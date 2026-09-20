@@ -1,0 +1,4 @@
+PyMuPDF==1.26.6
+PySide6-Essentials==6.11.2
+fonttools==4.64.0
+pypdfium2==5.13.0

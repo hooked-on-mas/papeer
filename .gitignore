@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+.env
+
+# Local generated output and scratch files
+/output/
+/tmp/

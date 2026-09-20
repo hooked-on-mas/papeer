@@ -1,0 +1,24 @@
+{
+  "app": "PaperDesk",
+  "version": "0.1.0",
+  "target": "Windows 11 x64 / Python 3.12",
+  "verified_environment": "Linux / Python 3.12.13 / PyMuPDF 1.26.6 / PySide6 Essentials 6.11.2; Windows 11 x64 / Python 3.12.10 for the shell integration",
+  "verification": {
+    "backend_tests": 17,
+    "backend_passed": 17,
+    "gui_smoke": "passed",
+    "pdf_visual_review": "passed",
+    "windows_dependency_resolution": "passed",
+    "windows_runtime_launch": "passed",
+    "windows_shortcut_app_id": "passed",
+    "windows_taskbar_progress_interface": "passed",
+    "windows_window_relaunch_properties": "passed"
+  },
+  "not_verified": [
+    "ChatGPT authentication and real model calls",
+    "real external API calls",
+    "Windows exe build",
+    "taskbar appearance after the user pins the app"
+  ],
+  "independent_implementation": true
+}

@@ -1,0 +1,38 @@
+name: Windows validation and build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - run: python -m pip install -r requirements-build.txt
+      - run: python -m unittest discover -s tests -v
+      - run: python tests/gui_smoke.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: python tests/gui_folders.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: python tests/gui_usability.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: >
+          python -m PyInstaller --noconfirm --clean --windowed --onedir --name PaperDesk
+          --icon paperdesk/assets/paperdesk.ico
+          --version-file packaging/version-info.txt
+          --add-data "paperdesk/assets;paperdesk/assets"
+          --collect-all pymupdf --collect-all fontTools --collect-all pypdfium2 --collect-all pypdfium2_raw --copy-metadata pypdfium2 main.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PaperDesk-Windows-x64
+          path: dist/PaperDesk/
