@@ -11,6 +11,7 @@ import unicodedata
 from .math_layout import MATH_TOKEN
 from .providers import check_cancel, parse_json_answer
 from .translation_context import recovery_context
+from .code_version import application_version
 
 
 TRANSLATION_SCHEMA = {
@@ -45,6 +46,18 @@ _RESERVED = re.compile(r"PD[\s_]*MATH", re.I)
 _LOOSE_TOKEN = re.compile(r"[\[［]\s*[\[［]([^\[\]［］]+)[\]］]\s*[\]］]")
 
 MAX_BLOCK_RETRIES = 3
+# Snapshot once per process: edited code takes effect after restarting the app.
+_CODE_VERSION = application_version()
+
+
+def translation_version():
+    """Identify the application source loaded for this session."""
+    return _CODE_VERSION
+
+
+def page_fingerprint(units):
+    return hashlib.sha256(json.dumps(units, ensure_ascii=False,
+                                     sort_keys=True).encode()).hexdigest()
 
 
 def translation_fingerprint(settings, units):

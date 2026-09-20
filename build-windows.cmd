@@ -11,10 +11,13 @@ if not exist ".venv\Scripts\python.exe" (
 if errorlevel 1 goto failed
 ".venv\Scripts\python.exe" -m unittest discover -s tests -v
 if errorlevel 1 goto failed
+".venv\Scripts\python.exe" -m paperdesk.code_version build\code-version.txt
+if errorlevel 1 goto failed
 ".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --windowed --onedir --name PaperDesk ^
     --icon "paperdesk\assets\paperdesk.ico" ^
     --version-file "packaging\version-info.txt" ^
     --add-data "paperdesk\assets;paperdesk\assets" ^
+    --add-data "build\code-version.txt;." ^
     --collect-all pymupdf --collect-all fontTools --collect-all pypdfium2 --collect-all pypdfium2_raw --copy-metadata pypdfium2 main.py
 if errorlevel 1 goto failed
 echo.

@@ -12,6 +12,7 @@ from .providers import Provider, check_cancel
 from .storage import Library
 from .math_layout import restore_formula_text
 from .translation import RetryState, TRANSLATION_SCHEMA, translate_batch, validate_translations, translation_fingerprint
+from .translation import translation_version, page_fingerprint
 from .translation_preview import preview_page
 from .translation_context import contextual_units
 from .reading_flow import unit_pages, expand_pages, materialize_flows
@@ -54,8 +55,26 @@ class PaperService:
         fingerprint = translation_fingerprint(settings, units)
         cache_path = folder / "translation-cache.json"
         cache = json.loads(cache_path.read_text("utf-8")) if cache_path.exists() else {}
-        done = cache.get("translations", {}) if cache.get("fingerprint") == fingerprint else {}
-        retry_state = RetryState.from_cache(cache.get("retry_state") if cache.get("fingerprint") == fingerprint else None)
+        version = translation_version()
+        compatible = (cache.get("fingerprint") == fingerprint
+                      and cache.get("translation_version") == version)
+        done = dict(cache.get("translations", {})) if compatible else {}
+        retry_state = RetryState.from_cache(cache.get("retry_state") if compatible else None)
+        source_pages = {n: [u for u in units if n in unit_pages(u)]
+                        for n in range(1, document["page_count"] + 1)}
+        page_keys = {n: page_fingerprint(values) for n, values in source_pages.items()}
+        completed_pages = {}
+        for number, page_units in source_pages.items():
+            entry = cache.get("completed_pages", {}).get(str(number), {})
+            if (entry.get("version") == version and entry.get("source") == page_keys[number]
+                    and all(u["id"] in entry.get("translations", {}) for u in page_units)):
+                done.update(entry["translations"])
+                completed_pages[str(number)] = entry
+        already_done = {n for n in selected if source_pages[n]
+                        and all(u["id"] in done for u in source_pages[n])}
+        if already_done:
+            self.progress("現バージョンで翻訳済みのページをスキップします：" +
+                          ", ".join(f"p.{n}" for n in sorted(already_done)))
         # Context is request-only: adding it must not invalidate translations or
         # reset the retry budget of an otherwise unchanged document.
         units = contextual_units(document, units)
@@ -103,7 +122,14 @@ class PaperService:
                     self.progress(f"翻訳ページを表示できます：p.{number}（{len(preview['pages'])}/{document['page_count']}ページ完了）")
 
             def save():
+                for number, page_units in source_pages.items():
+                    if page_units and all(u["id"] in done for u in page_units):
+                        completed_pages[str(number)] = {
+                            "version": version, "source": page_keys[number],
+                            "translations": {u["id"]: done[u["id"]] for u in page_units}}
                 save_json(cache_path, {"fingerprint": fingerprint, "translations": done,
+                                       "translation_version": version,
+                                       "completed_pages": completed_pages,
                                        "retry_state": retry_state.to_cache()})
 
             def accept(values):
@@ -111,6 +137,7 @@ class PaperService:
                 save()
                 publish_ready()
 
+            save()
             save_json(preview_path, preview)
             self.page_ready(paper_id, 0)
             publish_ready()
@@ -145,6 +172,8 @@ class PaperService:
             interleaved_pdf(folder / "original.pdf", folder / "translated.pdf", folder / "interleaved.pdf")
             report["skipped_blocks"] = [u["id"] for u in units if unit_pages(u) & set(preview["pages"]) and skipped(u)]
             report["requested_pages"] = sorted(requested)
+            report["translation_version"] = version
+            report["already_translated_pages"] = sorted(already_done)
             report["selected_pages"] = sorted(selected)
             report["translated_pages"] = sorted(preview["pages"])
             report["untranslated_pages"] = sorted(set(by_page) - set(preview["pages"]))

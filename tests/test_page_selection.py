@@ -16,6 +16,53 @@ from test_workflow import FakeProvider
 
 
 class PageSelectionTests(unittest.TestCase):
+    def test_completed_pages_survive_model_change_and_restart_until_version_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'source.pdf'
+            with fitz.open() as pdf:
+                for n in range(1, 4):
+                    pdf.new_page().insert_text((40, 70), f'Original content on page {n}.')
+                pdf.save(source)
+            library = Library(root / 'library')
+            identity, _ = library.import_pdf(source)
+            first = FakeProvider()
+            PaperService(library, first, threading.Event()).translate(identity, {1})
+            cache_path = library.folder(identity) / 'translation-cache.json'
+            cache = json.loads(cache_path.read_text('utf-8'))
+            self.assertEqual(set(cache['completed_pages']), {'1'})
+            self.assertEqual(cache['completed_pages']['1']['version'], cache['translation_version'])
+
+            second = FakeProvider()
+            second.settings.model = 'different-model'
+            service = PaperService(Library(root / 'library'), second, threading.Event())
+            report = service.translate(identity, {1, 2})
+            self.assertEqual(second.calls, 1)
+            self.assertEqual(report['already_translated_pages'], [1])
+            self.assertEqual(report['translated_pages'], [1, 2])
+            service.translate(identity, {1, 2})
+            self.assertEqual(second.calls, 1)
+            with patch('paperdesk.service.translation_version', return_value='next-version'):
+                report = service.translate(identity, {1})
+            self.assertEqual(second.calls, 2)
+            self.assertEqual(report['already_translated_pages'], [])
+
+    def test_legacy_cache_without_code_version_is_retranslated(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            library = Library(Path(temporary))
+            identity, _ = library.import_pdf(Path(__file__).parent / 'fixtures/sample.pdf')
+            provider = FakeProvider()
+            service = PaperService(library, provider, threading.Event())
+            service.translate(identity, {1})
+            cache_path = library.folder(identity) / 'translation-cache.json'
+            cache = json.loads(cache_path.read_text('utf-8'))
+            del cache['translation_version'], cache['completed_pages']
+            cache_path.write_text(json.dumps(cache), 'utf-8')
+            calls = provider.calls
+            service.translate(identity, {1})
+            self.assertGreater(provider.calls, calls)
+            self.assertIn('1', json.loads(cache_path.read_text('utf-8'))['completed_pages'])
+
     def test_page_continuation_is_translated_once_and_expands_selection(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

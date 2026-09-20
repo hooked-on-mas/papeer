@@ -39,6 +39,23 @@ def make_math_pdf(path, rotation=0):
 
 
 class MathLayoutTests(unittest.TestCase):
+    def test_short_prose_row_with_tall_math_does_not_absorb_next_row(self):
+        with fitz.open() as pdf:
+            page = pdf.new_page()
+            page.insert_text((40, 100), "over ", fontname="tiro", fontsize=10)
+            page.insert_text((60, 100), "x = 1", fontname="tiit", fontsize=10)
+            page.insert_text((40, 112), "Then, the variables follow a mixture.", fontname="tiro", fontsize=10)
+            lines = [line for item in page.get_text("rawdict")["blocks"] for line in item.get("lines", [])]
+        for line in lines:
+            if line["spans"][0]["origin"][1] == 100:
+                line["bbox"] = [line["bbox"][0], 92, line["bbox"][2], 110]
+        blocks = layout_blocks({"lines": lines}, 1, 1)
+        text = "\n".join(b["text"] for b in blocks)
+        self.assertIn("over x = 1\nThen, the variables follow a mixture.", text)
+        formulas = [f for b in blocks for f in b["formulas"]]
+        self.assertEqual([f["text"] for f in formulas], ["x = 1"])
+        self.assertTrue(all(y == 100 for f in formulas for x, y in f["glyph_origins"]))
+
     def test_multiple_integral_differentials_are_math_not_prose(self):
         for differential in ("dudv", "dxdy", "dudvdz", "du dv"):
             block = dict(text="integrand " + differential,

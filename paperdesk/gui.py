@@ -352,6 +352,33 @@ class TranslationPagesDialog(QDialog):
             super().accept()
 
 
+class JobErrorDialog(QDialog):
+    def __init__(self, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("処理を完了できませんでした")
+        self.resize(640, 360)
+        layout = QVBoxLayout(self)
+        details = QPlainTextEdit()
+        details.setReadOnly(True)
+        details.setPlainText(message)
+        details.setAccessibleName("エラー詳細")
+        layout.addWidget(details)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close_button = buttons.button(QDialogButtonBox.StandardButton.Close)
+        close_button.setText("閉じる")
+        close_button.setDefault(True)
+        copy_button = buttons.addButton("エラーをコピー", QDialogButtonBox.ButtonRole.ActionRole)
+        copy_button.setAutoDefault(False)
+
+        def copy_error():
+            QApplication.clipboard().setText(message)
+            copy_button.setText("コピーしました")
+
+        copy_button.clicked.connect(copy_error)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+
 class SettingsDialog(QDialog):
     def __init__(self, current: Settings, parent=None):
         super().__init__(parent)
@@ -1390,7 +1417,7 @@ class Window(QMainWindow):
         if not cancelled:
             self.taskbar.state(self.window_handle(), winintegration.ERROR)
             self.notify("処理を完了できませんでした", message)
-            QMessageBox.warning(self, "処理を完了できませんでした", message)
+            JobErrorDialog(message, self).exec()
 
     def job_finished(self):
         self.taskbar.busy(self.window_handle(), False)

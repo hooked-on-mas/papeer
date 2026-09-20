@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 import pymupdf as fitz
 
 
-LAYOUT_VERSION = 13
+LAYOUT_VERSION = 14
 MATH_TOKEN = re.compile(r"\[\[PD_MATH_[A-Za-z0-9_]+\]\]")
 _MATH_FONT = re.compile(r"(?:CMMI|CMSY|CMEX|MSAM|MSBM|CMBSY|CMMIB|Math|Symbol|MTMI|MTSY|MTEX|rsfs|AdvPSMP)", re.I)
 _SYMBOL = re.compile(r"[=+−×÷∑∏∫√∞≤≥≠≈∂∇∈∉⊂⊆∀∃∥⊤⊥α-ωΑ-Ω]|[\U0001d400-\U0001d7ff]")
@@ -110,6 +110,11 @@ def _merge_inline_fragments(lines: list[dict]) -> list[dict]:
         rect = fitz.Rect(line["bbox"])
         candidates = []
         for anchor in anchors:
+            # A short prose row (e.g. "over [interval]") is still its own
+            # sentence row. Tall symbol boxes can touch the following row;
+            # never interleave their glyphs merely because those boxes overlap.
+            if _prose_words(line) and abs(_prose_baseline(line) - _prose_baseline(anchor)) >= 1:
+                continue
             target = fitz.Rect(anchor["bbox"])
             size = max(s["size"] for s in anchor["spans"])
             overlap = min(rect.y1, target.y1) - max(rect.y0, target.y0)
