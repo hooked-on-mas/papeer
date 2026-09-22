@@ -31,6 +31,42 @@ def make_table(path, horizontal_only=False, rotation=0):
 
 
 class TableLayoutTests(unittest.TestCase):
+    def test_filled_segmented_rules_do_not_swallow_two_column_prose(self):
+        for rotation in (0, 90):
+            with self.subTest(rotation=rotation), tempfile.TemporaryDirectory() as tmp:
+                source = Path(tmp) / "source.pdf"
+                with fitz.open() as pdf:
+                    page = pdf.new_page(width=600, height=800)
+                    # Two stacked column tables and a wide table below the body.
+                    # Rules are filled rectangles; header rules are overlapping
+                    # segments, as in publisher PDFs rather than stroked lines.
+                    for index, (top, bottom, right) in enumerate(
+                            ((100, 165, 280), (200, 285, 280), (520, 650, 550)), 1):
+                        page.insert_text((70, top - 10), f"Table {index}. Control points", fontsize=9)
+                        for y in (top, top + 2.5, bottom - 2.5, bottom):
+                            page.draw_rect(fitz.Rect(50, y, right, y + .5), color=None, fill=(0, 0, 0))
+                        step = (right - 50) / 5
+                        for col in range(5):
+                            left = 50 + col * step
+                            page.draw_rect(fitz.Rect(left, top + 18, min(right, left + step + 10), top + 18.5),
+                                           color=None, fill=(0, 0, 0))
+                            for row, y in enumerate((top + 13, top + 32, bottom - 10)):
+                                page.insert_text((left + 3, y), f"{col}.{row}00", fontsize=8)
+                    for y in (110, 125, 140, 220, 235, 250, 330, 345):
+                        page.insert_text((315, y), "This is the kinetic and potential energy.", fontsize=9)
+                    for y in (330, 345, 360):
+                        page.insert_text((50, y), "The residual energy is a quadratic term.", fontsize=9)
+                    page.set_rotation(rotation)
+                    pdf.save(source)
+                document = extract_pdf(source)
+                tables = [b for b in document["blocks"] if b["kind"] == "table"]
+                self.assertEqual(len(tables), 3)
+                self.assertTrue(all("energy" not in b["text"] and "Table" not in b["text"] for b in tables))
+                units = translation_units(document)
+                text = " ".join(u["text"] for u in units)
+                for expected in ("kinetic and potential energy", "residual energy", "Table 1", "Table 2", "Table 3"):
+                    self.assertIn(expected, text)
+
     def test_local_rules_restore_sparse_outer_columns(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.pdf"

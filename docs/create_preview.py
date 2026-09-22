@@ -78,7 +78,7 @@ with tempfile.TemporaryDirectory(prefix="paperdesk-preview-") as temporary:
     window.show()
     window.refresh_list()
     window.select_paper(identity)
-    window.status_label.setText("動作検証用サンプル / 翻訳・解説は手作業のテストデータです。")
+    window.status_label.setText("動作検証用サンプル / 翻訳・サマリーは手作業のテストデータです。")
     for _ in range(5):
         app.processEvents()
         time.sleep(0.08)

@@ -8,7 +8,7 @@ import pymupdf as fitz
 from PySide6.QtGui import QImage
 
 from paperdesk.pdf_typography import FONT_CSS, font_archive
-from paperdesk.pdf_viewer import page_image, page_png
+from paperdesk.pdf_viewer import extract_selected_text, page_image, page_png, page_text_info
 
 
 class PdfViewerTests(unittest.TestCase):
@@ -71,6 +71,28 @@ class PdfViewerTests(unittest.TestCase):
         for width in [0, -1, float('nan'), float('inf')]:
             with self.subTest(width=width), self.assertRaises(ValueError):
                 page_image(source, 0, width)
+
+    def test_page_text_info_and_selection(self):
+        source = Path(__file__).parent / "fixtures/sample.pdf"
+        info = page_text_info(source, 0)
+        self.assertGreater(info["pdf_size"][0], 0)
+        self.assertGreater(info["pdf_size"][1], 0)
+        self.assertTrue(len(info["words"]) > 0)
+        first_word = info["words"][0]
+        # (x0, y0, x1, y1, text, block, line, word)
+        self.assertEqual(len(first_word), 8)
+        self.assertTrue(isinstance(first_word[4], str))
+
+        # Test extraction with bounding box around first word
+        clip_rect = (first_word[0] - 1, first_word[1] - 1, first_word[2] + 1, first_word[3] + 1)
+        text = extract_selected_text(source, 0, clip_rect)
+        self.assertIn(first_word[4], text)
+
+        # Invalid page and nonexistent path
+        self.assertEqual(page_text_info(source, 999)["words"], [])
+        self.assertEqual(page_text_info(Path("nonexistent.pdf"), 0)["words"], [])
+        self.assertEqual(extract_selected_text(Path("nonexistent.pdf"), 0, (0, 0, 10, 10)), "")
+
 
 
 if __name__ == '__main__':

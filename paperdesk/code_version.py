@@ -12,7 +12,7 @@ import sys
 TRANSLATION_SOURCES = (
     "translation.py", "translation_context.py", "providers.py", "service.py",
     "reading_flow.py", "pdf_engine.py", "math_layout.py", "figure_layout.py",
-    "table_layout.py", "reference_layout.py", "pdf_math_crops.py",
+    "table_layout.py", "algorithm_layout.py", "reference_layout.py", "pdf_math_crops.py",
     "pdf_typography.py", "pdf_fonts.py",
 )
 

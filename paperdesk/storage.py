@@ -230,6 +230,17 @@ class Library:
             db.execute("UPDATE papers SET original_name=?,title=? WHERE id=?", (name, stem, paper_id))
         return name
 
+    def reading_info(self, paper_id: str) -> dict:
+        """Read display metadata without loading or migrating the extraction cache."""
+        with self.connection() as db:
+            paper = db.execute("SELECT pages FROM papers WHERE id=?", (paper_id,)).fetchone()
+            if paper is None:
+                raise KeyError("論文が見つかりません。")
+            empty = [row[0] for row in db.execute(
+                "SELECT number FROM pages WHERE paper_id=? AND trim(text)='' ORDER BY number",
+                (paper_id,))]
+        return {"page_count": paper[0], "empty_pages": empty}
+
     def document(self, paper_id: str) -> dict:
         folder = self.folder(paper_id)
         path = folder / "document.json"

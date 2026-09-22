@@ -14,6 +14,7 @@ from .reference_layout import mark_references
 from .pdf_math_crops import formula_crop, page_glyph_bounds
 from .table_layout import separate_tables, table_regions
 from .figure_layout import figure_regions
+from .algorithm_layout import algorithm_regions
 from .reading_flow import order_page, continuation_groups, translation_blocks, materialize_flows
 from .pdf_typography import FONT_CSS, TextStyle, body_font_size, first_line_indented, font_archive, reading_space, running_headers, text_html, text_style
 
@@ -32,8 +33,10 @@ def extract_pdf(path: Path) -> dict:
         for number, page in enumerate(document):
             page_blocks = []
             items = page.get_text("rawdict", sort=True, flags=fitz.TEXTFLAGS_RAWDICT & ~fitz.TEXT_PRESERVE_IMAGES)["blocks"]
-            figures = figure_regions(page)
-            tables = [r for r in table_regions(page) if not any(r.intersects(f) for f in figures)]
+            algorithms = algorithm_regions(page, items)
+            figures = [r for r in figure_regions(page) if not any(r.intersects(a) for a in algorithms)]
+            tables = [r for r in table_regions(page) if not any(r.intersects(f) for f in figures + algorithms)]
+            items, algorithms = separate_tables(items, algorithms, number + 1, kind="algorithm")
             items, tables = separate_tables(items, tables, number + 1)
             items, figures = separate_tables(items, figures, number + 1, kind="figure")
             annotate_math_fonts(items)
@@ -43,8 +46,8 @@ def extract_pdf(path: Path) -> dict:
                 page_blocks.extend(layout_blocks(item, number + 1, len(page_blocks) + 1))
             page_blocks = merge_overlapping_prose(page_blocks)
             page_blocks = merge_continued_prose(page_blocks)
-            page_blocks.extend(tables + figures)
-            if tables or figures:
+            page_blocks.extend(tables + figures + algorithms)
+            if tables or figures or algorithms:
                 page_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
             if not page_blocks:
                 empty_pages.append(number + 1)
@@ -75,7 +78,7 @@ def translation_units(document: dict, limit: int = 6500) -> list[dict]:
         raise ValueError("翻訳単位の文字数上限は正の数にしてください。")
     units = []
     for block in translation_blocks(document):
-        if block.get("kind") in {"formula", "table", "reference", "figure"} or formula_only_block(block):
+        if block.get("kind") in {"formula", "table", "reference", "figure", "algorithm"} or formula_only_block(block):
             continue
         text = block.get("translation_text", block["text"])
         # Pure page numbers and symbol-only blocks are retained verbatim.
@@ -203,7 +206,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
         fonts = font_archive("".join(translations.values())) if translations else fitz.Archive()
         by_page: dict[int, list] = {}
         for block in document["blocks"]:
-            if block["id"] in translations and block.get("kind") not in {"formula", "table", "reference", "figure"}:
+            if block["id"] in translations and block.get("kind") not in {"formula", "table", "reference", "figure", "algorithm"}:
                 by_page.setdefault(block["page"], []).append(block)
         for number in range(document["page_count"]):
             if number + 1 not in selected or (translate_page_numbers is not None and number + 1 not in translate_page_numbers):
@@ -225,7 +228,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
             body_size = body_font_size(page_blocks)
             # Preserve the full box for isolated math (including fraction bars).
             # Where it encloses prose, protect the actual equation lines instead.
-            prose_rects = [fitz.Rect(b["bbox"]) for b in page_blocks if b.get("kind") not in {"formula", "table", "reference", "figure"}]
+            prose_rects = [fitz.Rect(b["bbox"]) for b in page_blocks if b.get("kind") not in {"formula", "table", "reference", "figure", "algorithm"}]
             full_boxes = [fitz.Rect(b["bbox"]) & bounds for b in page_blocks if b.get("kind") == "formula"]
             enclosed_prose = []
             for rect in prose_rects:
@@ -235,7 +238,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                     enclosed_prose.append(rect)
             display_rects = []
             for block in page_blocks:
-                if block.get("kind") not in {"formula", "table", "reference", "figure"}:
+                if block.get("kind") not in {"formula", "table", "reference", "figure", "algorithm"}:
                     continue
                 box = fitz.Rect(block["bbox"])
                 regions = (block.get("regions", [block["bbox"]])
@@ -309,7 +312,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                         "font_size": round(style.size * scale, 2), "scale": round(scale, 3)})
                 inline_formulas += len(formulas)
                 page.add_redact_annot(rect, fill=(1, 1, 1), cross_out=False)
-                planned.append((placement, markup, archive))
+                planned.append((placement, markup, archive, formulas))
             if planned:
                 page.apply_redactions(images=0, graphics=0, text=0)
                 # Redaction removes any glyph touching a text box. Restore math
@@ -317,10 +320,22 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 for rect in restore_rects:
                     page.draw_rect(rect, color=None, fill=(1, 1, 1), overlay=True)
                     page.show_pdf_page(rect, original, number, clip=rect)
-                for rect, markup, archive in planned:
+                for rect, markup, archive, formulas in planned:
+                    images_before = {tuple(img['bbox']) for img in page.get_image_info()}
                     remaining, _ = page.insert_htmlbox(rect, markup, archive=archive, css=FONT_CSS, scale_low=0)
                     if remaining < 0:
                         raise RuntimeError("訳文の描画に失敗しました。未完成のPDFは保存していません。")
+                    if formulas:
+                        images_after = page.get_image_info()
+                        new_images = [img for img in images_after if tuple(img['bbox']) not in images_before]
+                        new_images.sort(key=lambda img: (round((img['bbox'][1] + img['bbox'][3]) / 2 / 10), img['bbox'][0]))
+                        for img, formula in zip(new_images, formulas):
+                            img_rect = fitz.Rect(img['bbox'])
+                            fontsize = img_rect.height
+                            while fontsize >= 0.1:
+                                if page.insert_textbox(img_rect, formula["text"], fontsize=fontsize, render_mode=3) >= 0:
+                                    break
+                                fontsize *= 0.9
             page.set_rotation(rotation)
         if page_numbers is not None:
             pdf.select([number - 1 for number in sorted(selected)])
@@ -338,6 +353,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 "preserved_label_blocks": preserved_label_blocks,
                 "preserved_reference_blocks": [b["id"] for b in document["blocks"]
                                                if b.get("kind") == "reference" and b["page"] in selected],
+                "preserved_algorithm_blocks": sum(b.get("kind") == "algorithm" and b["page"] in selected for b in document["blocks"]),
                 "preserved_figure_blocks": sum(b.get("kind") == "figure" and b["page"] in selected for b in document["blocks"]),
                 "preserved_table_blocks": sum(b.get("kind") == "table" and b["page"] in selected for b in document["blocks"]),
                 "preserved_formula_blocks": sum(b.get("kind") == "formula" and b["page"] in selected for b in document["blocks"])}

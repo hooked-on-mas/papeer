@@ -62,7 +62,7 @@ class TextStyle:
 
 
 def body_font_size(blocks: list[dict]) -> float:
-    sizes = [b["font_size"] for b in blocks if b.get("kind") not in {"formula", "table", "figure"} and len(b["text"]) > 150]
+    sizes = [b["font_size"] for b in blocks if b.get("kind") not in {"formula", "table", "figure", "algorithm"} and len(b["text"]) > 150]
     return max(8.8, min(11, median(sizes) if sizes else 10))
 
 
@@ -125,7 +125,7 @@ def heading_space(block: dict, style: TextStyle, blocks: list[dict], bounds: fit
     if style.role not in {"title", "section", "subsection"}:
         return rect
     # Use the following paragraph to discover the width of this column.
-    below = [b for b in blocks if b["id"] != block["id"] and b.get("kind") not in {"formula", "table", "figure"}
+    below = [b for b in blocks if b["id"] != block["id"] and b.get("kind") not in {"formula", "table", "figure", "algorithm"}
              and b["bbox"][1] >= rect.y1 and abs(b["bbox"][0] - rect.x0) < 8
              and b["bbox"][2] > rect.x1 and len(b["text"]) > 60]
     right = min(below, key=lambda b: b["bbox"][1])["bbox"][2] if below else rect.x1

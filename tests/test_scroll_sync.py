@@ -10,6 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QNativeGestureEvent, QPointingDevice, QWheelEvent
 from PySide6.QtWidgets import QApplication, QGestureEvent, QPinchGesture
+from PySide6.QtTest import QSignalSpy, QTest
 
 from paperdesk.gui import Window
 
@@ -29,6 +30,20 @@ class ScrollSyncTests(unittest.TestCase):
         self.window.close()
         self.app.processEvents()
         self.temporary.cleanup()
+
+    def wait_for_pages(self):
+        self.window.render_timer.stop()
+        spy = QSignalSpy(self.window.page_renderer.ready)
+        self.window.render_pages()
+        for _ in range(300):
+            QTest.qWait(10)
+            current = [spy.at(i) for i in range(spy.count())
+                       if spy.at(i)[0] == self.window.render_generation]
+            if len(current) == 2:
+                # The worker can emit while qWait returns, before queued UI slots run.
+                self.app.processEvents()
+                return
+        self.fail("PDF rendering did not finish")
 
     def test_bidirectional_scroll_with_different_ranges_and_resizing(self):
         for getter in ("verticalScrollBar", "horizontalScrollBar"):
@@ -64,6 +79,7 @@ class ScrollSyncTests(unittest.TestCase):
         window.select_paper(identity)
         window.zoom_in_button.click()
         self.assertEqual(window.zoom.currentData(), 1.25)
+        self.wait_for_pages()
         widths_before = [label.pixmap().deviceIndependentSize().width() for label in window.pdf_labels]
         for area in window.pdf_scrolls:
             event = QWheelEvent(QPointF(20, 20), QPointF(20, 20), QPoint(), QPoint(0, 120),
@@ -72,6 +88,7 @@ class ScrollSyncTests(unittest.TestCase):
             QApplication.sendEvent(area.viewport(), event)
             self.assertTrue(event.isAccepted())
         self.assertEqual(window.zoom.currentData(), 2)
+        self.wait_for_pages()
         widths_after = [label.pixmap().deviceIndependentSize().width() for label in window.pdf_labels]
         self.assertEqual(widths_after[0], widths_after[1])
         self.assertTrue(all(after > before for before, after in zip(widths_before, widths_after)))
@@ -92,6 +109,7 @@ class ScrollSyncTests(unittest.TestCase):
         window.zoom.setCurrentIndex(3)
         self.app.processEvents()
         window.render_pages()
+        self.wait_for_pages()
         left, right = [area.verticalScrollBar() for area in window.pdf_scrolls]
         self.assertGreater(left.maximum(), 0)
         self.assertGreater(right.maximum(), 0)
@@ -99,9 +117,11 @@ class ScrollSyncTests(unittest.TestCase):
         self.assertAlmostEqual(left.value() / left.maximum(), .7, delta=.005)
         window.zoom.setCurrentIndex(2)
         self.app.processEvents()
+        self.wait_for_pages()
         self.assertAlmostEqual(left.value() / left.maximum(), right.value() / right.maximum(), delta=.005)
         window.move_page(1)
         self.app.processEvents()
+        self.wait_for_pages()
         self.assertEqual(window.current_page, 1)
         self.assertEqual((left.value(), right.value()), (0, 0))
 

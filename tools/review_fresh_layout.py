@@ -16,12 +16,13 @@ from paperdesk.translation_context import contextual_units
 from paperdesk.reading_flow import unit_pages, expand_pages
 
 
-def review(papers: Path, output: Path, seed: int, count: int, cases: list[str]):
+def review(papers: Path, output: Path, seed: int, count: int, cases: list[str], settings: Settings | None = None):
     papers, output = papers.resolve(), output.resolve()
     if output == papers or papers in output.parents or output in papers.parents:
         raise ValueError('Output must be separate from the paper library.')
     output.mkdir(parents=True, exist_ok=False)
-    settings = Settings.load(data_directory())
+    if settings is None:
+        settings = Settings.load(data_directory())
     cancel = threading.Event()
     provider = Provider(settings, cancel)
     documents = {}

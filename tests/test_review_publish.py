@@ -54,8 +54,8 @@ class ReviewPublishTests(unittest.TestCase):
                 pdf.save(folder/name)
         save_json(folder/'translation-report.json',dict(pages=3,translated_pages=[1,2,3],readability_warnings=[dict(page=2,scale=.2,font_size=2)]))
         (folder/'translation.md').write_text('# Paper\n\n## p.1 / old\n\nKeep first\n\n## p.2 / old\n\nRemove old\n\n## p.3 / old\n\nKeep last\n', 'utf8')
-        with patch('tools.review_fresh_layout.Provider',return_value=FakeProvider()):
-            review(root/'papers',root/'review',1,1,['aaaa:2'])
+        with patch('tools.review_fresh_layout.Provider', return_value=FakeProvider()):
+            review(root/'papers', root/'review', 1, 1, ['aaaa:2'], settings=Settings())
         return folder
 
     def test_publishes_only_selected_page_and_updates_related_files(self):
@@ -80,6 +80,7 @@ class ReviewPublishTests(unittest.TestCase):
             md=(folder/'translation.md').read_text('utf8')
             self.assertIn('Keep first',md); self.assertIn('Keep last',md); self.assertNotIn('Remove old',md)
             cache=json.loads((folder/'translation-cache.json').read_text('utf8'))
+            self.assertEqual(cache['fingerprint'], 'cb477b19d1fd3dcf59deb5122c48533c2cb469d052fcb226db32c641592447b8')
             self.assertEqual(cache['fingerprint'],translation_fingerprint(Settings(),translation_units(extract_pdf(folder/'original.pdf'))))
             self.assertTrue(cache['translations'])
             self.assertEqual(json.loads((folder/'translation-report.json').read_text('utf8'))['readability_warnings'],[])

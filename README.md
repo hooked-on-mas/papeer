@@ -65,20 +65,25 @@ Codexが見つからない場合、設定画面の「Codexのパス」に実際�
 
 参考：[認証](https://developers.openai.com/codex/auth)、[非対話実行](https://developers.openai.com/codex/non-interactive-mode)、[CLIリファレンス](https://developers.openai.com/codex/cli/reference)
 
-## API・ローカルモデルで使う
+## Claude Codeで使う
 
-「AI接続の設定」で「API / ローカルモデル（OpenAI互換）」を選びます。モデル名は必須で、初期値は`gpt-5.6-sol`です。接続先で利用できないモデル名の場合はHTTPエラーになるため、その接続先の名前に書き換えてください。
+この接続はAnthropic公式の**Claude Code CLI**（`claude`）を経由します。Claude Pro / Team / Max等のサブスクリプションや利用枠に従います。
 
-| 接続先 | API URLの例 | 補足 |
-| --- | --- | --- |
-| OpenAI API | `https://api.openai.com/v1` | APIキーと対応するモデル名を指定 |
-| OpenRouter | `https://openrouter.ai/api/v1` | 接続先のAPIキーとモデルIDを指定 |
-| Ollama | `http://localhost:11434/v1` | 先にローカルでモデルを起動 |
-| LM Studio | `http://localhost:1234/v1` | OpenAI互換サーバーを起動 |
+1. [Claude Codeの公式手順](https://docs.anthropic.com/claude-code)で導入します（すでに`claude`コマンドがあれば自動検出します）。
+2. 「接続・設定」→「AIにログイン」を押して、ブラウザーでClaudeにログインします。
+3. 「接続を確認」で、Claude Codeのログイン状態やアカウント情報を確認します。
+4. 「AI接続の設定」で接続先を「Claude Code CLI」にします。モデル欄は空欄（CLI既定モデル、または`claude-3-7-sonnet`等）に設定できます。
+5. 「日本語に翻訳 / 再開」で翻訳を実行します。
 
-実装は`POST /chat/completions`を使用します。表は接続設定の例で、各サービスとの実接続は今回未検証です。JSONを正しく返す能力や文脈長はモデルによって異なります。
+## Google Gemini（Antigravity CLI）で使う
 
-APIキーは設定ファイルへ保存せず、アプリを起動している間だけ保持します。必要なら起動前に環境変数`PAPERDESK_API_KEY`を設定できます。APIキーによる利用は、接続先の従量課金となる場合があります。
+この接続はGoogleのGemini公式CLIである**Antigravity CLI**（`agy`）を経由します。GoogleアカウントのGemini利用枠に従います。
+
+1. Antigravity CLI（`agy`）を導入します（環境内の`agy.exe`を自動検出します）。
+2. 「接続・設定」→「接続を確認」を押し、Geminiからの応答を確認します。
+3. 「AI接続の設定」で接続先を「Google Gemini (agy CLI)」にします。
+4. モデル欄は空欄（CLI既定の`gemini-3.8-flash`等）、または`gemini-3.1-pro`などを指定できます。
+5. 「日本語に翻訳 / 再開」で翻訳を実行します。
 
 ## できること
 

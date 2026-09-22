@@ -24,9 +24,9 @@ from PySide6.QtWidgets import (
 
 from . import winintegration
 from .config import REASONING_EFFORTS, Settings, data_directory
-from .pdf_viewer import page_image
+from .pdf_viewer import PageRenderer, page_image
 from .page_selection import parse_page_selection
-from .providers import Cancelled, Provider, codex_command
+from .providers import Cancelled, Provider, codex_command, claude_command, gemini_command, query_available_models, query_available_efforts
 from .service import PaperService
 from .storage import Library, normalize_collection_name
 from .bibliography import paper_display_name
@@ -277,19 +277,41 @@ class TranslationPagesDialog(QDialog):
         self.setWindowTitle("翻訳の設定")
         self.setMinimumWidth(600)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("今回の翻訳に使うモデル・effort"))
-        self.preset = QComboBox()
-        for key, (_model, _effort, description) in TRANSLATION_PRESETS.items():
-            self.preset.addItem(f"{key}：{description}", key)
-        self.preset.addItem("AI接続の設定をそのまま使う", "connection")
-        selected_index = self.preset.findData(preset)
-        self.preset.setCurrentIndex(selected_index if selected_index >= 0 else self.preset.findData("connection"))
-        layout.addWidget(self.preset)
+        layout.addWidget(QLabel("今回の翻訳に使うモデルと推論の強さ (effort)"))
+        
+        provider = settings.provider
+        cli_path = settings.gemini_path if provider == "gemini" else (settings.claude_path if provider == "claude" else settings.codex_path)
+
+        form = QFormLayout()
+        
+        # Model combo
+        self.model_combo = QComboBox()
+        self.model_combo.addItem("AI接続の設定と同じ", "")
+        models = query_available_models(provider, cli_path)
+        for m_id, label in models:
+            self.model_combo.addItem(label, m_id)
+        
+        # Effort combo
+        self.effort_combo = QComboBox()
+        self.effort_combo.addItem("AI接続の設定と同じ", "")
+        self.model_combo.currentIndexChanged.connect(self.update_efforts)
+        
+        form.addRow("モデル", self.model_combo)
+        form.addRow("推論の強さ (effort)", self.effort_combo)
+        layout.addLayout(form)
+
         self.model_summary = QLabel()
         self.model_summary.setWordWrap(True)
         layout.addWidget(self.model_summary)
-        self.preset.currentIndexChanged.connect(self.update_model_summary)
+        
+        # Connect to update summary
+        self.model_combo.currentIndexChanged.connect(self.update_model_summary)
+        self.effort_combo.currentIndexChanged.connect(self.update_model_summary)
+
+        # Initial effort population
+        self.update_efforts()
         self.update_model_summary()
+
         note = QLabel(f"全{page_count}ページ。PDFの先頭を1ページとして指定します。\n"
                       "文が前後のページへ続く場合は、つながるページも翻訳対象に含めます。\n"
                       "同じモデルでは保存済みの訳文を再利用します（effortの変更は次のAI処理から適用）。\n"
@@ -319,16 +341,37 @@ class TranslationPagesDialog(QDialog):
             self.page_input.setText(", ".join(str(p) for p in sorted(selected_pages)))
         self.validate_pages()
 
+    def update_efforts(self, *_):
+        self.effort_combo.blockSignals(True)
+        self.effort_combo.clear()
+        self.effort_combo.addItem("AI接続の設定と同じ", "")
+        provider = self.connection_settings.provider
+        cli_path = self.connection_settings.gemini_path if provider == "gemini" else (self.connection_settings.claude_path if provider == "claude" else self.connection_settings.codex_path)
+        m_id = self.model_combo.currentData() or self.connection_settings.model
+        efforts = query_available_efforts(provider, cli_path, m_id)
+        for e_id, label in efforts:
+            self.effort_combo.addItem(label, e_id)
+        self.effort_combo.blockSignals(False)
+
     def translation_settings(self):
-        values = TRANSLATION_PRESETS.get(self.preset.currentData())
-        if values:
-            model, effort, _description = values
-            return replace(self.connection_settings, model=model, reasoning_effort=effort)
-        return replace(self.connection_settings)
+        m_id = self.model_combo.currentData()
+        e_id = self.effort_combo.currentData()
+        kwargs = {}
+        if m_id:
+            kwargs["model"] = m_id
+        if e_id is not None and e_id != "":
+            kwargs["reasoning_effort"] = e_id
+        return replace(self.connection_settings, **kwargs)
 
     def update_model_summary(self, *_):
         settings = self.translation_settings()
-        connection = "ChatGPT / Codex CLI" if settings.provider == "codex" else "設定済みのAPI接続"
+        provider_names = {
+            "codex": "ChatGPT / Codex CLI",
+            "api": "設定済みのAPI接続",
+            "claude": "Claude Code CLI",
+            "gemini": "Google Gemini (agy CLI)",
+        }
+        connection = provider_names.get(settings.provider, settings.provider)
         self.model_summary.setText(
             f"{connection}：{settings.model or '既定モデル'} / effort: {settings.reasoning_effort or '既定値'}\n"
             "今回の翻訳にのみ適用します。接続先・解説・質問の設定は変更しません。")
@@ -391,57 +434,159 @@ class SettingsDialog(QDialog):
         layout.addWidget(note)
         form = QFormLayout()
         self.provider = QComboBox()
+        self.provider.addItem("Google Gemini (agy CLI)", "gemini")
+        self.provider.addItem("Claude Code CLI", "claude")
         self.provider.addItem("ChatGPT / Codex CLI", "codex")
         self.provider.addItem("API / ローカルモデル（OpenAI互換）", "api")
-        self.provider.setCurrentIndex(0 if current.provider == "codex" else 1)
-        self.model = QLineEdit(current.model)
-        self.model.setPlaceholderText("空欄にするとCodexの既定モデル / API接続では必須")
+        idx = self.provider.findData(current.provider)
+        self.provider.setCurrentIndex(idx if idx >= 0 else 0)
+
+        self.model = QComboBox()
+        self.model.setEditable(True)  # Allow user input for API/fallback
+        self.btn_refresh_models = QPushButton("再取得")
+        self.btn_refresh_models.clicked.connect(self.update_provider_ui)
+        model_layout = QHBoxLayout()
+        model_layout.setContentsMargins(0, 0, 0, 0)
+        model_layout.addWidget(self.model, 1)
+        model_layout.addWidget(self.btn_refresh_models)
+
         self.effort = QComboBox()
-        captions = ["既定値（接続先に任せる）", "low — 少なめ", "medium — 標準", "high — 多め", "xhigh — さらに多め"]
-        for value, caption in zip(REASONING_EFFORTS, captions):
-            self.effort.addItem(caption, value)
-        self.effort.setCurrentIndex(self.effort.findData(current.reasoning_effort))
+        
+        # We need a dictionary to store CLI paths, but the current object only holds specific fields.
+        # Create a dict mapping providers to their paths for the UI.
+        self.cli_paths = {
+            "codex": current.codex_path,
+            "claude": current.claude_path,
+            "gemini": current.gemini_path,
+        }
+        self.executable_label = QLabel("CLIのパス")
+        self.executable = QLineEdit(self.cli_paths.get(current.provider, ""))
+        self.executable.setPlaceholderText("通常は空欄で自動検出")
+
         self.url = QLineEdit(current.base_url)
         self.key = QLineEdit(current.api_key)
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
         self.key.setPlaceholderText("この起動中のみ保持 / PAPERDESK_API_KEYでも設定可")
-        self.executable = QLineEdit(current.codex_path)
-        self.executable.setPlaceholderText("通常は空欄で自動検出")
+
+        self.saved_models = {current.provider: current.model} if current.model else {}
+        self.saved_efforts = {current.provider: current.reasoning_effort} if current.reasoning_effort else {}
+        self.last_provider = current.provider
+
         form.addRow("接続先", self.provider)
-        form.addRow("モデル", self.model)
+        form.addRow("モデル", model_layout)
         form.addRow("推論の強さ（effort）", self.effort)
+        form.addRow(self.executable_label, self.executable)
         form.addRow("API URL", self.url)
         form.addRow("APIキー", self.key)
-        form.addRow("Codexのパス", self.executable)
         layout.addLayout(form)
+
         effort_note = QLabel("effortを上げると推論に使う時間・トークンが増える場合があります。対応値はモデルによって異なります。\n"
                              "翻訳・解説・質問の新しいAI処理に適用します。翻訳済みの部分は引き続き再利用します。")
         effort_note.setWordWrap(True)
         effort_note.setObjectName("subtle")
         layout.addWidget(effort_note)
-        info = QLabel("ローカル例: http://localhost:11434/v1（Ollama）\n"
+        info = QLabel("CLI接続（Gemini agy / Claude Code / Codex）は各ツールのログイン状態と利用枠に従います。\n"
+                      "ローカル例: http://localhost:11434/v1（Ollama）\n"
                       "ChatGPT接続はCodexの利用権限と利用枠に従います。\n"
                       "APIキーでの利用は接続先の従量課金となる場合があります。")
         info.setWordWrap(True)
         info.setObjectName("subtle")
         layout.addWidget(info)
-        self.provider.currentIndexChanged.connect(self.toggle_fields)
-        self.toggle_fields()
+        self.provider.currentIndexChanged.connect(self.on_provider_changed)
+        self.on_provider_changed()
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def toggle_fields(self):
-        api = self.provider.currentData() == "api"
+    def on_provider_changed(self):
+        if self.last_provider in self.cli_paths:
+            self.cli_paths[self.last_provider] = self.executable.text().strip()
+            self.saved_models[self.last_provider] = self.model.currentData() or self.model.currentText().strip()
+            self.saved_efforts[self.last_provider] = self.effort.currentData() or ""
+
+        new_provider = self.provider.currentData()
+        if new_provider in self.cli_paths:
+            self.executable.setText(self.cli_paths[new_provider])
+        self.last_provider = new_provider
+        self.update_provider_ui()
+
+    def update_provider_ui(self):
+        provider = self.provider.currentData()
+        cli_path = self.executable.text().strip()
+
+        # Update Models dropdown dynamically
+        self.btn_refresh_models.setText("取得中...")
+        QApplication.processEvents()
+        
+        self.model.blockSignals(True)
+        self.model.clear()
+        
+        # Use dynamic queries
+        models = query_available_models(provider, cli_path)
+        for m_id, label in models:
+            self.model.addItem(label, m_id)
+
+        target_model = self.saved_models.get(provider, "")
+        if not target_model and models:
+            target_model = models[0][0]
+
+        idx = self.model.findData(target_model)
+        if idx >= 0:
+            self.model.setCurrentIndex(idx)
+        elif target_model:
+            self.model.insertItem(0, target_model, target_model)
+            self.model.setCurrentIndex(0)
+        elif models:
+            self.model.setCurrentIndex(0)
+        self.model.blockSignals(False)
+
+        # Update Efforts dropdown dynamically
+        self.effort.blockSignals(True)
+        self.effort.clear()
+        
+        current_model_id = self.model.currentData() or self.model.currentText().strip()
+        efforts = query_available_efforts(provider, cli_path, current_model_id)
+        for e_id, label in efforts:
+            self.effort.addItem(label, e_id)
+
+        target_effort = self.saved_efforts.get(provider, "")
+        e_idx = self.effort.findData(target_effort)
+        if e_idx >= 0:
+            self.effort.setCurrentIndex(e_idx)
+        else:
+            self.effort.setCurrentIndex(0)
+        self.effort.blockSignals(False)
+        
+        self.btn_refresh_models.setText("再取得")
+
+        # Update Executable label and placeholder
+        if provider == "codex":
+            self.executable_label.setText("Codexのパス")
+            self.executable.setPlaceholderText("通常は空欄で自動検出（npm版やcodex.cmd等）")
+        elif provider == "claude":
+            self.executable_label.setText("Claude Codeのパス")
+            self.executable.setPlaceholderText("通常は空欄で自動検出（claude.cmd等）")
+        elif provider == "gemini":
+            self.executable_label.setText("Gemini (agy) のパス")
+            self.executable.setPlaceholderText("通常は空欄で自動検出（agy.exe等）")
+        
+        api = provider == "api"
         self.url.setEnabled(api)
         self.key.setEnabled(api)
         self.executable.setEnabled(not api)
 
     def settings(self):
-        return replace(self.current, provider=self.provider.currentData(), model=self.model.text().strip(),
+        if self.last_provider in self.cli_paths:
+            self.cli_paths[self.last_provider] = self.executable.text().strip()
+        model_val = self.model.currentData() or self.model.currentText().strip()
+        effort_val = self.effort.currentData() or ""
+        return replace(self.current, provider=self.provider.currentData(), model=model_val,
                        base_url=self.url.text().strip(), api_key=self.key.text().strip(),
-                       codex_path=self.executable.text().strip(), reasoning_effort=self.effort.currentData())
+                       codex_path=self.cli_paths.get("codex", ""),
+                       claude_path=self.cli_paths.get("claude", ""),
+                       gemini_path=self.cli_paths.get("gemini", ""),
+                       reasoning_effort=effort_val)
 
 
 class Window(QMainWindow):
@@ -477,6 +622,9 @@ class Window(QMainWindow):
         self.render_timer = QTimer(self)
         self.render_timer.setSingleShot(True)
         self.render_timer.timeout.connect(self.render_pages)
+        self.render_generation = 0
+        self.page_renderer = PageRenderer()
+        self.page_renderer.ready.connect(self.display_page)
         self.translation_page_ready.connect(self.refresh_translation_page)
         self._build()
         self._build_tray()
@@ -651,7 +799,7 @@ class Window(QMainWindow):
         left.addWidget(self.count_label)
         settings_button = QPushButton("接続・設定")
         settings_menu = QMenu(settings_button)
-        for caption, callback in [("AI接続の設定", self.configure), ("ChatGPTにログイン", self.login),
+        for caption, callback in [("AI接続の設定", self.configure), ("ログイン (CLI)", self.login),
                                   ("接続を確認", self.check_connection)]:
             action = settings_menu.addAction(caption)
             action.triggered.connect(callback)
@@ -1325,7 +1473,7 @@ class Window(QMainWindow):
         self.note.setPlainText(paper["note"])
         self.note.blockSignals(False)
         self.note_timer.stop()
-        info = self.library.document(paper_id)
+        info = self.library.reading_info(paper_id)
         extra = f" / 文字のないページ: {', '.join(map(str, info['empty_pages']))}" if info["empty_pages"] else ""
         # Scan pages are retained, but never silently presented as translated text.
         self.meta_label.setText(f"{paper['pages']} ページ / {paper['status']}{extra}")
@@ -1510,7 +1658,7 @@ class Window(QMainWindow):
     def translate(self):
         if not self.current_id or (self.job and self.job.isRunning()):
             return
-        count = self.library.document(self.current_id)["page_count"]
+        count = self.library.reading_info(self.current_id)["page_count"]
         preview = read_preview(self.library.folder(self.current_id))
         dialog = TranslationPagesDialog(count, min(self.current_page + 1, count), self,
                                         selected_pages=preview.get("target_pages") if preview else None,
@@ -1594,24 +1742,49 @@ class Window(QMainWindow):
 
     def login(self):
         try:
-            command = codex_command(self.settings.codex_path) + ["login"]
             kwargs = {"creationflags": subprocess.CREATE_NEW_CONSOLE} if os.name == "nt" else {}
-            subprocess.Popen(command, **kwargs)
-            self.status_label.setText("開いたブラウザーでChatGPTにログイン後、「接続を確認」を押してください。")
+            if self.settings.provider == "codex":
+                command = codex_command(self.settings.codex_path) + ["login"]
+                subprocess.Popen(command, **kwargs)
+                self.status_label.setText("開いたブラウザーでChatGPTにログイン後、「接続を確認」を押してください。")
+            elif self.settings.provider == "claude":
+                command = claude_command(self.settings.claude_path) + ["auth", "login"]
+                subprocess.Popen(command, **kwargs)
+                self.status_label.setText("開いたブラウザーでClaudeにログイン後、「接続を確認」を押してください。")
+            elif self.settings.provider == "gemini":
+                command = gemini_command(self.settings.gemini_path) + ["login"]
+                subprocess.Popen(command, **kwargs)
+                self.status_label.setText("開いたブラウザーでAntigravityにログイン後、「接続を確認」を押してください。")
+            else:
+                self.status_label.setText("API接続ではログイン操作は不要です。")
         except Exception as error:
-            QMessageBox.information(self, "Codex CLIの準備", str(error))
+            QMessageBox.information(self, "CLIの準備エラー", str(error))
 
     def check_connection(self):
         settings = replace(self.settings)
         def action(cancel, progress):
             progress("接続を確認しています…")
+            flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
             if settings.provider == "codex":
-                flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
                 result = subprocess.run(codex_command(settings.codex_path) + ["login", "status"],
                                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, **flags)
                 if result.returncode:
-                    raise RuntimeError("未ログインです。「ChatGPTにログイン」を実行してください。")
+                    raise RuntimeError("未ログインです。「ログイン (CLI)」を実行してください。")
                 return "Codexのログイン状態を確認しました。AI処理の実行可否は利用枠・モデル設定にも依存します。"
+            elif settings.provider == "claude":
+                result = subprocess.run(claude_command(settings.claude_path) + ["auth", "status"],
+                                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, **flags)
+                if result.returncode:
+                    raise RuntimeError("未ログインです。「ログイン (CLI)」を実行してください。\n" + result.stdout.strip())
+                return "Claude Codeのログイン状態を確認しました。"
+            elif settings.provider == "gemini":
+                result = subprocess.run(gemini_command(settings.gemini_path) + ["status"],
+                                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, **flags)
+                if result.returncode:
+                    detail = result.stderr.strip() or result.stdout.strip()
+                    raise RuntimeError("Gemini (agy) の接続確認に失敗しました。\n" + detail)
+                return f"Gemini (agy) の疎通を確認しました（応答: {result.stdout.strip()[:60]}）。"
+            
             provider = Provider(settings, cancel)
             answer = provider.generate("Reply with OK only.", "Connection test, no document data.")
             return "APIから応答を受信しました: " + answer[:120]
@@ -1621,7 +1794,7 @@ class Window(QMainWindow):
         if not self.current_id or self.tabs.currentIndex() != 0:
             return
         folder = self.library.folder(self.current_id)
-        document = self.library.document(self.current_id)
+        document = self.library.reading_info(self.current_id)
         count = document["page_count"]
         preview = read_preview(folder)
         report_path = folder / "translation-report.json"
@@ -1651,15 +1824,26 @@ class Window(QMainWindow):
             self.page_label.setText(f"原文 p.{self.current_page + 1}（表示 {position} / {len(visible_pages)}）")
         elif preview and len(completed_pages) < count:
             self.page_label.setText(f"{self.current_page + 1} / {count}（{len(completed_pages)}ページ翻訳済み）")
-        self.pdf_captions[1].setText("原文（PDF生成をスキップ）" if preview and self.current_page + 1 in preview.get("skipped_pages", []) else
+        translated_caption = ("原文（PDF生成をスキップ）" if preview and self.current_page + 1 in preview.get("skipped_pages", []) else
             "日本語訳" if self.current_page + 1 in completed_pages else
             "原文（未翻訳）" if preview and (preview["complete"] or self.current_page + 1 not in preview.get("target_pages", range(1, count + 1)))
             else "日本語訳（翻訳待ち）")
+        
+        if report_path.exists():
+            report_data = json.loads(report_path.read_text("utf-8"))
+            if self.current_page + 1 in completed_pages:
+                model = report_data.get("model", "unknown")
+                sha = report_data.get("sha256", "unknown")[:8]
+                translated_caption += f"  [{model} - {sha}]"
+        self.pdf_captions[1].setText(translated_caption)
+        self.render_generation = self.page_renderer.invalidate()
         factor = self.zoom.currentData()
         for scroll in self.pdf_scrolls:
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff if factor == 1
                                                 else Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         fit_width = max(250, min(x.viewport().width() for x in self.pdf_scrolls) - 8)
+        
+        requests = []
         for index, name in enumerate(["original.pdf", "translated.pdf"]):
             label, scroll = self.pdf_labels[index], self.pdf_scrolls[index]
             path = folder / name
@@ -1673,24 +1857,32 @@ class Window(QMainWindow):
                 label.setWordWrap(True)
                 label.resize(scroll.viewport().size())
                 continue
-            try:
-                width = int(fit_width * factor)
-                image = page_image(path, page_index, math.ceil(width * label.devicePixelRatioF()))
-                label.clear()
-                if image is not None:
-                    # Keep the logical page size while supplying native display pixels.
-                    image.setDevicePixelRatio(image.width() / width)
-                    pixmap = QPixmap.fromImage(image)
-                    label.setPixmap(pixmap)
-                    size = pixmap.deviceIndependentSize()
-                    label.resize(max(scroll.viewport().width(), math.ceil(size.width()) + 6), math.ceil(size.height()) + 6)
-                else:
-                    label.setText("対応する原文ページがありません。再翻訳すると原文と同じページ数になります。")
-                    label.setWordWrap(True)
-                    label.resize(scroll.viewport().size())
-            except Exception as error:
-                self.status_label.setText("PDF表示エラー: " + str(error))
+            
+            width = int(fit_width * factor)
+            pixel_width = math.ceil(width * label.devicePixelRatioF())
+            # Tuple must match: (pane, path, page_index, pixels, width)
+            requests.append((index, str(path), page_index, pixel_width, width))
+            
+        if requests:
+            self.page_renderer.submit(self.render_generation, requests)
         self.update_controls()
+
+    def display_page(self, generation: int, index: int, image, width: int):
+        if generation != self.render_generation:
+            return
+        label = self.pdf_labels[index]
+        scroll = self.pdf_scrolls[index]
+        label.clear()
+        if image is not None:
+            image.setDevicePixelRatio(image.width() / width)
+            pixmap = QPixmap.fromImage(image)
+            label.setPixmap(pixmap)
+            size = pixmap.deviceIndependentSize()
+            label.resize(max(scroll.viewport().width(), math.ceil(size.width()) + 6), math.ceil(size.height()) + 6)
+        else:
+            label.setText("対応する原文ページがありません。再翻訳すると原文と同じページ数になります。")
+            label.setWordWrap(True)
+            label.resize(scroll.viewport().size())
 
     def change_zoom(self, steps):
         self.zoom.setCurrentIndex(max(0, min(self.zoom.currentIndex() + steps, self.zoom.count() - 1)))
@@ -1792,7 +1984,7 @@ class Window(QMainWindow):
         if self.current_id:
             if self.page_filter.currentIndex() == 1:
                 folder = self.library.folder(self.current_id)
-                pages = translated_page_numbers(folder, self.library.document(self.current_id)["page_count"])
+                pages = translated_page_numbers(folder, self.library.reading_info(self.current_id)["page_count"])
                 if not pages:
                     return
                 position = pages.index(self.current_page + 1) if self.current_page + 1 in pages else 0
@@ -1884,6 +2076,8 @@ class Window(QMainWindow):
             self.render_timer.start(200)
 
     def closeEvent(self, event):
+        if hasattr(self, "page_renderer"):
+            self.page_renderer.stop()
         if self.job and self.job.isRunning():
             self.cancel_job()
             QMessageBox.information(self, "処理中", "中止を要求しました。処理の終了後に閉じてください。")

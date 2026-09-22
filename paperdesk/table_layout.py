@@ -2,6 +2,36 @@
 from __future__ import annotations
 
 import pymupdf as fitz
+import re
+
+
+def _horizontal_rules(page):
+    """Join rule segments, including thin filled rectangles used by publishers."""
+    rows = {}
+    for drawing in page.get_drawings():
+        for item in drawing["items"]:
+            if item[0] == "l":
+                a, b = item[1:3]
+                if abs(a.y - b.y) >= .2:
+                    continue
+                left, right, y = min(a.x, b.x), max(a.x, b.x), (a.y + b.y) / 2
+            elif item[0] == "re" and item[1].height <= 1:
+                rect = item[1]
+                left, right, y = rect.x0, rect.x1, (rect.y0 + rect.y1) / 2
+            else:
+                continue
+            key = next((k for k in rows if abs(k - y) < 1), y)
+            rows.setdefault(key, []).append((left, right))
+    rules = []
+    for y, segments in rows.items():
+        merged = []
+        for left, right in sorted(segments):
+            if merged and left <= merged[-1][1] + 2:
+                merged[-1][1] = max(right, merged[-1][1])
+            else:
+                merged.append([left, right])
+        rules.extend((left, right, y) for left, right in merged if right - left > 60)
+    return rules
 
 
 def table_regions(page: fitz.Page) -> list[fitz.Rect]:
@@ -18,32 +48,30 @@ def _table_regions(page: fitz.Page) -> list[fitz.Rect]:
     words = page.get_text("words")
     # The second pass handles academic tables with horizontal rules only.
     # Do not use unconstrained text detection: it can classify prose as a table.
-    options_list = [{"strategy": "lines_strict"},
-                    {"vertical_strategy": "text", "horizontal_strategy": "lines_strict",
-                     "intersection_y_tolerance": 20}]
+    options_list = [{"strategy": "lines_strict"}]
     # Isolate aligned horizontal rules before text-based column inference.
     # Otherwise nearby plots can join a small table into a page-wide candidate.
     groups = {}
-    for drawing in page.get_drawings():
-        for item in drawing["items"]:
-            if item[0] != "l":
-                continue
-            a, b = item[1:3]
-            if abs(a.y - b.y) < .2 and abs(a.x - b.x) > 60:
-                left, right = sorted((a.x, b.x))
-                key = next((k for k in groups if abs(k[0] - left) < 2 and abs(k[1] - right) < 2), (left, right))
-                groups.setdefault(key, []).append(a.y)
+    for left, right, y in _horizontal_rules(page):
+        key = next((k for k in groups if abs(k[0] - left) < 2 and abs(k[1] - right) < 2), (left, right))
+        groups.setdefault(key, []).append(y)
+    captions = [fitz.Rect(line["bbox"]) for block in page.get_text("dict")["blocks"]
+                for line in block.get("lines", [])
+                if re.match(r"Table\s*\d", "".join(s["text"] for s in line["spans"]).strip(), re.I)]
     for (left, right), ys in groups.items():
         runs = [[]]
         for y in sorted(set(ys)):
-            if runs[-1] and y - runs[-1][-1] > 80:
+            if runs[-1] and (y - runs[-1][-1] > 160 or any(
+                    runs[-1][-1] < caption.y0 < y and caption.x0 < right and caption.x1 > left
+                    for caption in captions)):
                 runs.append([])
             if not runs[-1] or y - runs[-1][-1] > 2:
                 runs[-1].append(y)
         for run in runs:
             if len(run) >= 3 and run[-1] - run[0] > 15:
                 options_list.append(dict(vertical_strategy="text", horizontal_strategy="lines_strict",
-                    intersection_y_tolerance=20, clip=fitz.Rect(left - 1, run[0] - 1, right + 1, run[-1] + 3)))
+                    intersection_y_tolerance=20, clip=fitz.Rect(left - 1, run[0] - 1, right + 1, run[-1] + 3),
+                    add_lines=[((left, y), (right, y)) for y in run]))
     for options in options_list:
         finder = page.find_tables(**options)
         for table in finder.tables:
@@ -125,7 +153,7 @@ def separate_tables(items: list[dict], regions: list[fitz.Rect], number: int, ki
         for char, _ in chars:
             box |= fitz.Rect(char["bbox"])
         text = " ".join("".join(char["c"] for char, _ in chars).split())
-        prefix = "t" if kind == "table" else "f"
+        prefix = {"table": "t", "figure": "f", "algorithm": "a"}[kind]
         tables.append({"id": f"p{number}{prefix}{index + 1}", "page": number,
                        "kind": kind, "bbox": list(box), "regions": [list(box)],
                        "text": text, "translation_text": text, "formulas": [],

@@ -16,6 +16,79 @@ from test_workflow import FakeProvider
 
 
 class PageSelectionTests(unittest.TestCase):
+    def test_partial_translation_preserves_stale_pages_during_and_after_run(self):
+        for change in ('version', 'model'):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                source = root / 'source.pdf'
+                with fitz.open() as pdf:
+                    for n in range(3):
+                        pdf.new_page().insert_text((40, 70), f'Original content on page {n + 1}.')
+                    pdf.save(source)
+                library = Library(root / 'library')
+                identity, _ = library.import_pdf(source)
+                folder = library.folder(identity)
+                provider = FakeProvider()
+                service = PaperService(library, provider, threading.Event())
+                service.translate(identity, {1, 2})
+                with fitz.open(folder / 'translated.pdf') as pdf:
+                    before = [pdf[n].get_pixmap().samples for n in (0, 1)]
+                old_cache = (folder / 'translation-cache.json').read_bytes()
+                seen = []
+                def ready(*_):
+                    preview = read_preview(folder)
+                    if preview and not preview['complete']:
+                        seen.append(preview['pages'])
+                        for n in (0, 1):
+                            path, index = translated_page(folder, n)
+                            with fitz.open(path) as pdf:
+                                self.assertEqual(pdf[index].get_pixmap().samples, before[n])
+                service.page_ready = ready
+                if change == 'model':
+                    provider.settings.model = 'another-model'
+                from paperdesk.translation import translation_version
+                version = 'new-version' if change == 'version' else translation_version()
+                with patch('paperdesk.service.translation_version', return_value=version):
+                    report = service.translate(identity, {3})
+                self.assertTrue(seen)
+                self.assertEqual(report['preserved_pages'], [1, 2])
+                self.assertEqual(report['translated_pages'], [1, 2, 3])
+                self.assertEqual(translated_page_numbers(folder, 3), [1, 2, 3])
+                with fitz.open(folder / 'translated.pdf') as pdf:
+                    for n in (0, 1):
+                        self.assertEqual(pdf[n].get_pixmap().samples, before[n])
+                    self.assertIn('適応制御', pdf[2].get_text())
+                self.assertEqual((folder / 'translation.md').read_text('utf-8').count('適応制御'), 3)
+                backup = folder / 'translation-pages' / read_preview(folder)['run_id'] / 'previous-translation-cache.json'
+                self.assertEqual(backup.read_bytes(), old_cache)
+
+    def test_retained_pages_survive_interruption_and_next_run(self):
+        from paperdesk.providers import Cancelled
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'source.pdf'
+            with fitz.open() as pdf:
+                for n in range(3):
+                    pdf.new_page().insert_text((40, 70), f'Original content on page {n + 1}.')
+                pdf.save(source)
+            library = Library(root / 'library')
+            identity, _ = library.import_pdf(source)
+            folder = library.folder(identity)
+            provider = FakeProvider()
+            service = PaperService(library, provider, threading.Event())
+            service.translate(identity, {1})
+            provider.interrupt_after = provider.calls + 1
+            with patch('paperdesk.service.translation_version', return_value='changed'):
+                with self.assertRaises(Cancelled):
+                    service.translate(identity, {2})
+                self.assertEqual(translated_page_numbers(folder, 3), [1])
+                path, index = translated_page(folder, 0)
+                with fitz.open(path) as pdf:
+                    self.assertIn('適応制御', pdf[index].get_text())
+                provider.interrupt_after = None
+                report = service.translate(identity, {3})
+            self.assertEqual(report['translated_pages'], [1, 3])
+
     def test_completed_pages_survive_model_change_and_restart_until_version_changes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

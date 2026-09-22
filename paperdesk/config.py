@@ -23,6 +23,8 @@ class Settings:
     base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
     codex_path: str = ""
+    claude_path: str = ""
+    gemini_path: str = ""
     timeout_seconds: int = 900
     reasoning_effort: str = ""
 
@@ -35,7 +37,7 @@ class Settings:
         path = root / "settings.json"
         values = json.loads(path.read_text("utf-8")) if path.exists() else {}
         values = {k: v for k, v in values.items() if k in cls.__dataclass_fields__}
-        values["api_key"] = os.environ.get("PAPERDESK_API_KEY", "")
+        values["api_key"] = os.environ.get("PAPERDESK_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
         return cls(**values)
 
     def save(self, root: Path) -> None:

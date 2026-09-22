@@ -4,16 +4,18 @@ import json
 import re
 import threading
 import uuid
+import shutil
 from pathlib import Path
 from typing import Callable
 
-from .pdf_engine import batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, save_json, translation_units
+from .pdf_engine import PDF_LOCK, batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, save_json, translation_units
+import pymupdf as fitz
 from .providers import Provider, check_cancel
 from .storage import Library
 from .math_layout import restore_formula_text
 from .translation import RetryState, TRANSLATION_SCHEMA, translate_batch, validate_translations, translation_fingerprint
 from .translation import translation_version, page_fingerprint
-from .translation_preview import preview_page
+from .translation_preview import preview_page, translated_page, translated_page_numbers
 from .translation_context import contextual_units
 from .reading_flow import unit_pages, expand_pages, materialize_flows
 
@@ -63,7 +65,8 @@ class PaperService:
         source_pages = {n: [u for u in units if n in unit_pages(u)]
                         for n in range(1, document["page_count"] + 1)}
         page_keys = {n: page_fingerprint(values) for n, values in source_pages.items()}
-        completed_pages = {}
+        # Keep historical page records without treating stale entries as current.
+        completed_pages = dict(cache.get("completed_pages", {}))
         for number, page_units in source_pages.items():
             entry = cache.get("completed_pages", {}).get(str(number), {})
             if (entry.get("version") == version and entry.get("source") == page_keys[number]
@@ -87,6 +90,25 @@ class PaperService:
                    "requested_pages": sorted(requested), "pages": [], "skipped_pages": [], "page_errors": {}, "target_pages": sorted(selected),
                    "total_pages": document["page_count"], "complete": False}
         preview_path = folder / "translation-preview.json"
+        # Rendered pages remain valid reading material even when extraction IDs,
+        # provider settings or code versions invalidate their translation cache.
+        retained = set(translated_page_numbers(folder, document["page_count"])) - selected
+        for number in sorted(retained):
+            source, index = translated_page(folder, number - 1)
+            destination = preview_page(folder, preview, number)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with PDF_LOCK, fitz.open(source) as previous, fitz.open() as single:
+                single.insert_pdf(previous, from_page=index, to_page=index)
+                single.save(destination)
+        previous_markdown = (folder / "translation.md").read_text("utf-8") if (folder / "translation.md").exists() else ""
+        preview["pages"] = sorted(retained)
+        preview["preserved_pages"] = sorted(retained)
+        # Archive the old cache before replacing it, including legacy records
+        # that predate the per-page cache format.
+        if cache_path.exists():
+            archive = preview_page(folder, preview, 1).parent / "previous-translation-cache.json"
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(cache_path, archive)
         self.library.update(paper_id, status="翻訳中")
         try:
             def skipped(unit):
@@ -126,9 +148,11 @@ class PaperService:
                     if page_units and all(u["id"] in done for u in page_units):
                         completed_pages[str(number)] = {
                             "version": version, "source": page_keys[number],
+                            "model": settings.model,
                             "translations": {u["id"]: done[u["id"]] for u in page_units}}
                 save_json(cache_path, {"fingerprint": fingerprint, "translations": done,
                                        "translation_version": version,
+                                       "model": settings.model,
                                        "completed_pages": completed_pages,
                                        "retry_state": retry_state.to_cache()})
 
@@ -161,37 +185,54 @@ class PaperService:
                 self.page_ready(paper_id, number)
             block_text = {}
             for unit in units:
-                if not unit_pages(unit) & set(preview["pages"]):
+                if not unit_pages(unit) & (set(preview["pages"]) - retained):
                     continue
                 block_text.setdefault(unit["block"], []).append(done.get(unit["id"], unit["text"]))
             translated = {key: "\n".join(parts) for key, parts in block_text.items()}
             self.progress("日本語PDFを作成しています…")
-            report = build_translated_pdf(folder / "original.pdf", document, translated, folder / "translated.pdf",
-                                          translate_page_numbers=set(preview["pages"]))
+            staged = preview_page(folder, preview, 1).parent / "assembled.pdf"
+            report = build_translated_pdf(folder / "original.pdf", document, translated, staged,
+                                          translate_page_numbers=set(preview["pages"]) - retained)
+            if retained:
+                with PDF_LOCK, fitz.open(staged) as assembled:
+                    for number in sorted(retained):
+                        with fitz.open(preview_page(folder, preview, number)) as previous:
+                            assembled.delete_page(number - 1)
+                            assembled.insert_pdf(previous, start_at=number - 1)
+                    merged = staged.with_name("merged.pdf")
+                    assembled.save(merged)
+                merged.replace(staged)
+            staged.replace(folder / "translated.pdf")
             self.progress("原文と日本語訳を交互に並べたPDFを作成しています…")
             interleaved_pdf(folder / "original.pdf", folder / "translated.pdf", folder / "interleaved.pdf")
-            report["skipped_blocks"] = [u["id"] for u in units if unit_pages(u) & set(preview["pages"]) and skipped(u)]
+            report["skipped_blocks"] = [u["id"] for u in units if unit_pages(u) & (set(preview["pages"]) - retained) and skipped(u)]
             report["requested_pages"] = sorted(requested)
             report["translation_version"] = version
             report["already_translated_pages"] = sorted(already_done)
             report["selected_pages"] = sorted(selected)
+            report["preserved_pages"] = sorted(retained)
             report["translated_pages"] = sorted(preview["pages"])
             report["untranslated_pages"] = sorted(set(by_page) - set(preview["pages"]))
             report["skipped_pages"] = sorted(preview["skipped_pages"])
             report["page_errors"] = preview["page_errors"]
+            report["model"] = settings.model
             save_json(folder / "translation-report.json", report)
             preview["complete"] = True
             save_json(preview_path, preview)
             self.page_ready(paper_id, document["page_count"])
             lines = [f"# {document['title']} — 日本語訳", ""]
+            for section in re.split(r"(?=^## p\.\d+ / )", previous_markdown, flags=re.M):
+                match = re.match(r"## p\.(\d+) / ", section)
+                if match and int(match[1]) in retained:
+                    lines += [section.rstrip(), ""]
             rendered_document, rendered_text = materialize_flows(document, translated)
             for block in rendered_document["blocks"]:
-                if block['page'] not in preview['pages']:
+                if block['page'] not in preview['pages'] or block['page'] in retained:
                     continue
                 if block["id"] in rendered_text:
                     lines += [f"## p.{block['page']} / {block['id']}", "",
                               restore_formula_text(rendered_text[block["id"]], block), ""]
-                elif block.get("kind") in {"formula", "table", "reference"} and block["page"] in preview["pages"]:
+                elif block.get("kind") in {"formula", "table", "reference", "figure", "algorithm"} and block["page"] in preview["pages"]:
                     lines += [f"## p.{block['page']} / {block['id']}", "", block["text"], ""]
             (folder / "translation.md").write_text("\n".join(lines), "utf-8")
             self.library.update(paper_id, status="一部翻訳済み" if report["untranslated_pages"] or report["skipped_blocks"] else "翻訳済み")
@@ -212,7 +253,7 @@ class PaperService:
         notes = []
         for index, chunk in enumerate(chunks):
             check_cancel(self.cancel)
-            self.progress(f"解説の資料を整理 {index + 1}/{len(chunks)}")
+            self.progress(f"サマリーの資料を整理 {index + 1}/{len(chunks)}")
             data = "\n\n".join(f"[{paper_id}:p{x['page']}]\n{x['text']}" for x in chunk)
             note = self.provider.generate(
                 "Write concise Japanese research notes covering the supplied pages: research question, method, "
@@ -220,12 +261,14 @@ class PaperService:
                 "Use only the supplied text, distinguish claims from inference, and do not invent missing figures.", data)
             notes.append(note)
         check_cancel(self.cancel)
-        self.progress("日本語の解説記事を作成しています…")
+        self.progress("日本語のサマリー記事を作成しています…")
         article = self.provider.generate(
-            "Write a clear Japanese Markdown article from these research notes, with sections for overview, "
-            "problem, method, results, limitations, and how to read the paper. Use technical English terms "
-            "in parentheses. Cite the original page markers [documentid:pN], preserving their exact IDs. "
-            "Do not invent facts or numerical results. Do not add external links or image syntax.",
+            "Write a clear and comprehensive Japanese Markdown article from these research notes. "
+            "The summary should be more detailed than a standard abstract, including a thorough Introduction, "
+            "Problem, Method, Results, Limitations, and Conclusion. Use concrete examples or analogies to build "
+            "a clear mental image of the concepts. Use technical English terms in parentheses. Cite the original "
+            "page markers [documentid:pN], preserving their exact IDs. Do not invent facts or numerical results. "
+            "Do not add external links or image syntax.",
             "\n\n".join(notes))
         article = link_citations(article, {paper_id: document["page_count"]})
         (folder / "article.md").write_text(article, "utf-8")

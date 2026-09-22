@@ -52,7 +52,7 @@ class FakeProvider:
             import re
             citation = re.search(r"\[[0-9a-f]{32}:p\d+\]", payload["evidence"])
             return "追従誤差は0.82です。 " + citation[0]
-        return "# 解説\n\n" + data
+        return "# サマリー\n\n" + data
 
 
 class WorkflowTests(unittest.TestCase):

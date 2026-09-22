@@ -83,7 +83,7 @@ def mark_references(document: dict) -> None:
     active = False
     for block in _reading_order(document):
         text = " ".join(block["text"].split())
-        if block.get("kind") in {"formula", "table", "figure"}:
+        if block.get("kind") in {"formula", "table", "figure", "algorithm"}:
             continue
         if _HEADING.fullmatch(text):
             active = True

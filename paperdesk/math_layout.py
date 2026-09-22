@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 import pymupdf as fitz
 
 
-LAYOUT_VERSION = 14
+LAYOUT_VERSION = 17
 MATH_TOKEN = re.compile(r"\[\[PD_MATH_[A-Za-z0-9_]+\]\]")
 _MATH_FONT = re.compile(r"(?:CMMI|CMSY|CMEX|MSAM|MSBM|CMBSY|CMMIB|Math|Symbol|MTMI|MTSY|MTEX|rsfs|AdvPSMP)", re.I)
 _SYMBOL = re.compile(r"[=+−×÷∑∏∫√∞≤≥≠≈∂∇∈∉⊂⊆∀∃∥⊤⊥α-ωΑ-Ω]|[\U0001d400-\U0001d7ff]")
