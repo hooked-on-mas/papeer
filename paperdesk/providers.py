@@ -69,13 +69,11 @@ def claude_command(configured: str = "") -> list[str]:
 
 
 def gemini_command(configured: str = "") -> list[str]:
-    found = configured.strip() or shutil.which("agy") or shutil.which("gemini") or ""
+    found = configured.strip() or shutil.which("agy") or ""
     if not found and os.name == "nt":
         candidates = [
             Path(os.environ.get("USERPROFILE", "")) / ".gemini/bin/agy.exe",
             Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Antigravity/agy.exe",
-            Path(os.environ.get("APPDATA", "")) / "npm/gemini.cmd",
-            Path(os.environ.get("USERPROFILE", "")) / ".local/bin/gemini.exe",
         ]
         for candidate in candidates:
             if candidate.is_file():
@@ -182,12 +180,7 @@ def query_available_models(provider: str, cli_path: str = "") -> list[tuple[str,
 def query_available_efforts(provider: str, cli_path: str = "", model: str = "") -> list[tuple[str, str]]:
     """CLIおよび指定モデルに応じた推論強度(effort)の選択肢を返す。"""
     if provider == "gemini":
-        return [
-            ("", "既定値（モデル・CLIに任せる）"),
-            ("low", "low — 少なめ"),
-            ("medium", "medium — 標準"),
-            ("high", "high — 多め"),
-        ]
+        return []
     elif provider == "codex":
         return [
             ("", "既定値（接続先に任せる）"),

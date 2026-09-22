@@ -292,12 +292,13 @@ class TranslationPagesDialog(QDialog):
             self.model_combo.addItem(label, m_id)
         
         # Effort combo
+        self.effort_label = QLabel("推論の強さ (effort)")
         self.effort_combo = QComboBox()
         self.effort_combo.addItem("AI接続の設定と同じ", "")
         self.model_combo.currentIndexChanged.connect(self.update_efforts)
         
         form.addRow("モデル", self.model_combo)
-        form.addRow("推論の強さ (effort)", self.effort_combo)
+        form.addRow(self.effort_label, self.effort_combo)
         layout.addLayout(form)
 
         self.model_summary = QLabel()
@@ -351,6 +352,11 @@ class TranslationPagesDialog(QDialog):
         efforts = query_available_efforts(provider, cli_path, m_id)
         for e_id, label in efforts:
             self.effort_combo.addItem(label, e_id)
+            
+        has_efforts = self.effort_combo.count() > 1
+        self.effort_label.setVisible(has_efforts)
+        self.effort_combo.setVisible(has_efforts)
+        self.adjustSize()
         self.effort_combo.blockSignals(False)
 
     def translation_settings(self):
@@ -450,6 +456,7 @@ class SettingsDialog(QDialog):
         model_layout.addWidget(self.model, 1)
         model_layout.addWidget(self.btn_refresh_models)
 
+        self.effort_label = QLabel("推論の強さ（effort）")
         self.effort = QComboBox()
         
         # We need a dictionary to store CLI paths, but the current object only holds specific fields.
@@ -463,7 +470,9 @@ class SettingsDialog(QDialog):
         self.executable = QLineEdit(self.cli_paths.get(current.provider, ""))
         self.executable.setPlaceholderText("通常は空欄で自動検出")
 
+        self.url_label = QLabel("API URL")
         self.url = QLineEdit(current.base_url)
+        self.key_label = QLabel("APIキー")
         self.key = QLineEdit(current.api_key)
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
         self.key.setPlaceholderText("この起動中のみ保持 / PAPERDESK_API_KEYでも設定可")
@@ -474,17 +483,30 @@ class SettingsDialog(QDialog):
 
         form.addRow("接続先", self.provider)
         form.addRow("モデル", model_layout)
-        form.addRow("推論の強さ（effort）", self.effort)
+        form.addRow(self.effort_label, self.effort)
         form.addRow(self.executable_label, self.executable)
-        form.addRow("API URL", self.url)
-        form.addRow("APIキー", self.key)
+        form.addRow(self.url_label, self.url)
+        form.addRow(self.key_label, self.key)
         layout.addLayout(form)
 
-        effort_note = QLabel("effortを上げると推論に使う時間・トークンが増える場合があります。対応値はモデルによって異なります。\n"
+        self.effort_note = QLabel("effortを上げると推論に使う時間・トークンが増える場合があります。対応値はモデルによって異なります。\n"
                              "翻訳・解説・質問の新しいAI処理に適用します。翻訳済みの部分は引き続き再利用します。")
-        effort_note.setWordWrap(True)
-        effort_note.setObjectName("subtle")
-        layout.addWidget(effort_note)
+        self.effort_note.setWordWrap(True)
+        self.effort_note.setObjectName("subtle")
+        layout.addWidget(self.effort_note)
+
+        # Add Login and Check Connection buttons
+        self.btn_login = QPushButton("ログイン (CLI)")
+        self.btn_check = QPushButton("接続を確認")
+        self.btn_login.clicked.connect(self.run_login)
+        self.btn_check.clicked.connect(self.run_check)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addWidget(self.btn_login)
+        btn_layout.addWidget(self.btn_check)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+
         info = QLabel("CLI接続（Gemini agy / Claude Code / Codex）は各ツールのログイン状態と利用枠に従います。\n"
                       "ローカル例: http://localhost:11434/v1（Ollama）\n"
                       "ChatGPT接続はCodexの利用権限と利用枠に従います。\n"
@@ -572,9 +594,127 @@ class SettingsDialog(QDialog):
             self.executable.setPlaceholderText("通常は空欄で自動検出（agy.exe等）")
         
         api = provider == "api"
-        self.url.setEnabled(api)
-        self.key.setEnabled(api)
-        self.executable.setEnabled(not api)
+        # Hide URL and API key fields for CLI providers
+        self.url_label.setVisible(api)
+        self.url.setVisible(api)
+        self.key_label.setVisible(api)
+        self.key.setVisible(api)
+        self.executable_label.setVisible(not api)
+        self.executable.setVisible(not api)
+        self.btn_login.setVisible(not api)
+        
+        # Hide effort field if it only has 1 or fewer options
+        has_efforts = self.effort.count() > 1
+        self.effort_label.setVisible(has_efforts)
+        self.effort.setVisible(has_efforts)
+        self.effort_note.setVisible(has_efforts)
+        
+        self.adjustSize()
+
+    def run_login(self):
+        self.btn_login.setText("確認中...")
+        self.btn_login.setEnabled(False)
+        QApplication.processEvents()
+        
+        settings = self.settings()
+        flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+        is_logged_in = False
+        
+        try:
+            if settings.provider == "codex":
+                res = subprocess.run(codex_command(settings.codex_path) + ["login", "status"],
+                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, **flags)
+                is_logged_in = (res.returncode == 0)
+            elif settings.provider == "claude":
+                res = subprocess.run(claude_command(settings.claude_path) + ["auth", "status"],
+                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, **flags)
+                is_logged_in = (res.returncode == 0)
+            elif settings.provider == "gemini":
+                res = subprocess.run(gemini_command(settings.gemini_path) + ["status"],
+                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, **flags)
+                is_logged_in = (res.returncode == 0)
+                
+            if is_logged_in:
+                QMessageBox.information(self, "ログイン状態", "すでにログインされています。")
+                return
+                
+        except Exception:
+            pass
+        finally:
+            self.btn_login.setText("ログイン (CLI)")
+            self.btn_login.setEnabled(True)
+
+        try:
+            kwargs = {"creationflags": subprocess.CREATE_NEW_CONSOLE} if os.name == "nt" else {}
+            if settings.provider == "codex":
+                subprocess.Popen(codex_command(settings.codex_path) + ["login"], **kwargs)
+                QMessageBox.information(self, "ログイン", "開いたブラウザーでChatGPTにログイン後、「接続を確認」を押してください。")
+            elif settings.provider == "claude":
+                subprocess.Popen(claude_command(settings.claude_path) + ["auth", "login"], **kwargs)
+                QMessageBox.information(self, "ログイン", "開いたブラウザーでClaudeにログイン後、「接続を確認」を押してください。")
+            elif settings.provider == "gemini":
+                subprocess.Popen(gemini_command(settings.gemini_path) + ["login"], **kwargs)
+                QMessageBox.information(self, "ログイン", "開いたブラウザーでAntigravityにログイン後、「接続を確認」を押してください。")
+        except Exception as error:
+            QMessageBox.warning(self, "CLIの準備エラー", str(error))
+
+    def run_check(self):
+        settings = self.settings()
+        parent = self.parent()
+        def action(cancel, progress):
+            progress("接続を確認しています…")
+            flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+            if settings.provider == "codex":
+                result = subprocess.run(codex_command(settings.codex_path) + ["login", "status"],
+                                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, **flags)
+                if result.returncode:
+                    raise RuntimeError("未ログインです。「ログイン (CLI)」を実行してください。")
+                return "Codexのログイン状態を確認しました。"
+            elif settings.provider == "claude":
+                result = subprocess.run(claude_command(settings.claude_path) + ["auth", "status"],
+                                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, **flags)
+                if result.returncode:
+                    raise RuntimeError("未ログインです。「ログイン (CLI)」を実行してください。\n" + result.stdout.strip())
+                return "Claude Codeのログイン状態を確認しました。"
+            elif settings.provider == "gemini":
+                result = subprocess.run(gemini_command(settings.gemini_path) + ["status"],
+                                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, **flags)
+                if result.returncode:
+                    detail = result.stderr.strip() or result.stdout.strip()
+                    raise RuntimeError("Gemini (agy) の接続確認に失敗しました。\n" + detail)
+                return f"Gemini (agy) の疎通を確認しました（応答: {result.stdout.strip()[:60]}）。"
+            
+            provider = Provider(settings, cancel)
+            answer = provider.generate("Reply with OK only.", "Connection test, no document data.")
+            return "APIから応答を受信しました: " + answer[:120]
+        
+        self.btn_check.setText("確認中...")
+        self.btn_check.setEnabled(False)
+        QApplication.processEvents()
+        
+        try:
+            import threading
+            result_box = []
+            def bg_task():
+                try:
+                    result_box.append(action(lambda: False, lambda x: None))
+                except Exception as e:
+                    result_box.append(e)
+            
+            t = threading.Thread(target=bg_task)
+            t.start()
+            while t.is_alive():
+                QApplication.processEvents()
+                t.join(0.05)
+                
+            res = result_box[0]
+            if isinstance(res, Exception):
+                QMessageBox.warning(self, "接続エラー", str(res))
+            else:
+                QMessageBox.information(self, "接続確認", res)
+        finally:
+            self.btn_check.setText("接続を確認")
+            self.btn_check.setEnabled(True)
 
     def settings(self):
         if self.last_provider in self.cli_paths:
