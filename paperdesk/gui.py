@@ -630,7 +630,7 @@ class SettingsDialog(QDialog):
                                      capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, **flags)
                 is_logged_in = (res.returncode == 0)
             elif settings.provider == "gemini":
-                res = subprocess.run(gemini_command(settings.gemini_path) + ["status"],
+                res = subprocess.run(gemini_command(settings.gemini_path) + ["models"],
                                      capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, **flags)
                 is_logged_in = (res.returncode == 0)
                 
@@ -653,7 +653,7 @@ class SettingsDialog(QDialog):
                 subprocess.Popen(claude_command(settings.claude_path) + ["auth", "login"], **kwargs)
                 QMessageBox.information(self, "ログイン", "開いたブラウザーでClaudeにログイン後、「接続を確認」を押してください。")
             elif settings.provider == "gemini":
-                subprocess.Popen(gemini_command(settings.gemini_path) + ["login"], **kwargs)
+                subprocess.Popen(gemini_command(settings.gemini_path), **kwargs)
                 QMessageBox.information(self, "ログイン", "開いたブラウザーでAntigravityにログイン後、「接続を確認」を押してください。")
         except Exception as error:
             QMessageBox.warning(self, "CLIの準備エラー", str(error))
@@ -677,7 +677,7 @@ class SettingsDialog(QDialog):
                     raise RuntimeError("未ログインです。「ログイン (CLI)」を実行してください。\n" + result.stdout.strip())
                 return "Claude Codeのログイン状態を確認しました。"
             elif settings.provider == "gemini":
-                result = subprocess.run(gemini_command(settings.gemini_path) + ["status"],
+                result = subprocess.run(gemini_command(settings.gemini_path) + ["models"],
                                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, **flags)
                 if result.returncode:
                     detail = result.stderr.strip() or result.stdout.strip()
@@ -1892,7 +1892,7 @@ class Window(QMainWindow):
                 subprocess.Popen(command, **kwargs)
                 self.status_label.setText("開いたブラウザーでClaudeにログイン後、「接続を確認」を押してください。")
             elif self.settings.provider == "gemini":
-                command = gemini_command(self.settings.gemini_path) + ["login"]
+                command = gemini_command(self.settings.gemini_path)
                 subprocess.Popen(command, **kwargs)
                 self.status_label.setText("開いたブラウザーでAntigravityにログイン後、「接続を確認」を押してください。")
             else:
@@ -1918,7 +1918,7 @@ class Window(QMainWindow):
                     raise RuntimeError("未ログインです。「ログイン (CLI)」を実行してください。\n" + result.stdout.strip())
                 return "Claude Codeのログイン状態を確認しました。"
             elif settings.provider == "gemini":
-                result = subprocess.run(gemini_command(settings.gemini_path) + ["status"],
+                result = subprocess.run(gemini_command(settings.gemini_path) + ["models"],
                                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, **flags)
                 if result.returncode:
                     detail = result.stderr.strip() or result.stdout.strip()
