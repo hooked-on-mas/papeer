@@ -59,7 +59,7 @@ class WindowBase(QMainWindow):
         self.list_filtered = False
         self.move_history = []
         self.current_page = 0
-        self.job = None
+        self.jobs = {}
         self.busy_buttons = []
         self.setWindowTitle("PaperDesk — 日本語で論文を読む")
         self.setWindowIcon(app_icon())
@@ -360,7 +360,7 @@ class WindowBase(QMainWindow):
             self.tabs.setCurrentIndex(0)
         self.reader_header.setVisible(not checked)
         self.tabs.tabBar().setVisible(not checked)
-        self.status_bar.setVisible(not checked or bool(self.job and self.job.isRunning()))
+        self.status_bar.setVisible(not checked or bool(hasattr(self, "jobs") and any(j.isRunning() for j in self.jobs)))
         self.sidebar.setVisible(not checked and self.sidebar_button.isChecked())
         self.focus_button.setText("集中表示を終了" if checked else "集中表示")
         self.render_timer.start(50)
@@ -389,7 +389,10 @@ class WindowBase(QMainWindow):
 
         self.translation_info_label = QLabel("")
         font = self.translation_info_label.font()
-        font.setPointSize(font.pointSize() - 2)
+        if font.pointSize() > 0:
+            font.setPointSize(max(1, font.pointSize() - 2))
+        elif font.pixelSize() > 0:
+            font.setPixelSize(max(1, font.pixelSize() - 2))
         self.translation_info_label.setFont(font)
         self.translation_info_label.setStyleSheet("color: gray;")
         nav.addWidget(self.translation_info_label)

@@ -48,7 +48,7 @@ from .gui_widgets import *
 
 class TranslationPagesDialog(QDialog):
     def __init__(self, page_count, current_page, parent=None, selected_pages=None,
-                 settings=None, preset="connection"):
+                 settings=None):
         super().__init__(parent)
         self.connection_settings = replace(settings or Settings())
         self.page_count, self.current_page = page_count, current_page

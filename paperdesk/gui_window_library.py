@@ -47,6 +47,49 @@ TRANSLATION_PRESETS = {
 from .gui_widgets import *
 from .gui_dialogs import *
 
+def render_markdown_with_math(text: str, folder: Path) -> str:
+    import hashlib
+    math_dir = folder / "math"
+    math_dir.mkdir(exist_ok=True)
+    def replace_math(match):
+        is_block = match.group(0).startswith("$$")
+        formula = match.group(1).strip()
+        if not formula:
+            return match.group(0)
+        
+        # Use a new salt to ignore old Codecogs/low-res caches
+        h = hashlib.md5(f"matplotlib_300dpi_{formula}".encode('utf-8')).hexdigest()
+        img_path = math_dir / f"{h}.png"
+        
+        if not img_path.exists():
+            try:
+                import matplotlib.pyplot as plt
+                fig = plt.figure(figsize=(0.01, 0.01))
+                # Add math delimiters for matplotlib mathtext
+                clean_formula = formula.replace(r"\text", r"\mathrm")
+                fig.text(0, 0, f"${clean_formula}$", fontsize=12)
+                # dpi=300 for crisp high-resolution rendering
+                fig.savefig(str(img_path), format='png', dpi=300, bbox_inches='tight', pad_inches=0.02, transparent=True)
+                plt.close(fig)
+            except Exception:
+                return match.group(0)
+                
+        # Read image size to scale it down in HTML
+        from PySide6.QtGui import QImage
+        img = QImage(str(img_path))
+        display_height = int(img.height() / 3.0)
+        display_width = int(img.width() / 3.0)
+        
+        uri = img_path.as_uri()
+        if is_block:
+            return f'\n\n<p align="center"><img src="{uri}" width="{display_width}" height="{display_height}" /></p>\n\n'
+        else:
+            return f'<img src="{uri}" width="{display_width}" height="{display_height}" style="vertical-align: middle;" />'
+            
+    text = re.sub(r"\$\$(.*?)\$\$", replace_math, text, flags=re.DOTALL)
+    text = re.sub(r"\$([^\n\$]+?)\$", replace_math, text)
+    return text
+
 class WindowLibraryMixin:
     def refresh_list(self, *_):
         keep = self.current_id
@@ -471,7 +514,8 @@ class WindowLibraryMixin:
             if report.get("skipped_pages"):
                 self.meta_label.setText(self.meta_label.text() + " / PDF生成スキップ: p." + ", ".join(map(str, report["skipped_pages"])))
         article = folder / "article.md"
-        self.article_view.setMarkdown(article.read_text("utf-8") if article.exists() else "## 解説はまだありません\n\n「解説を作成」を押してください。")
+        text = article.read_text("utf-8") if article.exists() else "## 解説はまだありません\n\n「解説を作成」を押してください。"
+        self.article_view.setMarkdown(render_markdown_with_math(text, folder))
         self.refresh_chat()
         self.update_controls()
         self.render_timer.start(30)

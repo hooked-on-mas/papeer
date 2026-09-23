@@ -29,6 +29,9 @@ class ScrollSyncTests(unittest.TestCase):
     def tearDown(self):
         self.window.close()
         self.app.processEvents()
+        if hasattr(self.window, "page_renderer"):
+            self.window.page_renderer.stop()
+            self.window.page_renderer._thread.join(5)
         self.temporary.cleanup()
 
     def wait_for_pages(self):

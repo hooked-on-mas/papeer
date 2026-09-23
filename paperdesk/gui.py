@@ -47,21 +47,29 @@ TRANSLATION_PRESETS = {
 from .gui_widgets import *
 from .gui_dialogs import *
 from .gui_window_base import WindowBase
-from .gui_window_library import WindowLibraryMixin
+from .gui_window_library import WindowLibraryMixin, render_markdown_with_math
 from .gui_window_viewer import WindowViewerMixin
 
 class Window(WindowLibraryMixin, WindowViewerMixin, WindowBase):
     translation_page_ready = Signal(str, int)
     def update_controls(self):
-        busy = self.job is not None and self.job.isRunning()
-        self.status_bar.setVisible(not self.focus_button.isChecked() or busy)
-        self.paper_list.imports_enabled = not busy
+        if not hasattr(self, "jobs"):
+            self.jobs = {}
+            if hasattr(self, "job") and self.job is not None:
+                self.jobs[self.job] = {"paper_id": None, "message": ""}
+        
+        busy_current = any(j.isRunning() for j in self.jobs if self.jobs[j].get("paper_id") == self.current_id or self.jobs[j].get("paper_id") is None)
+        any_busy = any(j.isRunning() for j in self.jobs)
+
+        self.status_bar.setVisible(not self.focus_button.isChecked() or any_busy)
+        self.paper_list.imports_enabled = not any_busy
         for widget in [self.page_input, self.jump_button]:
             widget.setEnabled(bool(self.current_id))
         for button in self.busy_buttons:
-            button.setEnabled(not busy)
+            # デフォルトで追加されたボタンは一旦現在のペーパーに依存するものとして扱う
+            button.setEnabled(not busy_current)
         for widget in [self.translate_button, self.article_button, self.export_button, self.ask_button]:
-            widget.setEnabled(bool(self.current_id) and not busy)
+            widget.setEnabled(bool(self.current_id) and not busy_current)
         for widget in [self.note, self.edit_title, self.edit_author, self.edit_year, self.collection, self.save_metadata_button]:
             widget.setEnabled(bool(self.current_id))
         for name, button in self.external_pdf_buttons.items():
@@ -70,41 +78,75 @@ class Window(WindowLibraryMixin, WindowViewerMixin, WindowBase):
                 folder = self.library.folder(self.current_id)
                 path = folder / ("translated.pdf" if name == "interleaved.pdf" else name)
             button.setEnabled(path is not None and path.is_file())
-            if name == "interleaved.pdf" and busy:
+            if name == "interleaved.pdf" and busy_current:
                 button.setEnabled(False)
         if self.current_id:
             preview = read_preview(self.library.folder(self.current_id))
             if preview and not preview["complete"]:
                 self.export_button.setEnabled(False)
-        self.progress_bar.setVisible(busy)
-        self.cancel_button.setVisible(busy)
+        self.progress_bar.setVisible(any_busy)
+        self.cancel_button.setVisible(any_busy)
 
-    def run_job(self, action, completed=None):
-        if self.job and self.job.isRunning():
+    def update_status_display(self):
+        if not hasattr(self, "jobs"):
             return
-        job = Job(action, self)
-        self.job = job
-        job.progress.connect(self.report_progress)
-        job.failed.connect(self.job_failed)
-        if completed:
-            job.succeeded.connect(completed)
-        job.finished.connect(self.job_finished)
-        job.start()
-        self.update_controls()
+        current_job = next((j for j in self.jobs if self.jobs[j].get("paper_id") == self.current_id and j.isRunning()), None)
+        global_job = next((j for j in self.jobs if self.jobs[j].get("paper_id") is None and j.isRunning()), None)
+        active_job = current_job or global_job
 
-    def report_progress(self, message):
-        self.status_label.setText(message)
-        # Steps are reported as "3/12"; mirror that on the progress bar and the taskbar button.
-        match = COUNTER.search(message)
-        if match:
-            done, total = (int(value) for value in match.groups())
-            self.progress_bar.setRange(0, total)
-            self.progress_bar.setValue(done)
-            self.taskbar.state(self.window_handle(), winintegration.NORMAL)
-            self.taskbar.value(self.window_handle(), done, total)
-        else:
+        if active_job:
+            message = self.jobs[active_job].get("message", "処理中...")
+            self.status_label.setText(message)
+            match = COUNTER.search(message)
+            if match:
+                done, total = (int(value) for value in match.groups())
+                self.progress_bar.setRange(0, total)
+                self.progress_bar.setValue(done)
+                self.taskbar.state(self.window_handle(), winintegration.NORMAL)
+                self.taskbar.value(self.window_handle(), done, total)
+            else:
+                self.progress_bar.setRange(0, 0)
+                self.taskbar.busy(self.window_handle(), True)
+        elif any(j.isRunning() for j in self.jobs):
+            num = sum(1 for j in self.jobs if j.isRunning())
+            self.status_label.setText(f"バックグラウンドで {num} 件のタスクが実行中です...")
             self.progress_bar.setRange(0, 0)
             self.taskbar.busy(self.window_handle(), True)
+        else:
+            self.progress_bar.setRange(0, 0)
+            self.taskbar.busy(self.window_handle(), False)
+
+    def run_job(self, action, completed=None, paper_id=None):
+        if not hasattr(self, "jobs"):
+            self.jobs = {}
+        if paper_id is not None:
+            if any(info.get("paper_id") == paper_id for j, info in self.jobs.items() if j.isRunning()):
+                return
+        else:
+            if any(j.isRunning() for j in self.jobs):
+                return
+
+        job = Job(action, self)
+        self.jobs[job] = {"paper_id": paper_id, "message": "準備中..."}
+
+        job.progress.connect(lambda msg, j=job: self.report_progress(j, msg))
+        job.failed.connect(lambda msg, cancelled, j=job: self.job_failed(j, msg, cancelled))
+        if completed:
+            job.succeeded.connect(lambda res, j=job, c=completed: self.job_succeeded(j, res, c))
+        job.finished.connect(lambda j=job: self.job_finished(j))
+        
+        job.start()
+        self.update_controls()
+        self.update_status_display()
+
+    def job_succeeded(self, job, result, completed_callback):
+        completed_callback(result)
+
+    def report_progress(self, job, message):
+        if job in self.jobs:
+            self.jobs[job]["message"] = message
+        if getattr(self, "current_id", None) == self.jobs.get(job, {}).get("paper_id") or self.jobs.get(job, {}).get("paper_id") is None:
+            self.update_status_display()
 
     def refresh_translation_page(self, paper_id, number):
         if paper_id != self.current_id:
@@ -115,32 +157,50 @@ class Window(WindowLibraryMixin, WindowViewerMixin, WindowBase):
     def window_handle(self) -> int:
         return int(self.winId())
 
-    def job_failed(self, message, cancelled):
-        self.status_label.setText(message)
+    def job_failed(self, job, message, cancelled):
+        if job in self.jobs:
+            self.jobs[job]["message"] = message
+        if getattr(self, "current_id", None) == self.jobs.get(job, {}).get("paper_id") or self.jobs.get(job, {}).get("paper_id") is None:
+            self.status_label.setText(message)
+            if not cancelled:
+                self.taskbar.state(self.window_handle(), winintegration.ERROR)
         if not cancelled:
-            self.taskbar.state(self.window_handle(), winintegration.ERROR)
             self.notify("処理を完了できませんでした", message)
             JobErrorDialog(message, self).exec()
+        self.update_status_display()
 
-    def job_finished(self):
-        self.taskbar.busy(self.window_handle(), False)
-        self.progress_bar.setRange(0, 0)
+    def job_finished(self, job):
+        if job in self.jobs:
+            del self.jobs[job]
+        
         self.update_controls()
+        self.update_status_display()
         self.refresh_list()
-        if self.current_id:
+        
+        paper_id = getattr(job, "paper_id", None)
+        if paper_id == self.current_id and self.current_id:
             self.select_paper(self.current_id, self.current_page)
 
     def cancel_job(self):
-        if self.job:
-            self.job.cancel.set()
+        if not hasattr(self, "jobs"):
+            return
+        canceled_any = False
+        for job in list(self.jobs.keys()):
+            if job.isRunning() and (self.jobs[job].get("paper_id") == self.current_id or self.jobs[job].get("paper_id") is None):
+                job.cancel.set()
+                canceled_any = True
+        
+        if canceled_any:
             self.status_label.setText("中止しています… API通信中の場合は応答またはタイムアウトまで待ちます。")
+        else:
+            QMessageBox.information(self, "中止", "現在表示中の論文で実行中の処理はありません。他の論文の処理を中止する場合は、その論文を開いてから中止を押してください。")
 
     def import_pdfs(self):
         paths, _ = QFileDialog.getOpenFileNames(self, "論文PDFを追加", "", "PDF (*.pdf)")
         self.import_paths([Path(path) for path in paths])
 
     def import_paths(self, paths: list[Path], collection_name: str | None = None):
-        if not paths or (self.job and self.job.isRunning()):
+        if not paths or (hasattr(self, "jobs") and any(j.isRunning() for j in self.jobs if self.jobs[j].get("paper_id") is None)):
             return
         def action(cancel, progress):
             imported = []
@@ -208,22 +268,20 @@ class Window(WindowLibraryMixin, WindowViewerMixin, WindowBase):
             provider = Provider(settings, cancel)
             service = PaperService(self.library, provider, cancel, progress, self.translation_page_ready.emit)
             return operation(service, paper_id)
-        self.run_job(action, completed)
+        self.run_job(action, completed, paper_id=paper_id)
 
     def translate(self):
-        if not self.current_id or (self.job and self.job.isRunning()):
+        if not self.current_id or (hasattr(self, "jobs") and any(j.isRunning() for j in self.jobs if self.jobs[j].get("paper_id") == self.current_id)):
             return
         count = self.library.reading_info(self.current_id)["page_count"]
         preview = read_preview(self.library.folder(self.current_id))
         dialog = TranslationPagesDialog(count, min(self.current_page + 1, count), self,
                                         selected_pages=preview.get("target_pages") if preview else None,
-                                        settings=self.settings,
-                                        preset=self.preferences.value("translation/preset", "connection"))
+                                        settings=self.settings)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         pages = set(dialog.pages)
         selected_settings = dialog.translation_settings()
-        self.preferences.setValue("translation/preset", dialog.preset.currentData())
         def done(report):
             message = (f"指定した{len(report['selected_pages'])}ページの翻訳処理が終了しました。"
                        f"全{report['pages']}ページ中{len(report['translated_pages'])}ページ翻訳済み。")
@@ -243,7 +301,7 @@ class Window(WindowLibraryMixin, WindowViewerMixin, WindowBase):
 
     def ask(self):
         question = self.question.text().strip()
-        if not question or not self.current_id or (self.job and self.job.isRunning()):
+        if not question or not self.current_id or (hasattr(self, "jobs") and any(j.isRunning() for j in self.jobs if self.jobs[j].get("paper_id") == self.current_id)):
             return
         all_papers = self.all_papers.isChecked()
         self.service_job(lambda service, identity: service.ask(identity, question, all_papers),
@@ -267,7 +325,9 @@ class Window(WindowLibraryMixin, WindowViewerMixin, WindowBase):
             role = "あなた" if message["role"] == "user" else "回答"
             content = message["content"] if message["role"] == "assistant" else html.escape(message["content"])
             pieces.append(f"### {role}\n\n{content}")
-        self.chat_view.setMarkdown("\n\n---\n\n".join(pieces))
+        text = "\n\n---\n\n".join(pieces)
+        folder = self.library.folder(self.current_id)
+        self.chat_view.setMarkdown(render_markdown_with_math(text, folder))
         self.chat_view.verticalScrollBar().setValue(self.chat_view.verticalScrollBar().maximum())
 
     def save_note(self):
@@ -428,8 +488,10 @@ class Window(WindowLibraryMixin, WindowViewerMixin, WindowBase):
     def closeEvent(self, event):
         if hasattr(self, "page_renderer"):
             self.page_renderer.stop()
-        if self.job and self.job.isRunning():
-            self.cancel_job()
+        if hasattr(self, "jobs") and any(j.isRunning() for j in self.jobs):
+            for job in list(self.jobs.keys()):
+                if job.isRunning():
+                    job.cancel.set()
             QMessageBox.information(self, "処理中", "中止を要求しました。処理の終了後に閉じてください。")
             event.ignore()
             return

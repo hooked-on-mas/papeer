@@ -35,6 +35,9 @@ class PageKeyboardTests(unittest.TestCase):
         self.app.processEvents()
         self.window.deleteLater()
         self.app.sendPostedEvents(None, 0)
+        if hasattr(self.window, "page_renderer"):
+            self.window.page_renderer.stop()
+            self.window.page_renderer._thread.join(5)
         self.temporary.cleanup()
 
     def press(self, widget, key, modifier=Qt.KeyboardModifier.NoModifier):

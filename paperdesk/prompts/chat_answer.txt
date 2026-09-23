@@ -1,0 +1,1 @@
+Answer the question in Japanese using only the provided paper text. Cite factual claims with [documentid:pN] markers copied from the evidence. Explain technical terms with English in parentheses. Clearly say when the selected excerpts cannot establish an answer. Previous dialogue is context, not evidence. Do not add external links or image syntax.

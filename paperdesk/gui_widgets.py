@@ -244,8 +244,12 @@ class LocalTextBrowser(QTextBrowser):
             block = block.next()
 
     def loadResource(self, resource_type, name):
-        # Generated Markdown is text and internal page links only.
-        # Never fetch remote images or read arbitrary local paths from document content.
+        from PySide6.QtGui import QTextDocument
+        if resource_type == QTextDocument.ResourceType.ImageResource:
+            url = name.toString()
+            if url.startswith("file:///") or url.startswith("http"):
+                # Permit local media and math images
+                return super().loadResource(resource_type, name)
         return None
 
 

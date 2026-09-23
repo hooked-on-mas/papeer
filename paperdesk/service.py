@@ -18,16 +18,37 @@ from .translation import translation_version, page_fingerprint
 from .translation_preview import preview_page, translated_page, translated_page_numbers
 from .translation_context import contextual_units
 from .reading_flow import unit_pages, expand_pages, materialize_flows
+from . import prompts
 
 
 def link_citations(answer: str, allowed: dict[str, int]) -> str:
     """Only turn validated document/page identifiers into navigable internal links."""
     def replace(match):
-        identity, page = match.group(1), int(match.group(2))
-        if identity in allowed and 1 <= page <= allowed[identity]:
-            return f"[p.{page}](paperdesk://{identity}/{page})"
-        return f"[参照未確認: {identity[:8]} p.{page}]"
-    return re.sub(r"\[([0-9a-f]{32}):p(\d+)\]", replace, answer)
+        content = match.group(1)
+        parts = content.split(',')
+        links = []
+        current_id = None
+        for part in parts:
+            part = part.strip()
+            m = re.match(r'([0-9a-f]{32}):(.*)', part)
+            if m:
+                current_id = m.group(1)
+                page_str = m.group(2)
+            else:
+                page_str = part
+            if not current_id:
+                continue
+            pages = re.findall(r'\d+', page_str)
+            for p in pages:
+                page = int(p)
+                if current_id in allowed and 1 <= page <= allowed[current_id]:
+                    links.append(f"[p.{page}](paperdesk://{current_id}/{page})")
+                else:
+                    links.append(f"[参照未確認: {current_id[:8]} p.{page}]")
+        if links:
+            return f"[{', '.join(links)}]"
+        return f"[{content}]"
+    return re.sub(r"\[([0-9a-f]{32}:[^\[\]]+)\]", replace, answer)
 
 
 class PaperService:
@@ -244,31 +265,53 @@ class PaperService:
     def article(self, paper_id: str) -> str:
         folder = self.library.folder(paper_id)
         document = self.library.document(paper_id)
+        
+        media_dir = folder / "media"
+        media_dir.mkdir(exist_ok=True)
+        blocks_by_page = {}
+        for b in document.get("blocks", []):
+            if b.get("kind") in {"figure", "table"}:
+                blocks_by_page.setdefault(b["page"], []).append(b)
+
+        if blocks_by_page:
+            import pymupdf as fitz
+            with fitz.open(folder / "original.pdf") as pdf:
+                for page_num, blocks in blocks_by_page.items():
+                    if 1 <= page_num <= len(pdf):
+                        page = pdf[page_num - 1]
+                        for b in blocks:
+                            image_path = media_dir / f"{b['id']}.png"
+                            if not image_path.exists():
+                                rect = fitz.Rect(b["bbox"])
+                                pix = page.get_pixmap(clip=rect, dpi=150)
+                                pix.save(str(image_path))
+
         page_units = []
         for page in document["pages"]:
-            for offset in range(0, max(1, len(page["text"])), 10000):
+            page_text = page["text"]
+            if page["number"] in blocks_by_page:
+                markers = []
+                for b in blocks_by_page[page["number"]]:
+                    image_path = media_dir / f"{b['id']}.png"
+                    uri = image_path.as_uri()
+                    markers.append(f"\n[図表画像が参照できます。Markdownで出力する際は次の構文をそのまま使ってください: ![{b['kind']} p.{page['number']}]({uri})]")
+                page_text += "\n" + "\n".join(markers)
+
+            for offset in range(0, max(1, len(page_text)), 10000):
                 page_units.append({"id": f"p{page['number']}-{offset}", "page": page["number"],
-                                   "text": page["text"][offset:offset + 10000]})
+                                   "text": page_text[offset:offset + 10000]})
         chunks = list(batches(page_units, limit=18000))
         notes = []
         for index, chunk in enumerate(chunks):
             check_cancel(self.cancel)
             self.progress(f"サマリーの資料を整理 {index + 1}/{len(chunks)}")
             data = "\n\n".join(f"[{paper_id}:p{x['page']}]\n{x['text']}" for x in chunk)
-            note = self.provider.generate(
-                "Write concise Japanese research notes covering the supplied pages: research question, method, "
-                "findings, quantitative results, limitations. Retain page citations exactly in [documentid:pN] format. "
-                "Use only the supplied text, distinguish claims from inference, and do not invent missing figures.", data)
+            note = self.provider.generate(prompts.load("summary_notes"), data)
             notes.append(note)
         check_cancel(self.cancel)
         self.progress("日本語のサマリー記事を作成しています…")
         article = self.provider.generate(
-            "Write a clear and comprehensive Japanese Markdown article from these research notes. "
-            "The summary should be more detailed than a standard abstract, including a thorough Introduction, "
-            "Problem, Method, Results, Limitations, and Conclusion. Use concrete examples or analogies to build "
-            "a clear mental image of the concepts. Use technical English terms in parentheses. Cite the original "
-            "page markers [documentid:pN], preserving their exact IDs. Do not invent facts or numerical results. "
-            "Do not add external links or image syntax.",
+            prompts.load("summary_article"),
             "\n\n".join(notes))
         article = link_citations(article, {paper_id: document["page_count"]})
         (folder / "article.md").write_text(article, "utf-8")
@@ -285,9 +328,7 @@ class PaperService:
         selection_note = "選択した論文の全文テキストを参照しています。"
         if entire_library or len(all_text) > 55000:
             self.progress("関連ページを検索しています…")
-            keywords = self.provider.generate(
-                "Return 3 to 8 English search keywords for finding evidence to answer this research question. "
-                "Return only space-separated keywords; no explanation.", question)
+            keywords = self.provider.generate(prompts.load("chat_keywords"), question)
             pages = self.library.search_pages(keywords + " " + question,
                                               None if entire_library else paper_id, limit=10)
             if not pages:
@@ -301,10 +342,7 @@ class PaperService:
         history = self.library.messages(paper_id)[-6:]
         self.progress("本文を参照して回答しています…")
         answer = self.provider.generate(
-            "Answer the question in Japanese using only the provided paper text. Cite factual claims "
-            "with [documentid:pN] markers copied from the evidence. Explain technical terms with English "
-            "in parentheses. Clearly say when the selected excerpts cannot establish an answer. "
-            "Previous dialogue is context, not evidence. Do not add external links or image syntax.",
+            prompts.load("chat_answer"),
             json.dumps({"question": question, "previous_dialogue": history,
                         "retrieval_scope": selection_note, "evidence": context}, ensure_ascii=False))
         answer = link_citations(answer, allowed) + "\n\n---\n*" + selection_note + "*"
