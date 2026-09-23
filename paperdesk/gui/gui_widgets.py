@@ -21,6 +21,9 @@ from PySide6.QtWidgets import (
     QInputDialog, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
     QSpinBox, QSplitter, QSizePolicy, QStyle, QSystemTrayIcon, QTabWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWebEngineCore import QWebEnginePage
+import markdown
 
 from paperdesk.core import winintegration
 from paperdesk.core.config import REASONING_EFFORTS, Settings, data_directory
@@ -230,27 +233,120 @@ class LibraryTree(QTreeWidget):
             painter.end()
 
 
-class LocalTextBrowser(QTextBrowser):
-    def setMarkdown(self, text):
-        super().setMarkdown(text)
-        block = self.document().begin()
-        while block.isValid():
-            cursor = QTextCursor(block)
-            formatting = block.blockFormat()
-            formatting.setTopMargin(16 if formatting.headingLevel() else 6)
-            formatting.setBottomMargin(6)
-            formatting.setLineHeight(145, QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
-            cursor.setBlockFormat(formatting)
-            block = block.next()
+KATEX_HTML_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/copy-tex.min.css" rel="stylesheet" type="text/css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/copy-tex.min.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            renderMathInElement(document.body, {
+              delimiters: [
+                  {left: '$$', right: '$$', display: true},
+                  {left: '$', right: '$', display: false},
+                  {left: '\\\\[', right: '\\\\]', display: true},
+                  {left: '\\\\(', right: '\\\\)', display: false}
+              ],
+              throwOnError : false
+            });
+        });
+    </script>
+    <style>
+        body {
+            font-family: 'Yu Gothic UI', 'Segoe UI', 'Noto Sans CJK JP', sans-serif;
+            font-size: 15px;
+            line-height: 1.65;
+            color: #24314a;
+            padding: 14px;
+            background-color: white;
+            margin: 0;
+            overflow-x: hidden;
+            word-wrap: break-word;
+        }
+        a { color: #285ee6; }
+        h1, h2, h3 { color: #233c61; margin-top: 16px; margin-bottom: 6px; }
+        p { margin-top: 6px; margin-bottom: 6px; }
+        img { max-width: 100%; }
+        code { background-color: #f4f6fa; padding: 2px 4px; border-radius: 4px; font-family: monospace; }
+        pre code { display: block; padding: 10px; overflow-x: auto; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #d7dfea; padding: 8px; }
+        th { background-color: #f4f6fa; }
+    </style>
+</head>
+<body>
+{content}
+</body>
+</html>
+"""
 
-    def loadResource(self, resource_type, name):
-        from PySide6.QtGui import QTextDocument
-        if resource_type == QTextDocument.ResourceType.ImageResource:
-            url = name.toString()
-            if url.startswith("file:///") or url.startswith("http"):
-                # Permit local media and math images
-                return super().loadResource(resource_type, name)
-        return None
+class CustomWebEnginePage(QWebEnginePage):
+    anchorClicked = Signal(QUrl)
+
+    def acceptNavigationRequest(self, url, _type, isMainFrame):
+        if _type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
+            self.anchorClicked.emit(url)
+            return False
+        return True
+
+class MockDocument:
+    def setDefaultStyleSheet(self, style):
+        pass
+
+class MockScrollBar:
+    def __init__(self, page):
+        self.page = page
+    
+    def setValue(self, value):
+        if value > 0:
+            self.page.runJavaScript("window.scrollTo(0, document.body.scrollHeight);")
+    
+    def maximum(self):
+        return 1
+
+class LocalTextBrowser(QWebEngineView):
+    anchorClicked = Signal(QUrl)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setPage(CustomWebEnginePage(self))
+        self.page().anchorClicked.connect(self.anchorClicked)
+        
+    def setOpenLinks(self, open):
+        pass
+        
+    def setOpenExternalLinks(self, open):
+        pass
+        
+    def document(self):
+        return MockDocument()
+        
+    def verticalScrollBar(self):
+        return MockScrollBar(self.page())
+
+    def setMarkdown(self, text):
+        math_blocks = []
+        def save_math(match):
+            idx = len(math_blocks)
+            math_blocks.append(match.group(0))
+            return f"<!--MATH_BLOCK_{idx}-->"
+            
+        text = re.sub(r"\$\$(.*?)\$\$", save_math, text, flags=re.DOTALL)
+        text = re.sub(r"\$([^\n\$]+?)\$", save_math, text)
+        
+        html_content = markdown.markdown(text, extensions=['tables', 'fenced_code'])
+        
+        for i, block in enumerate(math_blocks):
+            html_content = html_content.replace(f"<!--MATH_BLOCK_{i}-->", block)
+            
+        full_html = KATEX_HTML_TEMPLATE.replace("{content}", html_content)
+        self.setHtml(full_html)
+
+
 
 
 class Job(QThread):

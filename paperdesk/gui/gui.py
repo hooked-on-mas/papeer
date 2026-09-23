@@ -47,7 +47,7 @@ TRANSLATION_PRESETS = {
 from paperdesk.gui.gui_widgets import *
 from paperdesk.gui.gui_dialogs import *
 from paperdesk.gui.gui_window_base import WindowBase
-from paperdesk.gui.gui_window_library import WindowLibraryMixin, render_markdown_with_math
+from paperdesk.gui.gui_window_library import WindowLibraryMixin
 from paperdesk.gui.gui_window_viewer import WindowViewerMixin
 
 class Window(WindowLibraryMixin, WindowViewerMixin, WindowBase):
@@ -327,7 +327,7 @@ class Window(WindowLibraryMixin, WindowViewerMixin, WindowBase):
             pieces.append(f"### {role}\n\n{content}")
         text = "\n\n---\n\n".join(pieces)
         folder = self.library.folder(self.current_id)
-        self.chat_view.setMarkdown(render_markdown_with_math(text, folder))
+        self.chat_view.setMarkdown(text)
         self.chat_view.verticalScrollBar().setValue(self.chat_view.verticalScrollBar().maximum())
 
     def save_note(self):
