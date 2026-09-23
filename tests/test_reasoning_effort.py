@@ -7,8 +7,8 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
-from paperdesk.config import REASONING_EFFORTS, Settings
-from paperdesk.providers import Provider
+from paperdesk.core.config import REASONING_EFFORTS, Settings
+from paperdesk.core.providers import Provider
 
 
 class ReasoningEffortTests(unittest.TestCase):
@@ -30,7 +30,7 @@ class ReasoningEffortTests(unittest.TestCase):
         for effort in REASONING_EFFORTS:
             with self.subTest(effort=effort):
                 response = StringIO(json.dumps({"choices": [{"message": {"content": "訳文"}}]}))
-                with patch("paperdesk.providers.urlopen", return_value=response) as request:
+                with patch("paperdesk.core.providers.urlopen", return_value=response) as request:
                     provider = Provider(Settings(provider="api", reasoning_effort=effort), threading.Event())
                     self.assertEqual(provider.generate("Translate", "text"), "訳文")
                 payload = json.loads(request.call_args.args[0].data)
@@ -48,8 +48,8 @@ class ReasoningEffortTests(unittest.TestCase):
                     output = Path(command[command.index("--output-last-message") + 1])
                     output.write_text("訳文", "utf-8")
                     return Mock(poll=Mock(return_value=0), returncode=0)
-                with patch("paperdesk.providers.codex_command", return_value=["mock-codex"]), \
-                     patch("paperdesk.providers.subprocess.Popen", side_effect=launch):
+                with patch("paperdesk.core.providers.codex_command", return_value=["mock-codex"]), \
+                     patch("paperdesk.core.providers.subprocess.Popen", side_effect=launch):
                     provider = Provider(Settings(reasoning_effort=effort), threading.Event())
                     self.assertEqual(provider.generate("Translate", "text"), "訳文")
                 config = [value for value in commands[0] if value.startswith("model_reasoning_effort=")]
@@ -59,7 +59,7 @@ class ReasoningEffortTests(unittest.TestCase):
 
     def test_unsupported_api_setting_explains_default_without_retry(self):
         error = HTTPError("https://example.invalid", 400, "unsupported", None, None)
-        with patch("paperdesk.providers.urlopen", side_effect=error) as request:
+        with patch("paperdesk.core.providers.urlopen", side_effect=error) as request:
             with self.assertRaisesRegex(RuntimeError, "既定値"):
                 Provider(Settings(provider="api", reasoning_effort="high"), threading.Event()).generate("", "")
         request.assert_called_once()

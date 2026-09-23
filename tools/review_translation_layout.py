@@ -11,9 +11,9 @@ from collections import Counter
 import json
 from pathlib import Path
 
-from paperdesk.pdf_engine import build_translated_pdf, translation_units
-from paperdesk.math_layout import MATH_TOKEN
-from paperdesk.reading_flow import unit_pages
+from paperdesk.pdf.pdf_engine import build_translated_pdf, translation_units
+from paperdesk.layout.math_layout import MATH_TOKEN
+from paperdesk.layout.reading_flow import unit_pages
 
 
 def rebuild(papers: Path, output: Path) -> dict:

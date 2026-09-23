@@ -5,8 +5,8 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
-from paperdesk.config import Settings
-from paperdesk.providers import (
+from paperdesk.core.config import Settings
+from paperdesk.core.providers import (
     Cancelled,
     Provider,
     claude_command,
@@ -63,8 +63,8 @@ class ProvidersTests(unittest.TestCase):
             stdout.flush()
             return Mock(poll=Mock(return_value=0), returncode=0)
 
-        with patch("paperdesk.providers.claude_command", return_value=["claude"]), \
-             patch("paperdesk.providers.subprocess.Popen", side_effect=mock_popen):
+        with patch("paperdesk.core.providers.claude_command", return_value=["claude"]), \
+             patch("paperdesk.core.providers.subprocess.Popen", side_effect=mock_popen):
             settings = Settings(provider="claude", model="claude-3-7-sonnet")
             provider = Provider(settings, threading.Event())
             result = provider.generate("Translate this", '{"text": "hello"}', schema={"type": "object"})
@@ -86,8 +86,8 @@ class ProvidersTests(unittest.TestCase):
             stdout.flush()
             return Mock(poll=Mock(return_value=0), returncode=0)
 
-        with patch("paperdesk.providers.gemini_command", return_value=["agy.exe"]), \
-             patch("paperdesk.providers.subprocess.Popen", side_effect=mock_popen):
+        with patch("paperdesk.core.providers.gemini_command", return_value=["agy.exe"]), \
+             patch("paperdesk.core.providers.subprocess.Popen", side_effect=mock_popen):
             settings = Settings(provider="gemini", model="gemini-3.8-flash", reasoning_effort="high")
             provider = Provider(settings, threading.Event())
             result = provider.generate("Translate this", '{"text": "hello"}', schema={"type": "object"})
@@ -107,8 +107,8 @@ class ProvidersTests(unittest.TestCase):
             stderr.flush()
             return Mock(poll=Mock(return_value=1), returncode=1)
 
-        with patch("paperdesk.providers.claude_command", return_value=["claude"]), \
-             patch("paperdesk.providers.subprocess.Popen", side_effect=mock_popen):
+        with patch("paperdesk.core.providers.claude_command", return_value=["claude"]), \
+             patch("paperdesk.core.providers.subprocess.Popen", side_effect=mock_popen):
             settings = Settings(provider="claude")
             provider = Provider(settings, threading.Event())
             with self.assertRaisesRegex(RuntimeError, "weekly limit"):
@@ -117,9 +117,9 @@ class ProvidersTests(unittest.TestCase):
     def test_query_available_models_gemini(self):
         fake_stdout = "Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\ngemini-3.1-pro-high\tGemini 3.1 Pro (High)\n"
         mock_res = Mock(returncode=0, stdout=fake_stdout)
-        with patch("paperdesk.providers.gemini_command", return_value=["agy.exe"]), \
-             patch("paperdesk.providers.subprocess.run", return_value=mock_res):
-            from paperdesk.providers import query_available_models
+        with patch("paperdesk.core.providers.gemini_command", return_value=["agy.exe"]), \
+             patch("paperdesk.core.providers.subprocess.run", return_value=mock_res):
+            from paperdesk.core.providers import query_available_models
             models = query_available_models("gemini")
             self.assertEqual(len(models), 2)
             self.assertEqual(models[0][0], "gemini-3.8-flash-high")
@@ -131,24 +131,24 @@ class ProvidersTests(unittest.TestCase):
             {"slug": "gpt-5.6-sol", "display_name": "GPT-5.6-Sol"}
         ]})
         mock_res = Mock(returncode=0, stdout=fake_json)
-        with patch("paperdesk.providers.codex_command", return_value=["codex"]), \
-             patch("paperdesk.providers.subprocess.run", return_value=mock_res):
-            from paperdesk.providers import query_available_models
+        with patch("paperdesk.core.providers.codex_command", return_value=["codex"]), \
+             patch("paperdesk.core.providers.subprocess.run", return_value=mock_res):
+            from paperdesk.core.providers import query_available_models
             models = query_available_models("codex")
             self.assertEqual(len(models), 2)
             self.assertEqual(models[0][0], "gpt-6-astra")
             self.assertIn("GPT-6-Astra", models[0][1])
 
     def test_query_available_models_fallback_on_error(self):
-        with patch("paperdesk.providers.subprocess.run", side_effect=OSError("CLI not found")):
-            from paperdesk.providers import query_available_models
+        with patch("paperdesk.core.providers.subprocess.run", side_effect=OSError("CLI not found")):
+            from paperdesk.core.providers import query_available_models
             models = query_available_models("gemini")
             self.assertTrue(len(models) > 0)
             models_codex = query_available_models("codex")
             self.assertTrue(len(models_codex) > 0)
 
     def test_query_available_efforts(self):
-        from paperdesk.providers import query_available_efforts
+        from paperdesk.core.providers import query_available_efforts
         efforts_gemini = query_available_efforts("gemini")
         self.assertEqual(0, len(efforts_gemini))
         efforts_codex = query_available_efforts("codex")

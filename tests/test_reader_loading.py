@@ -15,7 +15,7 @@ from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from paperdesk.gui import Window
+from paperdesk.gui.gui import Window
 
 
 class ReaderLoadingTests(unittest.TestCase):
@@ -50,7 +50,7 @@ class ReaderLoadingTests(unittest.TestCase):
         document["layout_version"] = "old"
         path.write_text(json.dumps(document), encoding="utf-8")
         before = path.read_bytes()
-        with patch("paperdesk.storage.extract_pdf", side_effect=AssertionError("UI re-extracted PDF")):
+        with patch("paperdesk.core.storage.extract_pdf", side_effect=AssertionError("UI re-extracted PDF")):
             self.window.select_paper(self.identity)
             self.window.render_timer.stop()
             self.window.render_pages()
@@ -59,7 +59,7 @@ class ReaderLoadingTests(unittest.TestCase):
             self.window.move_page(1)
         self.assertEqual(path.read_bytes(), before)
         # Translation still uses the normal migration path.
-        with patch("paperdesk.storage.extract_pdf", return_value=document) as extract:
+        with patch("paperdesk.core.storage.extract_pdf", return_value=document) as extract:
             self.window.library.document(self.identity)
             extract.assert_called_once()
 
@@ -82,7 +82,7 @@ class ReaderLoadingTests(unittest.TestCase):
             image.fill("red" if len(calls) == 1 else "blue")
             return image
 
-        with patch("paperdesk.pdf_viewer.page_image", side_effect=slow_image):
+        with patch("paperdesk.pdf.pdf_viewer.page_image", side_effect=slow_image):
             try:
                 self.window.select_paper(self.identity)
                 self.window.render_timer.stop()

@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QApplication
 
-from paperdesk.gui import COLLECTION_ROLE, SettingsDialog, STYLE, TranslationPagesDialog, Window
-from paperdesk.service import PaperService
+from paperdesk.gui.gui import COLLECTION_ROLE, SettingsDialog, STYLE, TranslationPagesDialog, Window
+from paperdesk.core.service import PaperService
 from test_workflow import FakeProvider
 
 
@@ -77,7 +77,7 @@ with tempfile.TemporaryDirectory() as temporary:
         window.move_page(1)
         assert window.current_page == 0, "translated-only navigation must skip the unfinished page"
         window.page_filter.setCurrentIndex(0)
-        with patch('paperdesk.gui.QDesktopServices.openUrl', return_value=True) as opened:
+        with patch('paperdesk.gui.gui.QDesktopServices.openUrl', return_value=True) as opened:
             window.external_pdf_buttons['translated.pdf'].trigger()
             assert not opened.called, 'the complete PDF does not exist yet'
             window.external_pdf_buttons['original.pdf'].trigger()
@@ -96,10 +96,10 @@ with tempfile.TemporaryDirectory() as temporary:
     app.processEvents()
     assert not window.job.isRunning()
     assert results and results[0]["pages"] >= 2
-    with patch('paperdesk.gui.QDesktopServices.openUrl', return_value=True) as opened:
+    with patch('paperdesk.gui.gui.QDesktopServices.openUrl', return_value=True) as opened:
         window.external_pdf_buttons['translated.pdf'].trigger()
         assert Path(opened.call_args.args[0].toLocalFile()).name == 'translated.pdf'
-        with patch('paperdesk.gui.read_preview', return_value={
+        with patch('paperdesk.gui.gui.read_preview', return_value={
                 'complete': False, 'pages': [], 'total_pages': 2, 'target_pages': [1, 2]}):
             window.update_controls()
             assert window.external_pdf_buttons['translated.pdf'].isEnabled()
@@ -131,7 +131,7 @@ with tempfile.TemporaryDirectory() as temporary:
     restored_selection = TranslationPagesDialog(8, 1, window, selected_pages={2, 5})
     assert restored_selection.scope.currentIndex() == 2 and restored_selection.pages == {2, 5}
     restored_selection.reject()
-    from paperdesk.config import Settings
+    from paperdesk.core.config import Settings
     connection = Settings(provider="api", model="local-model", base_url="http://localhost:1234/v1",
                           api_key="session-only", reasoning_effort="low")
     presets = TranslationPagesDialog(8, 1, window, settings=connection)
@@ -151,7 +151,7 @@ with tempfile.TemporaryDirectory() as temporary:
         dialog.page_input.setText('2')
         dialog.preset.setCurrentIndex(dialog.preset.findData("sol-high"))
         return dialog.DialogCode.Accepted
-    with patch('paperdesk.gui.TranslationPagesDialog.exec', choose_page_two), patch.object(window, 'service_job') as start:
+    with patch('paperdesk.gui.gui.TranslationPagesDialog.exec', choose_page_two), patch.object(window, 'service_job') as start:
         window.translate()
         service = Mock()
         start.call_args.args[0](service, identity)
@@ -168,7 +168,7 @@ with tempfile.TemporaryDirectory() as temporary:
         assert run.call_args.args[0](threading.Event(), lambda _: None) == "high"
         window.service_job(lambda service, identity: service.provider.settings.reasoning_effort, None)
         assert run.call_args.args[0](threading.Event(), lambda _: None) == ""
-    with patch('paperdesk.gui.TranslationPagesDialog.exec', return_value=0), patch.object(window, 'service_job') as start:
+    with patch('paperdesk.gui.gui.TranslationPagesDialog.exec', return_value=0), patch.object(window, 'service_job') as start:
         window.translate()
         start.assert_not_called()
         assert window.preferences.value("translation/preset") == "sol-high"

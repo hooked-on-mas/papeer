@@ -10,8 +10,8 @@ from collections import Counter
 from pathlib import Path
 import random
 
-from paperdesk.pdf_engine import extract_pdf, save_json, translation_units
-from paperdesk.reading_flow import expand_pages
+from paperdesk.pdf.pdf_engine import extract_pdf, save_json, translation_units
+from paperdesk.layout.reading_flow import expand_pages
 from tools.review_fresh_layout import review
 
 

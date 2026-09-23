@@ -4,8 +4,8 @@ import json
 import threading
 import unittest
 
-from paperdesk.providers import Cancelled
-from paperdesk.translation import (MAX_BLOCK_RETRIES, RetryState,
+from paperdesk.core.providers import Cancelled
+from paperdesk.translation.translation import (MAX_BLOCK_RETRIES, RetryState,
                                    _assemble_parts, translate_batch, validate_translations)
 
 

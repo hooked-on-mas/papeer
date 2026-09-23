@@ -10,12 +10,12 @@ import unittest
 
 import pymupdf as fitz
 
-from paperdesk.config import Settings
-from paperdesk.pdf_engine import batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, extract_pdf, page_png, translation_units
-from paperdesk.providers import Cancelled, Provider
-from paperdesk.service import PaperService, link_citations, validate_translations
-from paperdesk.storage import Library, normalize_collection_name
-from paperdesk.math_layout import MATH_TOKEN
+from paperdesk.core.config import Settings
+from paperdesk.pdf.pdf_engine import batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, extract_pdf, page_png, translation_units
+from paperdesk.core.providers import Cancelled, Provider
+from paperdesk.core.service import PaperService, link_citations, validate_translations
+from paperdesk.core.storage import Library, normalize_collection_name
+from paperdesk.layout.math_layout import MATH_TOKEN
 
 FIXTURE = Path(__file__).parent / "fixtures/sample.pdf"
 
@@ -198,14 +198,14 @@ class WorkflowTests(unittest.TestCase):
         cache = json.loads((folder / "translation-cache.json").read_text("utf-8"))
         self.assertGreater(len(cache["translations"]), 0)
         self.assertFalse((folder / "translated.pdf").exists())
-        from paperdesk.translation_preview import read_preview
+        from paperdesk.translation.translation_preview import read_preview
         self.assertNotIn(1, read_preview(folder)["pages"], "a partially translated page must not be published")
         provider.interrupt_after = None
         result = PaperService(self.library, provider, self.cancel).translate(self.paper_id)
         self.assertGreaterEqual(result["pages"], 2)
 
     def test_completed_page_is_published_before_next_request_and_survives_failure(self):
-        from paperdesk.translation_preview import read_preview, translated_page
+        from paperdesk.translation.translation_preview import read_preview, translated_page
 
         folder = self.library.folder(self.paper_id)
         notifications = []

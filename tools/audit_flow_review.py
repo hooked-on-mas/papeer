@@ -8,10 +8,10 @@ from pathlib import Path
 import pymupdf as fitz
 import pypdfium2 as pdfium
 
-from paperdesk.math_layout import MATH_TOKEN, restore_formula_text
-from paperdesk.pdf_engine import save_json, translation_units
-from paperdesk.reading_flow import materialize_flows, translation_blocks, unit_pages
-from paperdesk.translation import validate_translations
+from paperdesk.layout.math_layout import MATH_TOKEN, restore_formula_text
+from paperdesk.pdf.pdf_engine import save_json, translation_units
+from paperdesk.layout.reading_flow import materialize_flows, translation_blocks, unit_pages
+from paperdesk.translation.translation import validate_translations
 
 
 def audit(review, papers):

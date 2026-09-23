@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from paperdesk.code_version import TRANSLATION_SOURCES, application_version, source_version
+from paperdesk.core.code_version import TRANSLATION_SOURCES, application_version, source_version
 
 
 class CodeVersionTests(unittest.TestCase):
@@ -14,6 +14,10 @@ class CodeVersionTests(unittest.TestCase):
             for name in TRANSLATION_SOURCES:
                 (root / 'paperdesk' / name).write_bytes(b'x = 1\n')
             module = root / 'paperdesk' / 'translation.py'
+                target = root / 'paperdesk' / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b'x = 1\n')
+            module = root / 'paperdesk' / 'translation' / 'translation.py'
             original = source_version(root)
             module.touch()
             module.write_bytes(b'x = 1\r\n')
@@ -39,7 +43,7 @@ class CodeVersionTests(unittest.TestCase):
                     path.write_bytes(b'x = 1\n')
             extra = root / 'paperdesk' / 'new_translation.py'
             extra.write_bytes(b'x = 1\n')
-            with patch('paperdesk.code_version.TRANSLATION_SOURCES',
+            with patch('paperdesk.core.code_version.TRANSLATION_SOURCES',
                        (*TRANSLATION_SOURCES, extra.name)):
                 self.assertNotEqual(source_version(root), original)
             module.unlink()

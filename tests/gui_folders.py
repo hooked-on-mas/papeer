@@ -13,8 +13,8 @@ from PySide6.QtCore import QMimeData, QPointF, Qt, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import QApplication, QMenu
 
-from paperdesk.gui import COLLECTION_ROLE, ITEM_KIND_ROLE, STYLE, Window
-from paperdesk.storage import Library
+from paperdesk.gui.gui import COLLECTION_ROLE, ITEM_KIND_ROLE, STYLE, Window
+from paperdesk.core.storage import Library
 
 
 app = QApplication.instance() or QApplication([])
@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory() as temporary:
     class ChoosingMenu(QMenu):
         def exec(self, position):
             choose_existing(self, position)
-    with patch("paperdesk.gui.QMenu", ChoosingMenu):
+    with patch("paperdesk.gui.gui.QMenu", ChoosingMenu):
         window.show_library_menu(tree.visualItemRect(window._paper_tree_item(first)).center())
     assert window.library.paper(first)["collection_name"] == "資料"
     assert window.collection.text() == "資料"
@@ -70,15 +70,15 @@ with tempfile.TemporaryDirectory() as temporary:
     window.search.clear()
 
     # New folder input and cancellation go through the same saved move operation.
-    with patch("paperdesk.gui.QInputDialog.getText", return_value=(r"研究\2026", True)):
+    with patch("paperdesk.gui.gui.QInputDialog.getText", return_value=(r"研究\2026", True)):
         window.choose_new_collection(first, "資料")
-    with patch("paperdesk.gui.QInputDialog.getText", return_value=("キャンセル", False)):
+    with patch("paperdesk.gui.gui.QInputDialog.getText", return_value=("キャンセル", False)):
         window.choose_new_collection(first, "研究 / 2026")
     assert window.library.paper(first)["collection_name"] == "研究 / 2026"
 
     # Internal drag payload is produced only for a PDF; Qt must not delete its row.
     tree.setCurrentItem(window._paper_tree_item(first))
-    with patch("paperdesk.gui.QDrag.exec", return_value=Qt.DropAction.MoveAction) as dragged:
+    with patch("paperdesk.gui.gui.QDrag.exec", return_value=Qt.DropAction.MoveAction) as dragged:
         tree.startDrag(Qt.DropAction.MoveAction)
         dragged.assert_called_once()
         tree.setCurrentItem(folder(tree, "資料"))

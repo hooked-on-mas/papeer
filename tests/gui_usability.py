@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFontDatabase
-from paperdesk.gui import COLLECTION_ROLE, ITEM_KIND_ROLE, STYLE, Window
-from paperdesk.storage import Library
+from paperdesk.gui.gui import COLLECTION_ROLE, ITEM_KIND_ROLE, STYLE, Window
+from paperdesk.core.storage import Library
 
 app = QApplication.instance() or QApplication([])
 # The offscreen platform does not discover Windows fonts automatically.
@@ -40,13 +40,13 @@ with tempfile.TemporaryDirectory() as temporary:
     assert window.empty_library_label.isVisible()
     assert not window.page_input.isEnabled()
     assert not window.undo_move_button.isEnabled()
-    with patch("paperdesk.gui.QInputDialog.getText", return_value=(r"研究\2026", True)):
+    with patch("paperdesk.gui.gui.QInputDialog.getText", return_value=(r"研究\2026", True)):
         window.create_folder()
     assert Library(window.root).collections() == ["研究", "研究 / 2026"]
     assert window.current_collection == "研究 / 2026"
     window.refresh_list()
     assert window.paper_list.currentItem().data(0, COLLECTION_ROLE) == window.current_collection
-    with patch("paperdesk.gui.QInputDialog.getText", return_value=("取り消し", False)):
+    with patch("paperdesk.gui.gui.QInputDialog.getText", return_value=("取り消し", False)):
         window.create_folder()
     assert "取り消し" not in window.library.collections()
     fixture = Path(__file__).parent / "fixtures/sample.pdf"
@@ -140,31 +140,31 @@ with tempfile.TemporaryDirectory() as temporary:
     class RenameMenu(QMenu):
         def exec(self, position):
             next(a for a in self.actions() if a.text() == "名前を変更…").trigger()
-    with patch("paperdesk.gui.QMenu", RenameMenu), patch("paperdesk.gui.QInputDialog.getText", return_value=("実験", True)):
+    with patch("paperdesk.gui.gui.QMenu", RenameMenu), patch("paperdesk.gui.gui.QInputDialog.getText", return_value=("実験", True)):
         window.show_library_menu(window.paper_list.visualItemRect(folder(window, "研究")).center())
     assert window.library.paper(identity)["collection_name"] == "実験 / 2026"
     assert window.current_collection == "実験"
     assert window.paper_list.currentItem().data(0, COLLECTION_ROLE) == "実験"
-    with patch("paperdesk.gui.QInputDialog.getText", return_value=("子", True)):
+    with patch("paperdesk.gui.gui.QInputDialog.getText", return_value=("子", True)):
         window.create_child_folder()
     assert "実験 / 子" in window.library.collections()
-    with patch("paperdesk.gui.QInputDialog.getText", return_value=("資料", True)), patch("paperdesk.gui.QMessageBox.warning") as warning:
+    with patch("paperdesk.gui.gui.QInputDialog.getText", return_value=("資料", True)), patch("paperdesk.gui.gui.QMessageBox.warning") as warning:
         window.rename_folder("実験")
         warning.assert_called_once()
     assert "実験 / 2026" in window.library.collections()
     window.select_paper(identity)
     window.note.setPlainText("名前変更後も残るメモ")
     original = (window.library.folder(identity) / "original.pdf").read_bytes()
-    with patch("paperdesk.gui.QInputDialog.getText", return_value=("新しい名前", True)):
+    with patch("paperdesk.gui.gui.QInputDialog.getText", return_value=("新しい名前", True)):
         window.rename_selected()
     assert window.library.paper(identity)["original_name"] == "新しい名前.pdf"
     assert window.note.toPlainText() == "名前変更後も残るメモ"
     assert window.library.papers("新しい名前.pdf")[0]["id"] == identity
-    with patch("paperdesk.gui.QInputDialog.getText", return_value=("CON.pdf", True)), patch("paperdesk.gui.QMessageBox.warning") as warning:
+    with patch("paperdesk.gui.gui.QInputDialog.getText", return_value=("CON.pdf", True)), patch("paperdesk.gui.gui.QMessageBox.warning") as warning:
         window.rename_file(identity)
         warning.assert_called_once()
     exported = root / "export.pdf"
-    with patch("paperdesk.gui.QFileDialog.getSaveFileName", return_value=(str(exported), "PDF (*.pdf)")):
+    with patch("paperdesk.gui.gui.QFileDialog.getSaveFileName", return_value=(str(exported), "PDF (*.pdf)")):
         window.save_original(identity)
     assert exported.read_bytes() == original
     assert (window.library.folder(identity) / "original.pdf").read_bytes() == original
@@ -192,7 +192,7 @@ with tempfile.TemporaryDirectory() as temporary:
     reopened.note.setPlainText("削除時にも保持するメモ")
     reopened.move_paper(second, "実験")
     # Cancellation leaves the whole subtree and its papers intact.
-    with patch("paperdesk.gui.QMessageBox.question", return_value=QMessageBox.StandardButton.Cancel) as question:
+    with patch("paperdesk.gui.gui.QMessageBox.question", return_value=QMessageBox.StandardButton.Cancel) as question:
         reopened.delete_folder("実験")
         assert "2件" in question.call_args.args[2]
     assert reopened.library.paper(identity)["collection_name"] == "実験 / 2026"
@@ -200,7 +200,7 @@ with tempfile.TemporaryDirectory() as temporary:
     class DeleteMenu(QMenu):
         def exec(self, position):
             next(a for a in self.actions() if a.text() == "フォルダーを削除").trigger()
-    with patch("paperdesk.gui.QMenu", DeleteMenu), patch("paperdesk.gui.QMessageBox.question", return_value=QMessageBox.StandardButton.Ok):
+    with patch("paperdesk.gui.gui.QMenu", DeleteMenu), patch("paperdesk.gui.gui.QMessageBox.question", return_value=QMessageBox.StandardButton.Ok):
         reopened.show_library_menu(reopened.paper_list.visualItemRect(folder(reopened, "実験")).center())
     assert reopened.library.paper(identity)["collection_name"] == ""
     assert reopened.library.paper(second)["collection_name"] == ""
@@ -213,7 +213,7 @@ with tempfile.TemporaryDirectory() as temporary:
     assert (reopened.library.folder(identity) / "original.pdf").read_bytes() == original
     # Removing the only empty child preserves its implicit parent; no prompt is needed.
     reopened.library.create_collection("空の親 / 子")
-    with patch("paperdesk.gui.QMessageBox.question") as question:
+    with patch("paperdesk.gui.gui.QMessageBox.question") as question:
         reopened.delete_folder("空の親 / 子")
         question.assert_not_called()
     assert "空の親" in reopened.library.collections()

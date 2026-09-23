@@ -1,8 +1,8 @@
 import copy
 import unittest
 from collections import Counter
-from paperdesk.math_layout import MATH_TOKEN, merge_continued_prose
-from paperdesk.pdf_engine import translation_units
+from paperdesk.layout.math_layout import MATH_TOKEN, merge_continued_prose
+from paperdesk.pdf.pdf_engine import translation_units
 
 
 def block(identity, text, bbox, kind='text', formulas=None):

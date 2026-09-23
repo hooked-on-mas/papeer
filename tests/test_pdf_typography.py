@@ -4,8 +4,8 @@ import unittest
 
 import pymupdf as fitz
 
-from paperdesk.pdf_engine import build_translated_pdf, extract_pdf
-from paperdesk.pdf_typography import FONT_DIRECTORY, TextStyle, first_line_indented, heading_space, reading_space, running_headers, text_style, text_html
+from paperdesk.pdf.pdf_engine import build_translated_pdf, extract_pdf
+from paperdesk.pdf.pdf_typography import FONT_DIRECTORY, TextStyle, first_line_indented, heading_space, reading_space, running_headers, text_style, text_html
 
 
 class TypographyTests(unittest.TestCase):

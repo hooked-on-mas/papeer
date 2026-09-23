@@ -7,8 +7,8 @@ import unittest
 import pymupdf as fitz
 from PySide6.QtGui import QImage
 
-from paperdesk.pdf_typography import FONT_CSS, font_archive
-from paperdesk.pdf_viewer import extract_selected_text, page_image, page_png, page_text_info
+from paperdesk.pdf.pdf_typography import FONT_CSS, font_archive
+from paperdesk.pdf.pdf_viewer import extract_selected_text, page_image, page_png, page_text_info
 
 
 class PdfViewerTests(unittest.TestCase):
@@ -31,7 +31,7 @@ class PdfViewerTests(unittest.TestCase):
                 self.assertGreater(len(boxes), 10)
                 pdf.save(source)
             renderers = {
-                "pdfium": 'import sys; from pathlib import Path; from paperdesk.pdf_viewer import page_png; '
+                "pdfium": 'import sys; from pathlib import Path; from paperdesk.pdf.pdf_viewer import page_png; '
                           'Path(sys.argv[2]).write_bytes(page_png(Path(sys.argv[1]),0,1080))',
                 "mupdf": 'import sys,pymupdf as f; d=f.open(sys.argv[1]); '
                          'd[0].get_pixmap(matrix=f.Matrix(3,3)).save(sys.argv[2])',

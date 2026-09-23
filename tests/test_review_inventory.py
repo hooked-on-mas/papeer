@@ -5,7 +5,7 @@ import unittest
 
 import pymupdf as fitz
 
-from paperdesk.pdf_engine import extract_pdf, translation_units
+from paperdesk.pdf.pdf_engine import extract_pdf, translation_units
 from tools.review_translation_layout import rebuild
 
 

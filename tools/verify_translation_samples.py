@@ -11,12 +11,12 @@ import json
 from pathlib import Path
 import threading
 
-from paperdesk.config import Settings, data_directory
-from paperdesk.pdf_engine import batches, build_translated_pdf, extract_pdf, save_json, translation_units
-from paperdesk.providers import Provider
-from paperdesk.translation import RetryState, translate_batch
-from paperdesk.translation_context import contextual_units
-from paperdesk.reading_flow import unit_pages, expand_pages
+from paperdesk.core.config import Settings, data_directory
+from paperdesk.pdf.pdf_engine import batches, build_translated_pdf, extract_pdf, save_json, translation_units
+from paperdesk.core.providers import Provider
+from paperdesk.translation.translation import RetryState, translate_batch
+from paperdesk.translation.translation_context import contextual_units
+from paperdesk.layout.reading_flow import unit_pages, expand_pages
 
 
 def run(snapshot: Path, output: Path):

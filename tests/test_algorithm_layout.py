@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pymupdf as fitz
 
-from paperdesk.pdf_engine import extract_pdf, translation_units, build_translated_pdf
-from paperdesk.algorithm_layout import separate_algorithms
+from paperdesk.pdf.pdf_engine import extract_pdf, translation_units, build_translated_pdf
+from paperdesk.layout.algorithm_layout import separate_algorithms
 
 
 class AlgorithmLayoutTests(unittest.TestCase):

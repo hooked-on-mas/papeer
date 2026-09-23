@@ -6,10 +6,10 @@ import unittest
 
 import pymupdf as fitz
 
-from paperdesk.math_layout import LAYOUT_VERSION, MATH_TOKEN, _math_ranges, annotate_math_fonts, formula_only_block, layout_blocks, merge_overlapping_prose
-from paperdesk.pdf_engine import build_translated_pdf, extract_pdf, translation_units
-from paperdesk.service import PaperService, validate_translations
-from paperdesk.storage import Library
+from paperdesk.layout.math_layout import LAYOUT_VERSION, MATH_TOKEN, _math_ranges, annotate_math_fonts, formula_only_block, layout_blocks, merge_overlapping_prose
+from paperdesk.pdf.pdf_engine import build_translated_pdf, extract_pdf, translation_units
+from paperdesk.core.service import PaperService, validate_translations
+from paperdesk.core.storage import Library
 from test_workflow import FakeProvider
 
 

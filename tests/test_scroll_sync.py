@@ -12,7 +12,7 @@ from PySide6.QtGui import QNativeGestureEvent, QPointingDevice, QWheelEvent
 from PySide6.QtWidgets import QApplication, QGestureEvent, QPinchGesture
 from PySide6.QtTest import QSignalSpy, QTest
 
-from paperdesk.gui import Window
+from paperdesk.gui.gui import Window
 
 
 class ScrollSyncTests(unittest.TestCase):

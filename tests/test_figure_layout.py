@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import pymupdf as fitz
-from paperdesk.pdf_engine import extract_pdf, translation_units, build_translated_pdf
+from paperdesk.pdf.pdf_engine import extract_pdf, translation_units, build_translated_pdf
 
 
 class FigureLayoutTests(unittest.TestCase):

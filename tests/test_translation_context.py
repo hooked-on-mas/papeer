@@ -1,8 +1,8 @@
 import json
 import unittest
 
-from paperdesk.translation_context import contextual_units, recovery_context
-from paperdesk.translation import validate_translations
+from paperdesk.translation.translation_context import contextual_units, recovery_context
+from paperdesk.translation.translation import validate_translations
 
 
 class ContextTests(unittest.TestCase):

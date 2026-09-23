@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from paperdesk import winintegration
+from paperdesk.core import winintegration
 
 # Relaunch properties live on a real HWND, which the offscreen Qt platform does not provide.
 NATIVE_WINDOWS_GUI = winintegration.WINDOWS and os.environ.get("QT_QPA_PLATFORM", "windows") == "windows"

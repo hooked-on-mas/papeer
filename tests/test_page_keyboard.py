@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from paperdesk.gui import Window
+from paperdesk.gui.gui import Window
 
 
 class PageKeyboardTests(unittest.TestCase):

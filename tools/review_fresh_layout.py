@@ -8,12 +8,12 @@ from pathlib import Path
 import random
 import threading
 import pymupdf as fitz
-from paperdesk.config import Settings, data_directory
-from paperdesk.pdf_engine import extract_pdf, translation_units, batches, build_translated_pdf, bilingual_pdf, save_json
-from paperdesk.providers import Provider
-from paperdesk.translation import translate_batch, RetryState
-from paperdesk.translation_context import contextual_units
-from paperdesk.reading_flow import unit_pages, expand_pages
+from paperdesk.core.config import Settings, data_directory
+from paperdesk.pdf.pdf_engine import extract_pdf, translation_units, batches, build_translated_pdf, bilingual_pdf, save_json
+from paperdesk.core.providers import Provider
+from paperdesk.translation.translation import translate_batch, RetryState
+from paperdesk.translation.translation_context import contextual_units
+from paperdesk.layout.reading_flow import unit_pages, expand_pages
 
 
 def review(papers: Path, output: Path, seed: int, count: int, cases: list[str], settings: Settings | None = None):
