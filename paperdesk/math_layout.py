@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 import pymupdf as fitz
 
 
-LAYOUT_VERSION = 17
+LAYOUT_VERSION = 18
 MATH_TOKEN = re.compile(r"\[\[PD_MATH_[A-Za-z0-9_]+\]\]")
 _MATH_FONT = re.compile(r"(?:CMMI|CMSY|CMEX|MSAM|MSBM|CMBSY|CMMIB|Math|Symbol|MTMI|MTSY|MTEX|rsfs|AdvPSMP)", re.I)
 _SYMBOL = re.compile(r"[=+−×÷∑∏∫√∞≤≥≠≈∂∇∈∉⊂⊆∀∃∥⊤⊥α-ωΑ-Ω]|[\U0001d400-\U0001d7ff]")
@@ -226,16 +226,19 @@ def _display(line: dict) -> bool:
 def layout_blocks(item: dict, page_number: int, first_index: int) -> list[dict]:
     """Split mixed text/display blocks at line boundaries, retaining all glyphs."""
     lines = [line for line in item["lines"] if any(c["c"].strip() for c in _chars(line))]
-    lines = _merge_inline_fragments(lines)
+    if not item.get("algorithm"):
+        lines = _merge_inline_fragments(lines)
     kinds = [_display(line) for line in lines]
     if any(kinds) and not any(_prose_words(line) for line in lines):
         kinds = [True] * len(lines)
     # Matrix brackets, limits, and equation numbers may be separate PDF lines.
     for i, line in enumerate(lines):
         text = "".join(c["c"] for c in _chars(line)).strip()
-        if re.fullmatch(r"[\s\d()\[\]{}.,;:|a-z−-]+", text) and len(text) < 20:
+        if re.fullmatch(r"[\s\d()\[\]{}.,;:|a-z\u2212-]+", text) and len(text) < 20:
             if (i and kinds[i - 1]) or (i + 1 < len(lines) and kinds[i + 1]):
                 kinds[i] = True
+    if item.get("algorithm"):
+        kinds = [False] * len(lines)
     groups = []
     for line, kind in zip(lines, kinds):
         if not groups or groups[-1][0] != kind:
@@ -271,6 +274,9 @@ def layout_blocks(item: dict, page_number: int, first_index: int) -> list[dict]:
                        "text": "\n".join(original).strip(), "font_size": size,
                        "kind": "formula" if kind else "text", "formulas": formulas,
                        "translation_text": "\n".join(protected).strip()})
+        if item.get("algorithm"):
+            blocks[-1].update(kind="algorithm", font_size=item["algorithm_size"])
+            blocks[-1]["bbox"][2] = item["algorithm_right"]
     return blocks
 
 

@@ -83,6 +83,8 @@ def running_headers(document: dict) -> list[dict]:
 
 
 def text_style(block: dict, body_size: float, page_height: float) -> TextStyle:
+    if block.get("kind") == "algorithm":
+        return TextStyle("algorithm", block["font_size"], 1.05)
     text = " ".join(block["text"].split())
     rect = fitz.Rect(block["bbox"])
     if block.get("running_header"):
@@ -257,6 +259,8 @@ def text_html(text: str, style: TextStyle, images: dict[str, str], *,
         if not line.strip():
             continue
         content = _content(line.strip(), images)
+        if style.role == "algorithm":
+            content = content.replace("  ", "&nbsp; ")
         if style.role == "runin" and index == 0:
             match = re.match(r"^(\d+(?:\.\d+)+\.?\s*\S+?)(?:\u3000|\s)(.+)$", line.strip())
             if match:

@@ -14,7 +14,7 @@ from .reference_layout import mark_references
 from .pdf_math_crops import formula_crop, page_glyph_bounds
 from .table_layout import separate_tables, table_regions
 from .figure_layout import figure_regions
-from .algorithm_layout import algorithm_regions
+from .algorithm_layout import separate_algorithms
 from .reading_flow import order_page, continuation_groups, translation_blocks, materialize_flows
 from .pdf_typography import FONT_CSS, TextStyle, body_font_size, first_line_indented, font_archive, reading_space, running_headers, text_html, text_style
 
@@ -33,20 +33,21 @@ def extract_pdf(path: Path) -> dict:
         for number, page in enumerate(document):
             page_blocks = []
             items = page.get_text("rawdict", sort=True, flags=fitz.TEXTFLAGS_RAWDICT & ~fitz.TEXT_PRESERVE_IMAGES)["blocks"]
-            algorithms = algorithm_regions(page, items)
-            figures = [r for r in figure_regions(page) if not any(r.intersects(a) for a in algorithms)]
-            tables = [r for r in table_regions(page) if not any(r.intersects(f) for f in figures + algorithms)]
-            items, algorithms = separate_tables(items, algorithms, number + 1, kind="algorithm")
+            annotate_math_fonts(items)
+            items, algorithms, algorithm_regions = separate_algorithms(page, items)
+            figures = figure_regions(page)
+            tables = [r for r in table_regions(page) if not any(r.intersects(f) for f in figures + algorithm_regions)]
             items, tables = separate_tables(items, tables, number + 1)
             items, figures = separate_tables(items, figures, number + 1, kind="figure")
-            annotate_math_fonts(items)
             for item in items:
                 if item.get("type") != 0:
                     continue
                 page_blocks.extend(layout_blocks(item, number + 1, len(page_blocks) + 1))
             page_blocks = merge_overlapping_prose(page_blocks)
             page_blocks = merge_continued_prose(page_blocks)
-            page_blocks.extend(tables + figures + algorithms)
+            for item in algorithms:
+                page_blocks.extend(layout_blocks(item, number + 1, len(page_blocks) + 1))
+            page_blocks.extend(tables + figures)
             if tables or figures or algorithms:
                 page_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
             if not page_blocks:
