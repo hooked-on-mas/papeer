@@ -1,0 +1,2 @@
+"""PaperDesk FastAPI sidecar backend."""
+

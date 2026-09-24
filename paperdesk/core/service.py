@@ -293,7 +293,7 @@ class PaperService:
                 markers = []
                 for b in blocks_by_page[page["number"]]:
                     image_path = media_dir / f"{b['id']}.png"
-                    uri = image_path.as_uri()
+                    uri = f"media/{b['id']}.png"
                     markers.append(f"\n[図表画像が参照できます。Markdownで出力する際は次の構文をそのまま使ってください: ![{b['kind']} p.{page['number']}]({uri})]")
                 page_text += "\n" + "\n".join(markers)
 

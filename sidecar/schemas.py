@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+from typing import Any
+from pydantic import BaseModel, Field
+
+
+class HealthResponse(BaseModel):
+    status: str = "ok"
+    version: str
+    code_version: str
+
+
+class SettingsModel(BaseModel):
+    provider: str = "codex"
+    model: str = "gpt-5.6-sol"
+    reasoning_effort: str = "medium"
+    api_base: str = "https://api.openai.com/v1"
+    codex_path: str = "codex"
+    claude_path: str = "claude"
+    gemini_path: str = "agy"
+    api_key: str | None = None
+
+
+class TranslateRequest(BaseModel):
+    pages: str | None = None
+    model: str | None = None
+    effort: str | None = None
+
+
+class ImportRequest(BaseModel):
+    paths: list[str]
+    collection: str | None = None
+
+
+class AskRequest(BaseModel):
+    question: str
+    search_all: bool = False
+
+
+class ExportRequest(BaseModel):
+    kind: str = Field(description="translated | interleaved | bilingual | markdown")
+    destination: str
+
+
+class UpdatePaperRequest(BaseModel):
+    title: str | None = None
+    author: str | None = None
+    year: int | None = None
+    collection: str | None = None
+    note: str | None = None
+
+
+class RenamePaperRequest(BaseModel):
+    new_title: str
+
+
+class CreateCollectionRequest(BaseModel):
+    name: str
+
+
+class RenameCollectionRequest(BaseModel):
+    old_name: str
+    new_name: str
+
+
+class UIStateModel(BaseModel):
+    reading_pages: dict[str, int] = Field(default_factory=dict)
+    last_paper: str = ""
+    sort: int = 0
+    expanded_collections: list[str] = Field(default_factory=list)
+
+
+class JobInfo(BaseModel):
+    job_id: str
+    paper_id: str | None = None
+    kind: str
+    message: str = ""
+    done: int | None = None
+    total: int | None = None
+    status: str = "running"
+    running: bool = True
+    cancelled: bool = False
+    result: Any | None = None
+    error: str | None = None
