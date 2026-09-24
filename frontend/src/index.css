@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Yu Gothic UI", "Hiragino Sans", "Noto Sans CJK JP", sans-serif;
+}
+
