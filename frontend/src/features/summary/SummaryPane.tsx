@@ -1,32 +1,20 @@
-import { useQuery, useMutation } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
-import { RefreshCw } from "lucide-react";
+import { useMutation } from "@tanstack/react-query";
+import { RefreshCw, List } from "lucide-react";
 import { useStore } from "../../store";
+import { useArticle } from "../../api/hooks";
 import { api } from "../../api/client";
-import { Button } from "@/components/ui/button";
+import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 
 export function SummaryPane() {
   const activePaperId = useStore((state) => state.activePaperId);
+  const setCurrentPage = useStore((state) => state.setCurrentPage);
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["summary", activePaperId],
-    queryFn: async () => {
-      if (!activePaperId) return null;
-      // @ts-expect-error: schema might not have the summary endpoints yet
-      const { data, error } = await api.GET("/api/papers/{paper_id}/summary", {
-        params: { path: { paper_id: activePaperId } },
-      });
-      if (error) throw new Error((error as any).message || JSON.stringify(error) || "Failed to fetch summary");
-      return data;
-    },
-    enabled: !!activePaperId,
-  });
+  const { data: article, isLoading, error } = useArticle(activePaperId);
 
   const summarizeMutation = useMutation({
     mutationFn: async () => {
       if (!activePaperId) return;
-      // @ts-expect-error: schema might not have the summary endpoints yet
-      const { data, error } = await api.POST("/api/papers/{paper_id}/summarize", {
+      const { data, error } = await (api.POST as any)("/api/papers/{paper_id}/summarize", {
         params: { path: { paper_id: activePaperId } },
       });
       if (error) throw new Error((error as any).message || JSON.stringify(error) || "Failed to trigger summary");
@@ -39,39 +27,48 @@ export function SummaryPane() {
 
   if (!activePaperId) {
     return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground p-4 h-full">
-        Select a paper to view its summary
+      <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8 h-full">
+        <p className="text-[15px] font-medium mb-1 text-foreground">サマリーがありません</p>
+        <p className="text-[13px]">論文を選択してください</p>
       </div>
     );
   }
 
-  const summaryText = (data as any)?.summary || (typeof data === "string" ? data : "");
+  const summaryText = typeof article === "string" ? article : (article as any)?.content || (article as any)?.summary || "";
 
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden">
-      <div className="flex items-center justify-between p-4 border-b shrink-0">
-        <h2 className="text-lg font-semibold">Summary</h2>
-        <Button 
-          variant="outline" 
-          size="sm" 
+    <div className="flex flex-col h-full w-full bg-background overflow-hidden">
+      <div className="h-[48px] flex items-center justify-between px-4 border-b shrink-0 bg-background/50">
+        <h2 className="text-[14px] font-semibold flex items-center gap-2">
+          <List className="w-4 h-4 text-muted-foreground" />
+          サマリー
+        </h2>
+        <button 
           onClick={() => summarizeMutation.mutate()}
           disabled={summarizeMutation.isPending}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 transition-opacity"
         >
-          <RefreshCw className={`w-4 h-4 mr-2 ${summarizeMutation.isPending ? "animate-spin" : ""}`} />
-          {summarizeMutation.isPending ? "Generating..." : "Generate Summary"}
-        </Button>
+          <RefreshCw className={`w-3.5 h-3.5 ${summarizeMutation.isPending ? "animate-spin" : ""}`} />
+          {summarizeMutation.isPending ? "生成中..." : "サマリー生成"}
+        </button>
       </div>
       
-      <div className="flex-1 overflow-auto p-4">
-        <div className="prose dark:prose-invert max-w-none">
-          {isLoading && <div className="text-muted-foreground">Loading summary...</div>}
-          {error && <div className="text-destructive">Error: {error.message}</div>}
-          {!isLoading && !error && summaryText ? (
-            <ReactMarkdown>{summaryText}</ReactMarkdown>
-          ) : (
-            !isLoading && !error && <div className="text-muted-foreground">No summary available. Click "Generate Summary" to create one.</div>
-          )}
-        </div>
+      <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
+        {isLoading && <div className="text-muted-foreground text-sm flex items-center gap-2"><RefreshCw className="w-4 h-4 animate-spin" /> サマリーを読み込み中...</div>}
+        {error && <div className="text-destructive text-sm p-4 border rounded bg-destructive/10">エラーが発生しました: {error.message}</div>}
+        
+        {!isLoading && !error && summaryText ? (
+          <MarkdownRenderer 
+            content={summaryText} 
+            onCitationClick={(page) => setCurrentPage(page)}
+          />
+        ) : (
+          !isLoading && !error && (
+            <div className="text-center py-12">
+              <p className="text-muted-foreground text-sm mb-4">まだサマリーが生成されていません。</p>
+            </div>
+          )
+        )}
       </div>
     </div>
   );
