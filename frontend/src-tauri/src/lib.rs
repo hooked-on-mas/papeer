@@ -13,6 +13,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![greet])
+        .setup(|app| {
+            #[cfg(not(debug_assertions))]
+            {
+                use tauri_plugin_shell::ShellExt;
+                let sidecar_command = app.shell().sidecar("sidecar").unwrap();
+                let (_rx, _child) = sidecar_command.spawn().expect("Failed to spawn sidecar");
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
