@@ -11,7 +11,8 @@ export function GlobalProgress() {
     let reconnectTimeout: ReturnType<typeof setTimeout>;
 
     const connect = () => {
-      ws = new WebSocket("ws://127.0.0.1:1420/api/ws");
+      const port = import.meta.env.VITE_PAPERDESK_PORT || 8000;
+      ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`);
 
       ws.onmessage = (event) => {
         try {

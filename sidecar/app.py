@@ -320,6 +320,40 @@ def import_papers(body: ImportRequest, dependencies: None = Depends(verify_token
     except ConcurrencyConflict as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
+from fastapi import UploadFile, File
+import tempfile
+import shutil
+
+@app.post("/api/papers/upload", tags=["Papers"])
+def upload_paper(
+    file: UploadFile = File(...),
+    collection: str | None = None,
+    dependencies: None = Depends(verify_token)
+) -> dict[str, str]:
+    lib = get_library()
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = Path(tmp.name)
+        
+    def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> list[str]:
+        try:
+            progress(f"PDFアップロード中: {file.filename}")
+            paper_id, _is_new = lib.import_pdf(tmp_path, collection_name=collection or "")
+            progress(f"テキスト抽出中: {file.filename}")
+            lib.document(paper_id)
+            job_manager.broadcast({"type": "library.changed"})
+            return [paper_id]
+        finally:
+            tmp_path.unlink(missing_ok=True)
+            
+    try:
+        job = job_manager.submit_job("import", action, paper_id=None)
+        return {"job_id": job.job_id}
+    except ConcurrencyConflict as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
 
 @app.get("/api/papers/{paper_id}")
 def get_paper(paper_id: str, dependencies: None = Depends(verify_token)) -> dict[str, Any]:
