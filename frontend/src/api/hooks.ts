@@ -8,6 +8,7 @@ export type PaperData = {
   publication_year?: string;
   collection_name?: string;
   has_article?: boolean;
+  pages?: number;
 };
 
 export type ReadingData = {
@@ -55,9 +56,8 @@ export function useArticle(id: string | null) {
       });
       // 404 means article hasn't been generated yet - return null, not an error
       if (res.error) {
-        // openapi-fetch: res.response.status has the HTTP code
-        if (res.response?.status === 404) return null;
-        throw res.error;
+        if (res.response?.status === 404 || (res.error as any).status === 404) return null;
+        throw new Error((res.error as any).detail || JSON.stringify(res.error));
       }
       return res.data;
     },

@@ -1,10 +1,11 @@
 import { useStore } from "@/store";
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, Search } from "lucide-react";
-import { useReading } from "@/api/hooks";
+import { useReading, usePaper } from "@/api/hooks";
 
 export function ReaderToolbar() {
   const { activePaperId, currentPage, zoom, setZoom, setCurrentPage, translatedOnly, setTranslatedOnly, focusMode, setFocusMode } = useStore();
   const { data: reading } = useReading(activePaperId);
+  const { data: paper } = usePaper(activePaperId);
   const completedPages = reading?.completed_pages || [];
 
   const handlePrev = () => {
@@ -41,11 +42,11 @@ export function ReaderToolbar() {
             value={currentPage} 
             onChange={(e) => {
               const val = parseInt(e.target.value);
-              if (!isNaN(val)) setCurrentPage(val);
+              if (!isNaN(val)) setCurrentPage(Math.max(1, Math.min(val, paper?.pages || 9999)));
             }}
             className="w-8 h-6 text-center border rounded bg-background focus:ring-2 focus:ring-ring focus:outline-none tabular-nums"
           />
-          <span className="text-muted-foreground">/ ?</span>
+          <span className="text-muted-foreground">/ {paper?.pages || "?"}</span>
         </div>
         <button onClick={handleNext} className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground">
           <ChevronRight className="w-4 h-4" />

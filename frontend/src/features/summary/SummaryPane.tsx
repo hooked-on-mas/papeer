@@ -14,7 +14,7 @@ export function SummaryPane() {
   const summarizeMutation = useMutation({
     mutationFn: async () => {
       if (!activePaperId) return;
-      const { data, error } = await (api.POST as any)("/api/papers/{paper_id}/summarize", {
+      const { data, error } = await api.POST("/api/papers/{paper_id}/article", {
         params: { path: { paper_id: activePaperId } },
       });
       if (error) throw new Error((error as any).message || JSON.stringify(error) || "Failed to trigger summary");

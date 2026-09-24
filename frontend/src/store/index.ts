@@ -48,7 +48,7 @@ export const useStore = create<UiState>((set) => ({
   translatedOnly: false,
   focusMode: false,
   
-  setActivePaperId: (id) => set({ activePaperId: id }),
+  setActivePaperId: (id) => set((state) => ({ activePaperId: id, currentPage: state.activePaperId !== id ? 1 : state.currentPage })),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setZoom: (zoom) => set({ zoom }),
   setCurrentPage: (page) => set({ currentPage: page }),

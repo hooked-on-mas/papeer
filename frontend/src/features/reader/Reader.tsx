@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorker from "pdfjs-dist/build/pdf.worker.mjs?url";
 
@@ -26,9 +26,18 @@ export function Reader() {
   const rightScrollRef = useRef<HTMLDivElement>(null);
   const isSyncingLeft = useRef(false);
   const isSyncingRight = useRef(false);
+  const [pdfTimestamp, setPdfTimestamp] = useState(Date.now());
+  useEffect(() => {
+    const onTranslated = (e: any) => { if (e.detail?.paper_id === activePaperId) setPdfTimestamp(Date.now()); };
+    window.addEventListener("pdf-translated", onTranslated);
+    return () => window.removeEventListener("pdf-translated", onTranslated);
+  }, [activePaperId]);
 
-  const leftUrl = activePaperId ? `http://127.0.0.1:8000/api/papers/${activePaperId}/files/original.pdf` : null;
-  const rightUrl = activePaperId ? `http://127.0.0.1:8000/api/papers/${activePaperId}/files/translated.pdf` : null;
+  
+
+  const port = import.meta.env.VITE_PAPERDESK_PORT || 8000;
+  const leftUrl = activePaperId ? `http://127.0.0.1:${port}/api/papers/${activePaperId}/files/original.pdf?t=${pdfTimestamp}` : null;
+  const rightUrl = activePaperId ? `http://127.0.0.1:${port}/api/papers/${activePaperId}/files/translated.pdf?t=${pdfTimestamp}` : null;
 
   const handleLeftScroll = (e: React.UIEvent<HTMLDivElement>) => {
     if (isSyncingRight.current) {
@@ -121,7 +130,7 @@ export function Reader() {
           }
         }}
       >
-        <ResizablePanel id="original" defaultSize={readerSplit * 100} minSize={20} className="flex flex-col">
+        <ResizablePanel id="original" defaultSize={readerSplit * 100 + "%"} minSize="20%" className="flex flex-col">
           <div className="h-[28px] border-b flex items-center px-4 bg-background shrink-0 text-muted-foreground font-medium text-xs">
             原文
           </div>
@@ -138,7 +147,7 @@ export function Reader() {
         
         <ResizableHandle className="w-1 bg-border hover:bg-accent hover:w-[6px] transition-all cursor-col-resize active:bg-primary z-10" />
         
-        <ResizablePanel id="translated" defaultSize={(1 - readerSplit) * 100} minSize={20} className="flex flex-col">
+        <ResizablePanel id="translated" defaultSize={(1 - readerSplit) * 100 + "%"} minSize="20%" className="flex flex-col">
           <div className="h-[28px] border-b flex items-center px-4 bg-background shrink-0 justify-between">
             <span className="text-muted-foreground font-medium text-xs">訳文</span>
             {isTranslated ? (

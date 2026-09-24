@@ -3,8 +3,11 @@ import { useStore } from "@/store";
 import { shell } from "@/shell";
 import { Progress } from "@/components/ui/progress";
 
+import { useQueryClient } from "@tanstack/react-query";
+
 export function GlobalProgress() {
   const { activeJobs, addJob, updateJob, removeJob } = useStore();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     let ws: WebSocket;
@@ -12,7 +15,12 @@ export function GlobalProgress() {
 
     const connect = () => {
       const port = import.meta.env.VITE_PAPERDESK_PORT || 8000;
-      ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`);
+      const token = import.meta.env.VITE_PAPERDESK_TOKEN || "";
+      const url = new URL(`ws://127.0.0.1:${port}/ws/events`);
+      if (token) {
+        url.searchParams.set("token", token);
+      }
+      ws = new WebSocket(url);
 
       ws.onmessage = (event) => {
         try {
@@ -27,8 +35,19 @@ export function GlobalProgress() {
               addJob({ job_id, paper_id, message, done, total, status: "running" });
             }
           } else if (data.type === "job.finished") {
-            const { job_id, status } = data;
+            const { job_id, status, paper_id } = data;
             updateJob(job_id, { status });
+            
+            // Invalidate queries to refresh data
+            queryClient.invalidateQueries({ queryKey: ["papers"] });
+            if (paper_id) {
+              queryClient.invalidateQueries({ queryKey: ["article", paper_id] });
+              queryClient.invalidateQueries({ queryKey: ["messages", paper_id] });
+              queryClient.invalidateQueries({ queryKey: ["reading"] });
+              // Dispatch custom event to trigger PDF reload if needed
+              window.dispatchEvent(new CustomEvent("pdf-translated", { detail: { paper_id } }));
+            }
+
             // Remove the job after a short delay so the user can see completion state if needed
             setTimeout(() => {
               removeJob(job_id);

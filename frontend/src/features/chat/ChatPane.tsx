@@ -55,7 +55,7 @@ export function ChatPane() {
       const { data, error } = await api.POST("/api/papers/{paper_id}/ask", {
         params: { path: { paper_id: activePaperId } },
         // @ts-expect-error schema body might be different, adapt based on schema.d.ts if known
-        body: { message: text }
+        body: { question: text }
       });
       
       if (!error) {
