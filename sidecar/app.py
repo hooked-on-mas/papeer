@@ -172,6 +172,19 @@ def get_settings_endpoint(dependencies: None = Depends(verify_token)) -> Setting
 def update_settings(body: SettingsModel, dependencies: None = Depends(verify_token)) -> dict[str, str]:
     global _runtime_api_key
     s = get_settings()
+    
+    # Validate by creating a temporary instance
+    from paperdesk.core.config import Settings
+    Settings(
+        provider=body.provider,
+        model=body.model,
+        reasoning_effort=body.reasoning_effort,
+        base_url=body.api_base,
+        codex_path=body.codex_path,
+        claude_path=body.claude_path,
+        gemini_path=body.gemini_path,
+    )
+    
     s.provider = body.provider
     s.model = body.model
     s.reasoning_effort = body.reasoning_effort
@@ -195,7 +208,7 @@ def get_provider_models(provider: str, dependencies: None = Depends(verify_token
 
 @app.get("/api/providers/{provider}/efforts")
 def get_provider_efforts(provider: str, model: str | None = None, dependencies: None = Depends(verify_token)) -> list[dict[str, str]]:
-    efforts = query_available_efforts(provider, model or "")
+    efforts = query_available_efforts(provider, model=model or "")
     return [{"id": e[0], "name": e[1]} for e in efforts]
 
 
@@ -339,7 +352,7 @@ def upload_paper(
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> list[str]:
         try:
             progress(f"PDFアップロード中: {file.filename}")
-            paper_id, _is_new = lib.import_pdf(tmp_path, collection_name=collection or "")
+            paper_id, _is_new = lib.import_pdf(tmp_path, collection_name=collection or "", original_name=file.filename or "")
             progress(f"テキスト抽出中: {file.filename}")
             lib.document(paper_id)
             job_manager.broadcast({"type": "library.changed"})
@@ -404,6 +417,8 @@ def rename_paper(paper_id: str, body: RenamePaperRequest, dependencies: None = D
 
 @app.delete("/api/papers/{paper_id}")
 def delete_paper(paper_id: str, dependencies: None = Depends(verify_token)) -> dict[str, str]:
+    if any(j.running and j.paper_id == paper_id for j in job_manager.get_jobs()):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="処理中のジョブがあるため削除できません。")
     lib = get_library()
     try:
         folder = lib.folder(paper_id)

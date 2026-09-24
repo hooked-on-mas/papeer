@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-REASONING_EFFORTS = ("", "low", "medium", "high", "xhigh")
+REASONING_EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
 
 
 def data_directory() -> Path:

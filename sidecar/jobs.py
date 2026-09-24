@@ -72,7 +72,7 @@ class JobManager:
                 if any(j.running and j.paper_id == paper_id for j in self._jobs.values()):
                     raise ConcurrencyConflict(f"この論文（{paper_id}）の処理がすでに実行中です。")
             else:
-                if any(j.running and j.paper_id is None for j in self._jobs.values()):
+                if kind != 'import' and any(j.running and j.paper_id is None for j in self._jobs.values()):
                     raise ConcurrencyConflict("別の全体処理がすでに実行中です。")
 
             job_id = uuid.uuid4().hex[:12]

@@ -345,6 +345,8 @@ class Provider:
             ]
             if self.settings.model.strip():
                 command += ["--model", self.settings.model.strip()]
+            if self.settings.reasoning_effort:
+                command += ["--thinking", self.settings.reasoning_effort]
             if schema is not None:
                 command += ["--json-schema", json.dumps(schema)]
             prompt = (
@@ -424,8 +426,19 @@ class Provider:
             payload["reasoning_effort"] = self.settings.reasoning_effort
         request = Request(endpoint, data=json.dumps(payload).encode(), headers=headers, method="POST")
         try:
-            with urlopen(request, timeout=self.settings.timeout_seconds) as response:
-                result = json.load(response)
+            import concurrent.futures
+            import time
+            def fetch():
+                with urlopen(request, timeout=self.settings.timeout_seconds) as response:
+                    return response.read()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(fetch)
+                while not future.done():
+                    if self.cancel.is_set():
+                        raise Cancelled()
+                    time.sleep(0.5)
+                response_data = future.result()
+                result = json.loads(response_data)
         except HTTPError as error:
             effort_hint = (" このモデル・接続先が指定effortに対応するか確認し、非対応なら「既定値」に戻してください。"
                            if error.code == 400 and self.settings.reasoning_effort else "")

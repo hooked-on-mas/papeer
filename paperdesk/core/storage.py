@@ -84,7 +84,7 @@ class Library:
             raise ValueError("Invalid paper ID")
         return self.root / "papers" / paper_id
 
-    def import_pdf(self, source: Path, collection_name: str = "") -> tuple[str, bool]:
+    def import_pdf(self, source: Path, collection_name: str = "", original_name: str = "") -> tuple[str, bool]:
         if source.stat().st_size > 300 * 1024 * 1024:
             raise ValueError("300MB以下のPDFを追加してください。")
         with source.open("rb") as stream:
@@ -105,7 +105,7 @@ class Library:
             with self.connection() as db:
                 db.execute("""INSERT INTO papers(id,sha256,title,original_name,pages,collection_name,first_author,publication_year,bibliography_version)
                            VALUES(?,?,?,?,?,?,?,?,1)""",
-                           (paper_id, digest, info["title"], source.name, info["page_count"],
+                           (paper_id, digest, info["title"], original_name or source.name, info["page_count"],
                             normalize_collection_name(collection_name), info["first_author"], info["publication_year"]))
                 db.executemany("INSERT INTO pages(paper_id,number,text) VALUES(?,?,?)",
                                [(paper_id, p["number"], p["text"]) for p in info["pages"]])
