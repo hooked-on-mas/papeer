@@ -256,11 +256,15 @@ def translate_batch(provider, units, cancel, progress, accept, state=None, save=
         try:
             state.check(unit)
             text = _recover_unit(provider, unit, cancel, progress, state, save)
+            checked = validate_translations(json.dumps({"translations": [{"id": unit["id"], "text": text}]}), [unit])
+            accept(checked)
         except RetryLimitExceeded as error:
             progress(str(error))
             return
-        checked = validate_translations(json.dumps({"translations": [{"id": unit["id"], "text": text}]}), [unit])
-        accept(checked)
+        except ValueError as error:
+            progress(f"p.{unit['page']} / {unit['id']} 検証エラー ({error})")
+            state.reserve(unit, save)
+            return
 
     check_cancel(cancel)
     previous = [unit for unit in units if state.attempts.get(unit["id"], 0)]

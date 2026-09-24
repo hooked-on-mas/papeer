@@ -2,6 +2,18 @@ from __future__ import annotations
 
 from collections import Counter
 import json
+import time
+from pathlib import Path
+
+def safe_replace(src: Path, dst: Path) -> None:
+    for _ in range(50):
+        try:
+            src.replace(dst)
+            return
+        except PermissionError:
+            time.sleep(0.1)
+    src.replace(dst)
+
 from pathlib import Path
 import re
 import threading
@@ -32,6 +44,7 @@ def extract_pdf(path: Path) -> dict:
         blocks, pages, empty_pages = [], [], []
         for number, page in enumerate(document):
             page_blocks = []
+            block_seq = 1
             items = page.get_text("rawdict", sort=True, flags=fitz.TEXTFLAGS_RAWDICT & ~fitz.TEXT_PRESERVE_IMAGES)["blocks"]
             annotate_math_fonts(items)
             items, algorithms, algorithm_regions = separate_algorithms(page, items)
@@ -42,11 +55,15 @@ def extract_pdf(path: Path) -> dict:
             for item in items:
                 if item.get("type") != 0:
                     continue
-                page_blocks.extend(layout_blocks(item, number + 1, len(page_blocks) + 1))
+                new_blocks = layout_blocks(item, number + 1, block_seq)
+                block_seq += len(new_blocks)
+                page_blocks.extend(new_blocks)
             page_blocks = merge_overlapping_prose(page_blocks)
             page_blocks = merge_continued_prose(page_blocks)
             for item in algorithms:
-                page_blocks.extend(layout_blocks(item, number + 1, len(page_blocks) + 1))
+                new_blocks = layout_blocks(item, number + 1, block_seq)
+                block_seq += len(new_blocks)
+                page_blocks.extend(new_blocks)
             page_blocks.extend(tables + figures)
             if tables or figures or algorithms:
                 page_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
@@ -54,7 +71,7 @@ def extract_pdf(path: Path) -> dict:
                 empty_pages.append(number + 1)
             blocks.extend(page_blocks)
             pages.append({"number": number + 1, "text": "\n\n".join(b["text"] for b in page_blocks),
-                          "width": page.rect.width, "height": page.rect.height,
+                          "width": page.cropbox.width, "height": page.cropbox.height,
                           "rotation": page.rotation})
         title = (document.metadata or {}).get("title", "").strip()
         if not title or len(title) > 240:
@@ -344,7 +361,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
         temporary = output.with_suffix(".tmp.pdf")
         try:
             pdf.save(temporary, garbage=4, deflate=True)
-            temporary.replace(output)
+            safe_replace(temporary, output)
         finally:
             temporary.unlink(missing_ok=True)
         return {"overflow_blocks": 0, "pages": pdf.page_count, "supplements": [],
@@ -376,7 +393,7 @@ def interleaved_pdf(source: Path, translated: Path, output: Path) -> None:
         temporary = output.with_suffix(".tmp.pdf")
         try:
             result.save(temporary, garbage=4, deflate=True)
-            temporary.replace(output)
+            safe_replace(temporary, output)
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -404,5 +421,5 @@ def page_png(path: Path, index: int, width: int = 650) -> bytes | None:
 def save_json(path: Path, value: object) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), "utf-8")
-    temporary.replace(path)
+    safe_replace(temporary, path)
 

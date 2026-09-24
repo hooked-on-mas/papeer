@@ -1,6 +1,18 @@
 from __future__ import annotations
 
 import json
+import time
+from pathlib import Path
+
+def safe_replace(src: Path, dst: Path) -> None:
+    for _ in range(50):
+        try:
+            src.replace(dst)
+            return
+        except PermissionError:
+            time.sleep(0.1)
+    src.replace(dst)
+
 import re
 import threading
 import uuid
@@ -151,7 +163,7 @@ class PaperService:
                         build_translated_pdf(folder / "original.pdf", document,
                             {key: "\n".join(parts) for key, parts in block_text.items()},
                             preview_page(folder, preview, number), page_numbers={number})
-                    except (ValueError, RuntimeError) as error:
+                    except Exception as error:
                         check_cancel(self.cancel)
                         preview["skipped_pages"].append(number)
                         preview["page_errors"][str(number)] = str(error)
@@ -222,8 +234,8 @@ class PaperService:
                             assembled.insert_pdf(previous, start_at=number - 1)
                     merged = staged.with_name("merged.pdf")
                     assembled.save(merged)
-                merged.replace(staged)
-            staged.replace(folder / "translated.pdf")
+                safe_replace(merged, staged)
+            safe_replace(staged, folder / "translated.pdf")
             self.progress("原文と日本語訳を交互に並べたPDFを作成しています…")
             interleaved_pdf(folder / "original.pdf", folder / "translated.pdf", folder / "interleaved.pdf")
             report["skipped_blocks"] = [u["id"] for u in units if unit_pages(u) & (set(preview["pages"]) - retained) and skipped(u)]
@@ -267,6 +279,9 @@ class PaperService:
         document = self.library.document(paper_id)
         
         media_dir = folder / "media"
+        if media_dir.exists():
+            for f in media_dir.glob("*.png"):
+                f.unlink(missing_ok=True)
         media_dir.mkdir(exist_ok=True)
         blocks_by_page = {}
         for b in document.get("blocks", []):
