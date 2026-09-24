@@ -12,8 +12,6 @@ class CodeVersionTests(unittest.TestCase):
             root = Path(temporary)
             (root / 'paperdesk').mkdir()
             for name in TRANSLATION_SOURCES:
-                (root / 'paperdesk' / name).write_bytes(b'x = 1\n')
-            module = root / 'paperdesk' / 'translation.py'
                 target = root / 'paperdesk' / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(b'x = 1\n')
@@ -24,8 +22,7 @@ class CodeVersionTests(unittest.TestCase):
             (root / 'README.md').write_text('documentation')
             (root / 'paperdesk' / 'module.pyc').write_bytes(b'bytecode')
             self.assertEqual(source_version(root), original)
-            for name in ('gui.py', 'pdf_viewer.py', 'winintegration.py',
-                         'storage.py', 'config.py', '__init__.py', 'extra_ui.py'):
+            for name in ('pdf_viewer.py', 'code_version.py', 'storage.py', 'config.py', '__init__.py', 'extra_ui.py'):
                 excluded = root / 'paperdesk' / name
                 excluded.write_bytes(b'first version\n')
                 self.assertEqual(source_version(root), original)

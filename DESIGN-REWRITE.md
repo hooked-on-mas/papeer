@@ -12,8 +12,10 @@
 | UI シェル | **Tauri 2**（Windows: WebView2 / macOS: WKWebView / Linux: WebKitGTK） |
 | フロントエンド | **React 19 + TypeScript + Vite**、Tailwind CSS + shadcn/ui、react-markdown + KaTeX（同梱） |
 | バックエンド | **既存 Python コアをそのまま維持**し、FastAPI + uvicorn の **ローカル sidecar プロセス**として起動（PyInstaller で各 OS 向けにビルド） |
-| PDF 表示 | 第1段階: 現行どおり pypdfium2 でラスタライズした PNG を sidecar が配信（Qt 依存だけ除去）。第2段階（任意）: pdf.js に置換して文字選択・検索を追加 |
+| PDF 表示 | **pdf.js（`pdfjs-dist`）を WebView 内で実行**。sidecar は PDF ファイルを Range 対応で配信するだけ。文字選択・ページ内検索・ベクター拡大が得られ、Python 側のラスタライズは不要になる |
 | データ | `%LOCALAPPDATA%\PaperDesk`（`library.sqlite3` / `papers/<id>/…`）を**無変更で引き継ぐ**。`window.ini` のみ移行 |
+| 開発ツール | Python: **uv + ruff + pytest + pyright**（`pyproject.toml` / `uv.lock`）。フロント: **pnpm + Vite + Biome + Vitest**。タスク実行: **just**。詳細は §12 |
+| CI | 当面は用意しない。ローカルの `just` タスクで 3 OS ビルドを再現できる形にし、CI は後で同じタスクを呼ぶだけにする |
 
 理由の要約:
 
@@ -72,7 +74,7 @@
 
 | 候補 | 言語 | 見た目 | 3 OS 対応 | Python コア再利用 | Markdown+KaTeX（Mermaid も同条件） | 画像 (`media/*.png`) | PDF 表示 | `paperdesk://` 引用 | タスクバー進捗/通知/トレイ/DnD | 配布 | 総評 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Tauri 2 + React + Python sidecar** | TS + Python（Rust は雛形のみ） | ◎ Web UI | ◎ | ◎ sidecar で無変更 | ◎ KaTeX 同梱 | ◎ sidecar HTTP で配信 | ◎ PNG or pdf.js | ◎ クリック横取り | ◎ 公式 API/プラグイン（Linux 進捗は libunity 系 DE のみ） | ◎ MSI/NSIS, DMG, AppImage/deb、数 MB～ | **推奨** |
+| **Tauri 2 + React + Python sidecar** | TS + Python（Rust は雛形のみ） | ◎ Web UI | ◎ | ◎ sidecar で無変更 | ◎ KaTeX 同梱 | ◎ sidecar HTTP で配信 | ◎ pdf.js | ◎ クリック横取り | ◎ 公式 API/プラグイン（Linux 進捗は libunity 系 DE のみ） | ◎ MSI/NSIS, DMG, AppImage/deb、数 MB～ | **推奨** |
 | Electron + React + Python sidecar | TS + Python | ◎ | ◎ | ◎ | ◎ | ◎ | ◎ | ◎ | ◎ `setProgressBar`, Tray, Notification | ○ 150 MB 超、メモリ大 | Tauri と同じ UI/sidecar を流用可能な代替 |
 | pywebview + React（Python 単一プロセス） | Python + TS | ◎ | ○ Linux は WebKitGTK の DnD 制約 | ◎ 同一プロセス | ◎ | ◎ | ◎ | ◎ | △ 進捗/トレイは自前（既存 ctypes を流用可、他 OS は別途） | ○ PyInstaller + Inno/dmg を自作 | Rust/Node 不要の最小構成。ネイティブ連携を自作する覚悟があれば可 |
 | PySide6 + QML（Qt Quick Controls Material） | Python | ○ Material 風 | ◎ | ◎ | △ QtWebEngine 同梱で +200 MB、または `QtPdf`+独自数式 | ○ | ◎ `QtPdf.PdfMultiPageView` | ○ | ○ Qt6 に WinExtras なし、ctypes 継続 | ○ PyInstaller、GPL/LGPL 注意 | 「書き直し」の割に見た目の伸びしろが小さい |
@@ -83,7 +85,7 @@
 
 1. UI を Web 技術に統一すると、Markdown・KaTeX・画像・リンク横取りが **npm の標準的な部品**で完結し、現行の `QWebEngineView` で試している内容をそのまま昇華できる。
 2. 必須のネイティブ連携（タスクバー進捗、通知、トレイ、ファイル DnD、ウィンドウ状態、外部アプリで開く、ファイルダイアログ）が公式 API で揃う。
-3. インストーラー生成（MSI/NSIS/DMG/AppImage/deb）と GitHub Actions（`tauri-action`）が整備済み。
+3. インストーラー生成（MSI/NSIS/DMG/AppImage/deb）が `tauri build` 一発で行え、将来 CI を足すときも公式アクション（`tauri-action`）がある。
 4. Python 側は **FastAPI を薄く被せるだけ**。`PaperService` / `Library` / `Provider` のシグネチャを変えない。
 5. リスク対策として、フロントエンドは `ShellAdapter`（後述）経由でのみシェル機能を呼び、Electron/pywebview へ置換可能にしておく。
 
@@ -132,14 +134,15 @@ Rust については `src-tauri/src/main.rs` の雛形に sidecar 起動・終�
 | 抽出・レイアウト解析（`document.json`、`LAYOUT_VERSION` 更新時の再抽出） | `Library.document` | 無変更 | ✅ |
 | 翻訳（ページ指定、継続ページ展開、キャッシュ再開、再翻訳、ページごとの preview PDF） | `PaperService.translate` | 無変更。ジョブとして sidecar のスレッドで実行 | ✅ |
 | 訳文 PDF / 交互 / 対訳 PDF 生成 | `pdf_engine.py` | 無変更 | ✅ |
-| ページ画像（DPR 考慮の幅指定、8192 px / 24 M px 上限） | `pdf_viewer.page_image` → QImage | **Qt を除去**して RGB bytes → PNG（`pypdfium2` の `to_pil()` か `Pixmap` → `png` エンコード）。`GET /api/papers/{id}/pages/{n}/image?width=…&variant=original|translated` を `Cache-Control` 付きで返す | 🛠 |
+| ページ描画（DPR 考慮の幅指定、8192 px / 24 M px 上限） | `pdf_viewer.page_image`（pypdfium2 → QImage）、背景スレッド `PageRenderer` | **pdf.js に置換**。sidecar は `GET /api/papers/{id}/files/{name}` で `original.pdf` / `translated.pdf` / `translation-pages/<run>/page-N.pdf` を Range 対応（`Accept-Ranges`, `ETag` = mtime）で配信し、pdf.js の `getDocument({url, httpHeaders})` が必要な部分だけ取得。キャンバスは `scale × devicePixelRatio` で描画し、現行と同じ 24 M px 上限を超える倍率は CSS 拡大で補う。`pdf_viewer.py` の表示用コードは削除 | 🔁 |
+| 埋め込み日本語フォント・非埋め込みフォントの描画 | pypdfium2 | pdf.js は TrueType/CFF 埋め込みフォントを描画可能（訳文 PDF は fontTools で TrueType 化済み）。非埋め込み CJK フォント向けに `pdfjs-dist` の `cmaps/` と `standard_fonts/` を同梱し `cMapUrl` / `standardFontDataUrl` を指定 | 🔁 |
 | 翻訳中の訳文ページ解決（`translated_page`, `read_preview`） | GUI がファイルを直接読む | sidecar の `GET /api/papers/{id}/reading` が完了ページ・対象ページ・スキップ・翻訳時 SHA/モデルをまとめて返す | 🛠（読み取りロジックは既存関数を呼ぶだけ） |
 | 2 ペイン同期スクロール・倍率（幅合わせ〜400%）・Ctrl+ホイール・ピンチ | Qt イベント | `scroll` イベントの比率同期、`wheel`（ctrlKey）と `gesturechange`/`pointer` ピンチ。倍率プリセットは同じ | 🔁 |
 | ←/→ ページ移動、Ctrl+G、Ctrl+F、Ctrl+L、Ctrl+O、F11 集中表示、F2 | QAction | フロントのキーボードショートカット（入力中は無効） | 🔁 |
 | 「翻訳済みページのみ」表示 | GUI | 同じロジックをフロントで（`reading` API のデータから） | 🔁 |
 | 外部ビューアで開く / エクスプローラーで開く | `QDesktopServices` | `tauri-plugin-opener`（`openPath`, `revealItemInDir`） | 🔁 |
 | 原文 PDF の別名保存、PDF 書き出し（3 種） | `QFileDialog` + `shutil` / `service.export_*` | 保存ダイアログ → sidecar へパスを渡す | 🔁 |
-| 文字選択・検索（現状なし） | — | 第 2 段階で pdf.js 化すれば追加可能。`pdf_viewer.page_text_info` は既存 | 任意 |
+| 文字選択・ページ内検索（現状なし） | — | pdf.js の `TextLayer` で選択・コピー、`getTextContent()` でページ内検索とハイライト。訳文 PDF の数式画像上の不可視テキスト層（`pdf_engine.py:337`）も選択対象になる。`pdf_viewer.page_text_info` / `extract_selected_text` は不要になり削除 | 追加 |
 
 ### 3.5 PDF チャット（質問）
 
@@ -203,6 +206,10 @@ Rust については `src-tauri/src/main.rs` の雛形に sidecar 起動・終�
 
 ```
 paper-desk/
+  pyproject.toml        # uv 管理。paperdesk + sidecar を 1 プロジェクトに（依存グループ: dev / build）
+  uv.lock               # ロックファイル（requirements*.txt は廃止）
+  .python-version       # uv が使う Python 版（3.12 を固定）
+  justfile              # 開発・ビルドのタスク定義（setup / dev / test / build）
   paperdesk/            # 既存 Python コア（gui/ を削除、pdf_viewer から Qt を除去）
   sidecar/              # 新規: FastAPI アプリ
     app.py              # ルーティング、認証、起動/終了
@@ -210,7 +217,9 @@ paper-desk/
     schemas.py          # pydantic モデル
     ui_state.py         # ui-state.json（window.ini からの移行を含む）
     pyinstaller.spec
-  frontend/             # 新規: React + TS
+  frontend/             # 新規: React + TS（pnpm）
+    package.json / pnpm-lock.yaml
+    biome.json          # lint + format
     src/
       app/              # ルーティング、レイアウト、テーマ
       api/              # ApiClient（fetch + WebSocket）、型（OpenAPI から生成）
@@ -225,8 +234,7 @@ paper-desk/
         jobs/           # 進捗バー、中止、エラーダイアログ、通知
       components/       # shadcn/ui
   src-tauri/            # Tauri 設定と最小 Rust
-  tests/                # 既存 unittest（GUI 依存分は sidecar/API テストへ置換）
-  .github/workflows/    # 3 OS ビルド
+  tests/                # 既存 unittest（pytest で実行。GUI 依存分は sidecar/API テストへ置換）
 ```
 
 ### 4.3 sidecar API（抜粋）
@@ -242,7 +250,7 @@ paper-desk/
 | GET/PATCH | `/api/papers/{id}` | 詳細、メタ・メモ・分類更新 |
 | POST | `/api/papers/{id}/rename` | ファイル名変更 |
 | GET | `/api/papers/{id}/reading` | ページ数、完了ページ、preview 状態、スキップ、空ページ、翻訳 SHA/モデル、`translation-report` 要約 |
-| GET | `/api/papers/{id}/pages/{n}/image?variant=&width=` | PNG（`ETag` = ファイル mtime + 幅） |
+| GET | `/api/papers/{id}/files/{name}` | `original.pdf`, `translated.pdf`, `interleaved.pdf`, `translation-pages/<run>/page-N.pdf` を Range 対応で配信（`Accept-Ranges: bytes`, `ETag` = mtime + size）。パスは許可リストで検証し、ディレクトリ外を拒否 |
 | POST | `/api/papers/{id}/translate` | `{pages, model?, effort?}` → ジョブ |
 | POST | `/api/papers/{id}/article` | ジョブ |
 | GET | `/api/papers/{id}/article` | `article.md` 本文 |
@@ -284,7 +292,7 @@ OpenAPI から TypeScript 型を生成し（`openapi-typescript`）、フロン�
 | Markdown | react-markdown + remark-gfm + remark-math + rehype-katex + rehype-highlight + rehype-sanitize |
 | 図 | mermaid（`mermaid` フェンスのみ動的読込。`article.md` は Markdown のまま保存されるため外部ビューアでも描画可） |
 | ツリー DnD | dnd-kit |
-| PDF | 第 1 段階 `<img>`（sidecar PNG）、第 2 段階 pdf.js（`pdfjs-dist`） |
+| PDF | `pdfjs-dist`（コア API を直接使用。Worker は Vite の `?url` で同梱、`cmaps/` と `standard_fonts/` も同梱） |
 | キーボード | react-hotkeys-hook |
 
 **Markdown レンダリングパイプライン**
@@ -297,12 +305,16 @@ urlTransform: 'http(s):', 'paperdesk:' と相対パスを許可（それ以外�
 CitationLink: href が paperdesk://<id>/<page> なら onNavigate(id, page) を呼ぶ（既存 follow_citation と同じ検査・タブ切替・「全ページ」への戻し）
 ```
 
-**PDF リーダー（第 1 段階）**
+**PDF リーダー（pdf.js）**
 
-- 各ペインは `overflow:auto` のコンテナに `<img>`。要求幅は `Math.ceil(fitWidth * zoom * devicePixelRatio)`、CSS 幅は `fitWidth * zoom`（現行と同じ DPR 処理）。
+- pdf.js の既製ビューア UI は使わず、`getDocument` / `page.render` / `TextLayer` のコア API で **2 ペイン・1 ページずつ表示**を組む（現行と同じ UX。訳文ペインが翻訳中に別ファイルのページを指す `translated_page()` の仕組みをそのまま再現できる）。
+- 各ペインは `overflow:auto` のコンテナに `<canvas>` + テキスト層。表示倍率は「幅に合わせる」を基準に 1.25〜4 倍のプリセット（現行どおり）。描画は `viewport.scale × devicePixelRatio`、CSS サイズは論理幅。24 M px を超える場合は描画倍率を抑えて CSS で拡大（現行 `_MAX_PIXELS` と同じ方針）。
+- ドキュメントは URL（`/api/papers/{id}/files/{name}?v=<mtime>`）ごとに `PDFDocumentProxy` をキャッシュ。`job.page_ready` や翻訳完了で `reading` を再取得し、mtime が変わったファイルだけ開き直す。ページ切替時は前のレンダリングを `RenderTask.cancel()` で中断。
 - 同期: `scrollTop/(scrollHeight-clientHeight)` の比率を相互反映（`LinkedScrollBars` 相当）。再入防止フラグ付き。
-- 画像差し替え時のチラつき防止: 旧画像を保持し、新画像 `onload` で交換。ズーム変更時は CSS スケールで即時プレビュー → 高解像度取得後に差し替え。
+- ズーム変更時は既存キャンバスを CSS スケールで即時プレビュー → 再描画完了後に差し替え（チラつき防止）。
 - 翻訳中ページの文言（「翻訳待ち」「原文（未翻訳）」「PDF 生成をスキップ」）は `reading` API のデータから決定（`gui_window_viewer.py:85-88` のロジックを移植）。
+- 文字選択はテキスト層で可能。Ctrl+F はライブラリ検索に割り当て済みなので、ページ内検索は別ショートカット（例: Ctrl+Shift+F）とツールバーの検索欄で提供。
+- Tauri の CSP に `worker-src 'self' blob:` と `connect-src http://127.0.0.1:*` を設定（pdf.js の Worker と Range 取得のため）。
 
 **チャット**
 
@@ -334,13 +346,14 @@ Tauri 実装は各プラグインを呼ぶだけ。Electron 実装は `preload` 
 
 | ファイル | 変更 | 理由 |
 | --- | --- | --- |
-| `pdf/pdf_viewer.py` | `QImage`/`QBuffer`/`Signal` を除去。`page_image()` は `(rgb_bytes, width, height, stride)` または PNG bytes を返す。`PageRenderer` は sidecar 側の単純なスレッドプールに置換（`_RENDER_LOCK` は維持） | 唯一の Qt 依存を切る。`tests/test_pdf_viewer.py` を bytes ベースに更新 |
+| `pdf/pdf_viewer.py` | 表示用の `PageRenderer` / `page_image` / `page_text_info` / `extract_selected_text` を削除。`page_png()` だけを Qt なしで残す（pypdfium2 → Pillow で PNG 化、`_RENDER_LOCK` 維持） | 表示は pdf.js が担う。`page_png` は `tests/test_workflow.py` と `docs/create_preview.py` が使う検証用途 |
 | `pdf/pdf_engine.py:399 page_png` | 上記に追従 | |
+| `tests/test_pdf_viewer.py` | `page_png` のテストのみ残す | |
 | `core/service.py:296` | `image_path.as_uri()` → `f"media/{name}"`（相対）。プロンプト文言は変更不要 | WebView から `file://` を読めない。既存 `article.md` はフロントで変換 |
 | `core/service.py`（任意） | `progress` に構造化引数を追加する場合も**既存の文字列呼び出しを維持** | 互換 |
 | `gui/` | 削除（`TRANSLATION_PRESETS`、`STYLE`、ダイアログのラベル文言はフロントへ移す） | |
 | `core/winintegration.py` | `TaskbarProgress` / `apply_window_identity` / `install_shortcuts` は Tauri 側で代替されるため **sidecar からは呼ばない**。`icon_path` のみ残すか削除 | |
-| `requirements.txt` | `PySide6`, `matplotlib`, `markdown` を削除し `fastapi`, `uvicorn`, `pydantic` を追加。`pillow` は pypdfium2 の PNG 化に使う場合のみ | |
+| `requirements*.txt`, `setup.cmd`, `start.cmd` | 廃止し `pyproject.toml` + `uv.lock` に移行。`PySide6`, `matplotlib`, `markdown` を削除し `fastapi`, `uvicorn`, `pydantic` を追加。`pillow` は `page_png`（検証用）の PNG 化に使う。開発用依存（`pytest`, `ruff`, `pyright`, `pyinstaller`）は `[dependency-groups]` に分離 | uv 化（§12） |
 | `tests/` | `gui_smoke.py`, `gui_folders.py`, `gui_usability.py`, `test_page_keyboard.py`, `test_reader_loading.py`, `test_scroll_sync.py`, `test_shell_integration.py` は Qt 依存。API テスト（`TestClient`）とフロントの vitest/Playwright に置換。残り約 140 件はそのまま | |
 
 既知の不具合で、書き換え時に自然に解消されるもの: `gui_dialogs.py:477` 付近の接続確認スレッドが `cancel` に `lambda: False` を渡しており API 経路で `check_cancel` が `AttributeError` になる（sidecar では常に `threading.Event` を渡す）。
@@ -370,13 +383,20 @@ Tauri 実装は各プラグインを呼ぶだけ。Electron 実装は `preload` 
 - プラグイン: `dialog`, `opener`, `notification`, `window-state`, `shell`（ログイン用ターミナル起動が必要な場合）。トレイと進捗はコア API。
 - Windows: NSIS/MSI（WebView2 はブートストラッパー同梱設定にする）。macOS: DMG（署名・公証は任意。未署名なら Gatekeeper の警告手順を README に記載）。Linux: AppImage + deb（`webkit2gtk-4.1` 依存）。
 
-### 7.3 CI（GitHub Actions）
+### 7.3 ビルド手順（ローカル、`justfile`）
+
+CI は当面用意しない。代わりに全手順を `just` のタスクにまとめ、どの OS でも同じコマンドで再現できるようにする。CI を導入する際はこのタスクを呼ぶだけにする（既存 `.github/workflows/windows.yml` は旧 GUI 用なので削除）。
 
 ```
-matrix: [windows-latest, macos-latest, ubuntu-22.04]
-steps: setup-python → pip install → python -m unittest（コア）→ pytest sidecar（TestClient）
-       → pyinstaller（onedir）→ setup-node → npm ci → vitest → tauri-apps/tauri-action（build, artifact upload）
+just setup        # uv sync --all-groups && pnpm install --frozen-lockfile（frontend）
+just dev          # sidecar を uv run で起動 + pnpm tauri dev（ホットリロード）
+just test         # uv run pytest（コア + sidecar）+ pnpm vitest run
+just lint         # uv run ruff check && ruff format --check && pyright / pnpm biome check
+just build-sidecar  # uv run pyinstaller sidecar/pyinstaller.spec（onedir → src-tauri/resources/sidecar/<target>/）
+just build        # build-sidecar → pnpm tauri build（インストーラー生成）
 ```
+
+`uv run` は `.python-version` の Python を自動取得するため、開発者はシステムの Python に依存しない。Node/Rust の版は `frontend/package.json` の `packageManager` と `src-tauri/rust-toolchain.toml` で固定する。
 
 ### 7.4 Windows 固有事項の扱い
 
@@ -390,10 +410,10 @@ steps: setup-python → pip install → python -m unittest（コア）→ pytest
 
 | 層 | 手段 | 内容 |
 | --- | --- | --- |
-| Python コア | 既存 unittest（約 140 件を維持） | レイアウト、翻訳回復、PDF 生成、書誌、ストレージ |
+| Python コア | 既存 unittest（約 140 件）を **pytest で実行**（書き換え不要。新規テストは pytest スタイル） | レイアウト、翻訳回復、PDF 生成、書誌、ストレージ |
 | sidecar | pytest + FastAPI `TestClient` + `FakeProvider`（`tests/test_workflow.py` のものを流用） | 追加 → 翻訳ジョブ → `page_ready` イベント → `reading` の整合、ask と引用リンク、画像配信、エクスポート、キャンセル、409 の競合、トークン認証 |
 | フロント単体 | vitest + Testing Library | `normalizeMath`（4 区切り）、`file://`→API 変換、`paperdesk:` リンク横取り、翻訳中ページの表示文言、スクロール同期比率 |
-| E2E | Playwright（`tauri-driver` 経由、または dev サーバー + モック shell） | サンプル PDF の追加・翻訳（FakeProvider 設定の sidecar）・サマリー表示（数式・画像）・質問→引用クリック→ページ移動 |
+| E2E | Playwright（`tauri-driver` 経由、または dev サーバー + モック shell） | サンプル PDF の追加・翻訳（FakeProvider 設定の sidecar）・サマリー表示（数式・画像）・質問→引用クリック→ページ移動・pdf.js で原文/訳文が描画されテキスト層に日本語が含まれること |
 | 目視 | 既存 `tools/review_fresh_layout.py` 等 | PDF 生成物は無変更のため従来どおり |
 
 数式・画像・引用の回帰テストには、実データを模した固定の Markdown（`$…$`、`$$…$$`、`\(…\)`、`![figure p.3](file:///…/media/b12.png)`、`[p.3](paperdesk://<id>/3)`、`[参照未確認: …]` を含む）をフィクスチャとして用意する。
@@ -404,13 +424,12 @@ steps: setup-python → pip install → python -m unittest（コア）→ pytest
 
 | フェーズ | 内容 | 完了条件 |
 | --- | --- | --- |
-| 0. 下準備（1 週） | `pdf_viewer.py` の Qt 除去、`service.py` の相対 media パス、`tests` 更新。**現行 Qt GUI はこの時点でも動く**（QImage 変換を GUI 側へ移す） | 既存テスト緑 |
+| 0. 下準備（1 週） | uv 化（`pyproject.toml` / `uv.lock`、ruff・pyright 導入、既存テストを pytest で実行）、`pdf_viewer.py` の Qt 除去、`service.py` の相対 media パス、`tests` 更新。**現行 Qt GUI はこの時点でも動く**（QImage 変換を GUI 側へ移す） | `uv run pytest` が緑、`ruff check` が通る |
 | 1. sidecar（1〜2 週） | FastAPI、JobManager、WS イベント、`ui-state.json`、OpenAPI 出力。CLI だけで翻訳〜質問が回る | API テスト緑 |
-| 2. フロント骨格（2 週） | Tauri 雛形 + sidecar 起動、ライブラリ、リーダー（PNG）、設定 | サンプル PDF の追加・閲覧・翻訳 |
+| 2. フロント骨格（2〜3 週） | Tauri 雛形 + sidecar 起動、ライブラリ、リーダー（pdf.js: 2 ペイン、同期、ズーム、翻訳中ページの切替、文字選択）、設定 | サンプル PDF の追加・閲覧・翻訳。訳文 PDF の埋め込み日本語フォントと数式画像が pdf.js で正しく出ることを確認 |
 | 3. サマリー/チャット/メモ（1〜2 週） | Markdown + KaTeX + 画像 + 引用、履歴、メモ自動保存、書き出し | §3 の対応表を全項目クリア |
-| 4. ネイティブ連携・配布（1 週） | 進捗・通知・トレイ・DnD・ウィンドウ状態、3 OS ビルド、README 更新 | 3 OS でインストーラー生成、Windows 実機確認 |
-| 5. 旧 GUI 削除 | `paperdesk/gui/`, `scripts/*.cmd`, `windows.yml` の PyInstaller 部分を撤去 | |
-| 6.（任意）pdf.js 化 | 文字選択・検索・ベクター拡大 | |
+| 4. ネイティブ連携・配布（1 週） | 進捗・通知・トレイ・DnD・ウィンドウ状態、`just build` による 3 OS ビルド、README 更新 | 手元の OS でインストーラー生成、Windows 実機確認 |
+| 5. 旧 GUI 削除 | `paperdesk/gui/`, `scripts/*.cmd`, `requirements*.txt`, `.github/workflows/windows.yml` を撤去 | |
 
 各フェーズは独立してマージ可能。フェーズ 0〜1 の間は旧 GUI と新 sidecar が同じデータを共有できるので、並行して比較検証できる。
 
@@ -421,7 +440,8 @@ steps: setup-python → pip install → python -m unittest（コア）→ pytest
 | リスク | 影響 | 対策 |
 | --- | --- | --- |
 | Rust ツールチェーン導入・`tauri build` の環境差 | 着手遅れ | 雛形以外に Rust を書かない。行き詰まった場合は同じフロント/sidecar を Electron へ載せ替え（`ShellAdapter` のみ実装） |
-| Linux WebKitGTK の描画・性能差（大きな PNG、KaTeX フォント） | Linux での体験低下 | Linux は「動作する」を目標にし、主対象は Windows/macOS。pdf.js 化を Linux で先に評価 |
+| Linux WebKitGTK の描画・性能差（pdf.js のキャンバス描画、KaTeX フォント） | Linux での体験低下 | Linux は「動作する」を目標にし、主対象は Windows/macOS。フェーズ 2 で Linux でも pdf.js の描画速度を確認 |
+| pdf.js が特定 PDF を pypdfium2 と違って描画する（フォント置換、数式画像の補間） | 表示差 | フェーズ 2 で既存の翻訳済み論文と `docs/preview` を pdf.js で目視比較。差が出た場合は `page_png` を使う画像フォールバックを検討 |
 | PyInstaller onedir の起動時間・サイズ（PyMuPDF + フォント） | 起動 1〜2 秒、100 MB 前後 | 起動画面で `/health` 待ちを可視化。フォントは訳文生成時のみ読み込む（現行どおり） |
 | ループバック HTTP を他プロセスが叩く | データ漏えい | ランダムトークン必須、127.0.0.1 のみ、CORS 限定 |
 | CLI（codex/claude/agy）の macOS/Linux での検出 | 接続不可 | 既存 `shutil.which` 経路は OS 非依存。Windows 固有フォールバックは条件分岐済み。GUI 起動時 `PATH` が shell と異なる問題（macOS）には `login shell` から PATH を取得する処理を sidecar に追加 |
@@ -435,9 +455,60 @@ steps: setup-python → pip install → python -m unittest（コア）→ pytest
 
 1. **Linux をどこまで正式対応にするか**（AppImage 提供のみ、進捗表示なし で良いか）。
 2. **macOS の署名・公証**を行うか（Apple Developer Program が必要）。未署名なら初回起動に右クリック→開く の手順が要る。
-3. **pdf.js 化（第 2 段階）を当初から入れるか**。文字選択・検索は新機能になるため、まず PNG で既存機能同等を達成する案を推奨。
-4. 訳文 PDF 生成に使う **同梱フォント（約 11 MB）をインストーラーに含める**方針は現行どおりで良いか。
-5. 旧 `window.ini` の閲覧位置移行を行うか（行わない場合は実装が簡単になる）。
+3. 訳文 PDF 生成に使う **同梱フォント（約 11 MB）をインストーラーに含める**方針は現行どおりで良いか。
+4. 旧 `window.ini` の閲覧位置移行を行うか（行わない場合は実装が簡単になる）。
+
+---
+
+## 12. 開発ツールチェーン
+
+方針: 「流行っている」だけでなく **デファクトになりつつあり、1〜2 年後も残る見込みが高いもの**を採用する。位置づけを 3 段階で示す（◎ デファクト / ○ 有力・実績あり / △ 様子見）。
+
+### 12.1 Python（コア + sidecar）
+
+| 用途 | 採用 | 位置づけ | 備考 |
+| --- | --- | --- | --- |
+| パッケージ・環境・Python 版管理 | **uv** | ◎ | `pyproject.toml` + `uv.lock`。`uv sync` で `.venv` 作成、`uv run` で実行、`uv python` で 3.12 を自動取得。`requirements*.txt`、`setup.cmd`、`start.cmd`、`.venv` 手動管理を廃止 |
+| Lint + フォーマット | **ruff** | ◎ | `ruff check` + `ruff format`。設定は `pyproject.toml` の `[tool.ruff]`。flake8/black/isort は不要 |
+| テスト | **pytest** | ◎ | 既存 unittest はそのまま動く。`pytest-asyncio` は sidecar の WS テストに使用 |
+| 型チェック | **pyright** | ○ | Astral の `ty` は安定版になったら置換候補（△） |
+| Web フレームワーク | **FastAPI + uvicorn + pydantic v2** | ◎ | OpenAPI 自動生成をフロントの型生成に使う |
+| 実行ファイル化 | **PyInstaller** | ◎ | 現行と同じ。Nuitka は起動時間短縮の余地があるが PyMuPDF との相性検証が必要（△） |
+| 依存グループ | `[dependency-groups] dev / build` | ◎ | PEP 735。開発用と PyInstaller 用を分離 |
+
+### 12.2 フロントエンド
+
+| 用途 | 採用 | 位置づけ | 備考 |
+| --- | --- | --- | --- |
+| パッケージマネージャ | **pnpm** | ◎ | `packageManager` フィールドで版固定（Corepack）。Bun はランタイム互換の検証コストがあるため見送り（△） |
+| ビルド | **Vite** | ◎ | Tauri の公式テンプレートと同じ |
+| 言語・UI | **TypeScript（strict）+ React 19** | ◎ | |
+| Lint + フォーマット | **Biome** | ○→◎ | ESLint + Prettier を 1 ツールに統合、高速。React/TS のルールは標準搭載。特殊なプラグインが必要になったら ESLint 併用 |
+| スタイル | **Tailwind CSS v4 + shadcn/ui** | ◎ | ダークモード、Radix ベースのアクセシブルな部品 |
+| データ取得 | **TanStack Query** | ◎ | |
+| 型付き API クライアント | **openapi-typescript + openapi-fetch** | ○ | sidecar の OpenAPI から生成。WS イベントは **zod** で実行時検証 |
+| UI 状態 | **zustand** | ○ | Redux は過剰 |
+| テスト | **Vitest + Testing Library**, E2E は **Playwright** | ◎ | |
+| Markdown / 数式 / 図 / PDF | react-markdown, KaTeX, mermaid, pdfjs-dist | ◎ | §3, §4.5 参照 |
+
+### 12.3 シェル・共通
+
+| 用途 | 採用 | 位置づけ | 備考 |
+| --- | --- | --- | --- |
+| デスクトップシェル | **Tauri 2** | ○→◎ | §2 参照。Rust は `rust-toolchain.toml` で版固定 |
+| タスクランナー | **just** | ○ | `justfile` に setup/dev/test/lint/build を定義。Make より Windows で扱いやすい |
+| ツール版の統一 | **mise**（任意） | ○ | Node / Rust / just の版を `mise.toml` で固定したい場合に使う。Python は uv が担当するので必須ではない |
+| Git フック | **pre-commit**（任意） | ○ | ruff / biome / pyright を commit 前に実行 |
+| コミット規約 | Conventional Commits | ○ | 将来の CHANGELOG 自動生成に備える。ツール強制はしない |
+| CI | 当面なし | — | `just` タスクをそのまま呼べる形にしておく |
+
+### 12.4 見送るもの
+
+- **Poetry / pipenv / pip-tools**: uv に統合されるため不要。
+- **Bun / Deno**: ランタイム差異の検証コストに見合う利点が現時点ではない。
+- **ESLint + Prettier の併用構成**: Biome で代替。必要になったときだけ追加。
+- **Next.js 等のメタフレームワーク**: 単一ウィンドウのデスクトップアプリに SSR やルーティングは不要。
+- **Electron**: Tauri で行き詰まった場合の退路として設計上は残すが、初期採用はしない。
 
 ---
 
