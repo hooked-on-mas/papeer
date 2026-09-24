@@ -23,11 +23,14 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef }: PdfPaneP
     }
 
     let isCanceled = false;
+    const token = import.meta.env.VITE_PAPERDESK_TOKEN || "";
+    
     const loadingTask = pdfjsLib.getDocument({ 
       url,
-      cMapUrl: "https://unpkg.com/pdfjs-dist@4.10.38/cmaps/",
+      httpHeaders: token ? { Authorization: `Bearer ${token}` } : undefined,
+      cMapUrl: "/pdfjs/cmaps/",
       cMapPacked: true,
-      standardFontDataUrl: "https://unpkg.com/pdfjs-dist@4.10.38/standard_fonts/"
+      standardFontDataUrl: "/pdfjs/standard_fonts/"
     });
 
     loadingTask.promise
