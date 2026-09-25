@@ -274,6 +274,12 @@ def get_prompts(dependencies: None = Depends(verify_token)) -> dict[str, str]:
             prompts[name] = p.read_text("utf-8").strip()
     return prompts
 
+@app.get("/api/prompts/defaults")
+def get_default_prompts(dependencies: None = Depends(verify_token)) -> dict[str, str]:
+    """Built-in texts, so the settings dialog can show and restore them."""
+    from paperdesk.core.prompts import _BUILTIN_DIR
+    return {p.stem: p.read_text("utf-8").strip() for p in _BUILTIN_DIR.glob("*.txt")}
+
 @app.put("/api/prompts")
 def update_prompts(body: dict[str, str], dependencies: None = Depends(verify_token)) -> dict[str, str]:
     from paperdesk.core.prompts import _get_custom_dir

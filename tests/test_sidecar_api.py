@@ -382,3 +382,17 @@ def test_paper_metadata_reading_and_export_guards(test_env):
     assert (tmp_dir / "b.pdf").is_file()
     prepared = _wait(client.post(f"/api/papers/{paper_id}/interleaved").json()["job_id"])
     assert Path(prepared.result["path"]).is_file()
+
+
+def test_prompts_customize_and_reset(test_env):
+    client, _ = test_env
+    defaults = client.get("/api/prompts/defaults").json()
+    assert "translation" in defaults
+    assert client.get("/api/prompts").json() == defaults
+
+    client.put("/api/prompts", json={"translation": "custom instruction"})
+    assert client.get("/api/prompts").json()["translation"] == "custom instruction"
+    assert client.get("/api/prompts/defaults").json()["translation"] == defaults["translation"]
+
+    client.put("/api/prompts", json={"translation": ""})
+    assert client.get("/api/prompts").json()["translation"] == defaults["translation"]
