@@ -1,5 +1,5 @@
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { getCurrentWindow, ProgressBarStatus } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -13,7 +13,6 @@ export interface ShellAdapter {
   openFiles(filters: { name: string, extensions: string[] }[]): Promise<string[]>;
   saveFile(defaultName: string, filters: { name: string, extensions: string[] }[]): Promise<string | null>;
   openPath(path: string): Promise<void>;
-  revealInFolder(path: string): Promise<void>;
   notify(title: string, body: string): Promise<void>;
   isFocused(): Promise<boolean>;
   setProgress(state: 'none' | 'normal' | 'indeterminate' | 'error', done?: number, total?: number): Promise<void>;
@@ -42,10 +41,6 @@ export const tauriShell: ShellAdapter = {
 
   async openPath(path) {
     await openPath(path);
-  },
-
-  async revealInFolder(path) {
-    await revealItemInDir(path);
   },
 
   async notify(title, body) {
@@ -109,7 +104,6 @@ export const shell = (window.__TAURI_INTERNALS__ !== undefined || window.__TAURI
   openFiles: async () => [],
   saveFile: async () => null,
   openPath: async () => {},
-  revealInFolder: async () => {},
   notify: async (t, b) => { console.log("Notify", t, b); },
   isFocused: async () => document.hasFocus(),
   setProgress: async () => {},

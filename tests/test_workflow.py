@@ -11,9 +11,10 @@ import unittest
 import pymupdf as fitz
 
 from paperdesk.core.config import Settings
-from paperdesk.pdf.pdf_engine import batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, extract_pdf, page_png, translation_units
+from paperdesk.pdf.pdf_engine import batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, page_png, translation_units
 from paperdesk.core.providers import Cancelled, Provider
-from paperdesk.core.service import PaperService, link_citations, validate_translations
+from paperdesk.core.service import PaperService, link_citations
+from paperdesk.translation.translation import validate_translations
 from paperdesk.core.storage import Library, normalize_collection_name
 from paperdesk.layout.math_layout import MATH_TOKEN
 
@@ -270,7 +271,6 @@ class WorkflowTests(unittest.TestCase):
         provider = DamagedProvider()
         with self.assertRaisesRegex(RuntimeError, "connection failed"):
             PaperService(self.library, provider, self.cancel).translate(self.paper_id)
-        units = translation_units(self.library.document(self.paper_id))
         cache = json.loads((folder / "translation-cache.json").read_text("utf-8"))
         self.assertEqual(set(cache["translations"]), provider.initial_ids - {provider.missing_id})
         self.assertEqual(cache["retry_state"]["attempts"][provider.missing_id], 2)

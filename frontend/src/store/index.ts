@@ -63,7 +63,6 @@ interface UiState {
   setMoveHistory: (history: MoveRecord[]) => void;
 
   addJob: (job: Job) => void;
-  updateJob: (job_id: string, updates: Partial<Job>) => void;
   removeJob: (job_id: string) => void;
 }
 
@@ -129,9 +128,6 @@ export const useStore = create<UiState>()(
           ? state.activeJobs.map((j) => j.job_id === job.job_id ? { ...j, ...job } : j)
           : [...state.activeJobs, job],
       })),
-      updateJob: (job_id, updates) => set((state) => ({
-        activeJobs: state.activeJobs.map(j => j.job_id === job_id ? { ...j, ...updates } : j)
-      })),
       removeJob: (job_id) => set((state) => ({
         activeJobs: state.activeJobs.filter(j => j.job_id !== job_id)
       })),
@@ -162,11 +158,6 @@ export const useStore = create<UiState>()(
 
 export function isRunning(job: Job): boolean {
   return (job.status ?? "running") === "running";
-}
-
-/** Jobs that block actions on this paper: its own jobs plus library-wide ones. */
-export function jobsFor(jobs: Job[], paperId: string | null): Job[] {
-  return jobs.filter((j) => isRunning(j) && (j.paper_id === paperId || !j.paper_id));
 }
 
 export function paperBusy(jobs: Job[], paperId: string | null): boolean {

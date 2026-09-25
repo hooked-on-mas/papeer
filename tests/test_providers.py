@@ -7,10 +7,8 @@ from unittest.mock import Mock, patch
 
 from paperdesk.core.config import Settings
 from paperdesk.core.providers import (
-    Cancelled,
     Provider,
     claude_command,
-    codex_command,
     gemini_command,
     parse_json_answer,
 )

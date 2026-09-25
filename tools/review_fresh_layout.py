@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import hashlib
-import json
 from pathlib import Path
 import random
 import threading
@@ -25,7 +24,6 @@ def review(papers: Path, output: Path, seed: int, count: int, cases: list[str], 
         settings = Settings.load(data_directory())
     cancel = threading.Event()
     provider = Provider(settings, cancel)
-    documents = {}
     sources = {}
     candidates = []
     for source in sorted(papers.glob('*/original.pdf')):

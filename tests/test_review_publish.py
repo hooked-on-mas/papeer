@@ -1,6 +1,5 @@
 from pathlib import Path
 from contextlib import closing
-import hashlib
 import json
 import sqlite3
 import tempfile
