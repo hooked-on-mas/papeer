@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, MessageSquare, Minimize2, NotebookPen, ScrollText, ZoomIn, ZoomOut } from "lucide-react";
 import { useStore, ZOOM_PRESETS } from "@/store";
 import { useReading } from "@/api/hooks";
 import { changeZoom, jumpToPage, movePage } from "./navigation";
 
 const ZOOM_LABELS: Record<number, string> = { 1: "幅に合わせる" };
+
+/** Tabs that focus mode can open beside the reader. */
+const FOCUS_PANELS = [
+  { tab: "summary", label: "サマリー", icon: ScrollText, key: "Ctrl+2" },
+  { tab: "chat", label: "質問", icon: MessageSquare, key: "Ctrl+3" },
+  { tab: "notes", label: "メモ", icon: NotebookPen, key: "Ctrl+4" },
+];
 
 export function ReaderToolbar() {
   const activePaperId = useStore((s) => s.activePaperId);
@@ -15,6 +22,8 @@ export function ReaderToolbar() {
   const setTranslatedOnly = useStore((s) => s.setTranslatedOnly);
   const focusMode = useStore((s) => s.focusMode);
   const setFocusMode = useStore((s) => s.setFocusMode);
+  const focusPanel = useStore((s) => s.focusPanel);
+  const setFocusPanel = useStore((s) => s.setFocusPanel);
   const { data: reading } = useReading(activePaperId);
 
   const count = reading?.page_count ?? 0;
@@ -111,6 +120,22 @@ export function ReaderToolbar() {
           <ZoomIn className="w-4 h-4" />
         </button>
         <div className="w-px h-4 bg-border mx-2" />
+        {focusMode && (
+          <>
+            {FOCUS_PANELS.map(({ tab, label, icon: Icon, key }) => (
+              <button
+                key={tab}
+                onClick={() => setFocusPanel(focusPanel === tab ? null : tab)}
+                className={`flex items-center gap-1 h-6 px-2 rounded text-[12px] border transition-colors ${focusPanel === tab ? "text-primary bg-primary/10 border-primary/40" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                title={`${label}を右に表示（${key}）`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span className="hidden xl:inline">{label}</span>
+              </button>
+            ))}
+            <div className="w-px h-4 bg-border mx-2" />
+          </>
+        )}
         <button
           onClick={() => setFocusMode(!focusMode)}
           className={`flex items-center gap-1 h-6 px-2 rounded text-[12px] border transition-colors ${focusMode ? "text-primary bg-primary/10 border-primary/40" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}

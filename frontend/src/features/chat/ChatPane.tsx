@@ -187,7 +187,7 @@ export function ChatPane() {
               <Send className="w-4 h-4" /> 質問する
             </button>
           </div>
-          <div className="flex items-center justify-between mt-1.5 text-[12px] text-muted-foreground">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 mt-1.5 text-[12px] text-muted-foreground">
             <label className="flex items-center gap-1.5 cursor-pointer select-none">
               <input type="checkbox" checked={allPapers} onChange={(e) => setAllPapers(e.target.checked)} />
               保存したほかの論文も検索する

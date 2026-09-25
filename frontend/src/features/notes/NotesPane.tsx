@@ -12,7 +12,8 @@ import { showError } from "@/features/jobs/jobEvents";
 /** Pending memo saves, flushed before the window closes. */
 export const pendingNoteSaves = new Set<() => Promise<void>>();
 
-export function NotesPane() {
+/** `compact` shows only the memo, for the side panel in focus mode. */
+export function NotesPane({ compact = false }: { compact?: boolean }) {
   const activePaperId = useStore((state) => state.activePaperId);
   if (!activePaperId) {
     return (
@@ -23,7 +24,7 @@ export function NotesPane() {
     );
   }
   // Keyed so switching papers saves the old memo and never writes it into the new paper.
-  return <PaperNotes key={activePaperId} paperId={activePaperId} />;
+  return <PaperNotes key={activePaperId} paperId={activePaperId} compact={compact} />;
 }
 
 function metaLines(paper: PaperData, reading: ReadingData | null | undefined): { text: string; title?: string }[] {
@@ -39,7 +40,7 @@ function metaLines(paper: PaperData, reading: ReadingData | null | undefined): {
   return lines;
 }
 
-function PaperNotes({ paperId }: { paperId: string }) {
+function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean }) {
   const queryClient = useQueryClient();
   const { data: paper } = usePaper(paperId);
   const { data: reading } = useReading(paperId);
@@ -160,7 +161,7 @@ function PaperNotes({ paperId }: { paperId: string }) {
 
   return (
     <div className="flex h-full w-full bg-background overflow-hidden">
-      <div className="w-[340px] shrink-0 border-r overflow-y-auto p-4 space-y-5">
+      {!compact && <div className="w-[340px] shrink-0 border-r overflow-y-auto p-4 space-y-5">
         <section className="space-y-3">
           <h3 className="text-[13px] font-semibold">論文情報</h3>
           {paper && (
@@ -212,14 +213,14 @@ function PaperNotes({ paperId }: { paperId: string }) {
             <FolderOpen className="w-4 h-4" /> 保存フォルダーを開く
           </button>
         </section>
-      </div>
+      </div>}
 
       <div className="flex-1 flex flex-col min-w-0">
         <div className="h-[44px] flex items-center justify-between px-4 border-b shrink-0">
           <h3 className="text-[13px] font-semibold flex items-center gap-2">
             <NotebookPen className="w-4 h-4 text-muted-foreground" />
             メモ
-            <span className="font-normal text-muted-foreground text-[12px]">Markdownで記入できます。入力後に自動保存します。</span>
+            {!compact && <span className="font-normal text-muted-foreground text-[12px]">Markdownで記入できます。入力後に自動保存します。</span>}
           </h3>
           <div className="flex items-center gap-3">
             <span className="text-[12px] text-muted-foreground">

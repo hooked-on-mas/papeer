@@ -40,6 +40,9 @@ interface UiState {
   readerSplit: number; // 0-1 ratio
   translatedOnly: boolean;
   focusMode: boolean;
+  /** Tab shown beside the reader in focus mode ("summary" | "chat" | "notes"), or null. */
+  focusPanel: string | null;
+  focusPanelWidth: number;
   statusMessage: string;
   /** Folder that new PDFs go into ("" = 未分類); follows the selected tree row. */
   currentCollection: string;
@@ -64,6 +67,8 @@ interface UiState {
   setReaderSplit: (r: number) => void;
   setTranslatedOnly: (t: boolean) => void;
   setFocusMode: (f: boolean) => void;
+  setFocusPanel: (panel: string | null) => void;
+  setFocusPanelWidth: (w: number) => void;
   setStatus: (message: string) => void;
   setCurrentCollection: (collection: string) => void;
   setSelectedFolder: (folder: string | null) => void;
@@ -92,6 +97,8 @@ export const useStore = create<UiState>()(
       readerSplit: 0.5,
       translatedOnly: false,
       focusMode: false,
+      focusPanel: null,
+      focusPanelWidth: 420,
       statusMessage: "準備できました。PDFの追加・閲覧・メモ保存にはAI接続は不要です。",
       currentCollection: "",
       selectedFolder: null,
@@ -111,11 +118,9 @@ export const useStore = create<UiState>()(
           paperPages: id ? { ...state.paperPages, [id]: target } : state.paperPages,
         };
       }),
-      setActiveTab: (tab) => set((state) => ({
-        activeTab: tab,
-        // The old window left focus mode when another tab was chosen.
-        focusMode: tab === "reader" ? state.focusMode : false,
-      })),
+      // In focus mode the other tabs open beside the reader instead of replacing it.
+      setActiveTab: (tab) => set((state) =>
+        state.focusMode && tab !== "reader" ? { focusPanel: tab } : { activeTab: tab }),
       setZoom: (zoom) => set({ zoom: Math.max(ZOOM_PRESETS[0], Math.min(ZOOM_PRESETS[ZOOM_PRESETS.length - 1], zoom)) }),
       setCurrentPage: (page) => set((state) => ({
         currentPage: page,
@@ -129,6 +134,8 @@ export const useStore = create<UiState>()(
         focusMode,
         activeTab: focusMode ? "reader" : state.activeTab,
       })),
+      setFocusPanel: (focusPanel) => set({ focusPanel }),
+      setFocusPanelWidth: (focusPanelWidth) => set({ focusPanelWidth }),
       setStatus: (statusMessage) => set({ statusMessage }),
       setCurrentCollection: (currentCollection) => set({ currentCollection }),
       setSelectedFolder: (selectedFolder) => set({ selectedFolder }),
@@ -167,6 +174,8 @@ export const useStore = create<UiState>()(
         sidebarCollapsed: state.sidebarCollapsed,
         readerSplit: state.readerSplit,
         translatedOnly: state.translatedOnly,
+        focusPanel: state.focusPanel,
+        focusPanelWidth: state.focusPanelWidth,
       }),
     }
   )

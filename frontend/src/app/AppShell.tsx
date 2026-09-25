@@ -120,6 +120,8 @@ export function AppShell() {
   const sidebarCollapsed = useStore((s) => s.sidebarCollapsed);
   const sidebarWidth = useStore((s) => s.sidebarWidth);
   const focusMode = useStore((s) => s.focusMode);
+  const focusPanel = useStore((s) => s.focusPanel);
+  const focusPanelWidth = useStore((s) => s.focusPanelWidth);
   const activePaperId = useStore((s) => s.activePaperId);
   const activeJobs = useStore((s) => s.activeJobs);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -210,8 +212,12 @@ export function AppShell() {
   useHotkeys("ctrl+minus, meta+minus, ctrl+subtract", () => changeZoom(-1), hotkeyOptions);
   useHotkeys("ctrl+0, meta+0", () => useStore.getState().setZoom(1), hotkeyOptions);
   useHotkeys("ctrl+1, ctrl+2, ctrl+3, ctrl+4", (_e, handler) => {
-    const index = Number(handler.keys?.join("")) - 1;
-    if (TABS[index]) setActiveTab(TABS[index]);
+    const tab = TABS[Number(handler.keys?.join("")) - 1];
+    if (!tab) return;
+    const store = useStore.getState();
+    // In focus mode Ctrl+1, or the open panel's own key, closes the side panel.
+    if (store.focusMode && (tab === "reader" || store.focusPanel === tab)) store.setFocusPanel(null);
+    else setActiveTab(tab);
   }, hotkeyOptions);
 
   const anyRunning = activeJobs.some(isRunning);
@@ -219,9 +225,28 @@ export function AppShell() {
   if (focusMode) {
     return (
       <div className="flex h-screen w-full flex-col bg-background text-foreground overflow-hidden">
-        <main className="flex-1 flex flex-col min-h-0 relative">
-          <Reader />
-        </main>
+        <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
+          <ResizablePanel id="focus-reader" minSize="480px" className="flex flex-col min-w-0 relative">
+            <Reader />
+          </ResizablePanel>
+          {focusPanel && (
+            <>
+              <ResizableHandle className="w-1 bg-border hover:bg-primary/60 transition-colors cursor-col-resize" />
+              <ResizablePanel
+                id="focus-panel"
+                defaultSize={`${focusPanelWidth}px`}
+                minSize="320px"
+                maxSize="70%"
+                onResize={(size) => useStore.getState().setFocusPanelWidth(Math.round(size.inPixels))}
+                className="flex flex-col min-w-0 bg-background"
+              >
+                {focusPanel === "summary" && <SummaryPane />}
+                {focusPanel === "chat" && <ChatPane />}
+                {focusPanel === "notes" && <NotesPane compact />}
+              </ResizablePanel>
+            </>
+          )}
+        </ResizablePanelGroup>
         {anyRunning && <StatusBar />}
         <AppDialogs />
         <Lightbox />
