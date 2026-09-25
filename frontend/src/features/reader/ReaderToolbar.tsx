@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Maximize2, MessageSquare, Minimize2, NotebookPen, ScrollText, ZoomIn, ZoomOut } from "lucide-react";
 import { useStore, ZOOM_PRESETS } from "@/store";
-import { useReading } from "@/api/hooks";
+import { useArticle, useMessages, useReading } from "@/api/hooks";
 import { changeZoom, jumpToPage, movePage } from "./navigation";
 
 const ZOOM_LABELS: Record<number, string> = { 1: "幅に合わせる" };
@@ -25,6 +25,9 @@ export function ReaderToolbar() {
   const focusPanel = useStore((s) => s.focusPanel);
   const setFocusPanel = useStore((s) => s.setFocusPanel);
   const { data: reading } = useReading(activePaperId);
+  // Load what the side panels show, so opening one doesn't flash a loading state first.
+  useArticle(focusMode ? activePaperId : null);
+  useMessages(focusMode ? activePaperId : null);
 
   const count = reading?.page_count ?? 0;
   const completed = reading?.completed_pages ?? [];

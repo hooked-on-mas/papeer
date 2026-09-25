@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Document, Page, pdfjs } from "react-pdf";
 import type { PageCallback } from "react-pdf/dist/shared/types.js";
 import type { TextContent, TextItem } from "pdfjs-dist/types/src/display/api";
@@ -62,7 +63,8 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   useEffect(() => {
     if (!containerRef.current) return;
     const observer = new ResizeObserver((entries) => {
-      if (entries[0]) setContainerWidth(entries[0].contentRect.width);
+      // Before the paint, so a pane that just narrowed never shows the page cut off.
+      if (entries[0]) flushSync(() => setContainerWidth(entries[0].contentRect.width));
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
@@ -81,15 +83,46 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   const fitWidth = Math.max(250, containerWidth - PADDING * 2);
   const pageWidth = Math.round(fitWidth * zoom);
 
+  // react-pdf replaces the canvas whenever the width changes, leaving the page blank until it is
+  // redrawn. So while a side panel opens or the pane is resized or zoomed, the current drawing is
+  // scaled to fit, and the page is redrawn once the width settles, with a copy of the old drawing
+  // covering it until the new one is ready.
+  const [drawnWidth, setDrawnWidth] = useState(0);
+  const [covering, setCovering] = useState(false);
+  const snapshotRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    if (!containerWidth || pageWidth === drawnWidth) return;
+    if (!drawnWidth) {
+      setDrawnWidth(pageWidth);
+      return;
+    }
+    const timer = setTimeout(() => {
+      const canvas = pageRef.current?.querySelector("canvas");
+      const snapshot = snapshotRef.current;
+      // A canvas still hidden is mid-redraw; the snapshot already holds the last finished drawing.
+      if (canvas?.width && snapshot && canvas.style.visibility !== "hidden") {
+        snapshot.width = canvas.width;
+        snapshot.height = canvas.height;
+        snapshot.getContext("2d")?.drawImage(canvas, 0, 0);
+        setCovering(true);
+      }
+      setDrawnWidth(pageWidth);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [containerWidth, pageWidth, drawnWidth]);
+
+  useEffect(() => setCovering(false), [url, pageNumber]);
+
   // Stable, since react-pdf redraws the text layer whenever this callback changes.
   const onTextLayerRendered = useCallback(() => {
     const page = loadedPage.current;
     const layer = pageRef.current?.querySelector<HTMLElement>(".textLayer");
     if (!page || !layer || !textContent.current) return;
     // The scale react-pdf renders the text layer at for this width.
-    const scale = page.getViewport({ scale: pageWidth / page.getViewport({ scale: 1 }).width }).scale;
+    const scale = page.getViewport({ scale: drawnWidth / page.getViewport({ scale: 1 }).width }).scale;
     fitTextLayer(layer, textContent.current, scale);
-  }, [pageWidth]);
+  }, [drawnWidth]);
 
   const message = (text: React.ReactNode) => (
     <div className="h-full flex items-center justify-center p-8 text-center text-[13px] text-muted-foreground leading-relaxed">
@@ -117,19 +150,29 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
               error={message("PDFを読み込めませんでした。")}
               className="mx-auto w-fit"
             >
-              {numPages !== null && pageNumber > numPages ? message(missingPageMessage ?? "このページはありません。") : (
-                <Page
-                  pageNumber={pageNumber}
-                  width={pageWidth}
-                  inputRef={pageRef}
-                  onLoadSuccess={(page) => { loadedPage.current = page; }}
-                  onGetTextSuccess={(content) => { textContent.current = content; }}
-                  onRenderTextLayerSuccess={onTextLayerRendered}
-                  renderTextLayer
-                  renderAnnotationLayer
-                  loading={<PageSkeleton width={pageWidth} />}
-                  className="shadow-sm border bg-white"
-                />
+              {numPages !== null && pageNumber > numPages ? message(missingPageMessage ?? "このページはありません。") : drawnWidth > 0 && (
+                <div className="relative" style={{ zoom: pageWidth === drawnWidth ? undefined : pageWidth / drawnWidth }}>
+                  <Page
+                    pageNumber={pageNumber}
+                    width={drawnWidth}
+                    inputRef={pageRef}
+                    onLoadSuccess={(page) => { loadedPage.current = page; }}
+                    onGetTextSuccess={(content) => { textContent.current = content; }}
+                    onRenderSuccess={() => setCovering(false)}
+                    onRenderError={() => setCovering(false)}
+                    onRenderTextLayerSuccess={onTextLayerRendered}
+                    renderTextLayer
+                    renderAnnotationLayer
+                    loading={<PageSkeleton width={drawnWidth} />}
+                    className="shadow-sm border bg-white"
+                  />
+                  {/* Sits over the canvas, inside the page's 1px border. */}
+                  <canvas
+                    ref={snapshotRef}
+                    hidden={!covering}
+                    className="absolute left-px top-px w-[calc(100%-2px)] h-[calc(100%-2px)] pointer-events-none"
+                  />
+                </div>
               )}
             </Document>
           </div>
