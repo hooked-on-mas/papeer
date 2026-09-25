@@ -29,10 +29,13 @@ class ReasoningEffortTests(unittest.TestCase):
     def test_api_sends_selected_effort_and_omits_default(self):
         for effort in REASONING_EFFORTS:
             with self.subTest(effort=effort):
-                response = StringIO(json.dumps({"choices": [{"message": {"content": "訳文"}}]}))
+                response = StringIO(json.dumps({"choices": [{"message": {"content": "訳文"}}],
+                                                "usage": {"prompt_tokens": 9, "completion_tokens": 2}}))
                 with patch("paperdesk.core.providers.urlopen", return_value=response) as request:
                     provider = Provider(Settings(provider="api", reasoning_effort=effort), threading.Event())
                     self.assertEqual(provider.generate("Translate", "text"), "訳文")
+                usage = provider.usage_report()
+                self.assertEqual((usage["input_tokens"], usage["output_tokens"]), (9, 2))
                 payload = json.loads(request.call_args.args[0].data)
                 if effort:
                     self.assertEqual(payload["reasoning_effort"], effort)

@@ -1,6 +1,7 @@
-import { Loader2, Square, Undo2 } from "lucide-react";
+import { Gauge, Loader2, Square, Undo2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import { PROVIDER_LABELS, useHealth, useSettings } from "@/api/hooks";
+import { PROVIDER_LABELS, useHealth, useSettings, useUsageLimits } from "@/api/hooks";
+import { formatTokens, limitsDetails, limitsSummary, useLastUsage, usageDetails } from "@/lib/usage";
 import { isRunning, useStore } from "@/store";
 import { cancelVisibleJobs } from "@/features/jobs/jobEvents";
 import { undoMove } from "./actions";
@@ -12,6 +13,8 @@ export function StatusBar() {
   const moveHistory = useStore((s) => s.moveHistory);
   const { data: settings } = useSettings();
   const { data: health } = useHealth();
+  const { data: limits } = useUsageLimits(settings?.provider);
+  const lastUsage = useLastUsage((s) => s.usage);
 
   const running = activeJobs.filter(isRunning);
   // The paper on screen first, then library-wide jobs, as the old status line did.
@@ -19,6 +22,13 @@ export function StatusBar() {
   const message = job ? (job.message || "処理中...")
     : running.length ? `バックグラウンドで ${running.length} 件のタスクが実行中です...` : statusMessage;
   const percent = job?.total ? ((job.done ?? 0) / job.total) * 100 : null;
+
+  // Plan usage of the AI connection now selected; the last job's tokens when the service reports no plan.
+  const shownLimits = limits && limits.provider === settings?.provider && limits.windows.length ? limits : null;
+  const usageTitle = [
+    shownLimits ? "利用枠\n" + limitsDetails(shownLimits) : "",
+    lastUsage ? "直近のAI処理\n" + usageDetails(lastUsage) : "",
+  ].filter(Boolean).join("\n\n");
 
   return (
     <footer className="h-[32px] border-t flex items-center px-3 gap-3 text-[12px] text-muted-foreground shrink-0 bg-background">
@@ -44,6 +54,16 @@ export function StatusBar() {
         >
           <Undo2 className="w-3 h-3" /> 移動を戻す
         </button>
+      )}
+      {usageTitle && (
+        <span
+          className={`shrink-0 flex items-center gap-1 tabular-nums ${shownLimits?.windows.some((w) => w.used_percent >= 80) ? "text-destructive" : ""}`}
+          title={usageTitle}
+        >
+          <Gauge className="w-3.5 h-3.5" />
+          {shownLimits ? limitsSummary(shownLimits)
+            : lastUsage && `直近 入力${formatTokens(lastUsage.input_tokens)} 出力${formatTokens(lastUsage.output_tokens)}`}
+        </span>
       )}
       <span className="shrink-0 hidden md:inline" title="AI接続">
         {settings ? (PROVIDER_LABELS[settings.provider] ?? settings.provider) : ""}

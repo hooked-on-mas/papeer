@@ -50,6 +50,8 @@ class Library:
                     name TEXT PRIMARY KEY
                 );
             """)
+            if "usage" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
+                db.execute("ALTER TABLE messages ADD COLUMN usage TEXT")
             columns = {row[1] for row in db.execute("PRAGMA table_info(papers)")}
             for name in ("first_author", "publication_year"):
                 if name not in columns:
@@ -252,14 +254,18 @@ class Library:
             document = refreshed
         return document
 
-    def messages(self, paper_id: str) -> list[dict]:
+    def messages(self, paper_id: str, with_usage: bool = False) -> list[dict]:
         with self.connection() as db:
-            return [dict(x) for x in db.execute("SELECT role,content FROM messages WHERE paper_id=? ORDER BY id", (paper_id,))]
+            if not with_usage:
+                return [dict(x) for x in db.execute("SELECT role,content FROM messages WHERE paper_id=? ORDER BY id", (paper_id,))]
+            rows = db.execute("SELECT role,content,usage FROM messages WHERE paper_id=? ORDER BY id", (paper_id,))
+            return [dict(x, usage=json.loads(x["usage"]) if x["usage"] else None) for x in rows]
 
-    def add_exchange(self, paper_id: str, question: str, answer: str) -> None:
+    def add_exchange(self, paper_id: str, question: str, answer: str, usage: dict | None = None) -> None:
         with self.connection() as db:
-            db.executemany("INSERT INTO messages(paper_id,role,content) VALUES(?,?,?)",
-                           [(paper_id, "user", question), (paper_id, "assistant", answer)])
+            db.executemany("INSERT INTO messages(paper_id,role,content,usage) VALUES(?,?,?,?)",
+                           [(paper_id, "user", question, None),
+                            (paper_id, "assistant", answer, json.dumps(usage) if usage else None)])
 
     def search_pages(self, question: str, paper_id: str | None = None, limit: int = 10) -> list[dict]:
         import re

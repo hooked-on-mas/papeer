@@ -104,6 +104,11 @@ class PaperService:
         self.cancel, self.progress = cancel, progress
         self.page_ready = page_ready
 
+    def usage(self) -> dict | None:
+        """Tokens this job has used so far, when the provider can tell."""
+        report = getattr(self.provider, "usage_report", None)
+        return report() if report else None
+
     def translate(self, paper_id: str, pages: set[int] | None = None) -> dict:
         folder = self.library.folder(paper_id)
         document = self.library.document(paper_id)
@@ -297,6 +302,7 @@ class PaperService:
             report["skipped_pages"] = sorted(preview["skipped_pages"])
             report["page_errors"] = preview["page_errors"]
             report["model"] = settings.model
+            report["usage"] = self.usage()
             save_json(folder / "translation-report.json", report)
             preview["complete"] = True
             save_json(preview_path, preview)
@@ -378,6 +384,11 @@ class PaperService:
             "\n\n".join(notes))
         article = link_citations(article, {paper_id: document["page_count"]})
         (folder / "article.md").write_text(article, "utf-8")
+        usage_path = folder / "article-usage.json"
+        if usage := self.usage():
+            save_json(usage_path, usage)
+        else:
+            usage_path.unlink(missing_ok=True)
         return article
 
     def ask(self, paper_id: str, question: str, entire_library: bool = False) -> str:
@@ -409,7 +420,7 @@ class PaperService:
             json.dumps({"question": question, "previous_dialogue": history,
                         "retrieval_scope": selection_note, "evidence": context}, ensure_ascii=False))
         answer = link_citations(answer, allowed) + "\n\n---\n*" + selection_note + "*"
-        self.library.add_exchange(paper_id, question, answer)
+        self.library.add_exchange(paper_id, question, answer, self.usage())
         return answer
 
     def export_bilingual(self, paper_id: str, destination: Path) -> None:

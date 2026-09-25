@@ -23,6 +23,7 @@ from paperdesk.core.providers import (
     Provider,
     claude_command,
     codex_command,
+    current_limits,
     gemini_command,
     query_available_efforts,
     query_available_models,
@@ -376,6 +377,15 @@ def provider_check(body: ProviderActionRequest | None = None, dependencies: None
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
+@app.get("/api/usage/limits")
+def usage_limits(dependencies: None = Depends(verify_token)) -> dict[str, Any] | None:
+    """Plan usage of the connected AI. Claude Code reports it with each answer; Codex is asked here."""
+    try:
+        return current_limits(get_settings())
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+
 # --- Papers & Library ---
 
 
@@ -723,7 +733,7 @@ def get_paper_media(paper_id: str, name: str, dependencies: None = Depends(verif
 
 
 @app.get("/api/papers/{paper_id}/article")
-def get_paper_article(paper_id: str, dependencies: None = Depends(verify_token)) -> dict[str, str]:
+def get_paper_article(paper_id: str, dependencies: None = Depends(verify_token)) -> dict[str, Any]:
     lib = get_library()
     folder = paper_folder(lib, paper_id)
 
@@ -731,7 +741,9 @@ def get_paper_article(paper_id: str, dependencies: None = Depends(verify_token))
     if not article_path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="サマリー記事がまだ生成されていません。")
 
-    return {"content": article_path.read_text("utf-8")}
+    usage_path = folder / "article-usage.json"
+    usage = json.loads(usage_path.read_text("utf-8")) if usage_path.is_file() else None
+    return {"content": article_path.read_text("utf-8"), "usage": usage}
 
 
 @app.get("/api/papers/{paper_id}/translation-text/{page}")
@@ -788,12 +800,12 @@ def generate_article(paper_id: str, dependencies: None = Depends(verify_token)) 
     s = replace(get_settings())
     api_key = _runtime_api_key
 
-    def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> str:
+    def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict:
         provider = Provider(replace(s, api_key=api_key or s.api_key), cancel)
         service = PaperService(lib, provider, cancel, progress=progress)
         result = service.article(paper_id)
         job_manager.broadcast({"type": "library.changed"})
-        return result
+        return {"content": result, "usage": service.usage()}
 
     try:
         job = job_manager.submit_job("article", action, paper_id=paper_id)
@@ -803,10 +815,10 @@ def generate_article(paper_id: str, dependencies: None = Depends(verify_token)) 
 
 
 @app.get("/api/papers/{paper_id}/messages")
-def get_paper_messages(paper_id: str, dependencies: None = Depends(verify_token)) -> list[dict[str, str]]:
+def get_paper_messages(paper_id: str, dependencies: None = Depends(verify_token)) -> list[dict[str, Any]]:
     lib = get_library()
     paper_folder(lib, paper_id)
-    return lib.messages(paper_id)
+    return lib.messages(paper_id, with_usage=True)
 
 
 @app.post("/api/papers/{paper_id}/ask")
@@ -817,10 +829,11 @@ def ask_paper(paper_id: str, body: AskRequest, dependencies: None = Depends(veri
     s = replace(get_settings())
     api_key = _runtime_api_key
 
-    def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> str:
+    def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict:
         provider = Provider(replace(s, api_key=api_key or s.api_key), cancel)
         service = PaperService(lib, provider, cancel, progress=progress)
-        return service.ask(paper_id, body.question, entire_library=body.search_all)
+        answer = service.ask(paper_id, body.question, entire_library=body.search_all)
+        return {"answer": answer, "usage": service.usage()}
 
     try:
         job = job_manager.submit_job("ask", action, paper_id=paper_id)

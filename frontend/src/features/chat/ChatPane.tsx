@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Loader2, MessageSquare, Send, Square } from "lucide-react";
 import { isRunning, paperBusy, useStore } from "@/store";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
+import { UsageLine } from "@/components/UsageLine";
 import { apiRequest } from "@/api/client";
 import { useMessages } from "@/api/hooks";
 import { showError, startJob } from "@/features/jobs/jobEvents";
@@ -137,6 +138,7 @@ export function ChatPane() {
             <div key={idx}>
               <div className="text-[12px] font-medium text-muted-foreground mb-1">回答</div>
               <MarkdownRenderer content={msg.content} paperId={activePaperId} className="max-w-none" />
+              <UsageLine usage={msg.usage} className="mt-2" />
             </div>
           ))}
 

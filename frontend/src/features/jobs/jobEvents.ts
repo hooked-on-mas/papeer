@@ -5,6 +5,7 @@ import { apiRequest, authToken, backendPort } from "@/api/client";
 import { isRunning, useStore, type Job } from "@/store";
 import { notifyIfAway, shell } from "@/shell";
 import { removePendingImports, setPendingPages } from "@/app/pendingImports";
+import { useLastUsage, usageSummary, type Usage } from "@/lib/usage";
 
 export type JobFinished = {
   job_id: string;
@@ -96,7 +97,11 @@ function translateMessage(report: any): string {
 
 function handleSuccess(event: JobFinished, visible: boolean): void {
   const store = useStore.getState();
-  const status = (message: string) => { if (visible) store.setStatus(message); };
+  const usage: Usage | null = event.result?.usage ?? null;
+  if (usage) useLastUsage.setState({ usage, kind: event.kind });
+  const status = (message: string) => {
+    if (visible) store.setStatus(usage ? `${message}（${usageSummary(usage)}）` : message);
+  };
   switch (event.kind) {
     case "translate": {
       const message = translateMessage(event.result ?? {});
@@ -153,6 +158,8 @@ function handleFinished(event: JobFinished, queryClient: QueryClient): void {
 
   queryClient.invalidateQueries({ queryKey: ["papers"] });
   queryClient.invalidateQueries({ queryKey: ["collections"] });
+  // A failed job may have hit the plan limit, so refresh after those too.
+  if (["translate", "article", "ask"].includes(event.kind)) queryClient.invalidateQueries({ queryKey: ["usage-limits"] });
   if (event.paper_id) {
     queryClient.invalidateQueries({ queryKey: ["article", event.paper_id] });
     queryClient.invalidateQueries({ queryKey: ["messages", event.paper_id] });

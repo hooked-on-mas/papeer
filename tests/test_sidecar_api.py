@@ -262,7 +262,7 @@ def test_translate_ask_export_workflow(test_env):
                 break
             time.sleep(0.05)
         assert job.result is not None
-        assert "paperdesk://" in job.result  # Citation link!
+        assert "paperdesk://" in job.result["answer"]  # Citation link!
 
     # Messages
     msgs = client.get(f"/api/papers/{paper_id}/messages").json()

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, apiRequest } from "./client";
+import type { Usage, UsageLimits } from "@/lib/usage";
 
 export type PaperData = {
   id: string;
@@ -70,7 +71,7 @@ export type SettingsData = {
   api_key?: string | null;
 };
 
-export type Message = { role: "user" | "assistant"; content: string };
+export type Message = { role: "user" | "assistant"; content: string; usage?: Usage | null };
 
 export function usePaper(id: string | null) {
   return useQuery({
@@ -125,7 +126,7 @@ export function useArticle(id: string | null) {
         if (res.response?.status === 404 || (res.error as any).status === 404) return null;
         throw new Error((res.error as any).detail || JSON.stringify(res.error));
       }
-      return res.data;
+      return res.data as unknown as { content: string; usage?: Usage | null };
     },
     enabled: !!id,
     retry: false,
@@ -147,6 +148,17 @@ export function useSettings() {
   return useQuery({
     queryKey: ["settings"],
     queryFn: () => apiRequest<SettingsData>("GET", "/api/settings"),
+  });
+}
+
+/** Plan usage of the connected AI; refreshed after each AI job. null when the service reports none. */
+export function useUsageLimits(provider: string | undefined) {
+  return useQuery({
+    queryKey: ["usage-limits", provider],
+    queryFn: () => apiRequest<UsageLimits | null>("GET", "/api/usage/limits"),
+    enabled: !!provider,
+    staleTime: 5 * 60_000,
+    retry: false,
   });
 }
 

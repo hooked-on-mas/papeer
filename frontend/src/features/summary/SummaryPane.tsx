@@ -3,6 +3,7 @@ import { isRunning, paperBusy, useStore } from "../../store";
 import { useArticle } from "../../api/hooks";
 import { apiRequest } from "../../api/client";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
+import { UsageLine } from "@/components/UsageLine";
 import { exportMarkdown, generateArticle } from "@/app/actions";
 
 export function SummaryPane() {
@@ -21,7 +22,7 @@ export function SummaryPane() {
 
   const job = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && j.kind === "article");
   const busy = paperBusy(activeJobs, activePaperId);
-  const summaryText = (article as any)?.content || "";
+  const summaryText = article?.content || "";
 
   return (
     <div className="flex flex-col h-full w-full bg-background overflow-hidden">
@@ -69,6 +70,7 @@ export function SummaryPane() {
 
           {!isLoading && !error && summaryText ? (
             <article aria-label="論文のサマリー">
+              <UsageLine usage={article?.usage} className="justify-end mb-4" />
               <MarkdownRenderer className="summary-prose" content={summaryText} paperId={activePaperId} />
             </article>
           ) : (

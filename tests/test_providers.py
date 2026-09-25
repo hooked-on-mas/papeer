@@ -9,6 +9,8 @@ from paperdesk.core.config import Settings
 from paperdesk.core.providers import (
     Provider,
     claude_command,
+    codex_limit_windows,
+    current_limits,
     gemini_command,
     parse_json_answer,
 )
@@ -151,6 +153,63 @@ class ProvidersTests(unittest.TestCase):
         self.assertEqual(0, len(efforts_gemini))
         efforts_codex = query_available_efforts("codex")
         self.assertIn("xhigh", [e[0] for e in efforts_codex])
+
+    def run_cli(self, provider_name, stdout_lines, command_patch):
+        def mock_popen(command, cwd=None, stdin=None, stdout=None, stderr=None, **kwargs):
+            if "--output-last-message" in command:
+                Path(command[command.index("--output-last-message") + 1]).write_text("訳文", "utf-8")
+            stdout.write("\n".join(json.dumps(line) for line in stdout_lines).encode("utf-8"))
+            stdout.flush()
+            return Mock(poll=Mock(return_value=0), returncode=0)
+
+        with patch(command_patch, return_value=["cli"]), \
+             patch("paperdesk.core.providers.subprocess.Popen", side_effect=mock_popen):
+            provider = Provider(Settings(provider=provider_name, model="m"), threading.Event())
+            answers = [provider.generate("Translate", "text"), provider.generate("Translate", "text")]
+        return answers, provider.usage_report()
+
+    def test_claude_usage_and_plan_limits(self):
+        lines = [
+            {"type": "system", "subtype": "init"},
+            {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "unifiedWindows": {
+                "five_hour": {"utilization": 0.25, "resetsAt": 1790350200},
+                "seven_day": {"utilization": 0.1, "resetsAt": 1790697600}}}},
+            {"type": "result", "subtype": "success", "is_error": False, "result": "訳文", "total_cost_usd": 0.5,
+             "usage": {"input_tokens": 10, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 1000,
+                       "output_tokens": 50, "output_tokens_details": {"thinking_tokens": 20}}},
+        ]
+        answers, usage = self.run_cli("claude", lines, "paperdesk.core.providers.claude_command")
+        self.assertEqual(answers, ["訳文", "訳文"])
+        self.assertEqual((usage["calls"], usage["input_tokens"], usage["cached_tokens"]), (2, 2220, 2000))
+        self.assertEqual((usage["output_tokens"], usage["reasoning_tokens"], usage["cost_usd"]), (100, 40, 1.0))
+        limits = current_limits(Settings(provider="claude"))
+        self.assertEqual([(w["label"], w["used_percent"]) for w in limits["windows"]], [("5時間枠", 25.0), ("7日枠", 10.0)])
+
+    def test_claude_error_result_is_reported(self):
+        lines = [{"type": "result", "subtype": "success", "is_error": True, "result": "You've hit your limit"}]
+        with self.assertRaisesRegex(RuntimeError, "hit your limit"):
+            self.run_cli("claude", lines, "paperdesk.core.providers.claude_command")
+
+    def test_codex_usage_from_json_events(self):
+        lines = [{"type": "thread.started"},
+                 {"type": "turn.completed", "usage": {"input_tokens": 300, "cached_input_tokens": 200,
+                                                      "output_tokens": 7, "reasoning_output_tokens": 3}}]
+        answers, usage = self.run_cli("codex", lines, "paperdesk.core.providers.codex_command")
+        self.assertEqual(answers, ["訳文", "訳文"])
+        self.assertEqual((usage["input_tokens"], usage["cached_tokens"], usage["output_tokens"]), (600, 400, 14))
+
+    def test_agy_usage_from_json_output(self):
+        lines = [{"status": "SUCCESS", "response": "訳文\n",
+                  "usage": {"input_tokens": 12, "output_tokens": 3, "thinking_tokens": 1, "cache_read_tokens": 4}}]
+        answers, usage = self.run_cli("gemini", lines, "paperdesk.core.providers.gemini_command")
+        self.assertEqual(answers, ["訳文", "訳文"])
+        self.assertEqual((usage["input_tokens"], usage["cached_tokens"], usage["reasoning_tokens"]), (24, 8, 2))
+        self.assertIsNone(usage["cost_usd"])
+
+    def test_codex_limit_windows(self):
+        windows = codex_limit_windows({"primary": {"usedPercent": 12, "windowDurationMins": 300, "resetsAt": 1},
+                                       "secondary": {"usedPercent": 3, "windowDurationMins": 10080}})
+        self.assertEqual([(w["label"], w["used_percent"]) for w in windows], [("5時間枠", 12.0), ("7日枠", 3.0)])
 
 
 if __name__ == "__main__":
