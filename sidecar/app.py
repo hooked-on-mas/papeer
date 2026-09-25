@@ -27,7 +27,7 @@ from paperdesk.core.providers import (
     query_available_efforts,
     query_available_models,
 )
-from paperdesk.core.service import PaperService
+from paperdesk.core.service import PaperService, page_translation_text
 from paperdesk.core.storage import Library, normalize_collection_name
 from paperdesk.layout.page_selection import parse_page_selection
 from paperdesk.pdf.pdf_viewer import pdf_page_count
@@ -729,6 +729,15 @@ def get_paper_article(paper_id: str, dependencies: None = Depends(verify_token))
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="サマリー記事がまだ生成されていません。")
 
     return {"content": article_path.read_text("utf-8")}
+
+
+@app.get("/api/papers/{paper_id}/translation-text/{page}")
+def get_translation_text(paper_id: str, page: int, dependencies: None = Depends(verify_token)) -> dict[str, list[str]]:
+    lib = get_library()
+    folder = paper_folder(lib, paper_id)
+    if not (folder / "translation-cache.json").is_file() and not (folder / "translation.md").is_file():
+        return {"blocks": []}
+    return {"blocks": page_translation_text(folder, lib.document(paper_id), page)}
 
 
 # --- Translation, Article & Chat Jobs ---

@@ -361,6 +361,7 @@ def test_paper_metadata_reading_and_export_guards(test_env):
     assert reading["translated_pages"]["1"] is None  # nothing translated yet
     assert reading["empty_pages"] == []
     assert reading["in_progress"] is False
+    assert client.get(f"/api/papers/{paper_id}/translation-text/1").json() == {"blocks": []}
 
     # Untranslated papers cannot be exported, and library files are never overwritten.
     blocked = client.post(f"/api/papers/{paper_id}/export", json={"kind": "translated", "destination": str(tmp_dir / "x.pdf")})
@@ -375,6 +376,11 @@ def test_paper_metadata_reading_and_export_guards(test_env):
     assert reading["translated_pages"]["1"]["file"] == "translated.pdf"
     assert reading["translated_pages"]["1"]["index"] == 0
     assert reading["page_versions"]["1"]["sha"]
+    # Text for copying from the translated page; inline math tokens are restored as text.
+    blocks = client.get(f"/api/papers/{paper_id}/translation-text/1").json()["blocks"]
+    assert any("適応制御の検証結果" in block for block in blocks)
+    assert not any(MATH_TOKEN.search(block) for block in blocks)
+    assert client.get(f"/api/papers/{paper_id}/translation-text/99").json() == {"blocks": []}
 
     # Paired PDFs run as paper jobs; interleaved.pdf is rebuilt for external viewers.
     started = client.post(f"/api/papers/{paper_id}/export", json={"kind": "bilingual", "destination": str(tmp_dir / "b.pdf")})

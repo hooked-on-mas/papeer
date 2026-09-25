@@ -62,6 +62,40 @@ def link_citations(answer: str, allowed: dict[str, int]) -> str:
     return re.sub(r"\[([0-9a-f]{32}:[^\[\]]+)\]", replace, answer)
 
 
+def page_translation_text(folder: Path, document: dict, page: int) -> list[str]:
+    """Translated blocks of one page with inline math as text.
+
+    The translated PDF draws inline math as images, so text copied from it lacks the formulas.
+    """
+    units = translation_units(document)
+    cache_path = folder / "translation-cache.json"
+    cache = json.loads(cache_path.read_text("utf-8")) if cache_path.exists() else {}
+    # Cached pages count only while they match the current extraction: after a re-extraction
+    # the math tokens of renumbered blocks would resolve to other formulas.
+    done = {}
+    for number, entry in cache.get("completed_pages", {}).items():
+        page_units = [u for u in units if int(number) in unit_pages(u)]
+        if page_units and entry.get("source") == page_fingerprint(page_units):
+            done.update(entry.get("translations", {}))
+    started = {u["block"] for u in units if u["id"] in done}
+    block_text = {}
+    for unit in units:
+        if unit["block"] in started:
+            block_text.setdefault(unit["block"], []).append(done.get(unit["id"], unit["text"]))
+    rendered_document, rendered_text = materialize_flows(
+        document, {key: "\n".join(parts) for key, parts in block_text.items()})
+    blocks = [restore_formula_text(rendered_text[b["id"]], b) for b in rendered_document["blocks"]
+              if b["page"] == page and b["id"] in rendered_text]
+    if blocks:
+        return blocks
+    # Otherwise the last completed translation, whose sections read "## p.<page> / <block id>".
+    markdown_path = folder / "translation.md"
+    if not markdown_path.is_file():
+        return []
+    parts = re.split(r"^## p\.(\d+) / \S+[ \t]*$", markdown_path.read_text("utf-8"), flags=re.M)
+    return [body.strip() for number, body in zip(parts[1::2], parts[2::2]) if int(number) == page and body.strip()]
+
+
 class PaperService:
     def __init__(self, library: Library, provider: Provider, cancel: threading.Event,
                  progress: Callable[[str], None] = lambda _: None,

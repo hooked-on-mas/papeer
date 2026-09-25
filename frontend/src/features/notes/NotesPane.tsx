@@ -57,6 +57,8 @@ function PaperNotes({ paperId }: { paperId: string }) {
   const [preview, setPreview] = useState(false);
   const savedNote = useRef<string | null>(null);
   const latestNote = useRef<string | null>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+  const noteInsert = useStore((state) => state.noteInsert);
 
   useEffect(() => {
     if (!paper || formDirty) return;
@@ -73,6 +75,25 @@ function PaperNotes({ paperId }: { paperId: string }) {
       latestNote.current = paper.note ?? "";
     }
   }, [paper, note]);
+
+  // A quote from the reader's context menu goes at the end, once the memo has loaded.
+  useEffect(() => {
+    // Read from the store so a StrictMode rerun cannot add the quote twice.
+    const insert = useStore.getState().noteInsert;
+    if (!insert || note === null) return;
+    useStore.getState().setNoteInsert(null);
+    if (insert.paperId !== paperId) return;
+    const current = note.trimEnd();
+    setNote(`${current ? current + "\n\n" : ""}${insert.text}\n\n`);
+    setPreview(false);
+    requestAnimationFrame(() => {
+      const el = noteRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+      el.scrollTop = el.scrollHeight;
+    });
+  }, [noteInsert, note, paperId]);
 
   const saveNote = useRef(async () => {
     const text = latestNote.current;
@@ -219,6 +240,7 @@ function PaperNotes({ paperId }: { paperId: string }) {
             </div>
           ) : (
             <textarea
+              ref={noteRef}
               value={note ?? ""}
               disabled={note === null}
               onChange={(e) => setNote(e.target.value)}

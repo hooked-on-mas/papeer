@@ -17,6 +17,14 @@ export interface MoveRecord {
   to: string;
 }
 
+/** Text handed from the reader to the 質問 or メモ tab, used once by that paper's pane. */
+export interface PaperHandoff {
+  paperId: string;
+  text: string;
+  /** Chat only: ask right away instead of leaving the text in the input. */
+  send?: boolean;
+}
+
 /** Reader zoom relative to the fitted page width, as in the old reader. */
 export const ZOOM_PRESETS = [1, 1.25, 1.5, 2, 2.5, 3, 4];
 
@@ -44,6 +52,8 @@ interface UiState {
   /** Library moves made during this session, newest last. */
   moveHistory: MoveRecord[];
   uiStateLoaded: boolean;
+  chatDraft: PaperHandoff | null;
+  noteInsert: PaperHandoff | null;
 
   setActivePaperId: (id: string | null, page?: number) => void;
   setActiveTab: (tab: string) => void;
@@ -61,6 +71,8 @@ interface UiState {
   setSortOrder: (order: number) => void;
   setExpandedCollections: (paths: string[] | null) => void;
   setMoveHistory: (history: MoveRecord[]) => void;
+  setChatDraft: (draft: PaperHandoff | null) => void;
+  setNoteInsert: (insert: PaperHandoff | null) => void;
 
   addJob: (job: Job) => void;
   removeJob: (job_id: string) => void;
@@ -88,6 +100,8 @@ export const useStore = create<UiState>()(
       expandedCollections: null,
       moveHistory: [],
       uiStateLoaded: false,
+      chatDraft: null,
+      noteInsert: null,
 
       setActivePaperId: (id, page) => set((state) => {
         const target = page ?? (id ? (state.paperPages[id] || 1) : 1);
@@ -122,6 +136,8 @@ export const useStore = create<UiState>()(
       setSortOrder: (sortOrder) => set({ sortOrder }),
       setExpandedCollections: (expandedCollections) => set({ expandedCollections }),
       setMoveHistory: (moveHistory) => set({ moveHistory }),
+      setChatDraft: (chatDraft) => set({ chatDraft }),
+      setNoteInsert: (noteInsert) => set({ noteInsert }),
 
       addJob: (job) => set((state) => ({
         activeJobs: state.activeJobs.some((j) => j.job_id === job.job_id)

@@ -183,6 +183,7 @@ export function Reader() {
                 onScroll={(e) => syncScroll(e.currentTarget, leftScrollRef.current)}
                 scrollRef={rightScrollRef}
                 placeholder={rightPlaceholder}
+                translated
                 missingPageMessage="対応する原文ページがありません。再翻訳すると原文と同じページ数になります。"
               />
             </div>

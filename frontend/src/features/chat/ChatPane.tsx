@@ -25,7 +25,11 @@ export function ChatPane() {
   const askJob = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && j.kind === "ask");
   const busy = paperBusy(activeJobs, activePaperId);
 
+  // Only on a real paper switch: a StrictMode rerun on mount would wipe a draft from the reader.
+  const shownPaperId = useRef(activePaperId);
   useEffect(() => {
+    if (shownPaperId.current === activePaperId) return;
+    shownPaperId.current = activePaperId;
     setPending(null);
     setInput("");
   }, [activePaperId]);
@@ -63,7 +67,27 @@ export function ChatPane() {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  // Text from the reader's context menu: ask at once, or leave it in the input to finish the question.
+  const chatDraft = useStore((state) => state.chatDraft);
+  useEffect(() => {
+    // Take it from the store, not the render: StrictMode reruns this effect and must not ask twice.
+    const draft = useStore.getState().chatDraft;
+    if (!draft) return;
+    useStore.getState().setChatDraft(null);
+    if (draft.paperId !== activePaperId) return;
+    if (draft.send && !busy && !askJob && pending === null) {
+      send(draft.text);
+      return;
+    }
+    setInput(draft.text);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      el?.focus();
+      el?.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, [chatDraft, activePaperId]);
+
+  const handleKeyDown =(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send(input);
