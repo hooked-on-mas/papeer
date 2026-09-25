@@ -3,11 +3,6 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, MouseButton, TrayIconEvent};
 use tauri::Emitter;
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 #[derive(Clone)]
 struct BackendConfig {
     port: u16,
@@ -28,7 +23,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![greet, get_backend_config])
+        .invoke_handler(tauri::generate_handler![get_backend_config])
         .setup(|app| {
             let show_i = MenuItem::with_id(app, "show", "開く", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
