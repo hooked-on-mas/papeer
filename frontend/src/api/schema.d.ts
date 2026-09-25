@@ -537,6 +537,11 @@ export interface components {
              * @default agy
              */
             gemini_path: string;
+            /**
+             * Translation Concurrency
+             * @default 0
+             */
+            translation_concurrency: number;
             /** Api Key */
             api_key?: string | null;
         };

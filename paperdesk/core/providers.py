@@ -17,6 +17,20 @@ from urllib.request import Request, urlopen
 from paperdesk.core.config import Settings
 
 
+# 429 (rate limit) and 503 (overloaded) are temporary; other errors are reported at once.
+API_RETRY_STATUSES = {429, 503}
+API_RETRIES = 4
+
+
+def _retry_delay(error: HTTPError, attempt: int) -> float:
+    """Seconds to wait before retrying: the server's Retry-After, else 2, 4, 8, 16."""
+    try:
+        after = float(error.headers.get("Retry-After") or 0) if error.headers else 0.0
+    except ValueError:
+        after = 0.0
+    return min(60.0, after if after > 0 else 2.0 * 2 ** attempt)
+
+
 class Cancelled(Exception):
     pass
 
@@ -425,31 +439,22 @@ class Provider:
         if self.settings.reasoning_effort:
             payload["reasoning_effort"] = self.settings.reasoning_effort
         request = Request(endpoint, data=json.dumps(payload).encode(), headers=headers, method="POST")
-        try:
-            import concurrent.futures
-            import time
-            def fetch():
-                with urlopen(request, timeout=self.settings.timeout_seconds) as response:
-                    return response.read()
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-            future = executor.submit(fetch)
+        for attempt in range(API_RETRIES + 1):
             try:
-                while not future.done():
-                    if self.cancel.is_set():
-                        executor.shutdown(wait=False)
-                        raise Cancelled()
-                    time.sleep(0.5)
-                response_data = future.result()
-            finally:
-                executor.shutdown(wait=False)
-            result = json.loads(response_data)
-        except HTTPError as error:
-            effort_hint = (" このモデル・接続先が指定effortに対応するか確認し、非対応なら「既定値」に戻してください。"
-                           if error.code == 400 and self.settings.reasoning_effort else "")
-            raise RuntimeError(f"APIエラー HTTP {error.code}。URL・モデル名・認証・利用枠を確認してください。"
-                               + effort_hint) from error
-        except URLError as error:
-            raise RuntimeError("APIに接続できません。URLとネットワークを確認してください。") from error
+                result = json.loads(self._fetch(request))
+                break
+            except HTTPError as error:
+                if error.code in API_RETRY_STATUSES and attempt < API_RETRIES:
+                    # Parallel translation can briefly exceed a rate limit; wait it out.
+                    self.cancel.wait(_retry_delay(error, attempt))
+                    check_cancel(self.cancel)
+                    continue
+                effort_hint = (" このモデル・接続先が指定effortに対応するか確認し、非対応なら「既定値」に戻してください。"
+                               if error.code == 400 and self.settings.reasoning_effort else "")
+                raise RuntimeError(f"APIエラー HTTP {error.code}。URL・モデル名・認証・利用枠を確認してください。"
+                                   + effort_hint) from error
+            except URLError as error:
+                raise RuntimeError("APIに接続できません。URLとネットワークを確認してください。") from error
         check_cancel(self.cancel)
         choice = result["choices"][0]
         if choice.get("finish_reason") == "length":
@@ -458,3 +463,21 @@ class Provider:
         if not isinstance(content, str) or not content.strip():
             raise RuntimeError("APIからテキストの回答が返りませんでした。")
         return content.strip()
+
+    def _fetch(self, request: Request) -> bytes:
+        """POST on a helper thread so that cancelling does not wait for the response."""
+        import concurrent.futures
+
+        def fetch():
+            with urlopen(request, timeout=self.settings.timeout_seconds) as response:
+                return response.read()
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(fetch)
+        try:
+            while not future.done():
+                if self.cancel.is_set():
+                    raise Cancelled()
+                time.sleep(0.5)
+            return future.result()
+        finally:
+            executor.shutdown(wait=False)

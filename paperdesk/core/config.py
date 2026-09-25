@@ -4,8 +4,10 @@ from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 REASONING_EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
+MAX_TRANSLATION_CONCURRENCY = 8
 
 
 def data_directory() -> Path:
@@ -27,10 +29,26 @@ class Settings:
     gemini_path: str = ""
     timeout_seconds: int = 900
     reasoning_effort: str = ""
+    # Translation requests in flight at once; 0 lets translation_requests() decide.
+    translation_concurrency: int = 0
 
     def __post_init__(self):
         if self.reasoning_effort not in REASONING_EFFORTS:
             raise ValueError("effortは既定値・low・medium・high・xhighから選んでください。")
+        if (type(self.translation_concurrency) is not int
+                or not 0 <= self.translation_concurrency <= MAX_TRANSLATION_CONCURRENCY):
+            raise ValueError(f"翻訳の同時リクエスト数は0（自動）～{MAX_TRANSLATION_CONCURRENCY}で指定してください。")
+
+    def translation_requests(self) -> int:
+        """How many translation requests to send at once.
+
+        Automatic picks 1 for a model on this machine, whose single GPU would only
+        queue parallel requests, and 3 for remote services.
+        """
+        if self.translation_concurrency:
+            return self.translation_concurrency
+        local = self.provider == "api" and urlparse(self.base_url.strip()).hostname in {"127.0.0.1", "localhost", "::1"}
+        return 1 if local else 3
 
     @classmethod
     def load(cls, root: Path) -> "Settings":

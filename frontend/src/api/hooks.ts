@@ -65,6 +65,8 @@ export type SettingsData = {
   codex_path: string;
   claude_path: string;
   gemini_path: string;
+  /** 0 lets the sidecar decide: 1 for a local model, else 3. */
+  translation_concurrency: number;
   api_key?: string | null;
 };
 

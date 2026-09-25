@@ -23,7 +23,8 @@ FIXTURE = Path(__file__).parent / "fixtures/sample.pdf"
 
 class FakeProvider:
     def __init__(self, cancel=None):
-        self.settings = Settings()
+        # One request at a time, so tests can rely on the order of requests and pages.
+        self.settings = Settings(translation_concurrency=1)
         self.calls = 0
         self.cancel = cancel
         self.interrupt_after = None

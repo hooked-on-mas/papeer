@@ -1,7 +1,8 @@
 """Validated translations with bounded recovery for damaged formula markers."""
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 import json
 import hashlib
@@ -249,6 +250,18 @@ def _recover_unit(provider, unit, cancel, progress, state, save):
 
 
 def translate_batch(provider, units, cancel, progress, accept, state=None, save=lambda: None):
+    translate_batches(provider, [units], cancel, progress, accept, state, save)
+
+
+def translate_batches(provider, batches, cancel, progress, accept, state=None, save=lambda: None,
+                      concurrency=1, finished=lambda index: None):
+    """Translate `batches`, keeping up to `concurrency` first requests in flight.
+
+    Only each batch's first request runs on a worker thread. Retry records, recovery
+    requests and all callbacks stay on the calling thread, so the retry budget is
+    saved before every request just as in serial translation. `finished(index)` runs
+    once a batch is done; with concurrency, batches may finish out of order.
+    """
     state = state if state is not None else RetryState()
 
     def recover(unit):
@@ -266,22 +279,67 @@ def translate_batch(provider, units, cancel, progress, accept, state=None, save=
             state.reserve(unit, save)
             return
 
-    check_cancel(cancel)
-    previous = [unit for unit in units if state.attempts.get(unit["id"], 0)]
-    for unit in previous:
-        recover(unit)
-    fresh = [unit for unit in units if unit not in previous]
-    if not fresh:
+    def start(units):
+        """Recover blocks already sent in an earlier run; return the rest, recorded as sent."""
+        check_cancel(cancel)
+        previous = [unit for unit in units if state.attempts.get(unit["id"], 0)]
+        for unit in previous:
+            recover(unit)
+        fresh = [unit for unit in units if unit not in previous]
+        if fresh:
+            check_cancel(cancel)
+            for unit in fresh:
+                state.attempts[unit["id"]] = 1
+            save()
+        return fresh
+
+    def request(fresh):
+        return provider.generate(TRANSLATION_INSTRUCTION, json.dumps(fresh, ensure_ascii=False), TRANSLATION_SCHEMA)
+
+    def finish(fresh, answer):
+        accepted = _valid_items(answer, fresh)
+        if accepted:
+            accept(accepted)
+        for unit in fresh:
+            if unit["id"] not in accepted:
+                recover(unit)
+
+    if concurrency <= 1:
+        for index, units in enumerate(batches):
+            fresh = start(units)
+            if fresh:
+                finish(fresh, request(fresh))
+            finished(index)
         return
-    check_cancel(cancel)
-    for unit in fresh:
-        state.attempts[unit["id"]] = 1
-    save()
-    answer = provider.generate(TRANSLATION_INSTRUCTION, json.dumps(fresh, ensure_ascii=False), TRANSLATION_SCHEMA)
-    accepted = _valid_items(answer, fresh)
-    if accepted:
-        accept(accepted)
-    for unit in fresh:
-        if unit["id"] in accepted:
-            continue
-        recover(unit)
+
+    waiting = deque(enumerate(batches))
+    running = {}
+    pool = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="translate")
+    try:
+        while waiting or running:
+            while waiting and len(running) < concurrency:
+                index, units = waiting.popleft()
+                fresh = start(units)
+                if fresh:
+                    running[pool.submit(request, fresh)] = (index, fresh)
+                else:
+                    finished(index)
+            completed, _ = wait(running, return_when=FIRST_COMPLETED)
+            for future in completed:
+                index, fresh = running.pop(future)
+                finish(fresh, future.result())
+                finished(index)
+    except BaseException:
+        # Keep answers that were already on their way; blocks without a valid
+        # answer are recorded as sent and go to recovery when translation resumes.
+        if not cancel.is_set():
+            for future, (index, fresh) in running.items():
+                try:
+                    accepted = _valid_items(future.result(), fresh)
+                    if accepted:
+                        accept(accepted)
+                except Exception:
+                    continue
+        raise
+    finally:
+        pool.shutdown(wait=True)

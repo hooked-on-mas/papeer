@@ -18,6 +18,7 @@ class SettingsModel(BaseModel):
     codex_path: str = "codex"
     claude_path: str = "claude"
     gemini_path: str = "agy"
+    translation_concurrency: int = 0  # 0: automatic (1 for a local model, else 3)
     api_key: str | None = None
 
 

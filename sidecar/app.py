@@ -225,6 +225,7 @@ def get_settings_endpoint(dependencies: None = Depends(verify_token)) -> Setting
         codex_path=s.codex_path,
         claude_path=s.claude_path,
         gemini_path=s.gemini_path,
+        translation_concurrency=s.translation_concurrency,
         api_key=_runtime_api_key,
     )
 
@@ -245,6 +246,7 @@ def update_settings(body: SettingsModel, dependencies: None = Depends(verify_tok
             codex_path=body.codex_path,
             claude_path=body.claude_path,
             gemini_path=body.gemini_path,
+            translation_concurrency=body.translation_concurrency,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -256,6 +258,7 @@ def update_settings(body: SettingsModel, dependencies: None = Depends(verify_tok
     s.codex_path = body.codex_path
     s.claude_path = body.claude_path
     s.gemini_path = body.gemini_path
+    s.translation_concurrency = body.translation_concurrency
     s.save(get_data_dir())
     if body.api_key is not None:
         _runtime_api_key = body.api_key

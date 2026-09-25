@@ -402,3 +402,16 @@ def test_prompts_customize_and_reset(test_env):
 
     client.put("/api/prompts", json={"translation": ""})
     assert client.get("/api/prompts").json()["translation"] == defaults["translation"]
+
+
+def test_translation_concurrency_setting_round_trips(test_env):
+    client, _ = test_env
+    settings = client.get("/api/settings").json()
+    assert settings["translation_concurrency"] == 0
+
+    assert client.put("/api/settings", json={**settings, "translation_concurrency": 2}).status_code == 200
+    assert client.get("/api/settings").json()["translation_concurrency"] == 2
+
+    rejected = client.put("/api/settings", json={**settings, "translation_concurrency": 99})
+    assert rejected.status_code == 400
+    assert client.get("/api/settings").json()["translation_concurrency"] == 2

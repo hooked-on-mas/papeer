@@ -24,7 +24,7 @@ import pymupdf as fitz
 from paperdesk.core.providers import Provider, check_cancel
 from paperdesk.core.storage import Library
 from paperdesk.layout.math_layout import restore_formula_text
-from paperdesk.translation.translation import RetryState, translate_batch, translation_fingerprint
+from paperdesk.translation.translation import RetryState, translate_batches, translation_fingerprint
 from paperdesk.translation.translation import translation_version, page_fingerprint
 from paperdesk.translation.translation_preview import preview_page, translated_page, translated_page_numbers
 from paperdesk.translation.translation_context import contextual_units
@@ -233,12 +233,25 @@ class PaperService:
             save_json(preview_path, preview)
             self.page_ready(paper_id, 0)
             publish_ready()
-            for index, chunk in enumerate(chunks):
-                check_cancel(self.cancel)
+            concurrency = min(settings.translation_requests(), max(1, len(chunks)))
+            finished_chunks = 0
+
+            def report():
                 completed_units = sum(u["id"] in done for u in selected_units)
-                self.progress(f"翻訳 {index + 1}/{len(chunks)} — 指定ページの完了 {completed_units}/{len(selected_units)} ブロック")
-                translate_batch(self.provider, chunk, self.cancel, self.progress, accept, retry_state, save)
+                parallel = f"（同時{concurrency}件）" if concurrency > 1 else ""
+                self.progress(f"翻訳 {finished_chunks}/{len(chunks)}{parallel} — "
+                              f"指定ページの完了 {completed_units}/{len(selected_units)} ブロック")
+
+            def finished(_index):
+                nonlocal finished_chunks
+                finished_chunks += 1
                 publish_ready()
+                report()
+
+            check_cancel(self.cancel)
+            report()
+            translate_batches(self.provider, chunks, self.cancel, self.progress, accept, retry_state, save,
+                              concurrency=concurrency, finished=finished)
             check_cancel(self.cancel)
             # A shared sentence must not be published with half its destinations
             # missing. Retain cached translations for retry, but restore all

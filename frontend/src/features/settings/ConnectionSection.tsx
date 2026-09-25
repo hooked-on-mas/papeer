@@ -19,6 +19,12 @@ const PROVIDERS: { id: string; description: string }[] = [
   { id: "gemini", description: "Antigravity CLI (agy) 経由で Gemini を使います" },
   { id: "api", description: "API キー、または Ollama などのローカルモデル" },
 ];
+// 0 is automatic: one request at a time for a local model, three otherwise.
+const CONCURRENCY_OPTIONS: { value: number; label: string }[] = [
+  { value: 0, label: "自動（ローカルモデルは1、それ以外は3）" },
+  { value: 1, label: "1（1件ずつ）" },
+  ...[2, 3, 4, 6, 8].map((value) => ({ value, label: String(value) })),
+];
 const CLI_LABELS: Record<CliProvider, { label: string; placeholder: string }> = {
   codex: { label: "Codex のパス", placeholder: "空欄なら自動検出（codex.cmd など）" },
   claude: { label: "Claude Code のパス", placeholder: "空欄なら自動検出（claude.cmd など）" },
@@ -42,6 +48,7 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
   const [efforts, setEfforts] = useState<Record<string, string>>({});
   const [apiBase, setApiBase] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [concurrency, setConcurrency] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -55,6 +62,7 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
     setEfforts({ [settings.provider]: settings.reasoning_effort || "" });
     setApiBase(settings.api_base || "");
     setApiKey(settings.api_key || "");
+    setConcurrency(settings.translation_concurrency ?? 0);
     setDirty(false);
     setCheckResult(null);
   }, [open, settings]);
@@ -101,6 +109,7 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
     codex_path: cliPaths.codex.trim(),
     claude_path: cliPaths.claude.trim(),
     gemini_path: cliPaths.gemini.trim(),
+    translation_concurrency: concurrency,
   });
 
   const login = async () => {
@@ -134,6 +143,7 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
     effort, setEffort: edit((value: string) => setEfforts((prev) => ({ ...prev, [provider]: value }))),
     apiBase, setApiBase: edit(setApiBase),
     apiKey, setApiKey: edit(setApiKey),
+    concurrency, setConcurrency: edit(setConcurrency),
     isApi, hasEfforts, effortOptions, modelOptions,
     loadingModels: modelsQuery.isFetching, refetchModels: modelsQuery.refetch,
     dirty, values, login, check, checking, checkResult,
@@ -224,6 +234,11 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
             </NativeSelect>
           </Field>
         )}
+        <Field label="翻訳の同時実行" hint="翻訳リクエストをまとめて送ると速くなりますが、短時間に利用枠を多く使います。制限に当たるときは減らしてください。">
+          <NativeSelect value={form.concurrency} onChange={(e) => form.setConcurrency(Number(e.target.value))}>
+            {CONCURRENCY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </NativeSelect>
+        </Field>
       </div>
 
       <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
