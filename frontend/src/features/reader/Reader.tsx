@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { FilePlus2, Languages, Loader2 } from "lucide-react";
-import { isRunning, useStore } from "@/store";
+import { isRunning, useStore, ZOOM_PRESETS } from "@/store";
 import { useReading, type ReadingData } from "@/api/hooks";
 import { backendUrl } from "@/api/client";
 import { PdfPane } from "./PdfPane";
@@ -60,19 +60,43 @@ export function Reader() {
     for (const pane of [leftScrollRef.current, rightScrollRef.current]) if (pane) pane.scrollTop = 0;
   }, [currentPage, activePaperId]);
 
-  // Ctrl+wheel (and touchpad pinch, which arrives as Ctrl+wheel) zooms both panes together.
   useEffect(() => {
     const element = readerRef.current;
     if (!element) return;
-    let accumulated = 0;
+    // Scale the pinch is heading for; the zoom snaps to the nearest preset on the way.
+    let pinchTarget = 1;
+    let lastPinch = 0;
     const onWheel = (e: WheelEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      e.preventDefault();
-      accumulated += e.deltaY;
-      if (Math.abs(accumulated) >= 40) {
-        changeZoom(accumulated < 0 ? 1 : -1);
-        accumulated = 0;
+      const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? 400 : 1;
+      const dx = e.deltaX * unit;
+      const dy = e.deltaY * unit;
+      // A mouse notch is a single large vertical step; touchpads send small, often diagonal ones.
+      const mouseWheel = dx === 0 && Math.abs(dy) >= 50;
+
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl+wheel, and touchpad pinch, which arrives as Ctrl+wheel, zoom both panes together.
+        e.preventDefault();
+        if (mouseWheel) {
+          changeZoom(dy < 0 ? 1 : -1);
+          return;
+        }
+        // Pinch deltas follow scale = exp(-deltaY / 100) and are only a few pixels each.
+        const { zoom, setZoom } = useStore.getState();
+        if (e.timeStamp - lastPinch > 300) pinchTarget = zoom;
+        lastPinch = e.timeStamp;
+        pinchTarget = Math.max(ZOOM_PRESETS[0], Math.min(pinchTarget * Math.exp(-dy / 100), ZOOM_PRESETS[ZOOM_PRESETS.length - 1]));
+        const nearest = ZOOM_PRESETS.reduce((best, value) =>
+          Math.abs(Math.log(value / pinchTarget)) < Math.abs(Math.log(best / pinchTarget)) ? value : best);
+        if (nearest !== zoom) setZoom(nearest);
+        return;
       }
+
+      // Touchpad swipes can latch onto the window rather than the PDF under the pointer,
+      // so scroll that pane directly. Non-cancelable events belong to a native scroll already under way.
+      const pane = [leftScrollRef.current, rightScrollRef.current].find((p) => p?.contains(e.target as Node));
+      if (!pane || mouseWheel || !e.cancelable) return;
+      e.preventDefault();
+      pane.scrollBy(e.shiftKey && dx === 0 ? dy : dx, e.shiftKey && dx === 0 ? 0 : dy);
     };
     element.addEventListener("wheel", onWheel, { passive: false });
     return () => element.removeEventListener("wheel", onWheel);

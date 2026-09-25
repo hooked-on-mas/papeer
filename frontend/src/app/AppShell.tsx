@@ -84,6 +84,27 @@ function useCloseHandling(): void {
   }, []);
 }
 
+/**
+ * The webview's own zoom stays enabled only so touchpad pinch reaches the page as Ctrl+wheel
+ * (the reader turns it into PDF zoom); everywhere else it must not scale the whole app.
+ */
+function useBlockWebviewZoom(): void {
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) e.preventDefault();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && ["+", "-", "=", "0", ";"].includes(e.key)) e.preventDefault();
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("wheel", onWheel);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+}
+
 function Lightbox() {
   const [image, setImage] = useState<{ src: string; alt?: string } | null>(null);
   useEffect(() => {
@@ -143,6 +164,7 @@ export function AppShell() {
   useJobEvents();
   useFileDrop();
   useCloseHandling();
+  useBlockWebviewZoom();
 
   // Opening a paper makes its folder the 追加先, as selecting it in the old tree did.
   useEffect(() => {
