@@ -35,9 +35,11 @@ dev-sidecar:
 dev-frontend:
     cd frontend && pnpm tauri dev
 
-# Build sidecar
+# Build sidecar binary and place it where Tauri's externalBin expects it
 build-sidecar:
-    uv run pyinstaller sidecar.spec
+    uv run python -m paperdesk.core.code_version code-version.txt
+    uv run pyinstaller --noconfirm sidecar.spec
+    uv run python -c "import shutil; shutil.copy2('dist/sidecar-x86_64-pc-windows-msvc.exe', 'frontend/src-tauri/')"
 
 # Build everything
 build: build-sidecar

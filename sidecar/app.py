@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Header, Query, Request, Res
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
-from paperdesk.core.code_version import application_version, source_version
+from paperdesk.core.code_version import application_version
 from paperdesk.core.config import Settings, data_directory
 from paperdesk.core.providers import (
     Cancelled,
@@ -182,12 +182,8 @@ def cli_login_status(s: Settings, timeout: int) -> subprocess.CompletedProcess |
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict[str, str]:
-    root = Path(__file__).resolve().parents[1]
-    return {
-        "status": "ok",
-        "version": application_version(),
-        "code_version": source_version(root),
-    }
+    version = application_version()
+    return {"status": "ok", "version": version, "code_version": version}
 
 
 @app.post("/shutdown")
