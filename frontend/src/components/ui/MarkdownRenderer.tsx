@@ -22,20 +22,30 @@ interface Props {
 function MermaidDiagram({ chart }: { chart: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [svgContent, setSvgContent] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
     import("mermaid").then((mermaid) => {
-      mermaid.default.initialize({ startOnLoad: false, theme: "neutral" });
+      // The chart comes from AI output, which a PDF can steer, so keep Mermaid's sanitizing mode.
+      mermaid.default.initialize({ startOnLoad: false, theme: "neutral", securityLevel: "strict" });
       mermaid.default.render("mermaid-" + Math.random().toString(36).substring(7), chart).then((result) => {
-        if (isMounted) setSvgContent(result.svg);
+        if (!isMounted) return;
+        setSvgContent(result.svg);
+        setError(null);
       }).catch(err => {
-        if (isMounted) setSvgContent(`<pre class="text-red-500">${err.message}</pre>`);
+        if (!isMounted) return;
+        // The message quotes the chart source, so it is rendered as text, never as HTML.
+        setSvgContent("");
+        setError(err instanceof Error ? err.message : String(err));
       });
     });
     return () => { isMounted = false; };
   }, [chart]);
 
+  if (error !== null) {
+    return <div className="my-4 text-red-500 whitespace-pre-wrap break-words">{error}</div>;
+  }
   return <div ref={containerRef} dangerouslySetInnerHTML={{ __html: svgContent }} className="flex justify-center my-4" />;
 }
 
