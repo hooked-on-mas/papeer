@@ -1,48 +1,19 @@
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Eye, FolderOpen, NotebookPen, Pencil, Save } from "lucide-react";
 import { useStore } from "@/store";
-import { NotebookPen, Save } from "lucide-react";
-import { api } from "@/api/client";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/api/client";
+import { useCollections, usePaper, useReading, type PaperData, type ReadingData } from "@/api/hooks";
+import { Input } from "@/components/ui/input";
+import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
+import { openPaperFolder } from "@/app/actions";
+import { showError } from "@/features/jobs/jobEvents";
+
+/** Pending memo saves, flushed before the window closes. */
+export const pendingNoteSaves = new Set<() => Promise<void>>();
 
 export function NotesPane() {
   const activePaperId = useStore((state) => state.activePaperId);
-  const queryClient = useQueryClient();
-  const [content, setContent] = useState("");
-
-  const { data: paper } = useQuery({
-    queryKey: ["papers", activePaperId],
-    queryFn: async () => {
-      if (!activePaperId) return null;
-      const { data } = await api.GET("/api/papers/{paper_id}", {
-        params: { path: { paper_id: activePaperId } },
-      });
-      return data;
-    },
-    enabled: !!activePaperId,
-  });
-
-  useEffect(() => {
-    if (paper && (paper as any).notes) {
-      setContent((paper as any).notes);
-    } else {
-      setContent("");
-    }
-  }, [paper, activePaperId]);
-
-  const saveMutation = useMutation({
-    mutationFn: async (newNotes: string) => {
-      if (!activePaperId) return;
-      // We would ideally PATCH the notes.
-      // @ts-expect-error notes schema
-      await api.PUT(`/api/papers/${activePaperId}/notes`, {
-        body: { notes: newNotes }
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["papers", activePaperId] });
-    }
-  });
-
   if (!activePaperId) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8 h-full">
@@ -51,31 +22,212 @@ export function NotesPane() {
       </div>
     );
   }
+  // Keyed so switching papers saves the old memo and never writes it into the new paper.
+  return <PaperNotes key={activePaperId} paperId={activePaperId} />;
+}
+
+function metaLines(paper: PaperData, reading: ReadingData | null | undefined): { text: string; title?: string }[] {
+  const lines: { text: string; title?: string }[] = [{ text: `${paper.pages ?? "?"} ページ / ${paper.status ?? ""}` }];
+  if (reading?.empty_pages?.length) lines.push({ text: `文字のないページ: ${reading.empty_pages.join(", ")}` });
+  const report = reading?.report;
+  if (report?.scaled_blocks) lines.push({ text: `${report.scaled_blocks}ブロックの長い訳文を縮小表示` });
+  if (report?.readability_warnings?.length) {
+    const pages = [...new Set(report.readability_warnings.map((w) => w.page))].sort((a, b) => a - b);
+    lines.push({ text: `小さい文字のあるページ: ${pages.length}ページ`, title: "拡大して確認してください: p." + pages.join(", ") });
+  }
+  if (report?.skipped_pages?.length) lines.push({ text: "PDF生成スキップ: p." + report.skipped_pages.join(", ") });
+  return lines;
+}
+
+function PaperNotes({ paperId }: { paperId: string }) {
+  const queryClient = useQueryClient();
+  const { data: paper } = usePaper(paperId);
+  const { data: reading } = useReading(paperId);
+  const { data: collections = [] } = useCollections();
+
+  const [title, setTitle] = useState("");
+  const [author, setAuthor] = useState("");
+  const [year, setYear] = useState("");
+  const [collection, setCollection] = useState("");
+  const [formDirty, setFormDirty] = useState(false);
+  const [savingMeta, setSavingMeta] = useState(false);
+
+  const [note, setNote] = useState<string | null>(null);
+  const [noteState, setNoteState] = useState<"saved" | "saving" | "dirty">("saved");
+  const [preview, setPreview] = useState(false);
+  const savedNote = useRef<string | null>(null);
+  const latestNote = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!paper || formDirty) return;
+    setTitle(paper.title ?? "");
+    setAuthor(paper.first_author ?? "");
+    setYear(paper.publication_year ?? "");
+    setCollection(paper.collection_name ?? "");
+  }, [paper, formDirty]);
+
+  useEffect(() => {
+    if (paper && note === null) {
+      setNote(paper.note ?? "");
+      savedNote.current = paper.note ?? "";
+      latestNote.current = paper.note ?? "";
+    }
+  }, [paper, note]);
+
+  const saveNote = useRef(async () => {
+    const text = latestNote.current;
+    if (text === null || text === savedNote.current) return;
+    setNoteState("saving");
+    // Update the cache first so reopening the tab mid-save shows the new text.
+    queryClient.setQueryData<PaperData | null>(["papers", paperId], (old) => old ? { ...old, note: text } : old);
+    try {
+      await apiRequest("PATCH", `/api/papers/${paperId}`, { note: text });
+      savedNote.current = text;
+      if (latestNote.current === text) setNoteState("saved");
+    } catch (error) {
+      setNoteState("dirty");
+      showError(error, "メモを保存できませんでした");
+    }
+  }).current;
+
+  useEffect(() => {
+    if (note === null) return;
+    latestNote.current = note;
+    if (note === savedNote.current) return;
+    setNoteState("dirty");
+    const timer = setTimeout(saveNote, 600);
+    return () => clearTimeout(timer);
+  }, [note, saveNote]);
+
+  useEffect(() => {
+    pendingNoteSaves.add(saveNote);
+    return () => {
+      pendingNoteSaves.delete(saveNote);
+      saveNote();
+    };
+  }, [saveNote]);
+
+  const saveMetadata = async () => {
+    if (!title.trim()) {
+      showError("タイトルを入力してください。", "論文情報");
+      return;
+    }
+    setSavingMeta(true);
+    try {
+      await apiRequest("PATCH", `/api/papers/${paperId}`, {
+        title: title.trim(), author, year: year.trim(), collection: collection.trim(),
+      });
+      setFormDirty(false);
+      const store = useStore.getState();
+      if (store.selectedFolder === null && store.activePaperId === paperId) {
+        store.setCurrentCollection(collection.split(/[\\/]/).map((p) => p.trim()).filter(Boolean).join(" / "));
+      }
+      queryClient.invalidateQueries({ queryKey: ["papers"] });
+      queryClient.invalidateQueries({ queryKey: ["collections"] });
+      store.setStatus("論文情報・フォルダーを保存しました。");
+    } catch (error) {
+      showError(error, "論文情報");
+    } finally {
+      setSavingMeta(false);
+    }
+  };
+
+  const edit = (setter: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setter(e.target.value);
+    setFormDirty(true);
+  };
 
   return (
-    <div className="flex flex-col h-full w-full bg-background overflow-hidden">
-      <div className="h-[48px] flex items-center justify-between px-4 border-b shrink-0 bg-background/50">
-        <h2 className="text-[14px] font-semibold flex items-center gap-2">
-          <NotebookPen className="w-4 h-4 text-muted-foreground" />
-          メモ・整理
-        </h2>
-        <button 
-          onClick={() => saveMutation.mutate(content)}
-          disabled={saveMutation.isPending}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 transition-opacity"
-        >
-          <Save className="w-3.5 h-3.5" />
-          {saveMutation.isPending ? "保存中..." : "保存"}
-        </button>
+    <div className="flex h-full w-full bg-background overflow-hidden">
+      <div className="w-[340px] shrink-0 border-r overflow-y-auto p-4 space-y-5">
+        <section className="space-y-3">
+          <h3 className="text-[13px] font-semibold">論文情報</h3>
+          {paper && (
+            <div className="text-[12px] text-muted-foreground space-y-0.5">
+              {metaLines(paper, reading).map((line) => (
+                <div key={line.text} title={line.title}>{line.text}</div>
+              ))}
+            </div>
+          )}
+          <form
+            className="grid grid-cols-[72px_1fr] items-center gap-x-2 gap-y-2 text-[13px]"
+            onSubmit={(e) => { e.preventDefault(); saveMetadata(); }}
+          >
+            <label htmlFor="meta-title">タイトル</label>
+            <Input id="meta-title" value={title} onChange={edit(setTitle)} />
+            <label htmlFor="meta-author">筆頭著者</label>
+            <Input id="meta-author" value={author} onChange={edit(setAuthor)} placeholder="例：Smith / 山田太郎" />
+            <label htmlFor="meta-year">出版年</label>
+            <Input id="meta-year" value={year} onChange={edit(setYear)} maxLength={4} placeholder="例：2024（不明なら空欄）" />
+            <label htmlFor="meta-folder">フォルダー</label>
+            <Input id="meta-folder" value={collection} onChange={edit(setCollection)} list="collection-options" placeholder="例：制御工学 / 読書会" />
+            <datalist id="collection-options">
+              {collections.map((c) => <option key={c} value={c} />)}
+            </datalist>
+            <p className="col-span-2 text-[12px] text-muted-foreground">
+              「/」で区切るとサブフォルダーになります。例：制御工学 / 読書会
+            </p>
+            <button
+              type="submit"
+              disabled={savingMeta || !formDirty}
+              className="col-span-2 flex items-center justify-center gap-1.5 h-8 rounded-md bg-primary text-primary-foreground font-medium hover:opacity-90 disabled:opacity-50"
+            >
+              <Save className="w-4 h-4" /> 論文情報・フォルダーを保存
+            </button>
+          </form>
+        </section>
+
+        <section className="space-y-2">
+          <h3 className="text-[13px] font-semibold">ファイル</h3>
+          <div className="text-[12px] text-muted-foreground space-y-0.5">
+            <div>{paper?.original_name ?? "original.pdf"}（原文）</div>
+            <div>日本語訳：{reading?.has_translated ? (reading.in_progress ? "翻訳途中" : "あり") : "未作成"}</div>
+            <div>サマリー：{reading?.has_article ? "あり" : "未作成"}</div>
+          </div>
+          <button
+            onClick={() => openPaperFolder(paperId)}
+            className="flex items-center gap-1.5 h-8 px-3 rounded-md border text-[13px] hover:bg-muted"
+          >
+            <FolderOpen className="w-4 h-4" /> 保存フォルダーを開く
+          </button>
+        </section>
       </div>
-      
-      <div className="flex-1 p-4 flex flex-col">
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="論文に関するメモを自由に記述できます..."
-          className="flex-1 w-full p-4 text-[14px] leading-relaxed resize-none border rounded-lg focus:outline-none focus:ring-1 focus:ring-ring bg-transparent"
-        />
+
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className="h-[44px] flex items-center justify-between px-4 border-b shrink-0">
+          <h3 className="text-[13px] font-semibold flex items-center gap-2">
+            <NotebookPen className="w-4 h-4 text-muted-foreground" />
+            メモ
+            <span className="font-normal text-muted-foreground text-[12px]">Markdownで記入できます。入力後に自動保存します。</span>
+          </h3>
+          <div className="flex items-center gap-3">
+            <span className="text-[12px] text-muted-foreground">
+              {noteState === "saving" ? "保存中…" : noteState === "dirty" ? "未保存" : "自動保存済み ✓"}
+            </span>
+            <button
+              onClick={() => setPreview(!preview)}
+              className="flex items-center gap-1 h-7 px-2 rounded border text-[12px] hover:bg-muted"
+            >
+              {preview ? <><Pencil className="w-3.5 h-3.5" /> 編集</> : <><Eye className="w-3.5 h-3.5" /> プレビュー</>}
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 p-4 flex flex-col min-h-0">
+          {preview ? (
+            <div className="flex-1 overflow-y-auto border rounded-lg p-4">
+              <MarkdownRenderer content={note ?? ""} paperId={paperId} />
+            </div>
+          ) : (
+            <textarea
+              value={note ?? ""}
+              disabled={note === null}
+              onChange={(e) => setNote(e.target.value)}
+              onBlur={saveNote}
+              placeholder="論文に関するメモを自由に記述できます…"
+              className="flex-1 w-full p-4 text-[14px] leading-relaxed resize-none border rounded-lg focus:outline-none focus:ring-1 focus:ring-ring bg-transparent font-mono"
+            />
+          )}
+        </div>
       </div>
     </div>
   );

@@ -1,33 +1,100 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "./client";
+import { api, apiRequest } from "./client";
 
 export type PaperData = {
   id: string;
   title: string;
+  original_name?: string;
   first_author?: string;
   publication_year?: string;
   collection_name?: string;
+  note?: string;
+  status?: string;
   has_article?: boolean;
+  has_translated?: boolean;
+  translated_count?: number;
+  translation_in_progress?: boolean;
   pages?: number;
+  folder_path?: string;
+  created_at?: string;
+};
+
+export type TranslatedPageRef = { file: string; index: number; mtime: number } | null;
+
+export type TranslationReport = {
+  pages?: number;
+  selected_pages?: number[];
+  translated_pages?: number[];
+  skipped_pages?: number[];
+  scaled_blocks?: number;
+  readability_warnings?: { page: number }[];
+};
+
+export type TranslationPreview = {
+  run_id: string;
+  complete: boolean;
+  pages: number[];
+  target_pages?: number[];
+  skipped_pages?: number[];
+  total_pages?: number;
+  page_errors?: Record<string, string>;
 };
 
 export type ReadingData = {
-  completed_pages?: number[];
-  has_translated?: boolean;
+  page_count: number;
+  source_page_count: number;
+  empty_pages: number[];
+  completed_pages: number[];
+  preview: TranslationPreview | null;
+  in_progress: boolean;
+  report: TranslationReport | null;
+  translated_pages: Record<string, TranslatedPageRef>;
+  page_versions: Record<string, { sha: string; model: string }>;
+  last_page: number;
+  has_translated: boolean;
+  has_article: boolean;
+  has_interleaved: boolean;
+  original_mtime: number;
 };
+
+export type SettingsData = {
+  provider: string;
+  model: string;
+  reasoning_effort: string;
+  api_base: string;
+  codex_path: string;
+  claude_path: string;
+  gemini_path: string;
+  api_key?: string | null;
+};
+
+export type Message = { role: "user" | "assistant"; content: string };
 
 export function usePaper(id: string | null) {
   return useQuery({
     queryKey: ["papers", id],
     queryFn: async (): Promise<PaperData | null> => {
       if (!id) return null;
-      const { data, error } = await api.GET("/api/papers/{paper_id}", {
-        params: { path: { paper_id: id } },
-      });
-      if (error) throw error;
-      return data as unknown as PaperData;
+      return apiRequest<PaperData>("GET", `/api/papers/${id}`);
     },
     enabled: !!id,
+    retry: false,
+  });
+}
+
+export function usePaperList(query: string, sort: number) {
+  return useQuery({
+    queryKey: ["papers", "list", query, sort],
+    queryFn: () => apiRequest<PaperData[]>(
+      "GET", `/api/papers?query=${encodeURIComponent(query)}&sort=${sort}`),
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useCollections() {
+  return useQuery({
+    queryKey: ["collections"],
+    queryFn: () => apiRequest<string[]>("GET", "/api/collections"),
   });
 }
 
@@ -36,13 +103,10 @@ export function useReading(id: string | null) {
     queryKey: ["reading", id],
     queryFn: async (): Promise<ReadingData | null> => {
       if (!id) return null;
-      const { data, error } = await api.GET("/api/papers/{paper_id}/reading", {
-        params: { path: { paper_id: id } },
-      });
-      if (error) throw error;
-      return data as unknown as ReadingData;
+      return apiRequest<ReadingData>("GET", `/api/papers/${id}/reading`);
     },
     enabled: !!id,
+    retry: false,
   });
 }
 
@@ -69,14 +133,41 @@ export function useArticle(id: string | null) {
 export function useMessages(id: string | null) {
   return useQuery({
     queryKey: ["messages", id],
-    queryFn: async () => {
-      if (!id) return null;
-      const { data, error } = await api.GET("/api/papers/{paper_id}/messages", {
-        params: { path: { paper_id: id } },
-      });
-      if (error) throw error;
-      return data;
+    queryFn: async (): Promise<Message[]> => {
+      if (!id) return [];
+      return apiRequest<Message[]>("GET", `/api/papers/${id}/messages`);
     },
     enabled: !!id,
   });
 }
+
+export function useSettings() {
+  return useQuery({
+    queryKey: ["settings"],
+    queryFn: () => apiRequest<SettingsData>("GET", "/api/settings"),
+  });
+}
+
+export function useHealth() {
+  return useQuery({
+    queryKey: ["health"],
+    queryFn: () => apiRequest<{ version: string; code_version: string }>("GET", "/health"),
+    staleTime: Infinity,
+  });
+}
+
+/** "Smith (2024) Title", as the old library and header labelled papers. */
+export function paperDisplayName(paper: Pick<PaperData, "title" | "original_name" | "first_author" | "publication_year">): string {
+  const author = (paper.first_author || "").trim();
+  const year = (paper.publication_year || "").trim();
+  const prefix = [author, year ? `(${year})` : ""].filter(Boolean).join(" ");
+  const title = paper.title || paper.original_name || "";
+  return prefix ? `${prefix} ${title}` : title;
+}
+
+export const PROVIDER_LABELS: Record<string, string> = {
+  gemini: "Google Gemini (agy CLI)",
+  claude: "Claude Code CLI",
+  codex: "ChatGPT / Codex CLI",
+  api: "API / ローカルモデル（OpenAI互換）",
+};

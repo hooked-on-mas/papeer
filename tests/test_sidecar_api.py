@@ -93,6 +93,10 @@ def test_auth_token():
             resp = client.get("/api/settings", headers={"Authorization": "Bearer secret-token-123"})
             assert resp.status_code == 200
 
+            # <img> tags pass the token as a query parameter instead of a header.
+            assert client.get("/api/settings?token=secret-token-123").status_code == 200
+            assert client.get("/api/settings?token=wrong").status_code == 401
+
 
 def test_ui_state_crud(test_env):
     client, _ = test_env
@@ -276,3 +280,79 @@ def test_translate_ask_export_workflow(test_env):
     assert exp_resp.status_code == 200
     assert export_dest.is_file()
     assert export_dest.stat().st_size > 0
+
+
+def _wait(job_id):
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        job = job_manager.get_job(job_id)
+        if job and not job.running:
+            return job
+        time.sleep(0.05)
+    raise AssertionError("job did not finish")
+
+
+def test_collection_rules_match_old_library(test_env):
+    client, _ = test_env
+    assert client.post("/api/collections", json={"name": "制御工学/読書会"}).json()["name"] == "制御工学 / 読書会"
+    # Duplicates were rejected by the old folder dialog.
+    assert client.post("/api/collections", json={"name": "制御工学 / 読書会"}).status_code == 400
+    assert client.get("/api/collections").json() == ["制御工学", "制御工学 / 読書会"]
+
+    # new_name is the last segment; renaming keeps the parent.
+    renamed = client.patch("/api/collections/rename", json={"old_name": "制御工学 / 読書会", "new_name": "輪講"})
+    assert renamed.json()["name"] == "制御工学 / 輪講"
+
+    job = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)], "collection": "制御工学 / 輪講"}).json()["job_id"])
+    assert job.result["added"] == 1
+    paper_id = job.result["paper_ids"][0]
+
+    deleted = client.delete("/api/collections/制御工学")
+    assert deleted.json()["moved"] == [paper_id]
+    assert client.get(f"/api/papers/{paper_id}").json()["collection_name"] == ""
+    assert client.delete("/api/collections/存在しない").status_code == 400
+
+    # Importing the same PDF again opens the existing paper instead of adding one.
+    again = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
+    assert again.result == {"paper_ids": [paper_id], "added": 0}
+
+
+def test_paper_metadata_reading_and_export_guards(test_env):
+    client, tmp_dir = test_env
+    job = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
+    paper_id = job.result["paper_ids"][0]
+
+    assert client.patch(f"/api/papers/{paper_id}", json={"year": "2024", "author": "Smith"}).status_code == 200
+    assert client.patch(f"/api/papers/{paper_id}", json={"year": ""}).status_code == 200
+    assert client.patch(f"/api/papers/{paper_id}", json={"year": "24"}).status_code == 400
+    assert client.patch(f"/api/papers/{paper_id}", json={"title": "  "}).status_code == 400
+    assert client.get("/api/papers/not-a-paper").status_code == 404
+
+    renamed = client.post(f"/api/papers/{paper_id}/rename", json={"new_title": "renamed"})
+    assert renamed.json()["name"] == "renamed.pdf"
+
+    reading = client.get(f"/api/papers/{paper_id}/reading").json()
+    assert reading["translated_pages"]["1"] is None  # nothing translated yet
+    assert reading["empty_pages"] == []
+    assert reading["in_progress"] is False
+
+    # Untranslated papers cannot be exported, and library files are never overwritten.
+    blocked = client.post(f"/api/papers/{paper_id}/export", json={"kind": "translated", "destination": str(tmp_dir / "x.pdf")})
+    assert blocked.status_code == 400
+    folder = Path(client.get(f"/api/papers/{paper_id}").json()["folder_path"])
+    same = client.post(f"/api/papers/{paper_id}/export", json={"kind": "original", "destination": str(folder / "original.pdf")})
+    assert same.status_code == 400
+
+    with patch("sidecar.app.Provider", FakeProvider):
+        _wait(client.post(f"/api/papers/{paper_id}/translate", json={"pages": "1"}).json()["job_id"])
+    reading = client.get(f"/api/papers/{paper_id}/reading").json()
+    assert reading["translated_pages"]["1"]["file"] == "translated.pdf"
+    assert reading["translated_pages"]["1"]["index"] == 0
+    assert reading["page_versions"]["1"]["sha"]
+
+    # Paired PDFs run as paper jobs; interleaved.pdf is rebuilt for external viewers.
+    started = client.post(f"/api/papers/{paper_id}/export", json={"kind": "bilingual", "destination": str(tmp_dir / "b.pdf")})
+    assert _wait(started.json()["job_id"]).status == "succeeded"
+    assert (tmp_dir / "b.pdf").is_file()
+    prepared = _wait(client.post(f"/api/papers/{paper_id}/interleaved").json()["job_id"])
+    assert Path(prepared.result["path"]).is_file()

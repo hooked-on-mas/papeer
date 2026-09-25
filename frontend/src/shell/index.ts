@@ -1,7 +1,13 @@
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { sendNotification } from "@tauri-apps/plugin-notification";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { getCurrentWindow, ProgressBarStatus } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+
+export type FileDropEvent =
+  | { type: "over"; x: number; y: number }
+  | { type: "drop"; paths: string[]; x: number; y: number }
+  | { type: "leave" };
 
 export interface ShellAdapter {
   openFiles(filters: { name: string, extensions: string[] }[]): Promise<string[]>;
@@ -9,8 +15,13 @@ export interface ShellAdapter {
   openPath(path: string): Promise<void>;
   revealInFolder(path: string): Promise<void>;
   notify(title: string, body: string): Promise<void>;
+  isFocused(): Promise<boolean>;
   setProgress(state: 'none' | 'normal' | 'indeterminate' | 'error', done?: number, total?: number): Promise<void>;
+  /** OS file drags over the window; x/y are CSS pixels in the viewport. */
+  onFileDrop(callback: (event: FileDropEvent) => void): () => void;
 }
+
+let notificationAllowed: boolean | null = null;
 
 export const tauriShell: ShellAdapter = {
   async openFiles(filters) {
@@ -30,7 +41,7 @@ export const tauriShell: ShellAdapter = {
   },
 
   async openPath(path) {
-    await openUrl(path);
+    await openPath(path);
   },
 
   async revealInFolder(path) {
@@ -38,29 +49,57 @@ export const tauriShell: ShellAdapter = {
   },
 
   async notify(title, body) {
-    await sendNotification({ title, body });
+    if (notificationAllowed === null) {
+      notificationAllowed = await isPermissionGranted();
+      if (!notificationAllowed) notificationAllowed = (await requestPermission()) === "granted";
+    }
+    if (notificationAllowed) sendNotification({ title, body });
+  },
+
+  async isFocused() {
+    return await getCurrentWindow().isFocused();
   },
 
   async setProgress(state, done = 0, total = 0) {
     const w = getCurrentWindow();
-    let progress = 0;
-    if (total > 0) progress = Math.max(0, Math.min(100, Math.round((done / total) * 100)));
-    
+    const progress = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
     switch (state) {
       case 'none':
-        await w.setProgressBar({ progress: 0 }); // Hide or reset
+        await w.setProgressBar({ status: ProgressBarStatus.None });
         break;
       case 'normal':
-        await w.setProgressBar({ progress });
+        await w.setProgressBar({ status: ProgressBarStatus.Normal, progress });
         break;
       case 'indeterminate':
-        await w.setProgressBar({ progress: 0 }); // Tauri v2 supports state via setProgressBar state, wait, setProgressBar might just take a number in some environments, but let's just pass progress.
+        await w.setProgressBar({ status: ProgressBarStatus.Indeterminate });
         break;
       case 'error':
-        // Wait for v2 API details. Will set progress for now.
-        await w.setProgressBar({ progress });
+        await w.setProgressBar({ status: ProgressBarStatus.Error, progress: progress || 100 });
         break;
     }
+  },
+
+  onFileDrop(callback) {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    getCurrentWebview().onDragDropEvent((event) => {
+      const payload = event.payload;
+      const ratio = window.devicePixelRatio || 1;
+      if (payload.type === "leave") {
+        callback({ type: "leave" });
+      } else if (payload.type === "drop") {
+        callback({ type: "drop", paths: payload.paths, x: payload.position.x / ratio, y: payload.position.y / ratio });
+      } else {
+        callback({ type: "over", x: payload.position.x / ratio, y: payload.position.y / ratio });
+      }
+    }).then((u) => {
+      if (disposed) u();
+      else unlisten = u;
+    });
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
   }
 };
 
@@ -72,6 +111,21 @@ export const shell = (window.__TAURI_INTERNALS__ !== undefined || window.__TAURI
   openPath: async () => {},
   revealInFolder: async () => {},
   notify: async (t, b) => { console.log("Notify", t, b); },
+  isFocused: async () => document.hasFocus(),
   setProgress: async () => {},
+  onFileDrop: () => () => {},
 } as ShellAdapter;
 
+/** Toast the result of a long job only when the user has looked away, as the old tray balloon did. */
+export async function notifyIfAway(title: string, body: string): Promise<void> {
+  try {
+    if (!(await shell.isFocused())) await shell.notify(title, body);
+  } catch {
+    // Notifications are a convenience; never let them break job handling.
+  }
+}
+
+export function joinPath(folder: string, name: string): string {
+  const sep = folder.includes("\\") ? "\\" : "/";
+  return folder.endsWith(sep) ? folder + name : folder + sep + name;
+}

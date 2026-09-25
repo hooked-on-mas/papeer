@@ -1,149 +1,96 @@
-import React, { useEffect, useRef, useState } from "react";
-import * as pdfjsLib from "pdfjs-dist";
-import "pdfjs-dist/web/pdf_viewer.css";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Document, Page, pdfjs } from "react-pdf";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import "react-pdf/dist/Page/AnnotationLayer.css";
+import "react-pdf/dist/Page/TextLayer.css";
+import { authToken } from "@/api/client";
+
+// Bundled worker, cMaps and fonts keep PDFs (including CJK text) readable offline.
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 interface PdfPaneProps {
   url: string | null;
   pageNumber: number;
-  zoom: number; // 0 for fit-width, otherwise scale factor
+  /** Multiplier over the width that fits the pane. */
+  zoom: number;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
+  /** Shown instead of a page, e.g. while a translation is pending. */
+  placeholder?: React.ReactNode;
+  missingPageMessage?: string;
 }
 
-export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef }: PdfPaneProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
-  const [error, setError] = useState<string | null>(null);
+const PADDING = 16;
+
+export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholder, missingPageMessage }: PdfPaneProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [numPages, setNumPages] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!url) {
-      setPdfDoc(null);
-      return;
-    }
-
-    let isCanceled = false;
-    const token = import.meta.env.VITE_PAPERDESK_TOKEN || "";
-    
-    const loadingTask = pdfjsLib.getDocument({ 
-      url,
-      httpHeaders: token ? { Authorization: `Bearer ${token}` } : undefined,
-      cMapUrl: "/pdfjs/cmaps/",
-      cMapPacked: true,
-      standardFontDataUrl: "/pdfjs/standard_fonts/"
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      if (entries[0]) setContainerWidth(entries[0].contentRect.width);
     });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
-    loadingTask.promise
-      .then((doc) => {
-        if (!isCanceled) {
-          setPdfDoc(doc);
-          setError(null);
-        }
-      })
-      .catch((err) => {
-        if (!isCanceled) {
-          console.error("Error loading PDF:", err);
-          setError(err.message || "Failed to load PDF");
-        }
-      });
+  useEffect(() => setNumPages(null), [url]);
 
-    return () => {
-      isCanceled = true;
-      loadingTask.destroy();
-    };
-  }, [url]);
+  const token = authToken();
+  const options = useMemo(() => ({
+    cMapUrl: "/pdfjs/cmaps/",
+    cMapPacked: true,
+    standardFontDataUrl: "/pdfjs/standard_fonts/",
+    httpHeaders: token ? { Authorization: `Bearer ${token}` } : undefined,
+  }), [token]);
 
-  useEffect(() => {
-    if (!pdfDoc || !canvasRef.current || !containerRef.current) return;
-
-    let isCanceled = false;
-    let renderTask: pdfjsLib.RenderTask | null = null;
-
-    const renderPage = async () => {
-      try {
-        const page = await pdfDoc.getPage(pageNumber);
-        if (isCanceled) return;
-
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-
-        const context = canvas.getContext("2d");
-        if (!context) return;
-
-        // Calculate scale
-        let scale = zoom;
-        if (scale === 0) {
-          // Fit width
-          const viewport1 = page.getViewport({ scale: 1 });
-          const containerWidth = containerRef.current!.clientWidth - 32; // padding
-          scale = containerWidth / viewport1.width;
-        }
-
-        const viewport = page.getViewport({ scale });
-        const outputScale = window.devicePixelRatio || 1;
-
-        canvas.width = Math.floor(viewport.width * outputScale);
-        canvas.height = Math.floor(viewport.height * outputScale);
-        canvas.style.width = Math.floor(viewport.width) + "px";
-        canvas.style.height = Math.floor(viewport.height) + "px";
-
-        const transform = outputScale !== 1
-          ? [outputScale, 0, 0, outputScale, 0, 0]
-          : undefined;
-
-        const renderContext = {
-          canvasContext: context,
-          transform,
-          viewport: viewport,
-        };
-
-        renderTask = page.render(renderContext as any);
-        await renderTask.promise;
-      } catch (err: any) {
-        if (!isCanceled && err.name !== 'RenderingCancelledException') {
-          console.error("Error rendering page:", err);
-        }
-      }
-    };
-
-    renderPage();
-
-    return () => {
-      isCanceled = true;
-      if (renderTask) {
-        renderTask.cancel();
-      }
-    };
-  }, [pdfDoc, pageNumber, zoom]);
-
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    if (onScroll) onScroll(e);
-  };
+  const fitWidth = Math.max(250, containerWidth - PADDING * 2);
+  const pageWidth = Math.round(fitWidth * zoom);
+  const message = (text: React.ReactNode) => (
+    <div className="h-full flex items-center justify-center p-8 text-center text-[13px] text-muted-foreground leading-relaxed">
+      <div className="max-w-sm">{text}</div>
+    </div>
+  );
 
   return (
     <div
       ref={(node) => {
-        // @ts-ignore
         containerRef.current = node;
-        if (scrollRef) {
-          // @ts-ignore
-          scrollRef.current = node;
-        }
+        if (scrollRef) scrollRef.current = node;
       }}
-      onScroll={handleScroll}
-      className="w-full h-full overflow-auto bg-muted/30 p-4 flex justify-center items-start"
+      onScroll={onScroll}
+      className={`w-full h-full bg-reader-bg ${zoom > 1 ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
     >
-      {error ? (
-        <div className="text-destructive p-4 border rounded bg-background">Error: {error}</div>
-      ) : !url ? (
-        <div className="text-muted-foreground p-4">No PDF provided</div>
-      ) : (
-        <div className="relative shadow-md bg-white">
-          <canvas ref={canvasRef} />
-          {/* TextLayer would go here */}
+      {placeholder ? message(placeholder) : !url ? message("PDFがありません。") : (
+        <div className="w-fit min-w-full" style={{ padding: PADDING }}>
+          <Document
+            file={url}
+            options={options}
+            onLoadSuccess={(doc) => setNumPages(doc.numPages)}
+            loading={<PageSkeleton width={pageWidth} />}
+            error={message("PDFを読み込めませんでした。")}
+            className="mx-auto w-fit"
+          >
+            {numPages !== null && pageNumber > numPages ? message(missingPageMessage ?? "このページはありません。") : (
+              <Page
+                pageNumber={pageNumber}
+                width={pageWidth}
+                renderTextLayer
+                renderAnnotationLayer
+                loading={<PageSkeleton width={pageWidth} />}
+                className="shadow-sm border bg-white"
+              />
+            )}
+          </Document>
         </div>
       )}
     </div>
   );
 }
 
+function PageSkeleton({ width }: { width: number }) {
+  // Letter-ish proportions keep the layout from jumping while the page renders.
+  return <div className="bg-card border animate-pulse mx-auto" style={{ width, height: Math.round(width * 1.3) }} />;
+}

@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from paperdesk.core.code_version import application_version, source_version
 from paperdesk.core.config import Settings, data_directory
 from paperdesk.core.providers import (
+    Cancelled,
     Provider,
     claude_command,
     codex_command,
@@ -29,7 +30,7 @@ from paperdesk.core.providers import (
 from paperdesk.core.service import PaperService
 from paperdesk.core.storage import Library, normalize_collection_name
 from paperdesk.layout.page_selection import parse_page_selection
-from paperdesk.translation.translation_preview import read_preview, translated_page_numbers
+from paperdesk.translation.translation_preview import read_preview, translated_page, translated_page_numbers
 
 from sidecar.jobs import ConcurrencyConflict, JobManager
 from sidecar.schemas import (
@@ -44,6 +45,7 @@ from sidecar.schemas import (
     TranslateRequest,
     UIStateModel,
     UpdatePaperRequest,
+    ProviderActionRequest,
 )
 from sidecar.ui_state import load_ui_state, save_ui_state
 
@@ -94,14 +96,18 @@ app.add_middleware(
 )
 
 
-def verify_token(authorization: str | None = Header(None)) -> None:
-    token = get_auth_token()
-    if not token:
+def verify_token(authorization: str | None = Header(None), token: str | None = Query(None)) -> None:
+    expected = get_auth_token()
+    if not expected:
         return
-    if not authorization or not authorization.startswith("Bearer "):
+    # <img> tags cannot send headers, so media URLs carry the token as a query parameter.
+    if authorization and authorization.startswith("Bearer "):
+        provided = authorization[len("Bearer "):].strip()
+    elif token:
+        provided = token
+    else:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="認証トークンが必要です。")
-    provided = authorization[len("Bearer "):].strip()
-    if provided != token:
+    if provided != expected:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="認証トークンが不正です。")
 
 
@@ -111,6 +117,64 @@ def get_library() -> Library:
 
 def get_settings() -> Settings:
     return Settings.load(get_data_dir())
+
+
+def paper_folder(lib: Library, paper_id: str) -> Path:
+    try:
+        lib.paper(paper_id)
+        return lib.folder(paper_id)
+    except (KeyError, ValueError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
+
+
+def translation_state(folder: Path, page_count: int) -> dict[str, Any]:
+    """Summarize how much of a paper has a Japanese translation, as the library shows it."""
+    try:
+        completed = translated_page_numbers(folder, page_count)
+        preview = read_preview(folder)
+    except (OSError, ValueError, json.JSONDecodeError):
+        completed, preview = [], None
+    in_progress = bool(preview and not preview["complete"])
+    return {
+        "translated_count": len(completed),
+        "has_translated": (folder / "translated.pdf").is_file(),
+        "translation_in_progress": in_progress,
+    }
+
+
+def cli_path_for(settings: Settings, provider: str) -> str:
+    return {"codex": settings.codex_path, "claude": settings.claude_path,
+            "gemini": settings.gemini_path}.get(provider, "")
+
+
+def settings_with_override(body: ProviderActionRequest | None) -> Settings:
+    """Apply unsaved dialog values, so login/check test what the user is editing."""
+    s = replace(get_settings())
+    if body is None:
+        return s
+    if body.provider:
+        s.provider = body.provider
+    for field, value in (("model", body.model), ("base_url", body.api_base), ("codex_path", body.codex_path),
+                         ("claude_path", body.claude_path), ("gemini_path", body.gemini_path)):
+        if value is not None:
+            setattr(s, field, value)
+    if body.reasoning_effort is not None:
+        s.reasoning_effort = body.reasoning_effort
+    return s
+
+
+def cli_login_status(s: Settings, timeout: int) -> subprocess.CompletedProcess | None:
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    if s.provider == "codex":
+        command = codex_command(s.codex_path) + ["login", "status"]
+    elif s.provider == "claude":
+        command = claude_command(s.claude_path) + ["auth", "status"]
+    elif s.provider == "gemini":
+        command = gemini_command(s.gemini_path) + ["models"]
+    else:
+        return None
+    return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout, creationflags=creationflags)
 
 
 # --- Health & System ---
@@ -172,19 +236,22 @@ def get_settings_endpoint(dependencies: None = Depends(verify_token)) -> Setting
 def update_settings(body: SettingsModel, dependencies: None = Depends(verify_token)) -> dict[str, str]:
     global _runtime_api_key
     s = get_settings()
-    
+
     # Validate by creating a temporary instance
     from paperdesk.core.config import Settings
-    Settings(
-        provider=body.provider,
-        model=body.model,
-        reasoning_effort=body.reasoning_effort,
-        base_url=body.api_base,
-        codex_path=body.codex_path,
-        claude_path=body.claude_path,
-        gemini_path=body.gemini_path,
-    )
-    
+    try:
+        Settings(
+            provider=body.provider,
+            model=body.model,
+            reasoning_effort=body.reasoning_effort,
+            base_url=body.api_base,
+            codex_path=body.codex_path,
+            claude_path=body.claude_path,
+            gemini_path=body.gemini_path,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
     s.provider = body.provider
     s.model = body.model
     s.reasoning_effort = body.reasoning_effort
@@ -197,85 +264,96 @@ def update_settings(body: SettingsModel, dependencies: None = Depends(verify_tok
         _runtime_api_key = body.api_key
     return {"status": "saved"}
 
+@app.get("/api/prompts")
+def get_prompts(dependencies: None = Depends(verify_token)) -> dict[str, str]:
+    from paperdesk.core.prompts import _BUILTIN_DIR, _get_custom_dir
+    prompts = {}
+    for p in _BUILTIN_DIR.glob("*.txt"):
+        name = p.stem
+        custom_path = _get_custom_dir() / f"{name}.txt"
+        if custom_path.exists():
+            prompts[name] = custom_path.read_text("utf-8").strip()
+        else:
+            prompts[name] = p.read_text("utf-8").strip()
+    return prompts
+
+@app.put("/api/prompts")
+def update_prompts(body: dict[str, str], dependencies: None = Depends(verify_token)) -> dict[str, str]:
+    from paperdesk.core.prompts import _get_custom_dir
+    d = _get_custom_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    for name, content in body.items():
+        if content.strip():
+            (d / f"{name}.txt").write_text(content.strip(), "utf-8")
+        else:
+            p = d / f"{name}.txt"
+            if p.exists():
+                p.unlink()
+    return {"status": "updated"}
 
 @app.get("/api/providers/{provider}/models")
-def get_provider_models(provider: str, dependencies: None = Depends(verify_token)) -> list[dict[str, str]]:
+def get_provider_models(provider: str, cli_path: str | None = None, dependencies: None = Depends(verify_token)) -> list[dict[str, str]]:
     s = get_settings()
-    cli_path = getattr(s, f"{provider}_path", "")
-    models = query_available_models(provider, cli_path=cli_path)
+    path = cli_path if cli_path is not None else cli_path_for(s, provider)
+    models = query_available_models(provider, cli_path=path)
     return [{"id": m[0], "name": m[1]} for m in models]
 
 
 @app.get("/api/providers/{provider}/efforts")
-def get_provider_efforts(provider: str, model: str | None = None, dependencies: None = Depends(verify_token)) -> list[dict[str, str]]:
-    efforts = query_available_efforts(provider, model=model or "")
+def get_provider_efforts(provider: str, model: str | None = None, cli_path: str | None = None,
+                         dependencies: None = Depends(verify_token)) -> list[dict[str, str]]:
+    s = get_settings()
+    path = cli_path if cli_path is not None else cli_path_for(s, provider)
+    efforts = query_available_efforts(provider, path, model or "")
     return [{"id": e[0], "name": e[1]} for e in efforts]
 
 
 @app.post("/api/providers/login")
-def provider_login(dependencies: None = Depends(verify_token)) -> dict[str, str]:
-    s = get_settings()
+def provider_login(body: ProviderActionRequest | None = None, dependencies: None = Depends(verify_token)) -> dict[str, Any]:
+    s = settings_with_override(body)
+    if s.provider not in ("codex", "claude", "gemini"):
+        return {"message": "API接続ではログイン操作は不要です。", "already": False}
+    # Launching a second login console is confusing when the CLI is already signed in.
+    try:
+        result = cli_login_status(s, timeout=5)
+        if result is not None and result.returncode == 0:
+            return {"message": "すでにログインされています。", "already": True}
+    except (OSError, subprocess.SubprocessError):
+        pass
     creationflags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
-    if s.provider == "codex":
-        cmd = codex_command(s.codex_path) + ["login"]
-        subprocess.Popen(cmd, creationflags=creationflags)
-        return {"message": "ブラウザでChatGPTログイン画面を開きました。ログイン完了後「接続を確認」を実行してください。"}
-    elif s.provider == "claude":
-        cmd = claude_command(s.claude_path) + ["auth", "login"]
-        subprocess.Popen(cmd, creationflags=creationflags)
-        return {"message": "ブラウザでClaudeログイン画面を開きました。ログイン完了後「接続を確認」を実行してください。"}
-    elif s.provider == "gemini":
-        cmd = gemini_command(s.gemini_path)
-        subprocess.Popen(cmd, creationflags=creationflags)
-        return {"message": "ブラウザでAntigravityログイン画面を開きました。ログイン完了後「接続を確認」を実行してください。"}
-    else:
-        return {"message": "API接続ではCLIログイン操作は不要です。"}
+    try:
+        if s.provider == "codex":
+            subprocess.Popen(codex_command(s.codex_path) + ["login"], creationflags=creationflags)
+            service = "ChatGPT"
+        elif s.provider == "claude":
+            subprocess.Popen(claude_command(s.claude_path) + ["auth", "login"], creationflags=creationflags)
+            service = "Claude"
+        else:
+            subprocess.Popen(gemini_command(s.gemini_path), creationflags=creationflags)
+            service = "Antigravity"
+    except (OSError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"CLIの準備エラー: {error}")
+    return {"message": f"開いたブラウザーで{service}にログイン後、「接続を確認」を押してください。", "already": False}
 
 
 @app.post("/api/providers/check")
-def provider_check(dependencies: None = Depends(verify_token)) -> dict[str, str]:
-    s = replace(get_settings())
-    api_key = _runtime_api_key
+def provider_check(body: ProviderActionRequest | None = None, dependencies: None = Depends(verify_token)) -> dict[str, str]:
+    s = settings_with_override(body)
+    api_key = (body.api_key if body and body.api_key else None) or _runtime_api_key
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> str:
         progress("接続を確認しています…")
-        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        if s.provider == "codex":
-            res = subprocess.run(
-                codex_command(s.codex_path) + ["login", "status"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=30,
-                creationflags=creationflags,
-            )
-            if res.returncode:
-                raise RuntimeError("未ログインです。「ログイン (CLI)」を実行してください。")
-            return "Codexのログイン状態を確認しました。"
-        elif s.provider == "claude":
-            res = subprocess.run(
-                claude_command(s.claude_path) + ["auth", "status"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=30,
-                creationflags=creationflags,
-            )
-            if res.returncode:
-                raise RuntimeError("未ログインです。「ログイン (CLI)」を実行してください。\n" + res.stdout.strip())
-            return "Claude Codeのログイン状態を確認しました。"
-        elif s.provider == "gemini":
-            res = subprocess.run(
-                gemini_command(s.gemini_path) + ["models"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=30,
-                creationflags=creationflags,
-            )
+        if s.provider in ("codex", "claude", "gemini"):
+            res = cli_login_status(s, timeout=30)
+            assert res is not None
+            if s.provider == "codex":
+                if res.returncode:
+                    raise RuntimeError("未ログインです。「ログイン (CLI)」を実行してください。")
+                return "Codexのログイン状態を確認しました。AI処理の実行可否は利用枠・モデル設定にも依存します。"
+            if s.provider == "claude":
+                if res.returncode:
+                    raise RuntimeError("未ログインです。「ログイン (CLI)」を実行してください。\n" + res.stdout.strip())
+                return "Claude Codeのログイン状態を確認しました。"
             if res.returncode:
                 detail = res.stderr.strip() or res.stdout.strip()
                 raise RuntimeError("Gemini (agy) の接続確認に失敗しました。\n" + detail)
@@ -299,6 +377,15 @@ def provider_check(dependencies: None = Depends(verify_token)) -> dict[str, str]
 def list_papers(query: str = "", sort: int = 0, dependencies: None = Depends(verify_token)) -> list[dict[str, Any]]:
     lib = get_library()
     papers = lib.papers(query=query)
+    for p in papers:
+        try:
+            folder = lib.folder(p["id"])
+        except ValueError:
+            continue
+        p["folder_path"] = str(folder.resolve())
+        p["has_article"] = (folder / "article.md").is_file()
+        p.update(translation_state(folder, p["pages"]))
+
     if sort == 1:
         papers.reverse()
     elif sort in (2, 3):
@@ -314,18 +401,22 @@ def import_papers(body: ImportRequest, dependencies: None = Depends(verify_token
         if not p.is_file():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"ファイルが存在しません: {p}")
 
-    def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> list[str]:
-        imported_ids = []
-        for i, path in enumerate(paths):
-            if cancel.is_set():
-                break
-            progress(f"PDFを追加中 ({i + 1}/{len(paths)}): {path.name}")
-            paper_id, _is_new = lib.import_pdf(path, collection_name=body.collection or "")
-            imported_ids.append(paper_id)
-            progress(f"テキストを抽出中 ({i + 1}/{len(paths)}): {path.name}")
-            lib.document(paper_id)
-        job_manager.broadcast({"type": "library.changed"})
-        return imported_ids
+    def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, Any]:
+        imported_ids: list[str] = []
+        added = 0
+        try:
+            for i, path in enumerate(paths):
+                if cancel.is_set():
+                    raise Cancelled("追加を中止しました。追加済みの論文は保存されています。")
+                progress(f"PDFを追加 {i + 1}/{len(paths)}: {path.name}")
+                paper_id, is_new = lib.import_pdf(path, collection_name=body.collection or "")
+                imported_ids.append(paper_id)
+                added += is_new
+                lib.document(paper_id)
+        finally:
+            if imported_ids:
+                job_manager.broadcast({"type": "library.changed"})
+        return {"paper_ids": imported_ids, "added": added}
 
     try:
         job = job_manager.submit_job("import", action, paper_id=None)
@@ -335,7 +426,6 @@ def import_papers(body: ImportRequest, dependencies: None = Depends(verify_token
 
 from fastapi import UploadFile, File
 import tempfile
-import shutil
 
 @app.post("/api/papers/upload", tags=["Papers"])
 def upload_paper(
@@ -344,22 +434,22 @@ def upload_paper(
     dependencies: None = Depends(verify_token)
 ) -> dict[str, str]:
     lib = get_library()
-    
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = Path(tmp.name)
-        
-    def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> list[str]:
+
+    def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, Any]:
         try:
             progress(f"PDFアップロード中: {file.filename}")
-            paper_id, _is_new = lib.import_pdf(tmp_path, collection_name=collection or "", original_name=file.filename or "")
+            paper_id, is_new = lib.import_pdf(tmp_path, collection_name=collection or "", original_name=file.filename or "")
             progress(f"テキスト抽出中: {file.filename}")
             lib.document(paper_id)
             job_manager.broadcast({"type": "library.changed"})
-            return [paper_id]
+            return {"paper_ids": [paper_id], "added": int(is_new)}
         finally:
             tmp_path.unlink(missing_ok=True)
-            
+
     try:
         job = job_manager.submit_job("import", action, paper_id=None)
         return {"job_id": job.job_id}
@@ -371,44 +461,47 @@ def upload_paper(
 @app.get("/api/papers/{paper_id}")
 def get_paper(paper_id: str, dependencies: None = Depends(verify_token)) -> dict[str, Any]:
     lib = get_library()
-    try:
-        return lib.paper(paper_id)
-    except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
+    folder = paper_folder(lib, paper_id)
+    paper = lib.paper(paper_id)
+    paper["folder_path"] = str(folder.resolve())
+    paper["has_article"] = (folder / "article.md").is_file()
+    paper.update(translation_state(folder, paper["pages"]))
+    return paper
 
 
 @app.patch("/api/papers/{paper_id}")
 def update_paper(paper_id: str, body: UpdatePaperRequest, dependencies: None = Depends(verify_token)) -> dict[str, str]:
     lib = get_library()
+    paper_folder(lib, paper_id)
+    updates: dict[str, Any] = {}
+    if body.title is not None:
+        if not body.title.strip():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="タイトルを入力してください。")
+        updates["title"] = body.title.strip()
+    if body.author is not None:
+        updates["first_author"] = body.author
+    if body.year is not None:
+        updates["publication_year"] = str(body.year)
+    if body.collection is not None:
+        updates["collection_name"] = body.collection
+    if body.note is not None:
+        updates["note"] = body.note
     try:
-        updates: dict[str, Any] = {}
-        if body.title is not None:
-            updates["title"] = body.title
-        if body.author is not None:
-            updates["first_author"] = body.author
-        if body.year is not None:
-            updates["publication_year"] = str(body.year)
-        if body.collection is not None:
-            updates["collection_name"] = body.collection
-        if body.note is not None:
-            updates["note"] = body.note
         if updates:
             lib.update(paper_id, **updates)
-        job_manager.broadcast({"type": "library.changed"})
-        return {"status": "updated"}
-    except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    job_manager.broadcast({"type": "library.changed"})
+    return {"status": "updated"}
 
 
 @app.post("/api/papers/{paper_id}/rename")
 def rename_paper(paper_id: str, body: RenamePaperRequest, dependencies: None = Depends(verify_token)) -> dict[str, str]:
     lib = get_library()
     try:
-        lib.rename_paper(paper_id, body.new_title)
+        name = lib.rename_paper(paper_id, body.new_title)
         job_manager.broadcast({"type": "library.changed"})
-        return {"status": "renamed"}
+        return {"status": "renamed", "name": name}
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
     except ValueError as exc:
@@ -420,47 +513,79 @@ def delete_paper(paper_id: str, dependencies: None = Depends(verify_token)) -> d
     if any(j.running and j.paper_id == paper_id for j in job_manager.get_jobs()):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="処理中のジョブがあるため削除できません。")
     lib = get_library()
-    try:
-        folder = lib.folder(paper_id)
-        with lib.connection() as db:
-            db.execute("DELETE FROM messages WHERE paper_id=?", (paper_id,))
-            db.execute("DELETE FROM pages WHERE paper_id=?", (paper_id,))
-            db.execute("DELETE FROM papers WHERE id=?", (paper_id,))
-        if folder.exists():
-            shutil.rmtree(folder, ignore_errors=True)
-        job_manager.broadcast({"type": "library.changed"})
-        return {"status": "deleted"}
-    except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
+    folder = paper_folder(lib, paper_id)
+    with lib.connection() as db:
+        db.execute("DELETE FROM messages WHERE paper_id=?", (paper_id,))
+        db.execute("DELETE FROM pages WHERE paper_id=?", (paper_id,))
+        db.execute("DELETE FROM papers WHERE id=?", (paper_id,))
+    if folder.exists():
+        shutil.rmtree(folder, ignore_errors=True)
+    job_manager.broadcast({"type": "library.changed"})
+    return {"status": "deleted"}
 
 
 @app.get("/api/papers/{paper_id}/reading")
 def get_reading_info(paper_id: str, dependencies: None = Depends(verify_token)) -> dict[str, Any]:
     lib = get_library()
-    try:
-        folder = lib.folder(paper_id)
-        info = lib.reading_info(paper_id)
-        page_count = info["page_count"]
-        preview = read_preview(folder)
-        completed = translated_page_numbers(folder, page_count)
+    folder = paper_folder(lib, paper_id)
+    info = lib.reading_info(paper_id)
+    page_count = info["page_count"]
+    preview = read_preview(folder)
+    completed = translated_page_numbers(folder, page_count)
 
-        report_path = folder / "translation-report.json"
-        report = json.loads(report_path.read_text("utf-8")) if report_path.exists() else None
+    report_path = folder / "translation-report.json"
+    report = json.loads(report_path.read_text("utf-8")) if report_path.exists() else None
+    in_progress = bool(preview and not preview["complete"])
+    if report and not in_progress:
+        # Papers translated before page alignment may have more translated pages.
+        page_count = max(page_count, int(report.get("pages") or 0))
 
-        ui_state = load_ui_state(get_data_dir())
-        last_page = ui_state.get("reading_pages", {}).get(paper_id, 0)
+    # Where the right pane finds each page: a per-page preview while translating,
+    # the original for pages outside the request, or nothing while it waits.
+    translated_pages: dict[str, dict[str, Any] | None] = {}
+    for index in range(page_count):
+        path, page_index = translated_page(folder, index)
+        if path is None or not path.is_file():
+            translated_pages[str(index + 1)] = None
+        else:
+            translated_pages[str(index + 1)] = {
+                "file": path.resolve().relative_to(folder.resolve()).as_posix(),
+                "index": page_index,
+                "mtime": int(path.stat().st_mtime),
+            }
 
-        return {
-            "page_count": page_count,
-            "completed_pages": completed,
-            "preview": preview,
-            "report": report,
-            "last_page": last_page,
-            "has_translated": (folder / "translated.pdf").is_file(),
-            "has_article": (folder / "article.md").is_file(),
-        }
-    except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
+    # The code revision and model that produced each page, as the old reader showed.
+    page_versions: dict[str, dict[str, str]] = {}
+    cache_path = folder / "translation-cache.json"
+    if cache_path.exists():
+        try:
+            cache = json.loads(cache_path.read_text("utf-8"))
+            for number, entry in (cache.get("completed_pages") or {}).items():
+                version = entry.get("version", "")
+                sha = version.split("code-sha256-")[1][:7] if "code-sha256-" in version else "不明"
+                page_versions[number] = {"sha": sha, "model": entry.get("model") or "不明"}
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    ui_state = load_ui_state(get_data_dir())
+    last_page = ui_state.get("reading_pages", {}).get(paper_id, 0)
+
+    return {
+        "page_count": page_count,
+        "source_page_count": info["page_count"],
+        "empty_pages": info["empty_pages"],
+        "completed_pages": completed,
+        "preview": preview,
+        "in_progress": in_progress,
+        "report": report,
+        "translated_pages": translated_pages,
+        "page_versions": page_versions,
+        "last_page": last_page,
+        "has_translated": (folder / "translated.pdf").is_file(),
+        "has_article": (folder / "article.md").is_file(),
+        "has_interleaved": (folder / "interleaved.pdf").is_file(),
+        "original_mtime": int((folder / "original.pdf").stat().st_mtime) if (folder / "original.pdf").is_file() else 0,
+    }
 
 
 # --- File Streaming with Range Support ---
@@ -478,10 +603,7 @@ def stream_paper_file(
     dependencies: None = Depends(verify_token),
 ) -> Response:
     lib = get_library()
-    try:
-        folder = lib.folder(paper_id).resolve()
-    except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
+    folder = paper_folder(lib, paper_id).resolve()
 
     # Validate file path
     normalized = file_path.replace("\\", "/")
@@ -556,10 +678,7 @@ def stream_paper_file(
 @app.get("/api/papers/{paper_id}/media/{name}")
 def get_paper_media(paper_id: str, name: str, dependencies: None = Depends(verify_token)) -> FileResponse:
     lib = get_library()
-    try:
-        folder = lib.folder(paper_id).resolve()
-    except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
+    folder = paper_folder(lib, paper_id).resolve()
 
     if not re.fullmatch(r"^[a-zA-Z0-9_\-\.]+\.png$", name):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不正な画像名です。")
@@ -574,10 +693,7 @@ def get_paper_media(paper_id: str, name: str, dependencies: None = Depends(verif
 @app.get("/api/papers/{paper_id}/article")
 def get_paper_article(paper_id: str, dependencies: None = Depends(verify_token)) -> dict[str, str]:
     lib = get_library()
-    try:
-        folder = lib.folder(paper_id)
-    except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
+    folder = paper_folder(lib, paper_id)
 
     article_path = folder / "article.md"
     if not article_path.is_file():
@@ -592,10 +708,8 @@ def get_paper_article(paper_id: str, dependencies: None = Depends(verify_token))
 @app.post("/api/papers/{paper_id}/translate")
 def translate_paper(paper_id: str, body: TranslateRequest, dependencies: None = Depends(verify_token)) -> dict[str, str]:
     lib = get_library()
-    try:
-        doc = lib.document(paper_id)
-    except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
+    paper_folder(lib, paper_id)
+    doc = lib.document(paper_id)
 
     selected_pages = None
     if body.pages:
@@ -628,10 +742,7 @@ def translate_paper(paper_id: str, body: TranslateRequest, dependencies: None = 
 @app.post("/api/papers/{paper_id}/article")
 def generate_article(paper_id: str, dependencies: None = Depends(verify_token)) -> dict[str, str]:
     lib = get_library()
-    try:
-        lib.document(paper_id)
-    except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
+    paper_folder(lib, paper_id)
 
     s = replace(get_settings())
     api_key = _runtime_api_key
@@ -653,19 +764,14 @@ def generate_article(paper_id: str, dependencies: None = Depends(verify_token)) 
 @app.get("/api/papers/{paper_id}/messages")
 def get_paper_messages(paper_id: str, dependencies: None = Depends(verify_token)) -> list[dict[str, str]]:
     lib = get_library()
-    try:
-        return lib.messages(paper_id)
-    except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
+    paper_folder(lib, paper_id)
+    return lib.messages(paper_id)
 
 
 @app.post("/api/papers/{paper_id}/ask")
 def ask_paper(paper_id: str, body: AskRequest, dependencies: None = Depends(verify_token)) -> dict[str, str]:
     lib = get_library()
-    try:
-        lib.document(paper_id)
-    except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
+    paper_folder(lib, paper_id)
 
     s = replace(get_settings())
     api_key = _runtime_api_key
@@ -688,33 +794,74 @@ def ask_paper(paper_id: str, body: AskRequest, dependencies: None = Depends(veri
 @app.post("/api/papers/{paper_id}/export")
 def export_paper(paper_id: str, body: ExportRequest, dependencies: None = Depends(verify_token)) -> dict[str, str]:
     lib = get_library()
-    try:
-        folder = lib.folder(paper_id)
-    except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
-
-    dest = Path(body.destination)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    service = PaperService(lib, Provider(get_settings(), threading.Event()), threading.Event())
-
-    if body.kind == "translated":
-        source = folder / "translated.pdf"
-        if not source.is_file():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="訳文PDFが存在しません。")
-        shutil.copyfile(source, dest)
-    elif body.kind == "interleaved":
-        service.export_interleaved(paper_id, dest)
-    elif body.kind == "bilingual":
-        service.export_bilingual(paper_id, dest)
-    elif body.kind == "markdown":
-        article = folder / "article.md"
-        if not article.is_file():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="サマリーMarkdownが存在しません。")
-        shutil.copyfile(article, dest)
-    else:
+    folder = paper_folder(lib, paper_id)
+    if body.kind not in ("translated", "original", "interleaved", "bilingual", "markdown"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不明なエクスポート形式です。")
 
+    dest = Path(body.destination).resolve()
+    library_files = {(folder / name).resolve() for name in
+                     ("original.pdf", "translated.pdf", "interleaved.pdf", "article.md")}
+    if dest in library_files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="別の保存先を選んでください。")
+
+    if body.kind in ("translated", "interleaved", "bilingual"):
+        preview = read_preview(folder)
+        if preview and not preview["complete"]:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="指定したページの翻訳が終わると書き出せます。完了したページはアプリ内で確認できます。")
+        if not (folder / "translated.pdf").is_file():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="先に日本語訳を作成してください。")
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if body.kind in ("interleaved", "bilingual"):
+        # Building paired PDFs can take a while on long papers; run it like other paper jobs.
+        def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, str]:
+            service = PaperService(lib, Provider(get_settings(), cancel), cancel)
+            if body.kind == "interleaved":
+                progress("原文・日本語訳の交互PDFを作成しています…")
+                service.export_interleaved(paper_id, dest)
+            else:
+                progress("対訳PDFを作成しています…")
+                service.export_bilingual(paper_id, dest)
+            return {"kind": body.kind, "destination": str(dest)}
+
+        try:
+            job = job_manager.submit_job("export", action, paper_id=paper_id)
+        except ConcurrencyConflict as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+        return {"status": "started", "job_id": job.job_id, "destination": str(dest)}
+
+    names = {"translated": "translated.pdf", "original": "original.pdf", "markdown": "article.md"}
+    source = folder / names[body.kind]
+    if not source.is_file():
+        detail = "先に解説を作成してください。" if body.kind == "markdown" else "ファイルが存在しません。"
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+    try:
+        shutil.copyfile(source, dest)
+    except OSError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"保存できませんでした: {error}")
     return {"status": "exported", "destination": str(dest)}
+
+
+@app.post("/api/papers/{paper_id}/interleaved")
+def prepare_interleaved(paper_id: str, dependencies: None = Depends(verify_token)) -> dict[str, str]:
+    """Regenerate interleaved.pdf beside the paper so it can be opened in an external viewer."""
+    lib = get_library()
+    folder = paper_folder(lib, paper_id)
+    if not (folder / "translated.pdf").is_file():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="先に日本語訳を作成してください。")
+    target = folder / "interleaved.pdf"
+
+    def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, str]:
+        progress("原文・日本語訳の交互PDFを作成しています…")
+        PaperService(lib, Provider(get_settings(), cancel), cancel).export_interleaved(paper_id, target)
+        return {"kind": "interleaved", "path": str(target.resolve())}
+
+    try:
+        job = job_manager.submit_job("interleaved", action, paper_id=paper_id)
+    except ConcurrencyConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    return {"job_id": job.job_id}
 
 
 # --- Collections ---
@@ -732,6 +879,8 @@ def create_collection(body: CreateCollectionRequest, dependencies: None = Depend
     if not name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="有効なフォルダー名を入力してください。")
     lib = get_library()
+    if name in lib.collections():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="同じ名前のフォルダーが既にあります。")
     lib.create_collection(name)
     job_manager.broadcast({"type": "library.changed"})
     return {"status": "created", "name": name}
@@ -740,20 +889,25 @@ def create_collection(body: CreateCollectionRequest, dependencies: None = Depend
 @app.patch("/api/collections/rename")
 def rename_collection(body: RenameCollectionRequest, dependencies: None = Depends(verify_token)) -> dict[str, str]:
     lib = get_library()
+    # new_name is the new last segment; accept a full path too for older clients.
+    leaf = normalize_collection_name(body.new_name).split(" / ")[-1]
     try:
-        lib.rename_collection(body.old_name, body.new_name)
+        destination = lib.rename_collection(body.old_name, leaf)
         job_manager.broadcast({"type": "library.changed"})
-        return {"status": "renamed"}
+        return {"status": "renamed", "name": destination}
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @app.delete("/api/collections/{name:path}")
-def delete_collection(name: str, dependencies: None = Depends(verify_token)) -> dict[str, str]:
+def delete_collection(name: str, dependencies: None = Depends(verify_token)) -> dict[str, Any]:
     lib = get_library()
-    lib.delete_collection(name)
+    try:
+        moved = lib.delete_collection(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     job_manager.broadcast({"type": "library.changed"})
-    return {"status": "deleted"}
+    return {"status": "deleted", "moved": moved}
 
 
 # --- Jobs ---
@@ -762,6 +916,12 @@ def delete_collection(name: str, dependencies: None = Depends(verify_token)) -> 
 @app.get("/api/jobs")
 def get_jobs(dependencies: None = Depends(verify_token)) -> list[dict[str, Any]]:
     return [job.model_dump() for job in job_manager.get_jobs()]
+
+
+@app.post("/api/jobs/cancel-all")
+def cancel_all_jobs(dependencies: None = Depends(verify_token)) -> dict[str, int]:
+    cancelled = sum(job_manager.cancel_job(job.job_id) for job in job_manager.get_jobs() if job.running)
+    return {"cancelled": cancelled}
 
 
 @app.post("/api/jobs/{job_id}/cancel")
@@ -787,10 +947,24 @@ async def ws_events(websocket: WebSocket, token: str | None = Query(None)) -> No
     job_manager.add_listener(queue)
     try:
         while True:
-            # Yield events to client, listen for client pings
-            event = await queue.get()
-            await websocket.send_text(json.dumps(event, ensure_ascii=False))
-    except WebSocketDisconnect:
+            send_task = asyncio.create_task(queue.get())
+            recv_task = asyncio.create_task(websocket.receive_text())
+            done, pending = await asyncio.wait(
+                [send_task, recv_task], return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+
+            if recv_task in done:
+                try:
+                    await recv_task
+                except WebSocketDisconnect:
+                    break
+
+            if send_task in done:
+                event = await send_task
+                await websocket.send_text(json.dumps(event, ensure_ascii=False))
+    except Exception:
         pass
     finally:
         job_manager.remove_listener(queue)

@@ -1,82 +1,72 @@
-import React, { useState, useRef, useEffect } from "react";
-import { useStore } from "@/store";
-import { Send, MessageSquare } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Loader2, MessageSquare, Send, Square } from "lucide-react";
+import { isRunning, paperBusy, useStore } from "@/store";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
-import { api } from "@/api/client";
+import { apiRequest } from "@/api/client";
 import { useMessages } from "@/api/hooks";
-import { useQueryClient } from "@tanstack/react-query";
-
-interface ChatMessage {
-  role: "user" | "assistant" | "system";
-  content: string;
-}
+import { showError, startJob } from "@/features/jobs/jobEvents";
 
 const EXAMPLE_QUESTIONS = [
-  "この論文の主な貢献は何ですか？",
-  "実験結果について詳しく教えてください。",
-  "使用されているデータセットは何ですか？",
+  "従来手法と比べた改善点は？",
+  "手法の前提条件と、実験の条件は？",
+  "限界と今後の課題は？",
 ];
 
 export function ChatPane() {
   const activePaperId = useStore((state) => state.activePaperId);
-  const setCurrentPage = useStore((state) => state.setCurrentPage);
-  const queryClient = useQueryClient();
-  
-  const { data: historyData } = useMessages(activePaperId);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const activeJobs = useStore((state) => state.activeJobs);
+  const { data: messages = [] } = useMessages(activePaperId);
   const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [allPapers, setAllPapers] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const askJob = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && j.kind === "ask");
+  const busy = paperBusy(activeJobs, activePaperId);
 
   useEffect(() => {
-    if (historyData) {
-      if (Array.isArray(historyData)) {
-        setMessages(historyData as unknown as ChatMessage[]);
-      } else if ((historyData as any).messages && Array.isArray((historyData as any).messages)) {
-        setMessages((historyData as any).messages as ChatMessage[]);
-      }
-    } else {
-      setMessages([]);
-    }
-  }, [historyData]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading]);
-
-  const handleSend = async (text: string) => {
-    if (!text.trim() || !activePaperId || isLoading) return;
-    
+    setPending(null);
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
-    setIsLoading(true);
-    
+  }, [activePaperId]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, askJob, pending, activePaperId]);
+
+  useEffect(() => {
+    // Grow with the text up to about six lines.
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+    el.style.overflowY = el.scrollHeight > 150 ? "auto" : "hidden";
+  }, [input]);
+
+  const send = async (text: string) => {
+    const question = text.trim();
+    if (!question || !activePaperId || busy) return;
+    const paperId = activePaperId;
+    setPending(question);
     try {
-      const { data, error } = await api.POST("/api/papers/{paper_id}/ask", {
-        params: { path: { paper_id: activePaperId } },
-        // @ts-expect-error schema body might be different, adapt based on schema.d.ts if known
-        body: { question: text }
-      });
-      
-      if (!error) {
-        if (data && (data as any).answer) {
-          setMessages((prev) => [...prev, { role: "assistant", content: (data as any).answer }]);
-        } else if (typeof data === "string") {
-          setMessages((prev) => [...prev, { role: "assistant", content: data }]);
-        }
-        queryClient.invalidateQueries({ queryKey: ["messages", activePaperId] });
-      }
-    } catch (e) {
-      console.error("Failed to send message", e);
-    } finally {
-      setIsLoading(false);
+      await startJob(`/api/papers/${paperId}/ask`, { question, search_all: allPapers },
+        { kind: "ask", paperId },
+        (event) => {
+          if (useStore.getState().activePaperId !== paperId) return;
+          setPending(null);
+          // Keep the question for another try unless it was answered.
+          if (event.status === "succeeded") setInput((current) => current.trim() === question ? "" : current);
+        });
+    } catch (error) {
+      setPending(null);
+      showError(error, "質問を送信できませんでした");
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      handleSend(input);
+      send(input);
     }
   };
 
@@ -89,76 +79,97 @@ export function ChatPane() {
     );
   }
 
+  const waiting = !!askJob || pending !== null;
+
   return (
     <div className="flex flex-col w-full h-full bg-background overflow-hidden">
-      <div className="h-[48px] flex items-center px-4 border-b shrink-0 bg-background/50">
-        <h2 className="text-[14px] font-semibold flex items-center gap-2">
-          <MessageSquare className="w-4 h-4 text-muted-foreground" />
-          質問
-        </h2>
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
+          {messages.length === 0 && !waiting && (
+            <div className="flex flex-col items-center justify-center text-center py-12">
+              <MessageSquare className="w-12 h-12 text-muted-foreground/30 mb-4" />
+              <p className="text-[15px] font-medium mb-1">本文を根拠に、質問する</p>
+              <p className="text-[13px] text-muted-foreground">手法の違い、実験条件、限界などを聞いてみてください。</p>
+              <div className="flex flex-wrap justify-center gap-2 mt-5">
+                {EXAMPLE_QUESTIONS.map((q) => (
+                  <button
+                    key={q}
+                    onClick={() => { setInput(q); inputRef.current?.focus(); }}
+                    className="text-[13px] px-3 py-1.5 border rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {messages.map((msg, idx) => msg.role === "user" ? (
+            <div key={idx}>
+              <div className="text-[12px] font-medium text-muted-foreground mb-1">あなた</div>
+              <div className="rounded-lg bg-muted/60 border px-4 py-2.5 text-[14px] whitespace-pre-wrap">{msg.content}</div>
+            </div>
+          ) : (
+            <div key={idx}>
+              <div className="text-[12px] font-medium text-muted-foreground mb-1">回答</div>
+              <MarkdownRenderer content={msg.content} paperId={activePaperId} className="max-w-none" />
+            </div>
+          ))}
+
+          {waiting && (
+            <>
+              {pending && (
+                <div>
+                  <div className="text-[12px] font-medium text-muted-foreground mb-1">あなた</div>
+                  <div className="rounded-lg bg-muted/60 border px-4 py-2.5 text-[14px] whitespace-pre-wrap">{pending}</div>
+                </div>
+              )}
+              <div className="flex items-center gap-3 text-[13px] text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                <span className="truncate">{askJob?.message || "回答を作成中…"}</span>
+                {askJob && (
+                  <button
+                    onClick={() => apiRequest("POST", `/api/jobs/${askJob.job_id}/cancel`).catch(() => undefined)}
+                    className="flex items-center gap-1 px-2 py-1 rounded border text-[12px] hover:bg-muted"
+                  >
+                    <Square className="w-3 h-3" /> 中止
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+          <div ref={endRef} />
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        {messages.length === 0 && !isLoading && (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <MessageSquare className="w-12 h-12 text-muted-foreground/30 mb-4" />
-            <p className="text-sm font-medium mb-2">この論文について質問しましょう</p>
-            <div className="flex flex-col gap-2 w-full max-w-sm mt-4">
-              {EXAMPLE_QUESTIONS.map((q, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleSend(q)}
-                  className="text-[13px] text-left px-4 py-2 border rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
+      <div className="px-4 pt-3 pb-2 bg-background border-t shrink-0">
+        <div className="max-w-3xl mx-auto">
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={inputRef}
+              className="flex-1 min-h-[40px] rounded-lg border border-input bg-background px-3 py-2.5 text-[13px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none leading-relaxed disabled:opacity-60"
+              placeholder="例：従来手法と比べた改善点と、実験の限界は？"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={waiting}
+              rows={1}
+            />
+            <button
+              className="flex items-center gap-1.5 justify-center rounded-lg bg-primary text-primary-foreground hover:opacity-90 h-[40px] px-4 shrink-0 disabled:opacity-50 transition-opacity text-[13px] font-medium"
+              onClick={() => send(input)}
+              disabled={busy || waiting || !input.trim()}
+            >
+              <Send className="w-4 h-4" /> 質問する
+            </button>
           </div>
-        )}
-
-        {messages.map((msg, idx) => (
-          <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[85%] rounded-lg px-4 py-3 text-[14px] ${
-              msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
-            }`}>
-              <MarkdownRenderer 
-                content={msg.content} 
-                onCitationClick={(page) => setCurrentPage(page)}
-              />
-            </div>
+          <div className="flex items-center justify-between mt-1.5 text-[12px] text-muted-foreground">
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input type="checkbox" checked={allPapers} onChange={(e) => setAllPapers(e.target.checked)} />
+              保存したほかの論文も検索する
+            </label>
+            <span>Enter: 送信 / Shift+Enter: 改行</span>
           </div>
-        ))}
-        
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-muted text-foreground rounded-lg px-4 py-3 text-sm flex gap-1 items-center">
-              <span className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" />
-              <span className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-              <span className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-            </div>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-      
-      <div className="p-4 bg-background border-t shrink-0">
-        <div className="relative max-w-3xl mx-auto flex items-end gap-2">
-          <textarea
-            className="flex-1 min-h-[44px] max-h-[200px] rounded-lg border border-input bg-background px-3 py-3 text-[13px] shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none leading-relaxed"
-            placeholder="論文に関する質問を入力 (Enterで送信, Shift+Enterで改行)..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={1}
-          />
-          <button
-            className="flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:opacity-90 h-[44px] w-[44px] shrink-0 disabled:opacity-50 transition-opacity"
-            onClick={() => handleSend(input)}
-            disabled={isLoading || !input.trim()}
-          >
-            <Send className="w-[18px] h-[18px]" />
-          </button>
         </div>
       </div>
     </div>

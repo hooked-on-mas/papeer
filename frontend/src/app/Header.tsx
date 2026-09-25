@@ -1,72 +1,177 @@
-import { useStore } from "../store";
-import { usePaper, useReading } from "../api/hooks";
-import { PaperStatusBadge, PaperStatus } from "../components/ui/PaperStatusBadge";
+import { useEffect, useState } from "react";
+import {
+  Download, ExternalLink, FileText, FolderOpen, Languages, MoreVertical, PanelLeft, Pencil, ScrollText, Square, Trash2,
+} from "lucide-react";
+import { useStore, isRunning, paperBusy } from "../store";
+import { paperDisplayName, usePaper, useReading } from "../api/hooks";
+import { PaperStatusBadge, type PaperStatus } from "../components/ui/PaperStatusBadge";
+import { TranslationDialog } from "../features/reader/TranslationDialog";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent,
+  DropdownMenuSubTrigger, DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
+import { apiRequest } from "@/api/client";
+import {
+  deletePaper, exportMarkdown, exportPdf, generateArticle, openPaperFile, openPaperFolder, renamePaperFile, saveOriginal,
+} from "./actions";
 
 export function Header() {
   const activePaperId = useStore((s) => s.activePaperId);
   const activeJobs = useStore((s) => s.activeJobs);
-  
+  const currentPage = useStore((s) => s.currentPage);
+  const sidebarCollapsed = useStore((s) => s.sidebarCollapsed);
+
   const { data: paper } = usePaper(activePaperId);
   const { data: reading } = useReading(activePaperId);
+  const [transOpen, setTransOpen] = useState(false);
+
+  useEffect(() => {
+    const open = () => { if (useStore.getState().activePaperId) setTransOpen(true); };
+    window.addEventListener("open-translate-dialog", open);
+    return () => window.removeEventListener("open-translate-dialog", open);
+  }, []);
+
+  const toggleSidebar = (
+    <button
+      onClick={() => useStore.getState().setSidebarCollapsed(!sidebarCollapsed)}
+      className={`p-1.5 mr-2 rounded-md hover:bg-muted shrink-0 ${sidebarCollapsed ? "text-muted-foreground" : "text-foreground"}`}
+      title="左パネルの表示を切り替え（Ctrl+B）"
+      aria-label="ライブラリ"
+    >
+      <PanelLeft className="w-4 h-4" />
+    </button>
+  );
 
   if (!activePaperId) {
     return (
-      <header className="h-[48px] border-b flex items-center px-4 shrink-0 bg-background/50">
-        <h1 className="text-sm text-muted-foreground">論文を選択してください</h1>
+      <header className="h-[52px] border-b flex items-center px-3 shrink-0 bg-background/50">
+        {toggleSidebar}
+        <div className="flex flex-col">
+          <h1 className="text-[15px] font-semibold">論文を追加して、読み始めよう</h1>
+          <span className="text-[12px] text-muted-foreground">PDFを追加 → AI接続を設定 → 翻訳・解説・質問</span>
+        </div>
       </header>
     );
   }
 
-  // Determine status
-  const job = activeJobs.find(j => j.paper_id === activePaperId && j.status === "running");
-  
+  const translateJob = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && j.kind === "translate");
+  const busy = paperBusy(activeJobs, activePaperId);
+  const pageCount = reading?.page_count ?? paper?.pages ?? 0;
+  const completed = reading?.completed_pages?.length ?? 0;
+
   let status: PaperStatus = "untranslated";
   let statusText = "未翻訳";
-  
-  if (job) {
+  if (translateJob) {
     status = "translating";
-    statusText = `翻訳中 ${job.done || 0}/${job.total || "?"}`;
-  } else if (reading?.has_translated && reading?.completed_pages && reading.completed_pages.length > 0) {
-    // We should technically check if all pages are translated, but this is a rough proxy
+    statusText = `翻訳中 ${translateJob.done ?? 0}/${translateJob.total ?? "?"}`;
+  } else if (reading?.has_translated && !reading.in_progress && completed >= pageCount && pageCount > 0) {
     status = "translated";
     statusText = "翻訳済み";
-  } else if (reading?.completed_pages && reading.completed_pages.length > 0) {
+  } else if (completed > 0) {
     status = "partial";
-    statusText = `翻訳済み ${reading.completed_pages.length}`;
+    statusText = `翻訳済み ${completed}/${pageCount}`;
   }
-  // TODO: Add failed state based on job history if needed
+
+  const handleCancel = async () => {
+    if (translateJob) {
+      await apiRequest("POST", `/api/jobs/${translateJob.job_id}/cancel`).catch(() => undefined);
+      useStore.getState().setStatus("中止しています… API通信中の場合は応答またはタイムアウトまで待ちます。");
+    }
+  };
+
+  const exportBlocked = !reading?.has_translated || !!reading?.in_progress;
+  const meta = [
+    paper?.first_author,
+    paper?.publication_year,
+    paper?.collection_name || "未分類",
+    `${paper?.pages ?? "?"}ページ`,
+  ].filter(Boolean).join(" · ");
 
   return (
-    <header className="h-[48px] border-b flex items-center px-4 justify-between shrink-0 bg-background/50">
-      <div className="flex flex-col min-w-0 pr-4">
-        <div className="flex items-center gap-2">
-          <h1 className="text-[15px] font-semibold truncate cursor-pointer hover:underline" title={paper?.title || "Untitled"}>
-            {paper?.title || "Loading..."}
-          </h1>
-        </div>
-        <div className="flex items-center gap-2 text-[12px] text-muted-foreground mt-0.5">
-          <span className="truncate max-w-[200px]">
-            {paper?.first_author || "Unknown"} · {paper?.publication_year || "?"} · {paper?.collection_name || "未分類"}
-          </span>
+    <header className="h-[52px] border-b flex items-center pl-3 pr-4 justify-between shrink-0 bg-background/50">
+      {toggleSidebar}
+      <div className="flex flex-col min-w-0 flex-1 pr-4">
+        <h1
+          className="text-[15px] font-semibold truncate cursor-pointer hover:underline"
+          title={paper ? `${paperDisplayName(paper)}\nクリックで論文情報・メモを開く` : ""}
+          onClick={() => useStore.getState().setActiveTab("notes")}
+        >
+          {paper ? paperDisplayName(paper) : "読み込み中…"}
+        </h1>
+        <div className="flex items-center gap-2 text-[12px] text-muted-foreground mt-0.5 min-w-0">
+          <span className="truncate" title={meta}>{meta}</span>
           <span className="text-border">|</span>
-          <PaperStatusBadge status={status} text={statusText} hasSummary={!!paper?.has_article} />
+          <PaperStatusBadge status={status} text={statusText} hasSummary={!!paper?.has_article} className="shrink-0" />
         </div>
       </div>
-      
+
       <div className="flex items-center gap-2 shrink-0">
-        {status === "translating" ? (
-          <button className="bg-destructive text-destructive-foreground px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90 transition-opacity">
-            中止
+        {translateJob ? (
+          <button onClick={handleCancel} className="flex items-center gap-1.5 bg-destructive text-white px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90 transition-opacity">
+            <Square className="w-3.5 h-3.5" /> 中止
           </button>
         ) : (
-          <button className="bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90 transition-opacity">
-            {status === "partial" ? "再開 ▾" : status === "translated" ? "再翻訳 ▾" : "翻訳する ▾"}
+          <button
+            onClick={() => setTransOpen(true)}
+            disabled={busy}
+            title="翻訳するページとモデルを選んで開始します（Ctrl+T）。保存済みの訳文は再利用します。"
+            className="flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+          >
+            <Languages className="w-4 h-4" />
+            {status === "partial" || reading?.in_progress ? "翻訳 / 再開…" : status === "translated" ? "再翻訳…" : "翻訳する…"}
           </button>
         )}
-        <button className="p-1.5 hover:bg-muted rounded-md text-muted-foreground transition-colors">
-          ⋯
-        </button>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger className="p-1.5 hover:bg-muted rounded-md text-muted-foreground transition-colors inline-flex items-center gap-1 text-[13px]" title="その他">
+            <MoreVertical className="w-4 h-4" /> その他
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuItem disabled={busy} onClick={() => generateArticle(activePaperId)}>
+              <ScrollText className="w-4 h-4 mr-2" /> サマリー（解説）を作成
+            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger disabled={busy || exportBlocked}>
+                <Download className="w-4 h-4 mr-2" /> PDFを書き出す
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-60">
+                <DropdownMenuItem onClick={() => exportPdf(activePaperId, "translated")}>日本語訳</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportPdf(activePaperId, "interleaved")}>原文と訳文の交互ページ</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportPdf(activePaperId, "bilingual")}>原文と訳文の対訳（左右）</DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem disabled={!reading?.has_article} onClick={() => exportMarkdown(activePaperId)}>
+              <FileText className="w-4 h-4 mr-2" /> サマリーをMarkdownで保存
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => openPaperFile(activePaperId, "original.pdf")}>
+              <ExternalLink className="w-4 h-4 mr-2" /> 原文を外部で開く
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={!reading?.has_translated} onClick={() => openPaperFile(activePaperId, "translated.pdf")}>
+              <ExternalLink className="w-4 h-4 mr-2" /> 日本語訳を外部で開く
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={!reading?.has_translated || busy} onClick={() => openPaperFile(activePaperId, "interleaved.pdf")}>
+              <ExternalLink className="w-4 h-4 mr-2" /> 原文・日本語訳（交互）を外部で開く
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => saveOriginal(activePaperId)}>
+              <Download className="w-4 h-4 mr-2" /> 原文PDFを名前を付けて保存…
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => renamePaperFile(activePaperId)}>
+              <Pencil className="w-4 h-4 mr-2" /> ファイル名を変更…
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openPaperFolder(activePaperId)}>
+              <FolderOpen className="w-4 h-4 mr-2" /> 保存フォルダーを開く
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={busy} className="text-destructive" onClick={() => deletePaper(activePaperId)}>
+              <Trash2 className="w-4 h-4 mr-2" /> ライブラリから削除
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
+
+      <TranslationDialog open={transOpen} onOpenChange={setTransOpen} paperId={activePaperId} currentPage={currentPage} />
     </header>
   );
 }

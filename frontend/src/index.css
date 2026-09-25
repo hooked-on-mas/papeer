@@ -1,6 +1,18 @@
 @import "tailwindcss";
 @import "@fontsource-variable/geist";
 
+/* dark: follows the theme setting (data-theme), not only the OS preference. */
+@custom-variant dark {
+  &:where([data-theme=dark], [data-theme=dark] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where([data-theme=system], [data-theme=system] *) {
+      @slot;
+    }
+  }
+}
+
 @theme {
   --font-sans: "Geist Variable", "Yu Gothic UI", "Hiragino Sans", "Noto Sans CJK JP", sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
@@ -10,18 +22,29 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-secondary: var(--muted);
+  --color-secondary-foreground: var(--foreground);
   --color-border: var(--border);
+  --color-input: var(--border);
   --color-accent: var(--accent);
+  --color-accent-foreground: var(--foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--primary-foreground);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-ring: var(--ring);
   --color-sidebar: var(--sidebar);
   --color-reader-bg: var(--reader-bg);
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
 }
 
 :root {
@@ -40,11 +63,31 @@
   --ring: var(--primary);
   --sidebar: var(--muted);
   --reader-bg: oklch(0.94 0.006 80);
+  color-scheme: light;
 }
 
-:root[data-theme="dark"],
+/* Dark tokens apply when chosen explicitly, or when following a dark system theme. */
+:root[data-theme="dark"] {
+  --background: oklch(0.17 0.006 260);
+  --foreground: oklch(0.93 0.005 80);
+  --card: oklch(0.21 0.006 260);
+  --muted: oklch(0.24 0.006 260);
+  --muted-foreground: oklch(0.68 0.008 260);
+  --border: oklch(0.29 0.006 260);
+  --accent: oklch(0.27 0.03 250);
+  --primary: oklch(0.72 0.14 250);
+  --primary-foreground: oklch(0.15 0.02 250);
+  --destructive: oklch(0.70 0.18 25);
+  --success: oklch(0.75 0.14 150);
+  --warning: oklch(0.82 0.14 80);
+  --ring: var(--primary);
+  --sidebar: oklch(0.15 0.006 260);
+  --reader-bg: oklch(0.13 0.005 260);
+  color-scheme: dark;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
     --background: oklch(0.17 0.006 260);
     --foreground: oklch(0.93 0.005 80);
     --card: oklch(0.21 0.006 260);
@@ -60,21 +103,25 @@
     --ring: var(--primary);
     --sidebar: oklch(0.15 0.006 260);
     --reader-bg: oklch(0.13 0.005 260);
+    color-scheme: dark;
   }
 }
 
-* {
-  border-color: var(--border);
-}
+/* In the base layer so utilities such as border-transparent still win. */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
 
-body {
-  background-color: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans);
-  font-size: 13px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 }
 
 /* Typography styles for Prose */
@@ -93,4 +140,22 @@ body {
   font-weight: 600;
   margin-top: 1.5em;
   margin-bottom: 0.5em;
+}
+
+/* Indeterminate progress (no done/total in the job message). */
+[data-slot="progress-indicator"][data-indeterminate] {
+  width: 35%;
+  animation: pd-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes pd-indeterminate {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

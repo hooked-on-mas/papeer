@@ -1,105 +1,125 @@
-import { useStore } from "@/store";
-import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, Search } from "lucide-react";
-import { useReading, usePaper } from "@/api/hooks";
+import { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, ZoomIn, ZoomOut } from "lucide-react";
+import { useStore, ZOOM_PRESETS } from "@/store";
+import { useReading } from "@/api/hooks";
+import { changeZoom, jumpToPage, movePage } from "./navigation";
+
+const ZOOM_LABELS: Record<number, string> = { 1: "幅に合わせる" };
 
 export function ReaderToolbar() {
-  const { activePaperId, currentPage, zoom, setZoom, setCurrentPage, translatedOnly, setTranslatedOnly, focusMode, setFocusMode } = useStore();
+  const activePaperId = useStore((s) => s.activePaperId);
+  const currentPage = useStore((s) => s.currentPage);
+  const zoom = useStore((s) => s.zoom);
+  const setZoom = useStore((s) => s.setZoom);
+  const translatedOnly = useStore((s) => s.translatedOnly);
+  const setTranslatedOnly = useStore((s) => s.setTranslatedOnly);
+  const focusMode = useStore((s) => s.focusMode);
+  const setFocusMode = useStore((s) => s.setFocusMode);
   const { data: reading } = useReading(activePaperId);
-  const { data: paper } = usePaper(activePaperId);
-  const completedPages = reading?.completed_pages || [];
 
-  const handlePrev = () => {
-    if (translatedOnly) {
-      const idx = [...completedPages].reverse().find(p => p < currentPage);
-      if (idx) setCurrentPage(idx);
-    } else {
-      setCurrentPage(Math.max(1, currentPage - 1));
-    }
+  const count = reading?.page_count ?? 0;
+  const completed = reading?.completed_pages ?? [];
+  const [pageText, setPageText] = useState(String(currentPage));
+  useEffect(() => setPageText(String(currentPage)), [currentPage, activePaperId]);
+
+  const commitPage = () => {
+    const value = parseInt(pageText.normalize("NFKC"), 10);
+    if (Number.isFinite(value) && value !== currentPage) jumpToPage(value);
+    else setPageText(String(currentPage));
   };
 
-  const handleNext = () => {
-    // Assuming a max page count isn't easily known here without passing it, but let's just increment
-    if (translatedOnly) {
-      const idx = completedPages.find(p => p > currentPage);
-      if (idx) setCurrentPage(idx);
-    } else {
-      setCurrentPage(currentPage + 1);
-    }
-  };
+  let pageLabel = count ? `${currentPage} / ${count}` : "—";
+  if (translatedOnly) {
+    pageLabel = completed.length
+      ? `原文 p.${currentPage}（表示 ${Math.max(1, completed.indexOf(currentPage) + 1)} / ${completed.length}）`
+      : "翻訳済みページ: 0";
+  } else if (reading?.preview && completed.length < count) {
+    pageLabel = `${currentPage} / ${count}（${completed.length}ページ翻訳済み）`;
+  }
+  const version = reading?.page_versions?.[String(currentPage)];
+  const atStart = translatedOnly ? completed[0] === undefined || currentPage <= completed[0] : currentPage <= 1;
+  const atEnd = translatedOnly ? !completed.length || currentPage >= completed[completed.length - 1] : currentPage >= count;
 
-  const handleZoomIn = () => setZoom(zoom === 0 ? 1.25 : zoom + 0.25);
-  const handleZoomOut = () => setZoom(zoom === 0 ? 0.75 : Math.max(0.25, zoom - 0.25));
+  const button = "p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:pointer-events-none";
 
   return (
-    <div className="h-[40px] flex items-center px-4 border-b shrink-0 bg-background/50 text-[13px]">
-      <div className="flex items-center gap-1">
-        <button onClick={handlePrev} className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground">
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-        <div className="flex items-center gap-1 px-2">
-          <input 
-            type="text" 
-            value={currentPage} 
-            onChange={(e) => {
-              const val = parseInt(e.target.value);
-              if (!isNaN(val)) setCurrentPage(Math.max(1, Math.min(val, paper?.pages || 9999)));
-            }}
-            className="w-8 h-6 text-center border rounded bg-background focus:ring-2 focus:ring-ring focus:outline-none tabular-nums"
-          />
-          <span className="text-muted-foreground">/ {paper?.pages || "?"}</span>
-        </div>
-        <button onClick={handleNext} className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground">
-          <ChevronRight className="w-4 h-4" />
-        </button>
-      </div>
+    <div className="h-[40px] flex items-center px-3 gap-1 border-b shrink-0 bg-background/50 text-[13px] min-w-0">
+      <button onClick={() => movePage(-1)} disabled={!activePaperId || atStart} className={button} title="前のページ（←）">
+        <ChevronLeft className="w-4 h-4" />
+      </button>
+      <input
+        id="page-input"
+        type="text"
+        inputMode="numeric"
+        value={pageText}
+        disabled={!activePaperId}
+        onChange={(e) => setPageText(e.target.value.replace(/[^0-9０-９]/g, ""))}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commitPage();
+          if (e.key === "Escape") { setPageText(String(currentPage)); (e.target as HTMLInputElement).blur(); }
+        }}
+        onBlur={commitPage}
+        title="ページ番号を入力し、Enterで移動（Ctrl+G）"
+        className="w-11 h-6 text-center border rounded bg-background focus:ring-2 focus:ring-ring focus:outline-none tabular-nums"
+      />
+      <button onClick={commitPage} disabled={!activePaperId} className="h-6 px-2 rounded border text-[12px] hover:bg-muted disabled:opacity-40">
+        移動
+      </button>
+      <button onClick={() => movePage(1)} disabled={!activePaperId || atEnd} className={button} title="次のページ（→）">
+        <ChevronRight className="w-4 h-4" />
+      </button>
+      <span className="ml-2 text-muted-foreground tabular-nums truncate min-w-0" title={pageLabel}>{pageLabel}</span>
+      {version && (
+        <span className="ml-2 text-[11px] text-muted-foreground/80 truncate hidden lg:inline" title="このページを翻訳したときのコード版とモデル">
+          翻訳時SHA：{version.sha} ({version.model})
+        </span>
+      )}
 
-      <div className="w-px h-4 bg-border mx-4"></div>
-
-      <div className="flex items-center gap-2">
-        <select 
-          value={zoom} 
-          onChange={(e) => setZoom(Number(e.target.value))}
-          className="h-6 bg-transparent border-none text-[13px] focus:outline-none hover:bg-muted rounded px-1 cursor-pointer"
+      <div className="ml-auto flex items-center gap-1 shrink-0">
+        <select
+          value={translatedOnly ? "translated" : "all"}
+          onChange={(e) => {
+            const only = e.target.value === "translated";
+            setTranslatedOnly(only);
+            if (only && completed.length && !completed.includes(currentPage)) {
+              useStore.getState().setCurrentPage(completed[0]);
+            }
+          }}
+          title="表示するページ"
+          className="h-6 bg-transparent border rounded text-[12px] px-1 hover:bg-muted cursor-pointer"
         >
-          <option value={0}>幅に合わせる</option>
-          <option value={1}>100%</option>
-          <option value={1.25}>125%</option>
-          <option value={1.5}>150%</option>
-          <option value={2}>200%</option>
+          <option value="all">全ページ</option>
+          <option value="translated">翻訳済みページのみ</option>
         </select>
-        <button onClick={handleZoomOut} className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground">
+        <div className="w-px h-4 bg-border mx-2" />
+        <button onClick={() => changeZoom(-1)} disabled={zoom <= ZOOM_PRESETS[0]} className={button}
+          title="原文・日本語訳を縮小（Ctrl＋マウスホイール下 / Ctrl+-）">
           <ZoomOut className="w-4 h-4" />
         </button>
-        <button onClick={handleZoomIn} className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground">
+        <select
+          value={String(ZOOM_PRESETS.includes(zoom) ? zoom : 1)}
+          onChange={(e) => setZoom(Number(e.target.value))}
+          title="原文・日本語訳の共通倍率（幅に合わせた表示が基準）"
+          className="h-6 bg-transparent border rounded text-[12px] px-1 hover:bg-muted cursor-pointer tabular-nums"
+        >
+          {ZOOM_PRESETS.map((value) => (
+            <option key={value} value={String(value)}>{ZOOM_LABELS[value] ?? `${Math.round(value * 100)}%`}</option>
+          ))}
+        </select>
+        <button onClick={() => changeZoom(1)} disabled={zoom >= ZOOM_PRESETS[ZOOM_PRESETS.length - 1]} className={button}
+          title="原文・日本語訳を拡大（Ctrl＋マウスホイール上 / Ctrl+=）">
           <ZoomIn className="w-4 h-4" />
         </button>
-      </div>
-
-      <div className="w-px h-4 bg-border mx-4"></div>
-
-      <label className="flex items-center gap-2 cursor-pointer hover:text-foreground text-muted-foreground">
-        <input 
-          type="checkbox" 
-          checked={translatedOnly} 
-          onChange={(e) => setTranslatedOnly(e.target.checked)}
-          className="rounded border-border text-primary focus:ring-ring"
-        />
-        翻訳済みのみ
-      </label>
-
-      <div className="ml-auto flex items-center gap-2">
-        <button className="p-1.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground" title="検索 (Ctrl+Shift+F)">
-          <Search className="w-[18px] h-[18px]" />
-        </button>
-        <button 
-          onClick={() => setFocusMode(!focusMode)} 
-          className={`p-1.5 rounded hover:bg-muted transition-colors ${focusMode ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground'}`} 
-          title="集中 (F11)"
+        <div className="w-px h-4 bg-border mx-2" />
+        <button
+          onClick={() => setFocusMode(!focusMode)}
+          className={`flex items-center gap-1 h-6 px-2 rounded text-[12px] border transition-colors ${focusMode ? "text-primary bg-primary/10 border-primary/40" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+          title="PDFとページ操作を大きく表示（F11で切り替え）"
         >
-          <Maximize2 className="w-[18px] h-[18px]" />
+          {focusMode ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          {focusMode ? "集中表示を終了" : "集中表示"}
         </button>
       </div>
     </div>
   );
 }
-

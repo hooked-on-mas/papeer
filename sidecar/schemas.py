@@ -21,6 +21,18 @@ class SettingsModel(BaseModel):
     api_key: str | None = None
 
 
+class ProviderActionRequest(BaseModel):
+    """Optional unsaved settings from the dialog; omitted fields use the saved settings."""
+    provider: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    api_base: str | None = None
+    api_key: str | None = None
+    codex_path: str | None = None
+    claude_path: str | None = None
+    gemini_path: str | None = None
+
+
 class TranslateRequest(BaseModel):
     pages: str | None = None
     model: str | None = None
@@ -45,7 +57,7 @@ class ExportRequest(BaseModel):
 class UpdatePaperRequest(BaseModel):
     title: str | None = None
     author: str | None = None
-    year: int | None = None
+    year: str | None = None  # "" clears it; otherwise four digits
     collection: str | None = None
     note: str | None = None
 

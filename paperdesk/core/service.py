@@ -164,6 +164,8 @@ class PaperService:
                             {key: "\n".join(parts) for key, parts in block_text.items()},
                             preview_page(folder, preview, number), page_numbers={number})
                     except Exception as error:
+                        if isinstance(error, OSError):
+                            raise
                         check_cancel(self.cancel)
                         preview["skipped_pages"].append(number)
                         preview["page_errors"][str(number)] = str(error)

@@ -87,6 +87,13 @@ class JobManager:
             )
             self._jobs[job_id] = job
             self._events[job_id] = cancel_event
+        self.broadcast({
+            "type": "job.started",
+            "job_id": job_id,
+            "paper_id": paper_id,
+            "kind": kind,
+            "message": job.message,
+        })
 
         def progress(message: str) -> None:
             done, total = None, None
@@ -101,6 +108,7 @@ class JobManager:
                 "type": "job.progress",
                 "job_id": job_id,
                 "paper_id": paper_id,
+                "kind": kind,
                 "message": message,
                 "done": done,
                 "total": total,
@@ -130,6 +138,7 @@ class JobManager:
                     "type": "job.finished",
                     "job_id": job_id,
                     "paper_id": paper_id,
+                    "kind": kind,
                     "status": "succeeded",
                     "result": result,
                     "cancelled": False,
@@ -145,10 +154,21 @@ class JobManager:
                     "type": "job.finished",
                     "job_id": job_id,
                     "paper_id": paper_id,
+                    "kind": kind,
                     "status": "cancelled" if is_cancelled else "failed",
                     "error": str(exc),
                     "cancelled": is_cancelled,
                 })
+            finally:
+                # Cleanup job after a delay so that clients and tests can read the final status
+                def cleanup():
+                    import time
+                    time.sleep(5)
+                    with self._lock:
+                        self._jobs.pop(job_id, None)
+                        self._events.pop(job_id, None)
+                        self._threads.pop(job_id, None)
+                threading.Thread(target=cleanup, daemon=True).start()
 
         thread = threading.Thread(target=runner, name=f"Job-{kind}-{job_id}", daemon=True)
         with self._lock:

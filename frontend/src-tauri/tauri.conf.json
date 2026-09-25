@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "PaperDesk",
-        "width": 1024,
-        "height": 768
+        "title": "PaperDesk — 日本語で論文を読む",
+        "width": 1380,
+        "height": 880,
+        "minWidth": 1000,
+        "minHeight": 680
       }
     ],
     "security": {

@@ -1,27 +1,51 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 export interface Job {
   job_id: string;
-  paper_id?: string;
+  paper_id?: string | null;
+  kind?: string;
   message?: string;
-  done?: number;
-  total?: number;
+  done?: number | null;
+  total?: number | null;
   status?: "running" | "succeeded" | "cancelled" | "failed";
 }
+
+export interface MoveRecord {
+  paperId: string;
+  from: string;
+  to: string;
+}
+
+/** Reader zoom relative to the fitted page width, as in the old reader. */
+export const ZOOM_PRESETS = [1, 1.25, 1.5, 2, 2.5, 3, 4];
 
 interface UiState {
   activePaperId: string | null;
   activeTab: string;
-  zoom: number; // 1.0 = 100%, 0 = fit-width
+  zoom: number;
   currentPage: number;
+  paperPages: Record<string, number>;
   activeJobs: Job[];
   sidebarWidth: number;
   sidebarCollapsed: boolean;
   readerSplit: number; // 0-1 ratio
   translatedOnly: boolean;
   focusMode: boolean;
-  
-  setActivePaperId: (id: string | null) => void;
+  statusMessage: string;
+  /** Folder that new PDFs go into ("" = 未分類); follows the selected tree row. */
+  currentCollection: string;
+  /** Folder row selected in the library, or null when a paper row is selected. */
+  selectedFolder: string | null;
+  librarySearch: string;
+  sortOrder: number;
+  /** null until known: expand everything, as the old tree did on first launch. */
+  expandedCollections: string[] | null;
+  /** Library moves made during this session, newest last. */
+  moveHistory: MoveRecord[];
+  uiStateLoaded: boolean;
+
+  setActivePaperId: (id: string | null, page?: number) => void;
   setActiveTab: (tab: string) => void;
   setZoom: (zoom: number) => void;
   setCurrentPage: (page: number) => void;
@@ -30,39 +54,121 @@ interface UiState {
   setReaderSplit: (r: number) => void;
   setTranslatedOnly: (t: boolean) => void;
   setFocusMode: (f: boolean) => void;
-  
+  setStatus: (message: string) => void;
+  setCurrentCollection: (collection: string) => void;
+  setSelectedFolder: (folder: string | null) => void;
+  setLibrarySearch: (query: string) => void;
+  setSortOrder: (order: number) => void;
+  setExpandedCollections: (paths: string[] | null) => void;
+  setMoveHistory: (history: MoveRecord[]) => void;
+
   addJob: (job: Job) => void;
   updateJob: (job_id: string, updates: Partial<Job>) => void;
   removeJob: (job_id: string) => void;
 }
 
-export const useStore = create<UiState>((set) => ({
-  activePaperId: null,
-  activeTab: "reader",
-  zoom: 0,
-  currentPage: 1,
-  activeJobs: [],
-  sidebarWidth: 280,
-  sidebarCollapsed: false,
-  readerSplit: 0.5,
-  translatedOnly: false,
-  focusMode: false,
-  
-  setActivePaperId: (id) => set((state) => ({ activePaperId: id, currentPage: state.activePaperId !== id ? 1 : state.currentPage })),
-  setActiveTab: (tab) => set({ activeTab: tab }),
-  setZoom: (zoom) => set({ zoom }),
-  setCurrentPage: (page) => set({ currentPage: page }),
-  setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
-  setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
-  setReaderSplit: (readerSplit) => set({ readerSplit }),
-  setTranslatedOnly: (translatedOnly) => set({ translatedOnly }),
-  setFocusMode: (focusMode) => set({ focusMode }),
-  
-  addJob: (job) => set((state) => ({ activeJobs: [...state.activeJobs, job] })),
-  updateJob: (job_id, updates) => set((state) => ({
-    activeJobs: state.activeJobs.map(j => j.job_id === job_id ? { ...j, ...updates } : j)
-  })),
-  removeJob: (job_id) => set((state) => ({
-    activeJobs: state.activeJobs.filter(j => j.job_id !== job_id)
-  })),
-}));
+export const useStore = create<UiState>()(
+  persist(
+    (set) => ({
+      activePaperId: null,
+      activeTab: "reader",
+      zoom: 1,
+      currentPage: 1,
+      paperPages: {},
+      activeJobs: [],
+      sidebarWidth: 280,
+      sidebarCollapsed: false,
+      readerSplit: 0.5,
+      translatedOnly: false,
+      focusMode: false,
+      statusMessage: "準備できました。PDFの追加・閲覧・メモ保存にはAI接続は不要です。",
+      currentCollection: "",
+      selectedFolder: null,
+      librarySearch: "",
+      sortOrder: 0,
+      expandedCollections: null,
+      moveHistory: [],
+      uiStateLoaded: false,
+
+      setActivePaperId: (id, page) => set((state) => {
+        const target = page ?? (id ? (state.paperPages[id] || 1) : 1);
+        return {
+          activePaperId: id,
+          currentPage: target,
+          paperPages: id ? { ...state.paperPages, [id]: target } : state.paperPages,
+        };
+      }),
+      setActiveTab: (tab) => set((state) => ({
+        activeTab: tab,
+        // The old window left focus mode when another tab was chosen.
+        focusMode: tab === "reader" ? state.focusMode : false,
+      })),
+      setZoom: (zoom) => set({ zoom: Math.max(ZOOM_PRESETS[0], Math.min(ZOOM_PRESETS[ZOOM_PRESETS.length - 1], zoom)) }),
+      setCurrentPage: (page) => set((state) => ({
+        currentPage: page,
+        paperPages: state.activePaperId ? { ...state.paperPages, [state.activePaperId]: page } : state.paperPages
+      })),
+      setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
+      setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
+      setReaderSplit: (readerSplit) => set({ readerSplit }),
+      setTranslatedOnly: (translatedOnly) => set({ translatedOnly }),
+      setFocusMode: (focusMode) => set((state) => ({
+        focusMode,
+        activeTab: focusMode ? "reader" : state.activeTab,
+      })),
+      setStatus: (statusMessage) => set({ statusMessage }),
+      setCurrentCollection: (currentCollection) => set({ currentCollection }),
+      setSelectedFolder: (selectedFolder) => set({ selectedFolder }),
+      setLibrarySearch: (librarySearch) => set({ librarySearch }),
+      setSortOrder: (sortOrder) => set({ sortOrder }),
+      setExpandedCollections: (expandedCollections) => set({ expandedCollections }),
+      setMoveHistory: (moveHistory) => set({ moveHistory }),
+
+      addJob: (job) => set((state) => ({
+        activeJobs: state.activeJobs.some((j) => j.job_id === job.job_id)
+          ? state.activeJobs.map((j) => j.job_id === job.job_id ? { ...j, ...job } : j)
+          : [...state.activeJobs, job],
+      })),
+      updateJob: (job_id, updates) => set((state) => ({
+        activeJobs: state.activeJobs.map(j => j.job_id === job_id ? { ...j, ...updates } : j)
+      })),
+      removeJob: (job_id) => set((state) => ({
+        activeJobs: state.activeJobs.filter(j => j.job_id !== job_id)
+      })),
+    }),
+    {
+      name: 'paper-desk-storage',
+      version: 2,
+      migrate: (persisted: any, version) => {
+        // v1 stored 0 for "fit width" and absolute scales otherwise.
+        if (version < 2 && persisted) {
+          persisted.zoom = persisted.zoom && persisted.zoom >= 1 ? persisted.zoom : 1;
+        }
+        return persisted;
+      },
+      // Reading position, sort and folder expansion live in the sidecar's ui-state.json
+      // (migrated from the old window.ini); see app/uiStateSync.ts.
+      partialize: (state) => ({
+        activeTab: state.activeTab,
+        zoom: state.zoom,
+        sidebarWidth: state.sidebarWidth,
+        sidebarCollapsed: state.sidebarCollapsed,
+        readerSplit: state.readerSplit,
+        translatedOnly: state.translatedOnly,
+      }),
+    }
+  )
+);
+
+export function isRunning(job: Job): boolean {
+  return (job.status ?? "running") === "running";
+}
+
+/** Jobs that block actions on this paper: its own jobs plus library-wide ones. */
+export function jobsFor(jobs: Job[], paperId: string | null): Job[] {
+  return jobs.filter((j) => isRunning(j) && (j.paper_id === paperId || !j.paper_id));
+}
+
+export function paperBusy(jobs: Job[], paperId: string | null): boolean {
+  return !!paperId && jobs.some((j) => isRunning(j) && j.paper_id === paperId);
+}

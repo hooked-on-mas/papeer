@@ -4,10 +4,26 @@ import App from "./App";
 import "./index.css";
 import { ThemeProvider } from "./app/ThemeProvider";
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <ThemeProvider defaultTheme="system" storageKey="paperdesk-ui-theme">
-      <App />
-    </ThemeProvider>
-  </React.StrictMode>,
-);
+import { invoke } from "@tauri-apps/api/core";
+
+async function init() {
+  if ((window as any).__TAURI_INTERNALS__) {
+    try {
+      const [port, token] = await invoke<[number, string]>("get_backend_config");
+      (window as any).__PAPERDESK_PORT = port;
+      (window as any).__PAPERDESK_TOKEN = token;
+    } catch (e) {
+      console.warn("Failed to fetch backend config", e);
+    }
+  }
+
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <ThemeProvider defaultTheme="system" storageKey="paperdesk-ui-theme">
+        <App />
+      </ThemeProvider>
+    </React.StrictMode>,
+  );
+}
+
+init();
