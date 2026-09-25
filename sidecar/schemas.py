@@ -63,6 +63,10 @@ class BookmarkRequest(BaseModel):
     anchor_y: float = 0
 
 
+class GlossaryRequest(BaseModel):
+    terms: list[dict[str, str]]
+
+
 class ExportRequest(BaseModel):
     kind: str = Field(description="translated | interleaved | bilingual | markdown")
     destination: str

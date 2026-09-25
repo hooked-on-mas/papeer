@@ -214,7 +214,8 @@ def _locked_translation(provider, unit: dict, parts: list[dict], tokens: list[st
         check_cancel(cancel)
         answer = provider.generate(
             prompts.load("translation_fallback"),
-            json.dumps({"context_parts": parts, "texts": fragments, **recovery_context(unit)}, ensure_ascii=False), TRANSLATION_SCHEMA)
+            json.dumps({"context_parts": parts, "texts": fragments, "glossary": unit.get("glossary", []),
+                        **recovery_context(unit)}, ensure_ascii=False), TRANSLATION_SCHEMA)
         translated = validate_translations(answer, fragments)
     result = []
     for i, part in enumerate(parts):
@@ -231,6 +232,7 @@ def _recover_unit(provider, unit, cancel, progress, state, save):
         progress(f"本文と数式番号を分けて再翻訳 p.{unit['page']} / {unit['id']}"
                  f"（追加1/{MAX_BLOCK_RETRIES}回）")
         answer = provider.generate(instruction, json.dumps({"source_parts": parts, "required_math_indices": list(range(len(tokens))),
+                                                           "glossary": unit.get("glossary", []),
                                                            **recovery_context(unit)},
                                                            ensure_ascii=False), _parts_schema(len(tokens)))
         try:

@@ -69,6 +69,13 @@ def page_translation_text(folder: Path, document: dict, page: int) -> list[str]:
     The translated PDF draws inline math as images, so text copied from it lacks the formulas.
     """
     units = translation_units(document)
+    glossary_path = folder / "glossary.json"
+    glossary = json.loads(glossary_path.read_text("utf-8")) if glossary_path.exists() else []
+    if glossary:
+        for unit in units:
+            matches = [item for item in glossary if item["source"].casefold() in unit["text"].casefold()]
+            if matches:
+                unit["glossary"] = matches
     cache_path = folder / "translation-cache.json"
     cache = json.loads(cache_path.read_text("utf-8")) if cache_path.exists() else {}
     # Cached pages count only while they match the current extraction: after a re-extraction
@@ -117,6 +124,14 @@ class PaperService:
         if not selected or any(type(p) is not int or not 1 <= p <= document["page_count"] for p in selected):
             raise ValueError(f"翻訳するページは1～{document['page_count']}の範囲で指定してください。")
         units = translation_units(document)
+        glossary_path = folder / "glossary.json"
+        glossary = json.loads(glossary_path.read_text("utf-8")) if glossary_path.exists() else []
+        glossary_key = json.dumps(glossary, ensure_ascii=False, sort_keys=True)
+        if glossary:
+            for unit in units:
+                matches = [item for item in glossary if item["source"].casefold() in unit["text"].casefold()]
+                if matches:
+                    unit["glossary"] = matches
         if not units:
             raise ValueError("翻訳対象の文字が見つかりませんでした。")
         requested = set(selected)
@@ -142,6 +157,7 @@ class PaperService:
         for number, page_units in source_pages.items():
             entry = cache.get("completed_pages", {}).get(str(number), {})
             if (entry.get("version") == version and entry.get("source") == page_keys[number]
+                    and entry.get("glossary", "[]") == glossary_key
                     and all(u["id"] in entry.get("translations", {}) for u in page_units)):
                 done.update(entry["translations"])
                 completed_pages[str(number)] = entry
@@ -221,7 +237,7 @@ class PaperService:
                 for number, page_units in source_pages.items():
                     if page_units and all(u["id"] in done for u in page_units):
                         completed_pages[str(number)] = {
-                            "version": version, "source": page_keys[number],
+                            "version": version, "source": page_keys[number], "glossary": glossary_key,
                             "model": settings.model,
                             "translations": {u["id"]: done[u["id"]] for u in page_units}}
                 save_json(cache_path, {"fingerprint": fingerprint, "translations": done,
@@ -242,7 +258,7 @@ class PaperService:
             concurrency = min(settings.translation_requests(), max(1, len(chunks)))
             finished_chunks = 0
 
-            def report():
+            def report_progress():
                 completed_units = sum(u["id"] in done for u in selected_units)
                 parallel = f"（同時{concurrency}件）" if concurrency > 1 else ""
                 self.progress(f"翻訳 {finished_chunks}/{len(chunks)}{parallel} — "
@@ -252,10 +268,10 @@ class PaperService:
                 nonlocal finished_chunks
                 finished_chunks += 1
                 publish_ready()
-                report()
+                report_progress()
 
             check_cancel(self.cancel)
-            report()
+            report_progress()
             translate_batches(self.provider, chunks, self.cancel, self.progress, accept, retry_state, save,
                               concurrency=concurrency, finished=finished)
             check_cancel(self.cancel)

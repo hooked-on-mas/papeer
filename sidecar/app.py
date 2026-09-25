@@ -38,6 +38,7 @@ from sidecar.jobs import ConcurrencyConflict, JobManager, TurnQueue
 from sidecar.schemas import (
     AskRequest,
     BookmarkRequest,
+    GlossaryRequest,
     CreateCollectionRequest,
     ExportRequest,
     HealthResponse,
@@ -856,6 +857,35 @@ def add_bookmark(paper_id: str, body: BookmarkRequest,
 def delete_bookmark(paper_id: str, bookmark_id: int,
                     dependencies: None = Depends(verify_token)) -> dict[str, bool]:
     return {"deleted": get_library().delete_bookmark(paper_id, bookmark_id)}
+
+
+@app.get("/api/papers/{paper_id}/glossary")
+def get_glossary(paper_id: str, dependencies: None = Depends(verify_token)) -> list[dict[str, str]]:
+    folder = paper_folder(get_library(), paper_id)
+    path = folder / "glossary.json"
+    return json.loads(path.read_text("utf-8")) if path.exists() else []
+
+
+@app.put("/api/papers/{paper_id}/glossary")
+def put_glossary(paper_id: str, body: GlossaryRequest,
+                 dependencies: None = Depends(verify_token)) -> dict[str, int]:
+    from paperdesk.pdf.pdf_engine import save_json
+    if any(job.running and job.paper_id == paper_id and job.kind == "translate" for job in job_manager.get_jobs()):
+        raise HTTPException(status_code=409, detail="翻訳中は用語辞書を変更できません。")
+    folder = paper_folder(get_library(), paper_id)
+    terms = []
+    seen = set()
+    for item in body.terms:
+        source = item.get("source", "").strip()
+        target = item.get("target", "").strip()
+        if not source or not target or len(source) > 100 or len(target) > 100 or source.casefold() in seen:
+            raise HTTPException(status_code=400, detail="用語と訳語を入力し、重複をなくしてください。")
+        seen.add(source.casefold())
+        terms.append({"source": source, "target": target})
+    if len(terms) > 200:
+        raise HTTPException(status_code=400, detail="用語は200件までです。")
+    save_json(folder / "glossary.json", terms)
+    return {"count": len(terms)}
 
 
 # --- Translation, Article & Chat Jobs ---

@@ -293,6 +293,51 @@ def _wait(job_id):
     raise AssertionError("job did not finish")
 
 
+def test_reader_search_bookmarks_glossary_and_scoped_question(test_env):
+    client, _ = test_env
+    imported = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)],
+        "collection": "研究 / 制御"}).json()["job_id"])
+    paper_id = imported.result["paper_ids"][0]
+    base = f"/api/papers/{paper_id}"
+
+    blocks = client.get(f"{base}/reading-blocks/1").json()
+    assert blocks["source"] and blocks["width"] > 0
+    word = re.search(r"[A-Za-z]{4,}", blocks["source"][0]["text"])
+    assert word
+    found = client.get(f"{base}/search", params={"q": word.group(), "side": "original"}).json()
+    assert found["total"] >= 1 and found["results"][0]["page"] >= 1
+    assert 0 <= found["results"][0]["anchor_y"] <= 1
+    assert client.get(f"{base}/search", params={"q": "x", "side": "invalid"}).status_code == 400
+
+    bookmark = client.post(f"{base}/bookmarks", json={"page": 1, "side": "original",
+        "quote": word.group(), "label": "あとで確認", "note": "復習", "anchor_y": 0.42}).json()
+    assert client.get(f"{base}/bookmarks").json()[0]["note"] == "復習"
+    assert bookmark["anchor_y"] == 0.42
+    assert client.delete(f"{base}/bookmarks/{bookmark['id']}").json()["deleted"]
+    assert client.get(f"{base}/bookmarks").json() == []
+
+    terms = [{"source": word.group(), "target": "検証語"}]
+    assert client.put(f"{base}/glossary", json={"terms": terms}).status_code == 200
+    assert client.get(f"{base}/glossary").json() == terms
+    assert client.put(f"{base}/glossary", json={"terms": terms * 2}).status_code == 400
+    with patch("sidecar.app.Provider", FakeProvider):
+        job = _wait(client.post(f"{base}/translate", json={"pages": "1"}).json()["job_id"])
+        assert job.status == "succeeded"
+        first_fingerprint = job.result["translation_version"]
+        scoped = _wait(client.post(f"{base}/ask", json={"question": "結果は？",
+            "scope": "selected", "paper_ids": [paper_id]}).json()["job_id"])
+        assert scoped.status == "succeeded"
+    assert client.get(f"{base}/translation-document").json()
+    assert client.get(f"{base}/reading-blocks/1").json()["translations"]
+    # Changing a term must make the next translation use a new cache identity.
+    assert client.put(f"{base}/glossary", json={"terms": [{"source": word.group(), "target": "別の訳語"}]}).status_code == 200
+    with patch("sidecar.app.Provider", FakeProvider):
+        updated = _wait(client.post(f"{base}/translate", json={"pages": "1"}).json()["job_id"])
+    assert updated.status == "succeeded"
+    assert updated.result["already_translated_pages"] == []
+    assert updated.result["translation_version"] == first_fingerprint
+
+
 def test_scoped_question_only_uses_selected_papers(test_env):
     client, directory = test_env
     ids = []

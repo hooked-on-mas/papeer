@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,14 +43,24 @@ function cliPath(settings: SettingsData | undefined): string {
 }
 
 export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: TranslationDialogProps) {
+  const queryClient = useQueryClient();
   const [scope, setScope] = useState<"all" | "current" | "custom">("all");
   const [customRange, setCustomRange] = useState("");
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
   const [starting, setStarting] = useState(false);
+  const [glossary, setGlossary] = useState<{ source: string; target: string }[]>([]);
+  const [glossaryDirty, setGlossaryDirty] = useState(false);
 
   const { data: settings } = useSettings();
   const { data: reading } = useReading(open ? paperId : null);
+  const { data: savedGlossary } = useQuery({
+    queryKey: ["glossary", paperId],
+    queryFn: () => apiRequest<{ source: string; target: string }[]>("GET", `/api/papers/${paperId}/glossary`),
+    enabled: open,
+  });
+  useEffect(() => { if (open) { setGlossaryDirty(false); setGlossary(savedGlossary ?? []); } }, [open, paperId]);
+  useEffect(() => { if (savedGlossary && !glossaryDirty) setGlossary(savedGlossary); }, [savedGlossary, glossaryDirty, paperId]);
   const provider = settings?.provider ?? "";
   const pageCount = reading?.source_page_count ?? reading?.page_count ?? 0;
 
@@ -104,6 +114,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     const pages = scope === "all" ? "" : selection.pages.join(",");
     setStarting(true);
     try {
+      if (glossaryDirty) await saveGlossary();
       await startJob(`/api/papers/${paperId}/translate`,
         { pages, model: model || undefined, effort: effort || undefined },
         { kind: "translate", paperId });
@@ -115,12 +126,19 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     }
   };
 
+  const saveGlossary = async () => {
+    const terms = glossary.filter(item => item.source.trim() || item.target.trim());
+    await apiRequest("PUT", `/api/papers/${paperId}/glossary`, { terms });
+    await queryClient.invalidateQueries({ queryKey: ["glossary", paperId] });
+    setGlossaryDirty(false);
+  };
+
   const connection = PROVIDER_LABELS[provider] ?? provider;
   const shownEffort = effort || settings?.reasoning_effort || "";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="sm:max-w-xl max-h-[calc(100vh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>翻訳の設定</DialogTitle>
           <DialogDescription>今回の翻訳に使うモデルと推論の強さ (effort)</DialogDescription>
@@ -169,6 +187,21 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
               {selection.error ?? (selection.pages ? `翻訳対象: ${selection.pages.length}ページ` : "")}
             </p>
           </div>
+          <details className="border rounded p-2 text-[12px]">
+            <summary className="cursor-pointer font-medium">この論文の専門用語辞書（{glossary.length}件）</summary>
+            <p className="text-muted-foreground my-2">原語と訳語を指定します。変更した辞書は次の翻訳から適用され、指定ページを訳し直します。指定外のページには以前の訳文が残ります。</p>
+            <div className="max-h-36 overflow-auto space-y-1">
+              {glossary.map((item, index) => <div key={index} className="flex gap-1">
+                <Input aria-label={`原語 ${index + 1}`} placeholder="原語" value={item.source} onChange={e => { setGlossary(values => values.map((v, i) => i === index ? { ...v, source: e.target.value } : v)); setGlossaryDirty(true); }} />
+                <Input aria-label={`訳語 ${index + 1}`} placeholder="訳語" value={item.target} onChange={e => { setGlossary(values => values.map((v, i) => i === index ? { ...v, target: e.target.value } : v)); setGlossaryDirty(true); }} />
+                <Button variant="outline" onClick={() => { setGlossary(values => values.filter((_, i) => i !== index)); setGlossaryDirty(true); }}>削除</Button>
+              </div>)}
+            </div>
+            <div className="flex gap-2 mt-2">
+              <Button variant="outline" onClick={() => { setGlossary(values => [...values, { source: "", target: "" }]); setGlossaryDirty(true); }}>用語を追加</Button>
+              <Button variant="outline" disabled={!glossaryDirty || starting} onClick={() => saveGlossary().catch(error => showError(error, "辞書を保存できませんでした"))}>辞書を保存</Button>
+            </div>
+          </details>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>キャンセル</Button>
