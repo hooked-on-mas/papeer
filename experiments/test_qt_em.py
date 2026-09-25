@@ -1,1 +1,0 @@
-import sys; from PySide6.QtWidgets import QApplication; from paperdesk.gui_widgets import LocalTextBrowser; app = QApplication(sys.argv); tb = LocalTextBrowser(); tb.setMarkdown('Test <img src=\"test.png\" height=\"1.5em\" /> inline'); print(tb.toHtml())

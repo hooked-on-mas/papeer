@@ -1,0 +1,16 @@
+* text=auto eol=lf
+
+# Windows-specific files keep CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets
+*.otf binary
+*.ttf binary
+*.pfb binary
+*.bcmap binary
+*.pdf binary
+*.png binary
+*.ico binary
+*.icns binary
+*.zip binary

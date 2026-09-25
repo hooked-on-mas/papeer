@@ -1,11 +1,16 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
-build/
-dist/
-*.spec
+
+# PyInstaller
+/build/
+/dist/
+code-version.txt
+
+# Secrets
 .env
 
 # Local generated output and scratch files
@@ -17,7 +22,6 @@ dist/
 /frontend/node_modules/
 /frontend/dist/
 /frontend/.vite/
-/frontend/src-tauri/target/
 
 # OS generated files
 .DS_Store
