@@ -42,7 +42,7 @@ Windows 11 x64 を対象にしています。次のツールを用意してく�
 - [uv](https://docs.astral.sh/uv/)（Python 3.12 は uv が自動で導入します）
 - [Node.js](https://nodejs.org/) LTS と [pnpm](https://pnpm.io/)
 - [Rust](https://www.rust-lang.org/tools/install) と [Tauri の前提条件](https://tauri.app/start/prerequisites/)
-- [just](https://github.com/casey/just)
+- [just](https://github.com/casey/just) 1.38 以上（`winget install Casey.Just`）
 
 ```bash
 just setup
