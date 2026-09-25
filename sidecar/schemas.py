@@ -53,7 +53,6 @@ class AskRequest(BaseModel):
     collection: str = ""
 
 
-
 class BookmarkRequest(BaseModel):
     page: int
     side: str

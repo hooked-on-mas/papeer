@@ -357,7 +357,8 @@ class PaperService:
         # Extraction finds vector plots and ruled tables only, so embedded raster figures are added here.
         figures_by_page = {}
         with PDF_LOCK, fitz.open(folder / "original.pdf") as pdf:
-            for number, page in enumerate(pdf, 1):
+            for number in range(1, len(pdf) + 1):
+                page = pdf[number - 1]
                 page.set_rotation(0)
                 found = [(b["id"], b["kind"], fitz.Rect(b["bbox"])) for b in document.get("blocks", [])
                          if b["page"] == number and b.get("kind") in {"figure", "table"}]
