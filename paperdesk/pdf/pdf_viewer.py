@@ -14,6 +14,18 @@ _MAX_PIXELS = 24_000_000
 _MAX_SIDE = 8192
 
 
+def pdf_page_count(path: Path) -> int | None:
+    """Page count, or None when PDFium cannot open the file.
+
+    PDFium rather than MuPDF, so this need not wait for a long text extraction to release PDF_LOCK.
+    """
+    try:
+        with _RENDER_LOCK, pdfium.PdfDocument(path) as document:
+            return len(document) or None
+    except (OSError, pdfium.PdfiumError):
+        return None
+
+
 def page_png(path: Path, index: int, width: int = 650) -> bytes | None:
     if not math.isfinite(width) or width <= 0:
         raise ValueError("PDFの描画幅は正の数で指定してください。")

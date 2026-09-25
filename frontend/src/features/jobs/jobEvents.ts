@@ -4,6 +4,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiRequest, authToken, backendPort } from "@/api/client";
 import { isRunning, useStore, type Job } from "@/store";
 import { notifyIfAway, shell } from "@/shell";
+import { removePendingImports, setPendingPages } from "@/app/pendingImports";
 
 export type JobFinished = {
   job_id: string;
@@ -231,6 +232,12 @@ export function useJobEvents(): void {
         } else if (data.type === "library.changed") {
           queryClient.invalidateQueries({ queryKey: ["papers"] });
           queryClient.invalidateQueries({ queryKey: ["collections"] });
+        } else if (data.type === "import.pages") {
+          setPendingPages(data.pages ?? {});
+        } else if (data.type === "import.item") {
+          // Keep the placeholder until the real row is in the list, so nothing flickers.
+          queryClient.invalidateQueries({ queryKey: ["collections"] });
+          queryClient.invalidateQueries({ queryKey: ["papers"] }).finally(() => removePendingImports([data.path]));
         }
       };
       ws.onclose = () => {

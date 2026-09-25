@@ -317,6 +317,32 @@ def test_collection_rules_match_old_library(test_env):
     assert again.result == {"paper_ids": [paper_id], "added": 0}
 
 
+def test_import_announces_page_counts_before_each_paper(test_env):
+    client, tmp_dir = test_env
+    events = []
+    with patch.object(job_manager, "broadcast", side_effect=events.append):
+        job = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
+    pages = client.get(f"/api/papers/{job.result['paper_ids'][0]}").json()["pages"]
+    imports = [e for e in events if e["type"].startswith("import.")]
+    # The library shows placeholder rows keyed by the path as sent, so both events echo it back.
+    assert imports == [
+        {"type": "import.pages", "pages": {str(FIXTURE_PDF): pages}},
+        {"type": "import.item", "path": str(FIXTURE_PDF), "paper_id": job.result["paper_ids"][0]},
+    ]
+
+
+def test_imports_requested_together_run_in_turn(test_env):
+    client, _ = test_env
+    # Without queueing, both jobs could pass the duplicate check and the second would fail
+    # on the UNIQUE sha256 column.
+    first = client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"]
+    second = client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"]
+    first, second = _wait(first), _wait(second)
+    assert (first.status, second.status) == ("succeeded", "succeeded")
+    assert first.result["added"] == 1
+    assert second.result == {"paper_ids": first.result["paper_ids"], "added": 0}
+
+
 def test_paper_metadata_reading_and_export_guards(test_env):
     client, tmp_dir = test_env
     job = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])

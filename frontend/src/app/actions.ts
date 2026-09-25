@@ -4,7 +4,8 @@ import type { PaperData, ReadingData } from "@/api/hooks";
 import { askConfirm, askText, showMessage } from "@/components/AppDialogs";
 import { showError, startJob } from "@/features/jobs/jobEvents";
 import { joinPath, shell } from "@/shell";
-import { isRunning, useStore } from "@/store";
+import { useStore } from "@/store";
+import { addPendingImports, removePendingImports, usePendingImports } from "./pendingImports";
 
 let queryClient: QueryClient | null = null;
 
@@ -33,17 +34,26 @@ function isInside(value: string, path: string): boolean {
 // --- Import ---------------------------------------------------------------------------
 
 export async function importPaths(paths: string[], collection?: string): Promise<void> {
-  const pdfs = paths.filter((p) => p.toLowerCase().endsWith(".pdf"));
-  if (!pdfs.length) return;
-  const { activeJobs, currentCollection, setStatus } = useStore.getState();
-  if (activeJobs.some((j) => isRunning(j) && j.kind === "import")) {
-    setStatus("PDFの追加が終わってから、次のPDFを追加してください。");
+  // A file dropped again while it is still being added would only duplicate its placeholder row.
+  const pending = new Set(usePendingImports.getState().items.map((i) => i.path));
+  const pdfs = paths.filter((p) => p.toLowerCase().endsWith(".pdf") && !pending.has(p));
+  const { currentCollection, setStatus } = useStore.getState();
+  if (!pdfs.length) {
+    if (paths.some((p) => pending.has(p))) setStatus("そのPDFはすでに追加中です。");
     return;
   }
+  // Show the files right away; extraction can take a while for long papers, and the sidecar
+  // queues this import behind any that are still running.
+  const destination = normalizeCollection(collection ?? currentCollection);
+  addPendingImports(pdfs, destination);
+  expandToCollection(destination);
   try {
-    await startJob("/api/papers/import", { paths: pdfs, collection: collection ?? currentCollection },
-      { kind: "import", paperId: null });
+    // Rows still pending at the end (failure, cancel, lost events) go once the list has caught up.
+    await startJob("/api/papers/import", { paths: pdfs, collection: destination }, { kind: "import", paperId: null },
+      () => void Promise.resolve(queryClient?.invalidateQueries({ queryKey: ["papers"] }))
+        .finally(() => removePendingImports(pdfs)));
   } catch (error) {
+    removePendingImports(pdfs);
     showError(error, "PDFを追加できませんでした");
   }
 }

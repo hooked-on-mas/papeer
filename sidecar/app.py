@@ -30,9 +30,10 @@ from paperdesk.core.providers import (
 from paperdesk.core.service import PaperService
 from paperdesk.core.storage import Library, normalize_collection_name
 from paperdesk.layout.page_selection import parse_page_selection
+from paperdesk.pdf.pdf_viewer import pdf_page_count
 from paperdesk.translation.translation_preview import read_preview, translated_page, translated_page_numbers
 
-from sidecar.jobs import ConcurrencyConflict, JobManager
+from sidecar.jobs import ConcurrencyConflict, JobManager, TurnQueue
 from sidecar.schemas import (
     AskRequest,
     CreateCollectionRequest,
@@ -389,6 +390,40 @@ def list_papers(query: str = "", sort: int = 0, dependencies: None = Depends(ver
     return papers
 
 
+# Imports run one after another in request order, so PDFs dropped while others are still
+# being added simply wait. Extraction is serialized by PDF_LOCK anyway, and the duplicate
+# check in Library.import_pdf would race if two imports of the same file overlapped.
+import_turns = TurnQueue()
+
+
+def submit_import(action: Any, before_turn: Any = None, cleanup: Any = None) -> str:
+    """Submit an import job that waits for the earlier ones.
+
+    `before_turn` runs before waiting; `cleanup` runs however the job ends, even if never submitted.
+    """
+    ticket = import_turns.ticket()
+
+    def queued(cancel: threading.Event, progress: Any, page_ready: Any) -> Any:
+        try:
+            if before_turn:
+                before_turn()
+            if not import_turns.wait(ticket, cancel, lambda: progress("前のPDFの追加が終わるのを待っています…")):
+                raise Cancelled("追加を中止しました。")
+            return action(cancel, progress, page_ready)
+        finally:
+            import_turns.release(ticket)
+            if cleanup:
+                cleanup()
+
+    try:
+        return job_manager.submit_job("import", queued, paper_id=None).job_id
+    except ConcurrencyConflict as exc:
+        import_turns.release(ticket)
+        if cleanup:
+            cleanup()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
 @app.post("/api/papers/import")
 def import_papers(body: ImportRequest, dependencies: None = Depends(verify_token)) -> dict[str, str]:
     lib = get_library()
@@ -397,28 +432,28 @@ def import_papers(body: ImportRequest, dependencies: None = Depends(verify_token
         if not p.is_file():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"ファイルが存在しません: {p}")
 
+    def announce_pages() -> None:
+        # Page counts are cheap, so the library can show them on its placeholder rows
+        # long before text extraction (or an earlier import) finishes. Keyed by the path as sent.
+        job_manager.broadcast({"type": "import.pages", "pages": {
+            source: pdf_page_count(path) for source, path in zip(body.paths, paths)}})
+
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, Any]:
         imported_ids: list[str] = []
         added = 0
-        try:
-            for i, path in enumerate(paths):
-                if cancel.is_set():
-                    raise Cancelled("追加を中止しました。追加済みの論文は保存されています。")
-                progress(f"PDFを追加 {i + 1}/{len(paths)}: {path.name}")
-                paper_id, is_new = lib.import_pdf(path, collection_name=body.collection or "")
-                imported_ids.append(paper_id)
-                added += is_new
-                lib.document(paper_id)
-        finally:
-            if imported_ids:
-                job_manager.broadcast({"type": "library.changed"})
+        for i, (source, path) in enumerate(zip(body.paths, paths)):
+            if cancel.is_set():
+                raise Cancelled("追加を中止しました。追加済みの論文は保存されています。")
+            progress(f"PDFを追加 {i + 1}/{len(paths)}: {path.name}")
+            paper_id, is_new = lib.import_pdf(path, collection_name=body.collection or "")
+            imported_ids.append(paper_id)
+            added += is_new
+            lib.document(paper_id)
+            # Also a library change: the client refreshes the list, then drops the placeholder row.
+            job_manager.broadcast({"type": "import.item", "path": source, "paper_id": paper_id})
         return {"paper_ids": imported_ids, "added": added}
 
-    try:
-        job = job_manager.submit_job("import", action, paper_id=None)
-        return {"job_id": job.job_id}
-    except ConcurrencyConflict as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    return {"job_id": submit_import(action, announce_pages)}
 
 from fastapi import UploadFile, File
 import tempfile
@@ -436,22 +471,14 @@ def upload_paper(
         tmp_path = Path(tmp.name)
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, Any]:
-        try:
-            progress(f"PDFアップロード中: {file.filename}")
-            paper_id, is_new = lib.import_pdf(tmp_path, collection_name=collection or "", original_name=file.filename or "")
-            progress(f"テキスト抽出中: {file.filename}")
-            lib.document(paper_id)
-            job_manager.broadcast({"type": "library.changed"})
-            return {"paper_ids": [paper_id], "added": int(is_new)}
-        finally:
-            tmp_path.unlink(missing_ok=True)
+        progress(f"PDFアップロード中: {file.filename}")
+        paper_id, is_new = lib.import_pdf(tmp_path, collection_name=collection or "", original_name=file.filename or "")
+        progress(f"テキスト抽出中: {file.filename}")
+        lib.document(paper_id)
+        job_manager.broadcast({"type": "library.changed"})
+        return {"paper_ids": [paper_id], "added": int(is_new)}
 
-    try:
-        job = job_manager.submit_job("import", action, paper_id=None)
-        return {"job_id": job.job_id}
-    except ConcurrencyConflict as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    return {"job_id": submit_import(action, cleanup=lambda: tmp_path.unlink(missing_ok=True))}
 
 
 @app.get("/api/papers/{paper_id}")

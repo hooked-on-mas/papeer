@@ -179,3 +179,42 @@ class JobManager:
 
 class ConcurrencyConflict(Exception):
     pass
+
+
+class TurnQueue:
+    """Lets jobs run one at a time, in the order their tickets were taken.
+
+    Every ticket must be released exactly once, whether or not its job got its turn,
+    so a job that fails or is cancelled while waiting never holds up the jobs behind it.
+    """
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._next_ticket = 0
+        self._serving = 0
+        self._released: set[int] = set()
+
+    def ticket(self) -> int:
+        with self._condition:
+            ticket = self._next_ticket
+            self._next_ticket += 1
+            return ticket
+
+    def wait(self, ticket: int, cancel: threading.Event, on_wait: Callable[[], None] | None = None) -> bool:
+        """Block until it is `ticket`'s turn; False if cancelled first. `on_wait` runs once if it must wait."""
+        with self._condition:
+            if self._serving != ticket and on_wait:
+                on_wait()
+            while self._serving != ticket:
+                if cancel.is_set():
+                    return False
+                self._condition.wait(0.2)
+            return True
+
+    def release(self, ticket: int) -> None:
+        with self._condition:
+            self._released.add(ticket)
+            while self._serving in self._released:
+                self._released.discard(self._serving)
+                self._serving += 1
+            self._condition.notify_all()

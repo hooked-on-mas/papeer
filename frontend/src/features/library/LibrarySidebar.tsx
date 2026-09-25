@@ -21,6 +21,7 @@ import {
   openPaperFile, openPaperFolder, renameFolder, renamePaperFile, saveOriginal,
 } from "@/app/actions";
 import { useDropTarget } from "@/app/fileDrop";
+import { usePendingImports, type PendingImport } from "@/app/pendingImports";
 
 export const SORT_LABELS = ["追加が新しい順", "追加が古い順", "名前順（昇順）", "名前順（降順）"];
 
@@ -29,17 +30,21 @@ type FolderNode = {
   name: string;
   children: FolderNode[];
   papers: PaperData[];
+  pending: PendingImport[];
   count: number;
 };
 
-function buildTree(collections: string[], papers: PaperData[], filtered: boolean): FolderNode[] {
+function buildTree(collections: string[], papers: PaperData[], pending: PendingImport[], filtered: boolean): FolderNode[] {
   const grouped = new Map<string, PaperData[]>();
   for (const paper of papers) {
     const path = normalizeCollection(paper.collection_name || "");
     grouped.set(path, [...(grouped.get(path) ?? []), paper]);
   }
+  const pendingGroups = new Map<string, PendingImport[]>();
+  for (const item of pending) pendingGroups.set(item.collection, [...(pendingGroups.get(item.collection) ?? []), item]);
   // While searching only folders with matches are listed, as in the old tree.
-  const paths = new Set<string>([...grouped.keys()].filter(Boolean));
+  // PDFs being added are always shown, so a drop never seems to have been ignored.
+  const paths = new Set<string>([...grouped.keys(), ...pendingGroups.keys()].filter(Boolean));
   if (!filtered) collections.forEach((c) => paths.add(c));
   for (const path of [...paths]) {
     const parts = path.split(" / ");
@@ -51,18 +56,23 @@ function buildTree(collections: string[], papers: PaperData[], filtered: boolean
     a.split(" / ").length - b.split(" / ").length || a.localeCompare(b, "ja", { sensitivity: "base" }));
   for (const path of ordered) {
     const parts = path.split(" / ");
-    const node: FolderNode = { path, name: parts[parts.length - 1], children: [], papers: grouped.get(path) ?? [], count: 0 };
+    const node: FolderNode = {
+      path, name: parts[parts.length - 1], children: [], papers: grouped.get(path) ?? [],
+      pending: pendingGroups.get(path) ?? [], count: 0,
+    };
     nodes.set(path, node);
     const parent = nodes.get(parts.slice(0, -1).join(" / "));
     if (parent) parent.children.push(node);
     else roots.push(node);
   }
   const count = (node: FolderNode): number =>
-    (node.count = node.papers.length + node.children.reduce((sum, child) => sum + count(child), 0));
+    (node.count = node.papers.length + node.pending.length + node.children.reduce((sum, child) => sum + count(child), 0));
   roots.forEach(count);
-  if (!filtered || grouped.has("")) {
-    const unfiled: FolderNode = { path: "", name: "未分類", children: [], papers: grouped.get("") ?? [], count: 0 };
-    unfiled.count = unfiled.papers.length;
+  if (!filtered || grouped.has("") || pendingGroups.has("")) {
+    const unfiled: FolderNode = {
+      path: "", name: "未分類", children: [], papers: grouped.get("") ?? [], pending: pendingGroups.get("") ?? [], count: 0,
+    };
+    unfiled.count = unfiled.papers.length + unfiled.pending.length;
     roots.push(unfiled);
   }
   return roots;
@@ -80,8 +90,6 @@ export function LibrarySidebar() {
   const currentCollection = useStore((s) => s.currentCollection);
   const expandedCollections = useStore((s) => s.expandedCollections);
   const setExpandedCollections = useStore((s) => s.setExpandedCollections);
-  const activeJobs = useStore((s) => s.activeJobs);
-  const importing = activeJobs.some((j) => isRunning(j) && j.kind === "import");
 
   const [searchText, setSearchText] = useState(librarySearch);
   useEffect(() => setSearchText(librarySearch), [librarySearch]);
@@ -93,7 +101,8 @@ export function LibrarySidebar() {
   const filtered = !!librarySearch.trim();
   const { data: papers = [] } = usePaperList(librarySearch, sortOrder);
   const { data: collections = [] } = useCollections();
-  const tree = useMemo(() => buildTree(collections, papers, filtered), [collections, papers, filtered]);
+  const pending = usePendingImports((s) => s.items);
+  const tree = useMemo(() => buildTree(collections, papers, pending, filtered), [collections, papers, pending, filtered]);
 
   const isExpanded = (path: string) => filtered || expandedCollections === null || expandedCollections.includes(path);
   const setExpanded = (path: string, expanded: boolean) => {
@@ -157,7 +166,6 @@ export function LibrarySidebar() {
       <div className="p-2 space-y-2 shrink-0">
         <button
           onClick={importPdfs}
-          disabled={importing}
           title={`追加するPDFを「${currentCollection || "未分類"}」へ入れます。（Ctrl+O）`}
           className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground h-[32px] rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
         >
@@ -227,7 +235,7 @@ export function LibrarySidebar() {
             <FolderRow key={node.path || "(unfiled)"} node={node} depth={0} papers={papers} collections={collections}
               isExpanded={isExpanded} setExpanded={setExpanded} dragOver={dragOver} />
           ))}
-          {papers.length === 0 && (
+          {papers.length === 0 && pending.length === 0 && (
             <div className="px-4 py-6 text-center text-muted-foreground text-[12px] leading-relaxed">
               {filtered
                 ? "見つかりませんでした。検索語や絞り込みを変更してください。"
@@ -331,11 +339,35 @@ function FolderRow({ node, depth, ...rest }: { node: FolderNode; depth: number }
           {node.children.map((child) => (
             <FolderRow key={child.path} node={child} depth={depth + 1} {...rest} />
           ))}
+          {node.pending.map((item) => <PendingRow key={item.path} item={item} depth={depth + 1} />)}
           {node.papers.map((paper) => (
             <PaperRow key={paper.id} paper={paper} depth={depth + 1} collections={rest.collections} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** A PDF whose import job has not finished yet: its file name, then its page count once known. */
+function PendingRow({ item, depth }: { item: PendingImport; depth: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => ref.current?.scrollIntoView({ block: "nearest" }), []);
+  return (
+    <div
+      ref={ref}
+      className="flex items-start py-1.5 border-l-2 border-transparent cursor-default text-muted-foreground"
+      style={{ paddingLeft: `${depth * 16 + 8}px`, paddingRight: "8px" }}
+      title={`${item.name}
+追加中…`}
+    >
+      <Loader2 className="h-4 w-4 mr-2 mt-0.5 animate-spin text-primary shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div className="truncate leading-5">{item.name}</div>
+        <div className="text-[11px] truncate tabular-nums">
+          {item.pages ? `${item.pages}ページ · ` : ""}追加中…
+        </div>
+      </div>
     </div>
   );
 }
