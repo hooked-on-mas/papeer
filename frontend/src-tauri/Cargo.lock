@@ -2499,6 +2499,7 @@ dependencies = [
 name = "paperdesk"
 version = "0.2.0"
 dependencies = [
+ "glob",
  "serde",
  "serde_json",
  "tauri",

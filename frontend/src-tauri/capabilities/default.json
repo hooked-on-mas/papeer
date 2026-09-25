@@ -11,14 +11,6 @@
     "dialog:default",
     "notification:default",
     "core:window:allow-set-progress-bar",
-    {
-      "identifier": "opener:allow-open-path",
-      "allow": [
-        {
-          "path": "**"
-        }
-      ]
-    },
     "process:allow-exit",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",

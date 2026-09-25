@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+
+use tauri::ipc::CapabilityBuilder;
 use tauri::Manager;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, MouseButton, TrayIconEvent};
@@ -12,6 +15,23 @@ struct BackendConfig {
 #[tauri::command]
 fn get_backend_config(state: tauri::State<BackendConfig>) -> (u16, String) {
     (state.port, state.token.clone())
+}
+
+/// Mirrors `paperdesk.core.config.data_directory` in the sidecar.
+fn data_directory(app: &tauri::App) -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("PAPERDESK_DATA_DIR").filter(|v| !v.is_empty()) {
+        let dir = PathBuf::from(dir);
+        let dir = match dir.strip_prefix("~") {
+            Ok(rest) => app.path().home_dir().ok()?.join(rest),
+            Err(_) => dir,
+        };
+        return std::path::absolute(dir).ok();
+    }
+    let base = match std::env::var_os("LOCALAPPDATA") {
+        Some(dir) => PathBuf::from(dir),
+        None => app.path().home_dir().ok()?.join(".local/share"),
+    };
+    Some(base.join("PaperDesk"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -74,6 +94,17 @@ pub fn run() {
             let token = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
             
             app.manage(BackendConfig { port, token: token.clone() });
+
+            // The frontend opens paper folders and PDFs in external apps. Limit that to the
+            // sidecar's data directory so a script in the webview cannot launch arbitrary files.
+            if let Some(dir) = data_directory(app) {
+                let scope = PathBuf::from(glob::Pattern::escape(&dir.to_string_lossy())).join("**");
+                app.add_capability(
+                    CapabilityBuilder::new("open-data-directory")
+                        .window("main")
+                        .permission_scoped("opener:allow-open-path", vec![serde_json::json!({ "path": scope })], vec![]),
+                )?;
+            }
 
             #[cfg(not(debug_assertions))]
             {
