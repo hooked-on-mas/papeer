@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import pymupdf as fitz
 from paperdesk.pdf.pdf_engine import extract_pdf, translation_units, build_translated_pdf
+from paperdesk.layout.figure_layout import figure_caption, raster_figures
 
 
 class FigureLayoutTests(unittest.TestCase):
@@ -41,3 +42,18 @@ class FigureLayoutTests(unittest.TestCase):
                     before[0].set_rotation(0); after[0].set_rotation(0)
                     clip=fitz.Rect(figures[0]['bbox'])
                     self.assertEqual(before[0].get_pixmap(clip=clip).samples, after[0].get_pixmap(clip=clip).samples)
+
+    def test_raster_figures_merge_panels_and_find_their_caption(self):
+        with fitz.open() as pdf:
+            page = pdf.new_page(width=400, height=400)
+            pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 50, 40), False)
+            pixmap.clear_with(128)
+            for rect in (fitz.Rect(50, 50, 150, 130), fitz.Rect(152, 50, 252, 130), fitz.Rect(10, 10, 30, 26)):
+                page.insert_image(rect, pixmap=pixmap)
+            page.insert_text((50, 145), 'Fig. 2. Panels (a) and (b).', fontsize=9)
+            page.insert_text((50, 160), 'Figure 2 shows the panels in detail.', fontsize=9)
+            regions = raster_figures(page, [])
+            self.assertEqual([fitz.Rect(50, 50, 252, 130)], regions)
+            self.assertEqual('Fig. 2. Panels (a) and (b).',
+                             figure_caption(page, regions[0]))
+            self.assertEqual([], raster_figures(page, [fitz.Rect(100, 60, 120, 70)]))

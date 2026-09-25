@@ -29,6 +29,7 @@ from paperdesk.translation.translation import translation_version, page_fingerpr
 from paperdesk.translation.translation_preview import preview_page, translated_page, translated_page_numbers
 from paperdesk.translation.translation_context import contextual_units
 from paperdesk.layout.reading_flow import unit_pages, expand_pages, materialize_flows
+from paperdesk.layout.figure_layout import figure_caption, raster_figures
 from paperdesk.core import prompts
 
 
@@ -337,33 +338,31 @@ class PaperService:
             for f in media_dir.glob("*.png"):
                 f.unlink(missing_ok=True)
         media_dir.mkdir(exist_ok=True)
-        blocks_by_page = {}
-        for b in document.get("blocks", []):
-            if b.get("kind") in {"figure", "table"}:
-                blocks_by_page.setdefault(b["page"], []).append(b)
-
-        if blocks_by_page:
-            import pymupdf as fitz
-            with fitz.open(folder / "original.pdf") as pdf:
-                for page_num, blocks in blocks_by_page.items():
-                    if 1 <= page_num <= len(pdf):
-                        page = pdf[page_num - 1]
-                        for b in blocks:
-                            image_path = media_dir / f"{b['id']}.png"
-                            if not image_path.exists():
-                                rect = fitz.Rect(b["bbox"])
-                                pix = page.get_pixmap(clip=rect, dpi=150)
-                                pix.save(str(image_path))
+        # Extraction finds vector plots and ruled tables only, so embedded raster figures are added here.
+        figures_by_page = {}
+        with PDF_LOCK, fitz.open(folder / "original.pdf") as pdf:
+            for number, page in enumerate(pdf, 1):
+                page.set_rotation(0)
+                found = [(b["id"], b["kind"], fitz.Rect(b["bbox"])) for b in document.get("blocks", [])
+                         if b["page"] == number and b.get("kind") in {"figure", "table"}]
+                found += [(f"p{number}i{index + 1}", "figure", rect) for index, rect
+                          in enumerate(raster_figures(page, [rect for *_, rect in found]))]
+                for block_id, kind, rect in found:
+                    page.get_pixmap(clip=rect, dpi=150).save(str(media_dir / f"{block_id}.png"))
+                    figures_by_page.setdefault(number, []).append(
+                        {"id": block_id, "kind": kind, "caption": figure_caption(page, rect)})
 
         page_units = []
+        images = []
         for page in document["pages"]:
             page_text = page["text"]
-            if page["number"] in blocks_by_page:
+            if page["number"] in figures_by_page:
                 markers = []
-                for b in blocks_by_page[page["number"]]:
-                    image_path = media_dir / f"{b['id']}.png"
-                    uri = f"media/{b['id']}.png"
-                    markers.append(f"\n[図表画像が参照できます。Markdownで出力する際は次の構文をそのまま使ってください: ![{b['kind']} p.{page['number']}]({uri})]")
+                for figure in figures_by_page[page["number"]]:
+                    image = f"![{figure['kind']} p.{page['number']}](media/{figure['id']}.png)"
+                    caption = f" — {figure['caption']}" if figure["caption"] else ""
+                    images.append(f"- {image} [{paper_id}:p{page['number']}]{caption}")
+                    markers.append(f"\n[このページの図表画像です。サマリーではこの構文をそのまま使って積極的に載せてください: {image}{caption}]")
                 page_text += "\n" + "\n".join(markers)
 
             for offset in range(0, max(1, len(page_text)), 10000):
@@ -379,9 +378,11 @@ class PaperService:
             notes.append(note)
         check_cancel(self.cancel)
         self.progress("日本語のサマリー記事を作成しています…")
+        # The notes stage may still drop images, so the article stage also gets the full list.
+        catalog = "\n\n## Available images\n" + "\n".join(images) if images else ""
         article = self.provider.generate(
             prompts.load("summary_article"),
-            "\n\n".join(notes))
+            "\n\n".join(notes) + catalog)
         article = link_citations(article, {paper_id: document["page_count"]})
         (folder / "article.md").write_text(article, "utf-8")
         usage_path = folder / "article-usage.json"

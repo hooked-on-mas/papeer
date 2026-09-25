@@ -52,3 +52,45 @@ def figure_regions(page: fitz.Page) -> list[fitz.Rect]:
         return result
     finally:
         page.set_rotation(rotation)
+
+
+# "Fig. 3", "Figure 3:" or "TABLE II." but not prose such as "Figure 6 shows ...".
+CAPTION = re.compile(r"(?:Fig(?:ure)?|Table)\.?\s*(?:\d+|[IVX]+)(?:[.:]|$)", re.I)
+
+
+def raster_figures(page: fitz.Page, exclude: list[fitz.Rect]) -> list[fitz.Rect]:
+    """Regions of embedded raster images large enough to be figures (expects rotation 0)."""
+    regions = []
+    for info in page.get_image_info():
+        rect = fitz.Rect(info["bbox"]) & page.rect
+        # Skip icons and logos, and full-page scans where the image is the page itself.
+        if rect.width < 60 or rect.height < 40 or rect.get_area() > page.rect.get_area() * .8:
+            continue
+        # Panels (a), (b), ... of one figure are often separate images placed edge to edge.
+        grown = fitz.Rect(rect.x0 - 4, rect.y0 - 4, rect.x1 + 4, rect.y1 + 4)
+        for other in [r for r in regions if r.intersects(grown)]:
+            rect |= other
+            regions.remove(other)
+        regions.append(rect)
+    regions = [rect for rect in regions if not any(rect.intersects(other) for other in exclude)]
+    return sorted(regions, key=lambda r: (r.y0, r.x0))
+
+
+def figure_caption(page: fitz.Page, rect: fitz.Rect, limit: int = 200) -> str:
+    """The "Fig. N ..." or "Table N ..." caption just below or above a region (expects rotation 0)."""
+    best = None
+    for block in page.get_text("dict")["blocks"]:
+        lines = block.get("lines", [])
+        for index, line in enumerate(lines):
+            text = "".join(span["text"] for span in line["spans"]).strip()
+            box = fitz.Rect(line["bbox"])
+            if not CAPTION.match(text) or box.x1 < rect.x0 or box.x0 > rect.x1:
+                continue
+            gap = box.y0 - rect.y1 if box.y0 >= rect.y1 - 2 else rect.y0 - box.y1
+            if -2 <= gap <= 40 and (best is None or gap < best[0]):
+                best = gap, lines[index:]
+    if best is None:
+        return ""
+    text = " ".join("".join(span["text"] for span in line["spans"]) for line in best[1])
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
