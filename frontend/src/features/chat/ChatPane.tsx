@@ -4,7 +4,7 @@ import { isRunning, paperBusy, useStore } from "@/store";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { UsageLine } from "@/components/UsageLine";
 import { apiRequest } from "@/api/client";
-import { useMessages } from "@/api/hooks";
+import { useCollections, useMessages, usePaperList } from "@/api/hooks";
 import { showError, startJob } from "@/features/jobs/jobEvents";
 
 const EXAMPLE_QUESTIONS = [
@@ -18,7 +18,11 @@ export function ChatPane() {
   const activeJobs = useStore((state) => state.activeJobs);
   const { data: messages = [] } = useMessages(activePaperId);
   const [input, setInput] = useState("");
-  const [allPapers, setAllPapers] = useState(false);
+  const [scope, setScope] = useState<"paper" | "selected" | "collection">("paper");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [collection, setCollection] = useState("");
+  const { data: papers = [] } = usePaperList("", 0);
+  const { data: collections = [] } = useCollections();
   const [pending, setPending] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -50,11 +54,11 @@ export function ChatPane() {
 
   const send = async (text: string) => {
     const question = text.trim();
-    if (!question || !activePaperId || busy) return;
+    if (!question || !activePaperId || busy || (scope === "selected" && !selectedIds.length)) return;
     const paperId = activePaperId;
     setPending(question);
     try {
-      await startJob(`/api/papers/${paperId}/ask`, { question, search_all: allPapers },
+      await startJob(`/api/papers/${paperId}/ask`, { question, scope, paper_ids: selectedIds, collection },
         { kind: "ask", paperId },
         (event) => {
           if (useStore.getState().activePaperId !== paperId) return;
@@ -184,18 +188,25 @@ export function ChatPane() {
             <button
               className="flex items-center gap-1.5 justify-center rounded-lg bg-primary text-primary-foreground hover:opacity-90 h-[40px] px-4 shrink-0 disabled:opacity-50 transition-opacity text-[13px] font-medium"
               onClick={() => send(input)}
-              disabled={busy || waiting || !input.trim()}
+              disabled={busy || waiting || !input.trim() || (scope === "selected" && !selectedIds.length)}
             >
               <Send className="w-4 h-4" /> 質問する
             </button>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-x-3 mt-1.5 text-[12px] text-muted-foreground">
-            <label className="flex items-center gap-1.5 cursor-pointer select-none">
-              <input type="checkbox" checked={allPapers} onChange={(e) => setAllPapers(e.target.checked)} />
-              保存したほかの論文も検索する
+            <label className="flex items-center gap-1.5">参照範囲
+              <select className="border rounded bg-background px-1" value={scope} onChange={e => setScope(e.target.value as typeof scope)}>
+                <option value="paper">この論文</option><option value="selected">選んだ論文</option><option value="collection">フォルダー内</option>
+              </select>
             </label>
             <span>Enter: 送信 / Shift+Enter: 改行</span>
           </div>
+          {scope === "selected" && <div className="mt-2 max-h-28 overflow-auto border rounded p-2 grid grid-cols-2 gap-1 text-xs">
+            {papers.map(paper => <label key={paper.id} className="flex gap-1 items-center truncate"><input type="checkbox" checked={selectedIds.includes(paper.id)} onChange={e => setSelectedIds(ids => e.target.checked ? [...ids, paper.id] : ids.filter(id => id !== paper.id))} /><span className="truncate" title={paper.title}>{paper.title}</span></label>)}
+          </div>}
+          {scope === "collection" && <select className="mt-2 w-full border rounded bg-background px-2 py-1 text-xs" value={collection} onChange={e => setCollection(e.target.value)}>
+            <option value="">未分類</option>{collections.filter(Boolean).map(name => <option key={name} value={name}>{name}</option>)}
+          </select>}
         </div>
       </div>
     </div>

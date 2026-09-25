@@ -392,7 +392,8 @@ class PaperService:
             usage_path.unlink(missing_ok=True)
         return article
 
-    def ask(self, paper_id: str, question: str, entire_library: bool = False) -> str:
+    def ask(self, paper_id: str, question: str, entire_library: bool = False,
+            paper_ids: set[str] | None = None, collection: str | None = None) -> str:
         question = question.strip()
         if not question:
             raise ValueError("質問を入力してください。")
@@ -401,11 +402,25 @@ class PaperService:
         allowed = {paper_id: document["page_count"]}
         context = all_text
         selection_note = "選択した論文の全文テキストを参照しています。"
-        if entire_library or len(all_text) > 55000:
+        if collection is not None:
+            paper_ids = {p["id"] for p in self.library.papers()
+                         if p["collection_name"] == collection or p["collection_name"].startswith(collection + " / ")}
+            if not paper_ids:
+                raise ValueError("指定したフォルダーに論文がありません。")
+        if paper_ids is not None:
+            if not paper_ids or any(not re.fullmatch(r"[0-9a-f]{32}", item) for item in paper_ids):
+                raise ValueError("質問対象の論文を選択してください。")
+            for item in paper_ids:
+                self.library.paper(item)
+            allowed = {}
+        scope_key = ("ids:" + ",".join(sorted(paper_ids)) if paper_ids is not None
+                     else "all" if entire_library else "paper")
+        if entire_library or paper_ids is not None or len(all_text) > 55000:
             self.progress("関連ページを検索しています…")
             keywords = self.provider.generate(prompts.load("chat_keywords"), question)
             pages = self.library.search_pages(keywords + " " + question,
-                                              None if entire_library else paper_id, limit=10)
+                                              None if entire_library or paper_ids is not None else paper_id,
+                                              limit=10, paper_ids=paper_ids)
             if not pages:
                 raise ValueError("参照できるページがありません。")
             context_parts = []
@@ -413,15 +428,20 @@ class PaperService:
                 allowed[page["paper_id"]] = self.library.paper(page["paper_id"])["pages"]
                 context_parts.append(f"[{page['paper_id']}:p{page['number']}] {page['title']}\n" + page["text"][:6000])
             context = "\n\n".join(context_parts)
-            selection_note = f"キーワード検索で選んだ{len(pages)}ページの抜粋を参照しています。"
-        history = self.library.messages(paper_id)[-6:]
+            references = []
+            for page in pages:
+                title = " ".join(re.sub(r"[][()!*_`<>]", "", page["title"]).split())[:80]
+                references.append(f"[{title} p.{page['number']}]"
+                                  f"(paperdesk://{page['paper_id']}/{page['number']})")
+            selection_note = f"キーワード検索で選んだ{len(pages)}ページの抜粋を参照しています：{', '.join(references)}"
+        history = self.library.messages(paper_id, scope=scope_key)[-6:]
         self.progress("本文を参照して回答しています…")
         answer = self.provider.generate(
             prompts.load("chat_answer"),
             json.dumps({"question": question, "previous_dialogue": history,
                         "retrieval_scope": selection_note, "evidence": context}, ensure_ascii=False))
         answer = link_citations(answer, allowed) + "\n\n---\n*" + selection_note + "*"
-        self.library.add_exchange(paper_id, question, answer, self.usage())
+        self.library.add_exchange(paper_id, question, answer, self.usage(), scope=scope_key)
         return answer
 
     def export_bilingual(self, paper_id: str, destination: Path) -> None:

@@ -935,7 +935,12 @@ def ask_paper(paper_id: str, body: AskRequest, dependencies: None = Depends(veri
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict:
         provider = Provider(replace(s, api_key=api_key or s.api_key), cancel)
         service = PaperService(lib, provider, cancel, progress=progress)
-        answer = service.ask(paper_id, body.question, entire_library=body.search_all)
+        if body.scope not in {"paper", "selected", "collection", "all"}:
+            raise ValueError("質問の検索範囲が不正です。")
+        answer = service.ask(paper_id, body.question,
+                             entire_library=body.scope == "all" or body.search_all,
+                             paper_ids=set(body.paper_ids) if body.scope == "selected" else None,
+                             collection=body.collection if body.scope == "collection" else None)
         return {"answer": answer, "usage": service.usage()}
 
     try:

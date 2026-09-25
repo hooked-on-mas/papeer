@@ -8,6 +8,7 @@ import time
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+import pymupdf as fitz
 import pytest
 
 from paperdesk.core.config import Settings
@@ -290,6 +291,28 @@ def _wait(job_id):
             return job
         time.sleep(0.05)
     raise AssertionError("job did not finish")
+
+
+def test_scoped_question_only_uses_selected_papers(test_env):
+    client, directory = test_env
+    ids = []
+    for index, collection in enumerate(("物理", "情報")):
+        path = directory / f"scope-{index}.pdf"
+        with fitz.open() as doc:
+            page = doc.new_page()
+            page.insert_text((72, 72), f"Adaptive controller experiment {index} and measured tracking error.")
+            doc.save(path)
+        job = _wait(client.post("/api/papers/import", json={"paths": [str(path)], "collection": collection}).json()["job_id"])
+        ids.append(job.result["paper_ids"][0])
+    with patch("sidecar.app.Provider", FakeProvider):
+        selected = _wait(client.post(f"/api/papers/{ids[0]}/ask", json={"question": "tracking error?",
+            "scope": "selected", "paper_ids": [ids[1]]}).json()["job_id"])
+        collection = _wait(client.post(f"/api/papers/{ids[0]}/ask", json={"question": "tracking error?",
+            "scope": "collection", "collection": "情報"}).json()["job_id"])
+    for job in (selected, collection):
+        assert job.status == "succeeded"
+        assert ids[1] in job.result["answer"]
+        assert ids[0] not in job.result["answer"]
 
 
 def test_collection_rules_match_old_library(test_env):

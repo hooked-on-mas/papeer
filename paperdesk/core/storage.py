@@ -44,6 +44,7 @@ class Library:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
                     role TEXT NOT NULL, content TEXT NOT NULL,
+                    scope TEXT NOT NULL DEFAULT 'paper',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE TABLE IF NOT EXISTS collections (
@@ -65,6 +66,8 @@ class Library:
                 db.execute("ALTER TABLE bookmarks ADD COLUMN anchor_y REAL NOT NULL DEFAULT 0")
             if "usage" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
                 db.execute("ALTER TABLE messages ADD COLUMN usage TEXT")
+            if "scope" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
+                db.execute("ALTER TABLE messages ADD COLUMN scope TEXT NOT NULL DEFAULT 'paper'")
             columns = {row[1] for row in db.execute("PRAGMA table_info(papers)")}
             for name in ("first_author", "publication_year"):
                 if name not in columns:
@@ -267,28 +270,34 @@ class Library:
             document = refreshed
         return document
 
-    def messages(self, paper_id: str, with_usage: bool = False) -> list[dict]:
+    def messages(self, paper_id: str, with_usage: bool = False, scope: str | None = None) -> list[dict]:
         with self.connection() as db:
+            condition = " WHERE paper_id=?" + (" AND scope=?" if scope is not None else "")
+            values = (paper_id, scope) if scope is not None else (paper_id,)
             if not with_usage:
-                return [dict(x) for x in db.execute("SELECT role,content FROM messages WHERE paper_id=? ORDER BY id", (paper_id,))]
-            rows = db.execute("SELECT role,content,usage FROM messages WHERE paper_id=? ORDER BY id", (paper_id,))
+                return [dict(x) for x in db.execute("SELECT role,content FROM messages" + condition + " ORDER BY id", values)]
+            rows = db.execute("SELECT role,content,usage FROM messages" + condition + " ORDER BY id", values)
             return [dict(x, usage=json.loads(x["usage"]) if x["usage"] else None) for x in rows]
 
-    def add_exchange(self, paper_id: str, question: str, answer: str, usage: dict | None = None) -> None:
+    def add_exchange(self, paper_id: str, question: str, answer: str, usage: dict | None = None,
+                     scope: str = "paper") -> None:
         with self.connection() as db:
-            db.executemany("INSERT INTO messages(paper_id,role,content,usage) VALUES(?,?,?,?)",
-                           [(paper_id, "user", question, None),
-                            (paper_id, "assistant", answer, json.dumps(usage) if usage else None)])
+            db.executemany("INSERT INTO messages(paper_id,role,content,usage,scope) VALUES(?,?,?,?,?)",
+                           [(paper_id, "user", question, None, scope),
+                            (paper_id, "assistant", answer, json.dumps(usage) if usage else None, scope)])
 
-    def search_pages(self, question: str, paper_id: str | None = None, limit: int = 10) -> list[dict]:
+    def search_pages(self, question: str, paper_id: str | None = None, limit: int = 10,
+                     paper_ids: set[str] | None = None) -> list[dict]:
         import re
         terms = re.findall(r"[a-zA-Z0-9_-]{2,}|[\u3040-\u30ff\u3400-\u9fff]{2,}", question.lower())
         with self.connection() as db:
             sql = "SELECT x.*, p.title FROM pages x JOIN papers p ON p.id=x.paper_id"
-            rows = db.execute(sql + (" WHERE paper_id=?" if paper_id else ""), (paper_id,) if paper_id else ()).fetchall()
+            rows = db.execute(sql + (" WHERE x.paper_id=?" if paper_id else ""), (paper_id,) if paper_id else ()).fetchall()
         scored = []
         for row in rows:
             data = dict(row)
+            if paper_ids is not None and data["paper_id"] not in paper_ids:
+                continue
             data["score"] = sum(data["text"].lower().count(term) for term in terms)
             scored.append(data)
         scored.sort(key=lambda x: (-x["score"], x["paper_id"], x["number"]))

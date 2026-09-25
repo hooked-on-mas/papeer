@@ -48,6 +48,10 @@ class ImportRequest(BaseModel):
 class AskRequest(BaseModel):
     question: str
     search_all: bool = False
+    scope: str = "paper"
+    paper_ids: list[str] = Field(default_factory=list)
+    collection: str = ""
+
 
 
 class BookmarkRequest(BaseModel):
