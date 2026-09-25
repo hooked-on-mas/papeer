@@ -24,6 +24,13 @@ interface PdfPaneProps {
   missingPageMessage?: string;
   /** Marks quotes taken from this pane as coming from the translation. */
   translated?: boolean;
+  searchTerm?: string;
+  blocks?: { id: string; bbox: number[] }[];
+  pageSize?: { width: number; height: number };
+  activeBlock?: string | null;
+  onBlockClick?: (id: string) => void;
+  jumpTarget?: { page: number; side: "original" | "translated"; anchor_y: number; id: number } | null;
+  savedHighlights?: { id: number; quote: string; anchor_y: number }[];
 }
 
 const PADDING = 16;
@@ -52,13 +59,16 @@ function fitTextLayer(layer: HTMLElement, content: TextContent, scale: number) {
   });
 }
 
-export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholder, missingPageMessage, translated = false }: PdfPaneProps) {
+export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholder, missingPageMessage,
+  translated = false, searchTerm = "", blocks = [], pageSize, activeBlock, onBlockClick, jumpTarget,
+  savedHighlights = [] }: PdfPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [numPages, setNumPages] = useState<number | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
   const loadedPage = useRef<PageCallback | null>(null);
   const textContent = useRef<TextContent | null>(null);
+  const [matches, setMatches] = useState<{ left: number; top: number; width: number; height: number; saved: boolean }[]>([]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -112,7 +122,16 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     return () => clearTimeout(timer);
   }, [containerWidth, pageWidth, drawnWidth]);
 
-  useEffect(() => setCovering(false), [url, pageNumber]);
+  useEffect(() => { setCovering(false); setMatches([]); }, [url, pageNumber]);
+  const jumpToBookmark = useCallback(() => {
+    if (!jumpTarget || jumpTarget.side !== (translated ? "translated" : "original")) return;
+    const page = pageRef.current;
+    const scroller = containerRef.current;
+    if (!page || !scroller) return;
+    const top = page.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    scroller.scrollTop = Math.max(0, top + jumpTarget.anchor_y * page.clientHeight - scroller.clientHeight * 0.25);
+  }, [jumpTarget, translated]);
+  useEffect(() => { jumpToBookmark(); }, [jumpToBookmark, pageNumber, url]);
 
   // Stable, since react-pdf redraws the text layer whenever this callback changes.
   const onTextLayerRendered = useCallback(() => {
@@ -122,7 +141,38 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     // The scale react-pdf renders the text layer at for this width.
     const scale = page.getViewport({ scale: drawnWidth / page.getViewport({ scale: 1 }).width }).scale;
     fitTextLayer(layer, textContent.current, scale);
-  }, [drawnWidth]);
+    const terms = [...savedHighlights.map(item => ({ text: item.quote.trim().slice(0, 32).toLocaleLowerCase(), saved: true })),
+      { text: searchTerm.trim().toLocaleLowerCase(), saved: false }].filter(item => item.text);
+    const spans = Array.from(layer.querySelectorAll<HTMLElement>('span[role="presentation"]'));
+    if (!terms.length || !spans.length) { setMatches([]); return; }
+    const content = spans.map(span => span.textContent ?? "");
+    const joined = content.join("").toLocaleLowerCase();
+    const positions: number[] = [];
+    let at = 0;
+    for (const value of content) { positions.push(at); at += value.length; }
+    const rects: { left: number; top: number; width: number; height: number; saved: boolean }[] = [];
+    const base = pageRef.current?.getBoundingClientRect();
+    if (!base) return;
+    for (const term of terms) for (let start = joined.indexOf(term.text); start >= 0 && rects.length < 100; start = joined.indexOf(term.text, start + term.text.length)) {
+      const end = start + term.text.length;
+      let first = -1;
+      let last = -1;
+      for (let i = 0; i < positions.length; i++) {
+        if (positions[i] <= start) first = i;
+        if (positions[i] < end) last = i;
+      }
+      if (first < 0 || last < 0) continue;
+      const range = document.createRange();
+      const firstNode = spans[first].firstChild;
+      const lastNode = spans[last].firstChild;
+      if (!firstNode || !lastNode || firstNode.nodeType !== Node.TEXT_NODE || lastNode.nodeType !== Node.TEXT_NODE) continue;
+      range.setStart(firstNode, Math.min(start - positions[first], firstNode.textContent?.length ?? 0));
+      range.setEnd(lastNode, Math.min(end - positions[last], lastNode.textContent?.length ?? 0));
+      for (const rect of Array.from(range.getClientRects())) rects.push({ left: rect.left - base.left, top: rect.top - base.top, width: rect.width, height: rect.height, saved: term.saved });
+    }
+    setMatches(rects);
+  }, [drawnWidth, searchTerm, savedHighlights]);
+  useEffect(() => { onTextLayerRendered(); }, [onTextLayerRendered, pageNumber]);
 
   const message = (text: React.ReactNode) => (
     <div className="h-full flex items-center justify-center p-8 text-center text-[13px] text-muted-foreground leading-relaxed">
@@ -151,14 +201,23 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
               className="mx-auto w-fit"
             >
               {numPages !== null && pageNumber > numPages ? message(missingPageMessage ?? "このページはありません。") : drawnWidth > 0 && (
-                <div className="relative" style={{ zoom: pageWidth === drawnWidth ? undefined : pageWidth / drawnWidth }}>
+                <div className="relative" style={{ zoom: pageWidth === drawnWidth ? undefined : pageWidth / drawnWidth }}
+                  onClick={e => {
+                    if (!onBlockClick || !pageSize || window.getSelection()?.toString().trim()) return;
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const x = (e.clientX - rect.left) / rect.width * pageSize.width;
+                    const y = (e.clientY - rect.top) / rect.height * pageSize.height;
+                    const hit = blocks.filter(b => x >= b.bbox[0] && x <= b.bbox[2] && y >= b.bbox[1] && y <= b.bbox[3])
+                      .sort((a, b) => (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) - (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]))[0];
+                    if (hit) onBlockClick(hit.id);
+                  }}>
                   <Page
                     pageNumber={pageNumber}
                     width={drawnWidth}
                     inputRef={pageRef}
                     onLoadSuccess={(page) => { loadedPage.current = page; }}
                     onGetTextSuccess={(content) => { textContent.current = content; }}
-                    onRenderSuccess={() => setCovering(false)}
+                    onRenderSuccess={() => { setCovering(false); jumpToBookmark(); }}
                     onRenderError={() => setCovering(false)}
                     onRenderTextLayerSuccess={onTextLayerRendered}
                     renderTextLayer
@@ -166,6 +225,14 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                     loading={<PageSkeleton width={drawnWidth} />}
                     className="shadow-sm border bg-white"
                   />
+                  {matches.map(({ saved, ...rect }, index) => <div key={index} className={`absolute pointer-events-none ${saved ? "bg-amber-400/30" : "bg-yellow-300/50"}`} style={rect} />)}
+                  {savedHighlights.map(item => <div key={`bookmark-${item.id}`} className="absolute left-0 w-1.5 h-3 bg-amber-500 pointer-events-none" style={{ top: item.anchor_y * (pageRef.current?.clientHeight ?? 0) }} />)}
+                  {activeBlock && pageSize && blocks.filter(b => b.id === activeBlock).map(b => <div key={b.id}
+                    className="absolute border-2 border-primary bg-primary/15 pointer-events-none"
+                    style={{ left: b.bbox[0] / pageSize.width * drawnWidth,
+                      top: b.bbox[1] / pageSize.height * (pageRef.current?.clientHeight ?? drawnWidth * pageSize.height / pageSize.width),
+                      width: (b.bbox[2] - b.bbox[0]) / pageSize.width * drawnWidth,
+                      height: (b.bbox[3] - b.bbox[1]) / pageSize.height * (pageRef.current?.clientHeight ?? drawnWidth * pageSize.height / pageSize.width) }} />)}
                   {/* Sits over the canvas, inside the page's 1px border. */}
                   <canvas
                     ref={snapshotRef}

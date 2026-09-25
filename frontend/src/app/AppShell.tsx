@@ -201,7 +201,12 @@ export function AppShell() {
   useHotkeys("f11", () => useStore.getState().setFocusMode(!useStore.getState().focusMode), { preventDefault: true });
   useHotkeys("esc", () => useStore.getState().setFocusMode(false), { enabled: focusMode });
   useHotkeys("ctrl+o, meta+o", () => importPdfs(), { preventDefault: true, enableOnFormTags: true });
-  useHotkeys("ctrl+f, meta+f", focusSearch, { preventDefault: true, enableOnFormTags: true });
+  useHotkeys("ctrl+f, meta+f", () => {
+    if (useStore.getState().activeTab === "reader" && useStore.getState().activePaperId)
+      window.dispatchEvent(new Event("open-reader-search"));
+    else focusSearch();
+  }, { preventDefault: true, enableOnFormTags: true });
+  useHotkeys("ctrl+shift+f, meta+shift+f", focusSearch, { preventDefault: true, enableOnFormTags: true });
   useHotkeys("ctrl+l, meta+l", () => {
     // Reveal the open paper in the library, clearing any search that hides it.
     focusSearch();

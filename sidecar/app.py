@@ -37,6 +37,7 @@ from paperdesk.translation.translation_preview import read_preview, translated_p
 from sidecar.jobs import ConcurrencyConflict, JobManager, TurnQueue
 from sidecar.schemas import (
     AskRequest,
+    BookmarkRequest,
     CreateCollectionRequest,
     ExportRequest,
     HealthResponse,
@@ -753,6 +754,108 @@ def get_translation_text(paper_id: str, page: int, dependencies: None = Depends(
     if not (folder / "translation-cache.json").is_file() and not (folder / "translation.md").is_file():
         return {"blocks": []}
     return {"blocks": page_translation_text(folder, lib.document(paper_id), page)}
+
+
+@app.get("/api/papers/{paper_id}/reading-blocks/{page}")
+def get_reading_blocks(paper_id: str, page: int, dependencies: None = Depends(verify_token)) -> dict[str, Any]:
+    lib = get_library()
+    document = lib.document(paper_id)
+    if not 1 <= page <= document["page_count"]:
+        raise HTTPException(status_code=400, detail="ページが範囲外です。")
+    source = [{"id": b["id"], "text": b["text"], "bbox": b["bbox"]}
+              for b in document["blocks"] if b["page"] == page]
+    folder = lib.folder(paper_id)
+    translations: list[dict[str, str]] = []
+    markdown = folder / "translation.md"
+    if markdown.exists():
+        parts = re.split(r"^## p\.(\d+) / (\S+)[ \t]*$", markdown.read_text("utf-8"), flags=re.M)
+        translations = [{"id": block_id, "text": body.strip()} for number, block_id, body in
+                        zip(parts[1::3], parts[2::3], parts[3::3]) if int(number) == page and body.strip()]
+    elif (folder / "translation-cache.json").exists():
+        translations = [{"id": f"preview-{i}", "text": value} for i, value in
+                        enumerate(page_translation_text(folder, document, page))]
+    return {"source": source, "translations": translations,
+            "width": document["pages"][page - 1]["width"], "height": document["pages"][page - 1]["height"]}
+
+
+@app.get("/api/papers/{paper_id}/translation-document")
+def get_translation_document(paper_id: str,
+                             dependencies: None = Depends(verify_token)) -> list[dict[str, Any]]:
+    folder = paper_folder(get_library(), paper_id)
+    markdown = folder / "translation.md"
+    if not markdown.exists():
+        return []
+    parts = re.split(r"^## p\.(\d+) / (\S+)[ \t]*$", markdown.read_text("utf-8"), flags=re.M)
+    return [{"page": int(number), "id": block_id, "text": body.strip()} for number, block_id, body in
+            zip(parts[1::3], parts[2::3], parts[3::3]) if body.strip()]
+
+
+@app.get("/api/papers/{paper_id}/search")
+def search_paper(paper_id: str, q: str = "", side: str = "original",
+                 dependencies: None = Depends(verify_token)) -> dict[str, Any]:
+    lib = get_library()
+    folder = paper_folder(lib, paper_id)
+    if side not in {"original", "translated"}:
+        raise HTTPException(status_code=400, detail="検索対象が不正です。")
+    term = q.strip().casefold()
+    if not term:
+        return {"results": [], "total": 0}
+    if len(term) > 200:
+        raise HTTPException(status_code=400, detail="検索語が長すぎます。")
+    document = lib.document(paper_id)
+    results = []
+    translated_pages: dict[int, list[tuple[str, str]]] = {}
+    markdown = folder / "translation.md"
+    if side == "translated" and markdown.exists():
+        parts = re.split(r"^## p\.(\d+) / (\S+)[ \t]*$", markdown.read_text("utf-8"), flags=re.M)
+        for number, block_id, body in zip(parts[1::3], parts[2::3], parts[3::3]):
+            translated_pages.setdefault(int(number), []).append((block_id, body.strip()))
+    source_by_id = {block["id"]: block for block in document["blocks"]}
+    for info in document["pages"]:
+        if len(results) >= 200:
+            break
+        number = info["number"]
+        sections = ([block for block in document["blocks"] if block["page"] == number]
+                    if side == "original" else
+                    [{"text": body, "bbox": source_by_id.get(block_id, {}).get("bbox", [0, 0, 0, 0])}
+                     for block_id, body in translated_pages.get(number, [])])
+        content = (info["text"] if side == "original" else "\n".join(
+            body for _, body in translated_pages.get(number, [])) or "\n".join(
+            page_translation_text(folder, document, number)))
+        anchors = [max(0.0, min(1.0, block["bbox"][1] / info["height"]))
+                   for block in sections for _ in range(block["text"].casefold().count(term))]
+        folded = content.casefold()
+        offset = 0
+        occurrence = 0
+        while len(results) < 200:
+            found = folded.find(term, offset)
+            if found < 0:
+                break
+            results.append({"page": number, "snippet": content[max(0, found - 45):found + len(term) + 65].replace("\n", " "),
+                            "anchor_y": anchors[occurrence] if occurrence < len(anchors) else 0})
+            occurrence += 1
+            offset = found + max(1, len(term))
+    return {"results": results, "total": len(results), "limited": len(results) == 200}
+
+
+@app.get("/api/papers/{paper_id}/bookmarks")
+def get_bookmarks(paper_id: str, dependencies: None = Depends(verify_token)) -> list[dict]:
+    return get_library().bookmarks(paper_id)
+
+
+@app.post("/api/papers/{paper_id}/bookmarks")
+def add_bookmark(paper_id: str, body: BookmarkRequest,
+                 dependencies: None = Depends(verify_token)) -> dict:
+    try:
+        return get_library().add_bookmark(paper_id, body.page, body.side, body.quote, body.label, body.note, body.anchor_y)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.delete("/api/papers/{paper_id}/bookmarks/{bookmark_id}")
+def delete_bookmark(paper_id: str, bookmark_id: int,
+                    dependencies: None = Depends(verify_token)) -> dict[str, bool]:
+    return {"deleted": get_library().delete_bookmark(paper_id, bookmark_id)}
 
 
 # --- Translation, Article & Chat Jobs ---

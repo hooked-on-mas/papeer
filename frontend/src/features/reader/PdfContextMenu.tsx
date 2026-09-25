@@ -1,6 +1,6 @@
 import React, { useRef, useState } from "react";
 import {
-  ChevronLeft, ChevronRight, Copy, Languages, MessageSquareQuote, MoveHorizontal, NotebookPen, Sparkles, ZoomIn, ZoomOut,
+  Bookmark, ChevronLeft, ChevronRight, Copy, Languages, MessageSquareQuote, MoveHorizontal, NotebookPen, Sparkles, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { useStore } from "@/store";
 import {
@@ -37,25 +37,30 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
   const areaRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState(false);
   // Resolved when the menu opens, so the translation text is usually loaded before an item is chosen.
-  const passage = useRef<{ paperId: string; page: number; text: Promise<string> } | null>(null);
+  const passage = useRef<{ paperId: string; page: number; text: Promise<string>; anchorY: number } | null>(null);
 
   const handleOpen = (open: boolean) => {
     if (!open) return;
     const raw = selectionWithin(areaRef.current);
     const { activePaperId, currentPage } = useStore.getState();
     const cleaned = cleanPdfSelection(raw);
+    const selection = window.getSelection();
+    const selectedRect = selection?.rangeCount ? selection.getRangeAt(0).getClientRects()[0] : null;
+    const pageRect = areaRef.current?.querySelector(".react-pdf__Page")?.getBoundingClientRect();
+    const anchorY = selectedRect && pageRect ? Math.max(0, Math.min(1, (selectedRect.top - pageRect.top) / pageRect.height)) : 0;
     setSelected(!!cleaned);
     passage.current = cleaned && activePaperId ? {
       paperId: activePaperId,
       page: currentPage,
+      anchorY,
       text: translated ? translatedPassage(raw, activePaperId, currentPage) : Promise.resolve(cleaned),
     } : null;
   };
 
-  const withPassage = (action: (text: string, source: string, paperId: string) => void) => async () => {
+  const withPassage = (action: (text: string, source: string, paperId: string, anchorY: number) => void) => async () => {
     const current = passage.current;
     if (!current) return;
-    action(await current.text, `p.${current.page}${translated ? "（訳文）" : ""}`, current.paperId);
+    action(await current.text, `p.${current.page}${translated ? "（訳文）" : ""}`, current.paperId, current.anchorY);
   };
 
   const handOff = (tab: "chat" | "notes", paperId: string, text: string, send = false) => {
@@ -93,6 +98,13 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
             </ContextMenuItem>
             <ContextMenuItem onClick={withPassage((text, source, paperId) => handOff("notes", paperId, quoteForNote(text, source)))}>
               <NotebookPen /> メモに引用
+            </ContextMenuItem>
+            <ContextMenuItem onClick={withPassage((text, _source, paperId, anchorY) => {
+              window.dispatchEvent(new CustomEvent("bookmark-selection", { detail: {
+                paperId, page: passage.current?.page, side: translated ? "translated" : "original", quote: text, anchorY,
+              } }));
+            })}>
+              <Bookmark /> しおりに保存…
             </ContextMenuItem>
           </>
         ) : (

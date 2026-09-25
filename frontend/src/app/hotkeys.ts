@@ -13,7 +13,7 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
   {
     title: "ライブラリ",
     items: [
-      { keys: ["Ctrl", "F"], label: "ライブラリを検索" },
+      { keys: ["Ctrl", "Shift", "F"], label: "ライブラリを検索" },
       { keys: ["Ctrl", "L"], label: "開いている論文をライブラリで表示" },
       { keys: ["Ctrl", "Shift", "N"], label: "新しいフォルダー" },
       { keys: ["F2"], label: "名前を変更" },
@@ -24,6 +24,7 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
     items: [
       { keys: ["←", "→"], label: "前後のページ" },
       { keys: ["Ctrl", "G"], label: "ページ番号を入力" },
+      { keys: ["Ctrl", "F"], label: "開いている論文を検索" },
       { keys: ["Ctrl", "+"], label: "拡大" },
       { keys: ["Ctrl", "-"], label: "縮小" },
       { keys: ["Ctrl", "0"], label: "幅に合わせる" },

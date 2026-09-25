@@ -49,7 +49,20 @@ class Library:
                 CREATE TABLE IF NOT EXISTS collections (
                     name TEXT PRIMARY KEY
                 );
+                CREATE TABLE IF NOT EXISTS bookmarks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+                    page INTEGER NOT NULL,
+                    side TEXT NOT NULL,
+                    quote TEXT NOT NULL,
+                    label TEXT NOT NULL DEFAULT '重要',
+                    note TEXT NOT NULL DEFAULT '',
+                    anchor_y REAL NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
             """)
+            if "anchor_y" not in {row[1] for row in db.execute("PRAGMA table_info(bookmarks)")}:
+                db.execute("ALTER TABLE bookmarks ADD COLUMN anchor_y REAL NOT NULL DEFAULT 0")
             if "usage" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
                 db.execute("ALTER TABLE messages ADD COLUMN usage TEXT")
             columns = {row[1] for row in db.execute("PRAGMA table_info(papers)")}
@@ -280,3 +293,28 @@ class Library:
             scored.append(data)
         scored.sort(key=lambda x: (-x["score"], x["paper_id"], x["number"]))
         return scored[:limit]
+
+    def bookmarks(self, paper_id: str) -> list[dict]:
+        self.paper(paper_id)
+        with self.connection() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT * FROM bookmarks WHERE paper_id=? ORDER BY page,id", (paper_id,))]
+
+    def add_bookmark(self, paper_id: str, page: int, side: str, quote: str,
+                     label: str = "重要", note: str = "", anchor_y: float = 0) -> dict:
+        paper = self.paper(paper_id)
+        if not 1 <= page <= paper["pages"] or side not in {"original", "translated"} or not 0 <= anchor_y <= 1:
+            raise ValueError("ページまたは原文・訳文の指定が不正です。")
+        quote = quote.strip()[:2000]
+        if not quote:
+            raise ValueError("保存する文章を選択してください。")
+        with self.connection() as db:
+            cursor = db.execute("INSERT INTO bookmarks(paper_id,page,side,quote,label,note,anchor_y) VALUES(?,?,?,?,?,?,?)",
+                                (paper_id, page, side, quote, label[:40], note[:1000], anchor_y))
+            return dict(db.execute("SELECT * FROM bookmarks WHERE id=?", (cursor.lastrowid,)).fetchone())
+
+    def delete_bookmark(self, paper_id: str, bookmark_id: int) -> bool:
+        self.paper(paper_id)
+        with self.connection() as db:
+            return db.execute("DELETE FROM bookmarks WHERE paper_id=? AND id=?",
+                              (paper_id, bookmark_id)).rowcount > 0

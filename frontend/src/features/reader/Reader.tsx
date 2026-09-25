@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { FilePlus2, Languages, Loader2 } from "lucide-react";
 import { isRunning, useStore, ZOOM_PRESETS } from "@/store";
 import { useReading, type ReadingData } from "@/api/hooks";
@@ -8,6 +9,8 @@ import { ReaderToolbar } from "./ReaderToolbar";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { importPdfs } from "@/app/actions";
 import { changeZoom } from "./navigation";
+import { apiRequest } from "@/api/client";
+import { ReaderExtras, TranslationTextView, type BookmarkData, type PendingBookmark } from "./ReaderExtras";
 
 /** Caption for the translation pane, following the old reader's rules. */
 function translatedCaption(reading: ReadingData | null | undefined, page: number): string {
@@ -31,6 +34,25 @@ export function Reader() {
   const setReaderSplit = useStore((s) => s.setReaderSplit);
   const translatedOnly = useStore((s) => s.translatedOnly);
   const activeJobs = useStore((s) => s.activeJobs);
+  const [mode, setMode] = useState<"pdf" | "text">("pdf");
+  const [search, setSearch] = useState<{ query: string; side: "original" | "translated" }>({ query: "", side: "original" });
+  const [bookmarkQuote, setBookmarkQuote] = useState<PendingBookmark | null>(null);
+  const [activeBlock, setActiveBlock] = useState<string | null>(null);
+  const [bookmarkTarget, setBookmarkTarget] = useState<Pick<BookmarkData, "id" | "page" | "side" | "anchor_y"> | null>(null);
+  const { data: readingBlocks } = useQuery({
+    queryKey: ["reading-blocks", activePaperId, currentPage],
+    queryFn: () => apiRequest<{ source: { id: string; text: string; bbox: number[] }[];
+      translations: { id: string; text: string }[]; width: number; height: number }>(
+        "GET", `/api/papers/${activePaperId}/reading-blocks/${currentPage}`),
+    enabled: !!activePaperId,
+  });
+  const { data: bookmarks = [] } = useQuery({
+    queryKey: ["bookmarks", activePaperId],
+    queryFn: () => apiRequest<BookmarkData[]>("GET", `/api/papers/${activePaperId}/bookmarks`),
+    enabled: !!activePaperId,
+  });
+  const sourceHighlights = useMemo(() => bookmarks.filter(item => item.page === currentPage && item.side === "original"), [bookmarks, currentPage]);
+  const translatedHighlights = useMemo(() => bookmarks.filter(item => item.page === currentPage && item.side === "translated"), [bookmarks, currentPage]);
   const { data: reading } = useReading(activePaperId);
   const translating = activeJobs.some((j) => j.paper_id === activePaperId && isRunning(j) && j.kind === "translate");
 
@@ -41,6 +63,20 @@ export function Reader() {
 
   const pageCount = reading?.page_count ?? 0;
   const completed = reading?.completed_pages ?? [];
+  useEffect(() => {
+    const onBookmark = (event: Event) => {
+      const detail = (event as CustomEvent<PendingBookmark>).detail;
+      if (detail.paperId === useStore.getState().activePaperId) setBookmarkQuote(detail);
+    };
+    window.addEventListener("bookmark-selection", onBookmark);
+    return () => window.removeEventListener("bookmark-selection", onBookmark);
+  }, []);
+  useEffect(() => { setActiveBlock(null); setBookmarkQuote(null); setSearch({ query: "", side: "original" }); }, [activePaperId]);
+  useEffect(() => {
+    if (!activeBlock) return;
+    const timer = setTimeout(() => setActiveBlock(null), 4000);
+    return () => clearTimeout(timer);
+  }, [activeBlock]);
 
   // Keep the page valid for the paper and the 翻訳済みページのみ filter.
   useEffect(() => {
@@ -158,6 +194,9 @@ export function Reader() {
   return (
     <div ref={readerRef} className="flex flex-col h-full w-full bg-reader-bg">
       <ReaderToolbar />
+      <ReaderExtras paperId={activePaperId} mode={mode} setMode={setMode} search={search} setSearch={setSearch}
+        bookmarkQuote={bookmarkQuote} setBookmarkQuote={setBookmarkQuote} onBookmarkJump={item => setBookmarkTarget({ ...item })}
+        onSearchJump={(item, index) => setBookmarkTarget({ id: -index - 1, page: item.page, side: search.side, anchor_y: item.anchor_y })} />
       {noTranslatedPages ? (
         <div className="flex-1 flex items-center justify-center text-muted-foreground p-8 text-[13px]">
           翻訳済みのページはまだありません。完了すると自動で表示します。
@@ -184,6 +223,13 @@ export function Reader() {
                 onScroll={(e) => syncScroll(e.currentTarget, rightScrollRef.current)}
                 scrollRef={leftScrollRef}
                 missingPageMessage="対応する原文ページがありません。"
+                searchTerm={search.side === "original" ? search.query : ""}
+                blocks={readingBlocks?.source}
+                pageSize={readingBlocks}
+                activeBlock={activeBlock}
+                onBlockClick={setActiveBlock}
+                jumpTarget={bookmarkTarget?.page === currentPage ? bookmarkTarget : null}
+                savedHighlights={sourceHighlights}
               />
             </div>
           </ResizablePanel>
@@ -192,7 +238,7 @@ export function Reader() {
 
           <ResizablePanel id="translated" defaultSize={`${(1 - readerSplit) * 100}%`} minSize="15%" className="flex flex-col">
             <div className="h-[28px] border-b flex items-center px-4 bg-background shrink-0 justify-between">
-              <span className="text-muted-foreground font-medium text-xs">{caption}</span>
+              <span className="text-muted-foreground font-medium text-xs">{mode === "text" ? "日本語訳（本文）" : caption}</span>
               {translating && (
                 <span className="flex items-center gap-1 text-[11px] text-primary">
                   <Loader2 className="w-3 h-3 animate-spin" /> 翻訳中
@@ -200,7 +246,8 @@ export function Reader() {
               )}
             </div>
             <div className="flex-1 relative min-h-0">
-              <PdfPane
+              {mode === "text" ? <TranslationTextView paperId={activePaperId} currentPage={currentPage}
+                onPage={(page) => { useStore.getState().setCurrentPage(page); setMode("pdf"); }} /> : <PdfPane
                 url={rightUrl}
                 pageNumber={(ref?.index ?? 0) + 1}
                 zoom={zoom}
@@ -209,7 +256,15 @@ export function Reader() {
                 placeholder={rightPlaceholder}
                 translated
                 missingPageMessage="対応する原文ページがありません。再翻訳すると原文と同じページ数になります。"
+                searchTerm={search.side === "translated" ? search.query : ""}
+                blocks={readingBlocks?.source}
+                pageSize={readingBlocks}
+                activeBlock={activeBlock}
+                onBlockClick={setActiveBlock}
+                jumpTarget={bookmarkTarget?.page === currentPage ? bookmarkTarget : null}
+                savedHighlights={translatedHighlights}
               />
+              }
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>

@@ -50,6 +50,15 @@ class AskRequest(BaseModel):
     search_all: bool = False
 
 
+class BookmarkRequest(BaseModel):
+    page: int
+    side: str
+    quote: str
+    label: str = "重要"
+    note: str = ""
+    anchor_y: float = 0
+
+
 class ExportRequest(BaseModel):
     kind: str = Field(description="translated | interleaved | bilingual | markdown")
     destination: str
