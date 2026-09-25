@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
+import type { PageCallback } from "react-pdf/dist/shared/types.js";
+import type { TextContent, TextItem } from "pdfjs-dist/types/src/display/api";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -25,10 +27,37 @@ interface PdfPaneProps {
 
 const PADDING = 16;
 
+/**
+ * pdf.js sizes each text-layer span by measuring its text on a canvas, but the canvas and the page
+ * can resolve the fallback font differently: in WebView2 on Japanese Windows the canvas measures
+ * "sans-serif" as Arial while the spans render in Meiryo, so lines mixing Japanese and Latin come out
+ * ~7% too wide and a selection lands on the wrong characters. Refit each span to its text's width in
+ * the PDF, measured in the font the page actually renders.
+ */
+function fitTextLayer(layer: HTMLElement, content: TextContent, scale: number) {
+  const spans = layer.querySelectorAll<HTMLElement>('span[role="presentation"]');
+  // pdf.js appends a span for each non-empty item, in order.
+  const items = content.items.filter((item): item is TextItem => "str" in item && item.str !== "");
+  if (spans.length !== items.length) return;
+  const minFontSize = Number(layer.style.getPropertyValue("--min-font-size")) || 1;
+  // Read every width before writing so the page lays out once.
+  const widths = Array.from(spans, (span) => span.offsetWidth);
+  spans.forEach((span, i) => {
+    // Only the spans pdf.js stretched; single characters keep their natural width.
+    if (!span.style.getPropertyValue("--scale-x") || !widths[i]) return;
+    const item = items[i];
+    const width = content.styles[item.fontName]?.vertical ? item.height : item.width;
+    span.style.setProperty("--scale-x", String((width * scale * minFontSize) / widths[i]));
+  });
+}
+
 export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholder, missingPageMessage, translated = false }: PdfPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [numPages, setNumPages] = useState<number | null>(null);
+  const pageRef = useRef<HTMLDivElement | null>(null);
+  const loadedPage = useRef<PageCallback | null>(null);
+  const textContent = useRef<TextContent | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -51,6 +80,17 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
 
   const fitWidth = Math.max(250, containerWidth - PADDING * 2);
   const pageWidth = Math.round(fitWidth * zoom);
+
+  // Stable, since react-pdf redraws the text layer whenever this callback changes.
+  const onTextLayerRendered = useCallback(() => {
+    const page = loadedPage.current;
+    const layer = pageRef.current?.querySelector<HTMLElement>(".textLayer");
+    if (!page || !layer || !textContent.current) return;
+    // The scale react-pdf renders the text layer at for this width.
+    const scale = page.getViewport({ scale: pageWidth / page.getViewport({ scale: 1 }).width }).scale;
+    fitTextLayer(layer, textContent.current, scale);
+  }, [pageWidth]);
+
   const message = (text: React.ReactNode) => (
     <div className="h-full flex items-center justify-center p-8 text-center text-[13px] text-muted-foreground leading-relaxed">
       <div className="max-w-sm">{text}</div>
@@ -81,6 +121,10 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                 <Page
                   pageNumber={pageNumber}
                   width={pageWidth}
+                  inputRef={pageRef}
+                  onLoadSuccess={(page) => { loadedPage.current = page; }}
+                  onGetTextSuccess={(content) => { textContent.current = content; }}
+                  onRenderTextLayerSuccess={onTextLayerRendered}
                   renderTextLayer
                   renderAnnotationLayer
                   loading={<PageSkeleton width={pageWidth} />}
