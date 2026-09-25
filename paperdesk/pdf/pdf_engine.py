@@ -14,7 +14,6 @@ def safe_replace(src: Path, dst: Path) -> None:
             time.sleep(0.1)
     src.replace(dst)
 
-from pathlib import Path
 import re
 import threading
 

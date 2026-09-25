@@ -17,7 +17,6 @@ import re
 import threading
 import uuid
 import shutil
-from pathlib import Path
 from typing import Callable
 
 from paperdesk.pdf.pdf_engine import PDF_LOCK, batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, save_json, translation_units
@@ -25,7 +24,7 @@ import pymupdf as fitz
 from paperdesk.core.providers import Provider, check_cancel
 from paperdesk.core.storage import Library
 from paperdesk.layout.math_layout import restore_formula_text
-from paperdesk.translation.translation import RetryState, TRANSLATION_SCHEMA, translate_batch, validate_translations, translation_fingerprint
+from paperdesk.translation.translation import RetryState, translate_batch, translation_fingerprint
 from paperdesk.translation.translation import translation_version, page_fingerprint
 from paperdesk.translation.translation_preview import preview_page, translated_page, translated_page_numbers
 from paperdesk.translation.translation_context import contextual_units
@@ -279,7 +278,7 @@ class PaperService:
     def article(self, paper_id: str) -> str:
         folder = self.library.folder(paper_id)
         document = self.library.document(paper_id)
-        
+
         media_dir = folder / "media"
         if media_dir.exists():
             for f in media_dir.glob("*.png"):

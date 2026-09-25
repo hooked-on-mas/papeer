@@ -37,11 +37,3 @@ ignore = ["E501", "E402", "E741", "E722", "E701", "E702", "E711", "E712", "E731"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-
-
-[tool.ruff.lint.per-file-ignores]
-# These files are hashed into the translation cache identity
-# (paperdesk/core/code_version.py: TRANSLATION_SOURCES). Cosmetic lint fixes
-# would invalidate every cached translation, so fold them into the next real change.
-"paperdesk/core/service.py" = ["F401", "F811", "W293"]
-"paperdesk/pdf/pdf_engine.py" = ["F811"]
