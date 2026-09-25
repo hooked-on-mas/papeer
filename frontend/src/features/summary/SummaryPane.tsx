@@ -25,7 +25,7 @@ export function SummaryPane() {
 
   return (
     <div className="flex flex-col h-full w-full bg-background overflow-hidden">
-      <div className="h-[48px] flex items-center justify-between px-4 border-b shrink-0 bg-background/50 gap-2">
+      <div className="min-h-12 flex flex-wrap items-center justify-between px-4 py-2 border-b shrink-0 bg-background/50 gap-2">
         <h2 className="text-[14px] font-semibold flex items-center gap-2">
           <ScrollText className="w-4 h-4 text-muted-foreground" />
           サマリー
@@ -62,13 +62,15 @@ export function SummaryPane() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-6 max-w-3xl mx-auto w-full">
+      <div className="flex-1 min-h-0 overflow-y-auto bg-muted/30">
+        <div className="summary-page mx-auto w-full max-w-[900px] px-5 py-8 sm:px-10 sm:py-12">
           {isLoading && <div className="text-muted-foreground text-sm flex items-center gap-2"><RefreshCw className="w-4 h-4 animate-spin" /> サマリーを読み込み中...</div>}
           {error && <div className="text-destructive text-sm p-4 border rounded bg-destructive/10">サマリーを読み込めませんでした: {error.message}</div>}
 
           {!isLoading && !error && summaryText ? (
-            <MarkdownRenderer content={summaryText} paperId={activePaperId} />
+            <article aria-label="論文のサマリー">
+              <MarkdownRenderer className="summary-prose" content={summaryText} paperId={activePaperId} />
+            </article>
           ) : (
             !isLoading && !error && (
               <div className="text-center py-12 max-w-md mx-auto">

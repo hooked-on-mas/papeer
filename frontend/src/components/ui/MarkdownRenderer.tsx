@@ -8,6 +8,7 @@ import { useStore } from "@/store";
 import { useEffect, useRef, useState } from "react";
 import { authorizedUrl } from "@/api/client";
 import { followCitation } from "@/app/actions";
+import { normalizeMarkdown } from "@/lib/normalizeMarkdown";
 
 interface Props {
   content: string;
@@ -43,9 +44,7 @@ export function MarkdownRenderer({ content, className, paperId, onCitationClick 
     const target = id || paperId || useStore.getState().activePaperId;
     if (target) followCitation(target, page);
   });
-  const normalizedContent = content
-    .replace(/\\\(([\s\S]*?)\\\)/g, '$$$1$$')
-    .replace(/\\\[([\s\S]*?)\\\]/g, '$$$$$1$$$$');
+  const normalizedContent = normalizeMarkdown(content);
 
   return (
     <div className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
@@ -65,8 +64,11 @@ export function MarkdownRenderer({ content, className, paperId, onCitationClick 
               const page = Number(paperdeskMatch[2]);
               return (
                 <button 
+                  type="button"
+                  title={`原文の${page}ページを開く`}
+                  aria-label={`原文の${page}ページを開く`}
                   onClick={() => cite(page, paperId)}
-                  className="inline-flex items-center justify-center px-1.5 py-0.5 mx-0.5 text-[10px] font-bold text-primary bg-primary/10 hover:bg-primary/20 rounded cursor-pointer transition-colors"
+                  className="citation-link inline-flex items-center justify-center px-1.5 py-0.5 mx-0.5 text-[11px] font-semibold leading-normal text-primary bg-primary/10 hover:bg-primary/20 rounded cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                 >
                   {props.children || page}
                 </button>
@@ -77,8 +79,10 @@ export function MarkdownRenderer({ content, className, paperId, onCitationClick 
             if (match) {
               return (
                 <button 
+                  type="button"
+                  title={`原文の${match[1]}ページを開く`}
                   onClick={() => cite(Number(match[1]))}
-                  className="inline-flex items-center justify-center px-1.5 py-0.5 mx-0.5 text-[10px] font-bold text-primary bg-primary/10 hover:bg-primary/20 rounded cursor-pointer transition-colors"
+                  className="citation-link inline-flex items-center justify-center px-1.5 py-0.5 mx-0.5 text-[11px] font-semibold leading-normal text-primary bg-primary/10 hover:bg-primary/20 rounded cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                 >
                   {match[1]}
                 </button>

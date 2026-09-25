@@ -142,6 +142,94 @@
   margin-bottom: 0.5em;
 }
 
+/* Article typography is scoped so chat and notes retain their compact layout. */
+.summary-page {
+  min-height: 100%;
+  background: var(--background);
+}
+
+.summary-prose {
+  max-width: none;
+  font-size: 15px;
+  line-height: 1.95;
+  overflow-wrap: anywhere;
+  line-break: strict;
+}
+
+.summary-prose > :first-child { margin-top: 0; }
+.summary-prose p { margin: 0 0 1.3em; }
+.summary-prose :is(h1, h2, h3, h4) {
+  color: var(--foreground);
+  font-weight: 700;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+.summary-prose h1 {
+  font-size: 1.65em;
+  margin: 0 0 1.5em;
+  padding-bottom: 0.9em;
+  border-bottom: 1px solid var(--border);
+  letter-spacing: -0.025em;
+}
+.summary-prose h2 {
+  font-size: 1.3em;
+  margin: 2.4em 0 1em;
+  padding-bottom: 0.55em;
+  border-bottom: 1px solid var(--border);
+}
+.summary-prose h3 { font-size: 1.12em; margin: 1.9em 0 0.8em; }
+.summary-prose h4 { font-size: 1em; margin: 1.5em 0 0.7em; }
+.summary-prose strong { font-weight: 700; }
+.summary-prose :is(ul, ol) { padding-left: 1.6em; margin: 1em 0 1.5em; }
+.summary-prose ul { list-style: disc; }
+.summary-prose ol { list-style: decimal; }
+.summary-prose li { padding-left: 0.3em; margin: 0.5em 0; }
+.summary-prose li::marker { color: var(--muted-foreground); }
+.summary-prose li > p { margin-bottom: 0.6em; }
+.summary-prose blockquote {
+  margin: 1.5em 0;
+  padding: 1em 1.3em;
+  border-left: 3px solid var(--primary);
+  background: var(--muted);
+  border-radius: 0 6px 6px 0;
+}
+.summary-prose blockquote > :last-child { margin-bottom: 0; }
+.summary-prose hr { border: 0; border-top: 1px solid var(--border); margin: 2em 0; }
+.summary-prose .katex { font-size: 1.08em; }
+.summary-prose .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 1.5em 0;
+  padding: 1em;
+  background: var(--muted);
+  border-radius: 8px;
+}
+.summary-prose .katex-display > .katex { white-space: nowrap; }
+.summary-prose img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.8em auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+}
+.summary-prose table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  margin: 1.5em 0;
+}
+.summary-prose :is(th, td) { padding: 0.7em 1em; border: 1px solid var(--border); text-align: left; }
+.summary-prose th { background: var(--muted); font-weight: 600; }
+.summary-prose pre { margin: 1.5em 0; line-height: 1.65; }
+.summary-prose pre code { padding: 0; background: transparent; }
+.summary-prose .citation-link { vertical-align: baseline; white-space: nowrap; }
+
 /* Indeterminate progress (no done/total in the job message). */
 [data-slot="progress-indicator"][data-indeterminate] {
   width: 35%;
