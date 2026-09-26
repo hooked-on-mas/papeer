@@ -4,7 +4,8 @@ import {
 } from "lucide-react";
 import { useStore, isRunning, paperBusy } from "../store";
 import { paperDisplayName, usePaper, useReading } from "../api/hooks";
-import { PaperStatusBadge, type PaperStatus } from "../components/ui/PaperStatusBadge";
+import { PaperStatusBadge } from "../components/ui/PaperStatusBadge";
+import { paperTranslationStatus } from "@/lib/paperStatus";
 import { TranslationDialog } from "../features/reader/TranslationDialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent,
@@ -56,21 +57,8 @@ export function Header() {
 
   const translateJob = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && j.kind === "translate");
   const busy = paperBusy(activeJobs, activePaperId);
-  const pageCount = reading?.page_count ?? paper?.pages ?? 0;
-  const completed = reading?.completed_pages?.length ?? 0;
-
-  let status: PaperStatus = "untranslated";
-  let statusText = "未翻訳";
-  if (translateJob) {
-    status = "translating";
-    statusText = `翻訳中 ${translateJob.done ?? 0}/${translateJob.total ?? "?"}`;
-  } else if (reading?.has_translated && !reading.in_progress && completed >= pageCount && pageCount > 0) {
-    status = "translated";
-    statusText = "翻訳済み";
-  } else if (completed > 0) {
-    status = "partial";
-    statusText = `翻訳済み ${completed}/${pageCount}`;
-  }
+  const translation = paperTranslationStatus(paper, !!translateJob, reading);
+  const { status } = translation;
 
   const handleCancel = async () => {
     if (translateJob) {
@@ -101,7 +89,7 @@ export function Header() {
         <div className="flex items-center gap-2 text-[12px] text-muted-foreground mt-0.5 min-w-0">
           <span className="truncate" title={meta}>{meta}</span>
           <span className="text-border">|</span>
-          <PaperStatusBadge status={status} text={statusText} hasSummary={!!paper?.has_article} className="shrink-0" />
+          <PaperStatusBadge status={status} text={`${translation.text} · ${translation.count}`} description={translation.description} hasSummary={!!paper?.has_article} className="shrink-0" />
         </div>
       </div>
 
@@ -118,7 +106,7 @@ export function Header() {
             className="flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
           >
             <Languages className="w-4 h-4" />
-            {status === "partial" || reading?.in_progress ? "翻訳 / 再開…" : status === "translated" ? "再翻訳…" : "翻訳する…"}
+            {["partial", "paused", "review", "failed"].includes(status) ? "翻訳 / 再開…" : status === "translated" ? "再翻訳…" : "翻訳する…"}
           </button>
         )}
 

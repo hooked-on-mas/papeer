@@ -15,6 +15,9 @@ export type PaperData = {
   has_article?: boolean;
   has_translated?: boolean;
   translated_count?: number;
+  translation_required_count?: number;
+  translation_completed_required_count?: number;
+  translation_has_issues?: boolean | null;
   translation_in_progress?: boolean;
   pages?: number;
   folder_path?: string;
@@ -30,6 +33,7 @@ export type TranslationReport = {
   skipped_pages?: number[];
   scaled_blocks?: number;
   readability_warnings?: { page: number }[];
+  skipped_blocks?: string[];
 };
 
 export type TranslationPreview = {
@@ -46,6 +50,7 @@ export type ReadingData = {
   page_count: number;
   source_page_count: number;
   empty_pages: number[];
+  translation_required_pages?: number[];
   completed_pages: number[];
   preview: TranslationPreview | null;
   in_progress: boolean;

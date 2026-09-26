@@ -10,6 +10,7 @@ import sqlite3
 import uuid
 
 from paperdesk.pdf.pdf_engine import PDF_LOCK, extract_pdf, save_json
+from paperdesk.core.translation_review import cached_required_translation_pages
 from paperdesk.core.bibliography import extract_bibliography
 import pymupdf as fitz
 from paperdesk.layout.math_layout import LAYOUT_VERSION
@@ -251,7 +252,7 @@ class Library:
         return name
 
     def reading_info(self, paper_id: str) -> dict:
-        """Read display metadata without loading or migrating the extraction cache."""
+        """Read display metadata without migrating the extraction cache."""
         with self.connection() as db:
             paper = db.execute("SELECT pages FROM papers WHERE id=?", (paper_id,)).fetchone()
             if paper is None:
@@ -259,7 +260,10 @@ class Library:
             empty = [row[0] for row in db.execute(
                 "SELECT number FROM pages WHERE paper_id=? AND trim(text)='' ORDER BY number",
                 (paper_id,))]
-        return {"page_count": paper[0], "empty_pages": empty}
+        # Use the same units as translation: references, formulas and other
+        # deliberately preserved content do not require a translated page.
+        required = cached_required_translation_pages(self.folder(paper_id), paper[0])
+        return {"page_count": paper[0], "empty_pages": empty, "translation_required_pages": required}
 
     def document(self, paper_id: str) -> dict:
         folder = self.folder(paper_id)

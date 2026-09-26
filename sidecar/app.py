@@ -139,8 +139,18 @@ def translation_state(folder: Path, page_count: int) -> dict[str, Any]:
     except (OSError, ValueError, json.JSONDecodeError):
         completed, preview = [], None
     in_progress = bool(preview and not preview["complete"])
+    from paperdesk.core.translation_review import cached_required_translation_pages
+    required = set(cached_required_translation_pages(folder, page_count))
+    try:
+        report = json.loads((folder / "translation-report.json").read_text("utf-8"))
+        has_issues = bool(report.get("skipped_blocks") or report.get("skipped_pages"))
+    except (OSError, ValueError):
+        has_issues = None
     return {
         "translated_count": len(completed),
+        "translation_required_count": len(required),
+        "translation_completed_required_count": len(required.intersection(completed)),
+        "translation_has_issues": has_issues,
         "has_translated": (folder / "translated.pdf").is_file(),
         "translation_in_progress": in_progress,
     }
@@ -618,6 +628,7 @@ def get_reading_info(paper_id: str, dependencies: None = Depends(verify_token)) 
         "page_count": page_count,
         "source_page_count": info["page_count"],
         "empty_pages": info["empty_pages"],
+        "translation_required_pages": info["translation_required_pages"],
         "completed_pages": completed,
         "preview": preview,
         "in_progress": in_progress,

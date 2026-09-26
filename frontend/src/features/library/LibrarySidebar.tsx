@@ -22,6 +22,8 @@ import {
 } from "@/app/actions";
 import { useDropTarget } from "@/app/fileDrop";
 import { usePendingImports, type PendingImport } from "@/app/pendingImports";
+import { PaperStatusBadge } from "@/components/ui/PaperStatusBadge";
+import { paperTranslationStatus } from "@/lib/paperStatus";
 
 export const SORT_LABELS = ["追加が新しい順", "追加が古い順", "名前順（昇順）", "名前順（降順）"];
 
@@ -378,6 +380,7 @@ function PaperRow({ paper, depth, collections }: { paper: PaperData; depth: numb
   const selectedFolder = useStore((s) => s.selectedFolder);
   const jobs = useStore((s) => s.activeJobs);
   const running = jobs.some((j) => isRunning(j) && j.paper_id === paper.id);
+  const translating = jobs.some(j => isRunning(j) && j.paper_id === paper.id && j.kind === "translate");
   const isActive = paper.id === activePaperId && selectedFolder === null;
   const collection = normalizeCollection(paper.collection_name || "");
 
@@ -388,11 +391,8 @@ function PaperRow({ paper, depth, collections }: { paper: PaperData; depth: numb
     if (store.activePaperId !== paper.id) store.setActivePaperId(paper.id);
   };
 
-  const pages = paper.pages ?? 0;
-  const translated = paper.translated_count ?? 0;
-  const dot = running || paper.translation_in_progress ? "bg-primary animate-pulse"
-    : pages > 0 && translated >= pages ? "bg-success"
-    : translated > 0 ? "bg-warning" : "bg-muted-foreground/40";
+  const translation = paperTranslationStatus(paper, translating);
+  const showProgress = ["partial", "translating", "paused"].includes(translation.status) && translation.pages > 0;
 
   return (
     <ContextMenu>
@@ -404,7 +404,7 @@ function PaperRow({ paper, depth, collections }: { paper: PaperData; depth: numb
           {...attributes}
           data-drop-collection={collection}
           onClick={select}
-          className={`flex items-start py-1.5 cursor-pointer border-l-2 outline-none ${
+          className={`flex items-start py-2 cursor-pointer border-l-2 outline-none ${
             isActive ? "bg-accent border-primary" : "hover:bg-muted/60 border-transparent"
           } ${isDragging ? "opacity-40" : ""}`}
           style={{ paddingLeft: `${depth * 16 + 8}px`, paddingRight: "8px" }}
@@ -413,13 +413,19 @@ function PaperRow({ paper, depth, collections }: { paper: PaperData; depth: numb
           <FileText className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="truncate leading-5">{paperDisplayName(paper)}</div>
-            <div className="text-[11px] text-muted-foreground truncate flex items-center gap-1.5 tabular-nums">
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
-              {pages}ページ · {running ? "処理中" : paper.status}
-              {paper.has_article && <span title="サマリーあり">· サマリー</span>}
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground tabular-nums">
+              <PaperStatusBadge status={translation.status} text={translation.text} description={translation.description} />
+              <span title={translation.description}>{translation.count}</span>
             </div>
+            {showProgress && <div role="progressbar" aria-label="訳文を保存済みのページ" aria-valuemin={0} aria-valuemax={translation.pages}
+              aria-valuenow={translation.completed} aria-valuetext={translation.description} title={translation.description}
+              className="mt-1.5 h-1 max-w-40 overflow-hidden rounded-full bg-muted-foreground/10">
+              <div className={`h-full rounded-full transition-[width] ${translating ? "bg-primary" : "bg-amber-500/60"}`} style={{ width: `${translation.progress}%` }} />
+            </div>}
+            {(paper.has_article || (running && !translating)) && <div className="mt-1 text-[10px] text-muted-foreground">{paper.has_article && "サマリーあり"}
+              {running && !translating && <span className="text-primary"> · AI処理中</span>}</div>}
           </div>
-          {running && <Loader2 className="w-3.5 h-3.5 ml-1 mt-0.5 animate-spin text-primary shrink-0" />}
+          {running && !translating && <Loader2 className="w-3.5 h-3.5 ml-1 mt-0.5 animate-spin text-primary shrink-0" />}
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-56">
