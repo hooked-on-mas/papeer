@@ -262,7 +262,9 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
           if (scrollRef) scrollRef.current = node;
         }}
         onScroll={onScroll}
-        className={`w-full h-full bg-reader-bg ${zoom > 1 ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
+        // A stable gutter keeps the width from changing as the scrollbar comes and goes; otherwise a
+        // page that only just overflows at "fit width" shrinks to fit, loses its scrollbar and grows back.
+        className={`w-full h-full bg-reader-bg [scrollbar-gutter:stable] ${zoom > 1 ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
       >
         {placeholder ? message(placeholder) : !url ? message("PDFがありません。") : (
           <div className="w-fit min-w-full" style={{ padding: PADDING }}>
