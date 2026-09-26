@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import threading
 import uuid
 
 from paperdesk.pdf.pdf_engine import PDF_LOCK, extract_pdf, save_json
@@ -21,12 +22,17 @@ def normalize_collection_name(value: str) -> str:
     return " / ".join(part.strip() for part in re.split(r"[\\/]", value) if part.strip())
 
 
+# The sidecar opens a Library per request; concurrent first requests after an upgrade must not
+# both see a column missing and both try to add it.
+_SCHEMA_LOCK = threading.Lock()
+
+
 class Library:
     def __init__(self, root: Path):
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
         (root / "papers").mkdir(exist_ok=True)
-        with self.connection() as db:
+        with _SCHEMA_LOCK, self.connection() as db:
             db.executescript("""
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS papers (

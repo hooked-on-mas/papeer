@@ -101,6 +101,13 @@ def page_translation_text(folder: Path, document: dict, page: int) -> list[str]:
     return [body.strip() for number, body in zip(parts[1::2], parts[2::2]) if int(number) == page and body.strip()]
 
 
+def _remove_other_runs(folder: Path, run_id: str) -> None:
+    """Delete page previews of earlier runs; the current preview no longer points into them."""
+    for run in (folder / "translation-pages").glob("*"):
+        if run.is_dir() and run.name != run_id:
+            shutil.rmtree(run, ignore_errors=True)
+
+
 class PaperService:
     def __init__(self, library: Library, provider: Provider, cancel: threading.Event,
                  progress: Callable[[str], None] = lambda _: None,
@@ -178,10 +185,20 @@ class PaperService:
         preview_path = folder / "translation-preview.json"
         # Rendered pages remain valid reading material even when extraction IDs,
         # provider settings or code versions invalidate their translation cache.
-        retained = set(translated_page_numbers(folder, document["page_count"])) - selected
-        for number in sorted(retained):
+        earlier = set(translated_page_numbers(folder, document["page_count"]))
+        retained = earlier - selected
+        # Earlier translations of the selected pages, put back if this run stops before redoing them.
+        superseded = earlier & selected
+        run_folder = preview_page(folder, preview, 1).parent
+
+        def previous_page(number):
+            return run_folder / f"previous-page-{number}.pdf"
+
+        for number in sorted(earlier):
             source, index = translated_page(folder, number - 1)
-            destination = preview_page(folder, preview, number)
+            if source is None:
+                continue
+            destination = preview_page(folder, preview, number) if number in retained else previous_page(number)
             destination.parent.mkdir(parents=True, exist_ok=True)
             with PDF_LOCK, fitz.open(source) as previous, fitz.open() as single:
                 single.insert_pdf(previous, from_page=index, to_page=index)
@@ -346,8 +363,21 @@ class PaperService:
                     lines += [f"## p.{block['page']} / {block['id']}", "", block["text"], ""]
             (folder / "translation.md").write_text("\n".join(lines), "utf-8")
             self.library.update(paper_id, status="一部翻訳済み" if report["untranslated_pages"] or report["skipped_blocks"] else "翻訳済み")
+            _remove_other_runs(folder, preview["run_id"])
             return report
         except Exception:
+            try:
+                restored = sorted(n for n in superseded if n not in preview["pages"]
+                                  and n not in preview["skipped_pages"] and previous_page(n).is_file())
+                for number in restored:
+                    previous_page(number).replace(preview_page(folder, preview, number))
+                    preview["pages"].append(number)
+                if restored:
+                    save_json(preview_path, preview)
+                    self.page_ready(paper_id, 0)
+                _remove_other_runs(folder, preview["run_id"])
+            except OSError:
+                pass
             self.library.update(paper_id, status="翻訳途中・再開可" if done else "翻訳未完了")
             raise
 

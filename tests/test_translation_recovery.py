@@ -73,6 +73,27 @@ class TranslationRecoveryTests(unittest.TestCase):
             with self.subTest(parts=parts), self.assertRaises(ValueError):
                 _assemble_parts(json.dumps({"parts": parts}), [A, B])
 
+    LONG = {"id": "long", "page": 1,
+            "text": f"For {A} we use the proposed estimator which is applied in all of the experiments that are reported below with {B}."}
+    ENGLISH = [{"kind": "text", "text": "For "}, {"kind": "math", "index": 0},
+               {"kind": "text", "text": " we use the proposed estimator which is applied in all of the experiments that are reported below with "},
+               {"kind": "math", "index": 1}, {"kind": "text", "text": "."}]
+
+    def test_untranslated_structured_retry_falls_back_to_fixed_positions(self):
+        fragments = {"text0": "日本語", "text2": "日本語"}
+        provider = ScriptedProvider(translations(long="欠落"), {"parts": self.ENGLISH}, translations(**fragments))
+        saved = self.run_batch(provider, [self.LONG])
+        self.assertEqual(saved, [{"long": "日本語" + A + "日本語" + B + "."}])
+        self.assertEqual(len(provider.calls), 3)
+
+    def test_untranslated_last_retry_skips_only_that_paragraph(self):
+        english = {"text0": "For ", "text2": self.ENGLISH[2]["text"]}
+        provider = ScriptedProvider(translations(long="欠落", good="正常な文章。"), {"parts": self.ENGLISH},
+                                    *[translations(**english)] * (MAX_BLOCK_RETRIES - 1))
+        saved = self.run_batch(provider, [self.LONG, UNITS[0]])
+        self.assertEqual(saved, [{"good": "正常な文章。"}])
+        self.assertEqual(len(provider.calls), 1 + MAX_BLOCK_RETRIES)
+
     def test_final_fallback_keeps_formula_positions_locally(self):
         provider = ScriptedProvider(translations(bad="欠落"), {"parts": []},
                                     translations(text0="条件", text2="では、使用するのは"))

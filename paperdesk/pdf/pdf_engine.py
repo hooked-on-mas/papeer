@@ -130,6 +130,19 @@ def batches(units: list[dict], limit: int = 9000):
         yield batch
 
 
+def _reading_order(images: list[dict]) -> list[dict]:
+    """Images placed by insert_htmlbox, line by line and left to right."""
+    lines: list[list[dict]] = []
+    for image in sorted(images, key=lambda img: (img['bbox'][1] + img['bbox'][3]) / 2):
+        middle = (image['bbox'][1] + image['bbox'][3]) / 2
+        # Same line when its middle falls within the line's first image.
+        if lines and lines[-1][0]['bbox'][1] <= middle <= lines[-1][0]['bbox'][3]:
+            lines[-1].append(image)
+        else:
+            lines.append([image])
+    return [image for line in lines for image in sorted(line, key=lambda img: img['bbox'][0])]
+
+
 def _space_without_formulas(rect: fitz.Rect, formulas: list[fitz.Rect]) -> fitz.Rect:
     """Find space for prose when a publisher's text box overlaps display math."""
     candidates = [rect]
@@ -329,7 +342,11 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                         "font_size": round(style.size * scale, 2), "scale": round(scale, 3)})
                 inline_formulas += len(formulas)
                 page.add_redact_annot(rect, fill=(1, 1, 1), cross_out=False)
-                planned.append((placement, markup, archive, formulas))
+                # In the translation's order, which the laid-out images follow; word order may differ from the source.
+                by_token = {}
+                for formula in formulas:
+                    by_token.setdefault(formula["token"], []).append(formula)
+                planned.append((placement, markup, archive, [by_token[token].pop(0) for token in MATH_TOKEN.findall(text)]))
             if planned:
                 page.apply_redactions(images=0, graphics=0, text=0)
                 # Redaction removes any glyph touching a text box. Restore math
@@ -345,8 +362,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                     if formulas:
                         images_after = page.get_image_info()
                         new_images = [img for img in images_after if tuple(img['bbox']) not in images_before]
-                        new_images.sort(key=lambda img: (round((img['bbox'][1] + img['bbox'][3]) / 2 / 10), img['bbox'][0]))
-                        for img, formula in zip(new_images, formulas):
+                        for img, formula in zip(_reading_order(new_images), formulas):
                             img_rect = fitz.Rect(img['bbox'])
                             fontsize = img_rect.height
                             while fontsize >= 0.1:

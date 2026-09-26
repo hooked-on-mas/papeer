@@ -10,7 +10,7 @@ from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from paperdesk.core import reading_tools as tools
-from paperdesk.core.providers import Provider, check_cancel
+from paperdesk.core.providers import Provider, check_cancel, parse_json_answer
 from paperdesk.core.service import PaperService
 from paperdesk.core.terminology import global_glossary, save_global_glossary, GlossaryConflict
 from sidecar.jobs import ConcurrencyConflict
@@ -139,7 +139,7 @@ def register_reading_api(app, verify_token):
             db.execute("INSERT OR REPLACE INTO note_templates(name,content) VALUES(?,?)", (name, body.content))
         return {"status": "saved"}
 
-    @app.delete("/api/note-templates/{name}", dependencies=[Depends(verify_token)])
+    @app.delete("/api/note-templates/{name:path}", dependencies=[Depends(verify_token)])
     def delete_template(name: str):
         with runtime.get_library().connection() as db:
             db.execute("DELETE FROM note_templates WHERE name=?", (name,))
@@ -232,7 +232,8 @@ def register_reading_api(app, verify_token):
     def draft_revision(paper_id: str, body: RevisionRequest):
         lib = runtime.get_library()
         paragraph = find_paragraph(lib, paper_id, body)
-        settings = replace(runtime.get_settings(), api_key=runtime._runtime_api_key or "")
+        settings = runtime.get_settings()
+        settings = replace(settings, api_key=runtime._runtime_api_key or settings.api_key)
         def action(cancel, progress, _page_ready):
             progress("この段落の修正案を作っています…")
             provider = Provider(settings, cancel)
@@ -242,7 +243,9 @@ def register_reading_api(app, verify_token):
                 json.dumps({"source": paragraph["source"], "current": paragraph["text"],
                             "glossary": tools.effective_glossary(lib, paper_id)}, ensure_ascii=False),
                 {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"], "additionalProperties": False})
-            value = json.loads(answer)
+            value = parse_json_answer(answer)
+            if not isinstance(value.get("text"), str):
+                raise ValueError("AIから修正案を取得できませんでした。再試行してください。")
             text = tools.validate_revision(paragraph["source"], value["text"])
             check_cancel(cancel)
             return {"text": text, "unit_id": paragraph["id"]}
@@ -256,7 +259,8 @@ def register_reading_api(app, verify_token):
             text = tools.validate_revision(paragraph["source"], body.text)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        settings = replace(runtime.get_settings(), api_key=runtime._runtime_api_key or "")
+        settings = runtime.get_settings()
+        settings = replace(settings, api_key=runtime._runtime_api_key or settings.api_key)
         def action(cancel, progress, page_ready):
             current = find_paragraph(lib, paper_id, body)
             provider = Provider(settings, cancel)

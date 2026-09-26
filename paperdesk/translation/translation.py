@@ -223,7 +223,12 @@ def _locked_translation(provider, unit: dict, parts: list[dict], tokens: list[st
     return "".join(result).strip()
 
 
+def _checked(unit: dict, text: str) -> dict:
+    return validate_translations(json.dumps({"translations": [{"id": unit["id"], "text": text}]}), [unit])
+
+
 def _recover_unit(provider, unit, cancel, progress, state, save):
+    """Retry `unit` until a translation passes the final check; raise RetryLimitExceeded once out of retries."""
     parts, tokens = _source_parts(unit)
     instruction = prompts.load("translation_recovery")
     if state.attempts.get(unit["id"], 1) < 2:
@@ -235,8 +240,9 @@ def _recover_unit(provider, unit, cancel, progress, state, save):
                                                            "glossary": unit.get("glossary", []),
                                                            **recovery_context(unit)},
                                                            ensure_ascii=False), _parts_schema(len(tokens)))
+        # A translation failing the final check falls through to the fixed-position retries.
         try:
-            return _assemble_parts(answer, tokens)
+            return _checked(unit, _assemble_parts(answer, tokens))
         except ValueError:
             pass
     while not state.exhausted(unit):
@@ -245,7 +251,7 @@ def _recover_unit(provider, unit, cancel, progress, state, save):
         progress(f"数式の位置を固定して本文を翻訳 p.{unit['page']} / {unit['id']}"
                  f"（追加{state.attempts[unit['id']] - 1}/{MAX_BLOCK_RETRIES}回）")
         try:
-            return _locked_translation(provider, unit, parts, tokens, cancel)
+            return _checked(unit, _locked_translation(provider, unit, parts, tokens, cancel))
         except ValueError:
             pass
     state.check(unit)
@@ -270,16 +276,10 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
         check_cancel(cancel)
         try:
             state.check(unit)
-            text = _recover_unit(provider, unit, cancel, progress, state, save)
-            checked = validate_translations(json.dumps({"translations": [{"id": unit["id"], "text": text}]}), [unit])
-            accept(checked)
+            accept(_recover_unit(provider, unit, cancel, progress, state, save))
         except RetryLimitExceeded as error:
+            # Skip only this paragraph; the rest of the paper goes on.
             progress(str(error))
-            return
-        except ValueError as error:
-            progress(f"p.{unit['page']} / {unit['id']} 検証エラー ({error})")
-            state.reserve(unit, save)
-            return
 
     def start(units):
         """Recover blocks already sent in an earlier run; return the rest, recorded as sent."""

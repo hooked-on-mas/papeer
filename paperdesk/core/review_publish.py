@@ -16,6 +16,7 @@ from paperdesk.pdf.pdf_engine import PDF_LOCK, translation_units, interleaved_pd
 from paperdesk.translation.translation import translation_fingerprint, validate_translations
 from paperdesk.translation.translation_preview import translated_page, translated_page_numbers
 from paperdesk.layout.reading_flow import unit_pages, materialize_flows
+from paperdesk.core.terminology import apply_glossary, global_glossary
 
 
 def _read(path, default=None):
@@ -130,7 +131,11 @@ def _publish(folder, review, manifest, entries):
         bilingual_pdf(folder/'original.pdf', stage/'translated.pdf', stage/'bilingual.pdf')
     settings = Settings(provider=manifest['provider'], model=manifest['model'],
                         base_url=manifest.get('base_url', Settings().base_url))
-    fingerprint = translation_fingerprint(settings, translation_units(document))
+    # With the glossary applied, as PaperService.translate fingerprints it.
+    units = translation_units(document)
+    root = folder.parent.parent
+    apply_glossary(units, global_glossary(root) if (root/'library.sqlite3').exists() else [])
+    fingerprint = translation_fingerprint(settings, units)
     old_cache = _read(folder/'translation-cache.json', {})
     cache = old_cache if old_cache.get('fingerprint') == fingerprint else {'fingerprint': fingerprint, 'translations': {}}
     cache = json.loads(json.dumps(cache))
@@ -138,6 +143,10 @@ def _publish(folder, review, manifest, entries):
     for _, _, values, _ in entries:
         reviewed_values.update(values)
     cache['translations'].update(reviewed_values)
+    # Page records are what translation reuses and paragraph editing reads.
+    for entry in cache.get('completed_pages', {}).values():
+        page_values = entry.get('translations', {})
+        page_values.update({key: value for key, value in reviewed_values.items() if key in page_values})
     retry = cache.setdefault('retry_state', {'attempts': {}, 'retry_calls': 0})
     for key in reviewed_values:
         retry['attempts'].pop(key, None)

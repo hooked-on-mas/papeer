@@ -57,7 +57,9 @@ def load_ui_state(data_dir: Path) -> dict[str, Any]:
         try:
             return json.loads(json_path.read_text("utf-8"))
         except Exception:
-            pass
+            # Possibly only locked for a moment (e.g. a virus scan): fall back to defaults
+            # for this request without overwriting the saved reading positions.
+            return migrate_window_ini(data_dir / "window.ini")
 
     # Migrate from window.ini if present
     state = migrate_window_ini(data_dir / "window.ini")

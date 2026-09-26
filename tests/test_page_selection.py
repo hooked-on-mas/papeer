@@ -89,6 +89,39 @@ class PageSelectionTests(unittest.TestCase):
                 report = service.translate(identity, {3})
             self.assertEqual(report['translated_pages'], [1, 3])
 
+    def test_interrupted_retranslation_keeps_earlier_translations_and_old_runs_are_removed(self):
+        from paperdesk.core.providers import Cancelled
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'source.pdf'
+            with fitz.open() as pdf:
+                for n in range(3):
+                    pdf.new_page().insert_text((40, 70), f'Original content on page {n + 1}.')
+                pdf.save(source)
+            library = Library(root / 'library')
+            identity, _ = library.import_pdf(source)
+            folder = library.folder(identity)
+            provider = FakeProvider()
+            service = PaperService(library, provider, threading.Event())
+            service.translate(identity)
+            first_run = read_preview(folder)['run_id']
+            provider.interrupt_after = provider.calls + 2
+            with patch('paperdesk.core.service.translation_version', return_value='changed'):
+                with self.assertRaises(Cancelled):
+                    service.translate(identity)
+                # Pages not redone before the interruption still show their earlier translation.
+                self.assertEqual(translated_page_numbers(folder, 3), [1, 2, 3])
+                for n in range(3):
+                    path, index = translated_page(folder, n)
+                    with fitz.open(path) as pdf:
+                        self.assertIn('適応制御', pdf[index].get_text())
+                provider.interrupt_after = None
+                report = service.translate(identity, {2})
+            self.assertEqual(report['translated_pages'], [1, 2, 3])
+            runs = {run.name for run in (folder / 'translation-pages').iterdir()}
+            self.assertEqual(runs, {read_preview(folder)['run_id']})
+            self.assertNotIn(first_run, runs)
+
     def test_completed_pages_survive_model_change_and_restart_until_version_changes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
