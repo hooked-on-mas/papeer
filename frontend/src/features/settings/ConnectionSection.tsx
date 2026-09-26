@@ -212,20 +212,31 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
         )}
         <Field label="モデル">
           <div className="flex gap-2">
-            <Input
-              value={form.model}
-              list="settings-model-options"
-              onChange={(e) => form.setModel(e.target.value)}
-              placeholder={form.loadingModels ? "取得中…" : "モデル名"}
-            />
-            <datalist id="settings-model-options">
-              {form.modelOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </datalist>
+            {form.isApi ? (
+              <Input value={form.model} onChange={(e) => form.setModel(e.target.value)} placeholder="モデル名" />
+            ) : (
+              <NativeSelect
+                aria-label="モデル"
+                value={form.modelOptions.some((m) => m.id === form.model) ? form.model : ""}
+                onChange={(e) => form.setModel(e.target.value)}
+              >
+                <option value="">{form.loadingModels ? "取得中…" : "モデル名を直接入力"}</option>
+                {form.modelOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </NativeSelect>
+            )}
             <Button variant="outline" onClick={() => form.refetchModels()} disabled={form.loadingModels} title="モデル一覧を再取得">
               <RefreshCw className={cn(form.loadingModels && "animate-spin")} />
               再取得
             </Button>
           </div>
+          {!form.isApi && !form.modelOptions.some((m) => m.id === form.model) && (
+            <Input
+              aria-label="モデル名を直接入力"
+              value={form.model}
+              onChange={(e) => form.setModel(e.target.value)}
+              placeholder="モデル名"
+            />
+          )}
         </Field>
         {form.hasEfforts && (
           <Field label="推論の強さ" hint="上げるほど時間とトークンが増えることがあります。翻訳済みの部分はそのまま再利用します。">
