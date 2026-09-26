@@ -5,6 +5,7 @@ import { askConfirm, askText, showMessage } from "@/components/AppDialogs";
 import { showError, startJob } from "@/features/jobs/jobEvents";
 import { joinPath, shell } from "@/shell";
 import { useStore } from "@/store";
+import { paperExportFilename } from "@/lib/exportFilename";
 import { addPendingImports, removePendingImports, usePendingImports } from "./pendingImports";
 
 let queryClient: QueryClient | null = null;
@@ -278,7 +279,7 @@ export async function openPaperFile(paperId: string, name: "original.pdf" | "tra
 export async function saveOriginal(paperId: string): Promise<void> {
   try {
     const current = await paper(paperId);
-    const destination = await shell.saveFile(current.original_name || "original.pdf", [{ name: "PDF", extensions: ["pdf"] }]);
+    const destination = await shell.saveFile(paperExportFilename(current, "original"), [{ name: "PDF", extensions: ["pdf"] }]);
     if (!destination) return;
     await apiRequest("POST", `/api/papers/${paperId}/export`, { kind: "original", destination });
     useStore.getState().setStatus(`原文PDFを保存しました：${destination}`);
@@ -299,12 +300,10 @@ export async function exportPdf(paperId: string, kind: PdfExportKind): Promise<v
     await showMessage("未翻訳", "先に日本語訳を作成してください。");
     return;
   }
-  const names: Record<PdfExportKind, string> = {
-    translated: "translated.pdf", interleaved: "interleaved.pdf", bilingual: "bilingual.pdf",
-  };
-  const destination = await shell.saveFile(names[kind], [{ name: "PDF", extensions: ["pdf"] }]);
-  if (!destination) return;
   try {
+    const current = await paper(paperId);
+    const destination = await shell.saveFile(paperExportFilename(current, kind), [{ name: "PDF", extensions: ["pdf"] }]);
+    if (!destination) return;
     const result = await apiRequest<{ job_id?: string }>("POST", `/api/papers/${paperId}/export`, { kind, destination });
     if (result.job_id) {
       useStore.getState().addJob({ job_id: result.job_id, paper_id: paperId, kind: "export", message: "準備中...", status: "running" });
@@ -322,9 +321,10 @@ export async function exportMarkdown(paperId: string): Promise<void> {
     await showMessage("未作成", "先に解説を作成してください。");
     return;
   }
-  const destination = await shell.saveFile("article.md", [{ name: "Markdown", extensions: ["md"] }]);
-  if (!destination) return;
   try {
+    const current = await paper(paperId);
+    const destination = await shell.saveFile(paperExportFilename(current, "markdown"), [{ name: "Markdown", extensions: ["md"] }]);
+    if (!destination) return;
     await apiRequest("POST", `/api/papers/${paperId}/export`, { kind: "markdown", destination });
     useStore.getState().setStatus(`サマリーを保存しました：${destination}`);
   } catch (error) {
