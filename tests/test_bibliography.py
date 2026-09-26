@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pymupdf as fitz
 
-from paperdesk.core.bibliography import extract_bibliography, paper_display_name
-from paperdesk.core.storage import Library
+from papeer.core.bibliography import extract_bibliography, paper_display_name
+from papeer.core.storage import Library
 
 
 class BibliographyTests(unittest.TestCase):

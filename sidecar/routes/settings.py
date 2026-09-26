@@ -12,9 +12,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from paperdesk.core import prompts
-from paperdesk.core.config import Settings
-from paperdesk.providers import ProviderBackend, spec_for, specs
+from papeer.core import prompts
+from papeer.core.config import Settings
+from papeer.providers import ProviderBackend, spec_for, specs
 from sidecar import deps
 from sidecar.schemas import ProviderActionRequest, ProviderSpecModel, SettingsModel
 

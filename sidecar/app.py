@@ -4,14 +4,14 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import json
-import os
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from paperdesk.core.code_version import application_version
+from papeer.core.paths import app_env
+from papeer.core.code_version import application_version
 from sidecar import deps
 from sidecar.routes import ai_jobs, ink, papers, reading, settings, system
 
@@ -96,7 +96,7 @@ async def ws_events(websocket: WebSocket, token: str | None = Query(None)) -> No
 def main() -> None:
     import uvicorn
 
-    port = int(os.environ.get("PAPERDESK_PORT", "8000"))
+    port = int(app_env("PORT") or "8000")
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
 
 

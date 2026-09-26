@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import pypdfium2 as pdfium
-from paperdesk.pdf.pdf_engine import save_json
+from papeer.pdf.pdf_engine import save_json
 
 
 def verify(papers, review):

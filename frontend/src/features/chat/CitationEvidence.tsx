@@ -19,7 +19,7 @@ function Excerpt({ id, page }: { id: string; page: number }) {
 }
 
 export function CitationEvidence({ content }: { content: string }) {
-  const links = [...new Set([...content.matchAll(/paperdesk:\/\/([0-9a-f]{32})\/(\d+)/g)].map(m => `${m[1]}/${m[2]}`))];
+  const links = [...new Set([...content.matchAll(/(?:papeer|paperdesk):\/\/([0-9a-f]{32})\/(\d+)/g)].map(m => `${m[1]}/${m[2]}`))];
   if (!links.length) return null;
   return <details className="mt-3 text-xs text-muted-foreground">
     <summary className="cursor-pointer">参照ページの原文を確認（{links.length}箇所）</summary>

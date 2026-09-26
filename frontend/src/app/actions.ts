@@ -358,7 +358,7 @@ export async function generateArticle(paperId: string): Promise<void> {
 
 // --- Navigation -----------------------------------------------------------------------------
 
-/** Open a `paperdesk://<id>/<page>` citation in the reader, as the old follow_citation did. */
+/** Open a `papeer://<id>/<page>` citation in the reader, as the old follow_citation did. */
 export async function followCitation(paperId: string, page: number): Promise<void> {
   const store = useStore.getState();
   try {

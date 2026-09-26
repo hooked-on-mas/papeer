@@ -10,12 +10,12 @@ from fastapi.testclient import TestClient
 import pymupdf as fitz
 import pytest
 
-from paperdesk.core.config import Settings
-from paperdesk.core.reading_tools import create_backup, restore_backup, library_search, translation_paragraphs
-from paperdesk.core.terminology import effective_glossary, validate_revision, global_glossary, save_global_glossary
-from paperdesk.core.service import PaperService
-from paperdesk.core.storage import Library
-from paperdesk.layout.math_layout import MATH_TOKEN
+from papeer.core.config import Settings
+from papeer.core.reading_tools import create_backup, restore_backup, library_search, translation_paragraphs
+from papeer.core.terminology import effective_glossary, validate_revision, global_glossary, save_global_glossary
+from papeer.core.service import PaperService
+from papeer.core.storage import Library
+from papeer.layout.math_layout import MATH_TOKEN
 from sidecar.jobs import JobManager, ConcurrencyConflict
 
 FIXTURE = Path(__file__).parent / "fixtures/sample.pdf"
@@ -86,8 +86,8 @@ def test_delete_tag_preserves_papers_notes_and_other_tags(library, tmp_path, mon
     tag = "研究/制御 #1 & '引用'"
     lib.update(identity, tags=[tag, tag + "a", "残す"], note="大切な読書メモ", read_status="読了")
     lib.update(other_id, tags=[tag, "別のタグ"])
-    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPEER_TOKEN", "")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     with TestClient(runtime.app) as client:
         response = client.delete("/api/tags", params={"name": tag})
@@ -109,8 +109,8 @@ def test_delete_tag_preserves_papers_notes_and_other_tags(library, tmp_path, mon
 def test_tag_choices_persist_without_papers_and_deleted_labels_stay_deleted(library, monkeypatch):
     from sidecar import app as runtime
     lib, identity = library
-    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPEER_TOKEN", "")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     bookmark = lib.add_bookmark(identity, 1, "original", "引用", label="重要", note="残すメモ")
     with TestClient(runtime.app) as client:
@@ -139,8 +139,8 @@ def test_tag_choices_persist_without_papers_and_deleted_labels_stay_deleted(libr
 def test_reading_status_choices_can_be_deleted_and_restored(library, monkeypatch, tmp_path):
     from sidecar import app as runtime
     lib, identity = library
-    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPEER_TOKEN", "")
     with TestClient(runtime.app) as client:
         defaults = ["未読", "読書中", "読了", "再読したい"]
         assert client.get("/api/reading-statuses").json() == defaults
@@ -166,8 +166,8 @@ def test_delete_tag_requires_authentication(library, monkeypatch):
     from sidecar import app as runtime
     lib, identity = library
     lib.update(identity, tags=["残す"])
-    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPERDESK_TOKEN", "test-secret")
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPEER_TOKEN", "test-secret")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     with TestClient(runtime.app) as client:
         assert client.delete("/api/tags", params={"name": "残す"}).status_code == 401
@@ -277,8 +277,8 @@ def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
     from sidecar import app as runtime
     from sidecar import deps
     lib, identity = library
-    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPEER_TOKEN", "")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     monkeypatch.setattr("sidecar.deps.create_provider", FakeProvider)
     PaperService(lib, FakeProvider(), threading.Event()).translate(identity)
@@ -327,8 +327,8 @@ def test_snapshot_api_and_write_guard(library, tmp_path, monkeypatch):
     from sidecar import app as runtime
     from sidecar import deps
     lib, identity = library
-    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPEER_TOKEN", "")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     def wait(job_id):
         job = deps.job_manager.get_job(job_id)
@@ -366,7 +366,7 @@ def test_chat_explicit_reference_pages(library):
     result = PaperService(lib, provider, threading.Event()).ask(identity, "実験の条件は？", reference_pages={1})
     request = provider.calls[-1][1]
     assert f"[{identity}:p1]" in request["evidence"]
-    assert f"paperdesk://{identity}/1" in result
+    assert f"papeer://{identity}/1" in result
     with pytest.raises(ValueError):
         PaperService(lib, provider, threading.Event()).ask(identity, "条件は？", reference_pages={999})
 
@@ -375,8 +375,8 @@ def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
     from sidecar import app as runtime
     from sidecar import deps
     lib, identity = library
-    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPEER_TOKEN", "")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     with lib.connection() as db:
         db.execute("UPDATE pages SET text=? WHERE paper_id=?",
@@ -417,8 +417,8 @@ def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
 
 
 def test_ai_glossary_failure_and_cancel_leave_dictionary_untouched(library):
-    from paperdesk.core.reading_tools import draft_glossary
-    from paperdesk.providers import Cancelled
+    from papeer.core.reading_tools import draft_glossary
+    from papeer.providers import Cancelled
     lib, identity = library
     path = lib.folder(identity) / "glossary.json"
     path.write_text("[]", encoding="utf-8")
@@ -442,8 +442,8 @@ def test_global_glossary_applies_to_unrelated_papers_and_checks_stale_edits(libr
     other = tmp_path / "other.pdf"
     other.write_bytes(FIXTURE.read_bytes() + b"\n% other paper\n")
     other_id, _ = lib.import_pdf(other, "unrelated")
-    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPEER_TOKEN", "")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     terms = [{"source": f"term {i}", "target": f"訳語 {i}"} for i in range(250)]
     with TestClient(runtime.app) as client:
@@ -456,7 +456,7 @@ def test_global_glossary_applies_to_unrelated_papers_and_checks_stale_edits(libr
         assert client.put("/api/glossary", json={"terms": terms * 2, "expected_terms": terms}).status_code == 400
         assert client.put("/api/glossary", json={"terms": [], "expected_terms": terms}).status_code == 200
         assert effective_glossary(lib, other_id) == []
-    monkeypatch.setenv("PAPERDESK_TOKEN", "secret")
+    monkeypatch.setenv("PAPEER_TOKEN", "secret")
     with TestClient(runtime.app) as client:
         assert client.get("/api/glossary").status_code == 401
         assert client.put("/api/glossary", json={"terms": [], "expected_terms": []}).status_code == 401
@@ -474,7 +474,7 @@ def test_global_glossary_survives_backup_restore(library, tmp_path):
 
 
 def test_glossary_draft_can_extend_large_global_dictionary(library):
-    from paperdesk.core.reading_tools import draft_glossary
+    from papeer.core.reading_tools import draft_glossary
     lib, identity = library
     terms = [{"source": f"unrelated {i}", "target": f"訳語 {i}"} for i in range(250)]
     terms.append({"source": "control", "target": "制御"})

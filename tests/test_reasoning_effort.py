@@ -7,11 +7,11 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
-from paperdesk.core.config import REASONING_EFFORTS, Settings
-from paperdesk.providers import create_provider
-from paperdesk.providers.codex import CodexProvider
+from papeer.core.config import REASONING_EFFORTS, Settings
+from papeer.providers import create_provider
+from papeer.providers.codex import CodexProvider
 
-URLOPEN = "paperdesk.providers.openai_compat.urlopen"
+URLOPEN = "papeer.providers.openai_compat.urlopen"
 
 
 class ReasoningEffortTests(unittest.TestCase):
@@ -55,7 +55,7 @@ class ReasoningEffortTests(unittest.TestCase):
                     output.write_text("訳文", "utf-8")
                     return Mock(poll=Mock(return_value=0), returncode=0)
                 with patch.object(CodexProvider, "command", return_value=["mock-codex"]), \
-                     patch("paperdesk.providers.common.subprocess.Popen", side_effect=launch):
+                     patch("papeer.providers.common.subprocess.Popen", side_effect=launch):
                     provider = create_provider(Settings(reasoning_effort=effort), threading.Event())
                     self.assertEqual(provider.generate("Translate", "text"), "訳文")
                 config = [value for value in commands[0] if value.startswith("model_reasoning_effort=")]

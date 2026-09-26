@@ -1,6 +1,6 @@
 # 翻訳処理の仕様
 
-PDF を日本語に翻訳し、原文と同じレイアウトの `translated.pdf` を生成する処理の挙動と制限をまとめます。実装は `paperdesk/translation/`、`paperdesk/layout/`、`paperdesk/pdf/`、`paperdesk/core/service.py` にあります。段・ページをまたぐ結合の詳細は [reading-flow.md](reading-flow.md) を参照してください。
+PDF を日本語に翻訳し、原文と同じレイアウトの `translated.pdf` を生成する処理の挙動と制限をまとめます。実装は `papeer/translation/`、`papeer/layout/`、`papeer/pdf/`、`papeer/core/service.py` にあります。段・ページをまたぐ結合の詳細は [reading-flow.md](reading-flow.md) を参照してください。
 
 ## 基本の流れ
 
@@ -49,7 +49,7 @@ PDF を日本語に翻訳し、原文と同じレイアウトの `translated.pdf
 
 共通辞書の「辞書をエクスポート」でJSONファイルを書き出し、「辞書を読み込み」で取り込めます。書き出しは検索・表示タブに関係なく、未保存の編集と候補を含む一覧全体です。読み込みは未登録語だけを追加候補にし、同じ原語（大文字・小文字を区別しない）は既存の訳語を保持します。異なる訳語の重複は比較表で確認でき、必要なら辞書一覧で修正できます。「辞書を保存」または翻訳開始までは共通辞書に反映されません。
 
-ファイルはUTF-8のJSON（最大10MB）で、`{"format":"paperdesk-glossary","version":1,"terms":[{"source":"control","target":"制御"}]}` の形式です。旧形式の `[{"source":"control","target":"制御"}]` も読み込めます。原語・訳語は各100文字までで、不正な形式・空欄・ファイル内の原語重複がある場合は読み込み全体を拒否します。
+ファイルはUTF-8のJSON（最大10MB）で、`{"format":"papeer-glossary","version":1,"terms":[{"source":"control","target":"制御"}]}` の形式です。旧形式の `[{"source":"control","target":"制御"}]` も読み込めます。原語・訳語は各100文字までで、不正な形式・空欄・ファイル内の原語重複がある場合は読み込み全体を拒否します。
 
 辞書は `library.sqlite3` の `global_glossary` に保存され、フォルダーや論文による適用範囲の指定はありません。旧辞書は初回参照時に一度だけ統合します。同じ原語の競合はフォルダー名順、次に論文ID順で後の訳語を採用します。元のフォルダー辞書と `papers/<論文ID>/glossary.json` は移行元として残しますが、以後は翻訳に直接適用しません。共通辞書から削除した語が旧辞書から復活することはありません。
 
@@ -67,7 +67,7 @@ PDF を日本語に翻訳し、原文と同じレイアウトの `translated.pdf
 
 ページごとに、翻訳時のコード識別値（SHA-256）を保存します。識別値は翻訳・AI 通信・PDF 抽出／生成に関わる Python ソースから計算します。同じ識別値で翻訳済みのページは、モデルや effort を変えてもスキップして訳文を再利用します。識別値やページの原文が変わった場合は再翻訳します。
 
-- 対象ファイルは `paperdesk/core/code_version.py` の `TRANSLATION_SOURCES` に列挙しています。翻訳処理のファイルを新設・移動した場合はこの一覧を更新してください。
+- 対象ファイルは `papeer/core/code_version.py` の `TRANSLATION_SOURCES` に列挙しています。翻訳処理のファイルを新設・移動した場合はこの一覧を更新してください。
 - 改行コードだけの変更は識別値に影響しません。それ以外の変更は、lint 修正のような見た目だけの変更でも既存キャッシュを無効にします。
 - 開発時は起動時にソースから計算します。配布ビルドでは `just build-sidecar` が生成する `code-version.txt` を同梱します。
 

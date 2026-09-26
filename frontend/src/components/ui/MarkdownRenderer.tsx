@@ -65,16 +65,16 @@ export function MarkdownRenderer({ content, className, paperId, onCitationClick,
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
         urlTransform={(value) => {
-          if (value.startsWith("paperdesk:") || value.startsWith("file:")) return value;
+          if ((value.startsWith("papeer:") || value.startsWith("paperdesk:")) || value.startsWith("file:")) return value;
           return defaultUrlTransform(value);
         }}
         components={{
           a: ({ node, ...props }) => {
             const href = props.href || "";
-            const paperdeskMatch = href.match(/^paperdesk:\/\/([^/]+)\/(\d+)$/);
-            if (paperdeskMatch) {
-              const paperId = paperdeskMatch[1];
-              const page = Number(paperdeskMatch[2]);
+            const papeerMatch = href.match(/^(?:papeer|paperdesk):\/\/([^/]+)\/(\d+)$/);
+            if (papeerMatch) {
+              const paperId = papeerMatch[1];
+              const page = Number(papeerMatch[2]);
               return (
                 <button 
                   type="button"

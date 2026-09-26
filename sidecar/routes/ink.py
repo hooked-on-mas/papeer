@@ -12,10 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, model_validator
 from PIL import Image
 
-from paperdesk.core.paths import PaperFiles
-from paperdesk.pdf.pdf_ink import annotated_page, annotated_pdf
-from paperdesk.pdf.pdf_viewer import page_png, pdf_page_count
-from paperdesk.translation.translation_preview import read_preview, translated_page
+from papeer.core.paths import PaperFiles
+from papeer.pdf.pdf_ink import annotated_page, annotated_pdf
+from papeer.pdf.pdf_viewer import page_png, pdf_page_count
+from papeer.translation.translation_preview import read_preview, translated_page
 from sidecar import deps
 
 Side = Literal["original", "translated"]

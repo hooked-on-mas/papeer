@@ -6,11 +6,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import pymupdf as fitz
-from paperdesk.core.review_publish import apply_review
-from paperdesk.translation.translation_preview import translated_page_numbers, translated_page
-from paperdesk.pdf.pdf_engine import extract_pdf, translation_units, save_json
-from paperdesk.core.config import Settings
-from paperdesk.translation.translation import translation_fingerprint
+from papeer.core.review_publish import apply_review
+from papeer.translation.translation_preview import translated_page_numbers, translated_page
+from papeer.pdf.pdf_engine import extract_pdf, translation_units, save_json
+from papeer.core.config import Settings
+from papeer.translation.translation import translation_fingerprint
 from tools.review_fresh_layout import review
 from test_workflow import FakeProvider
 

@@ -2,7 +2,7 @@ import pymupdf
 import pytest
 from fastapi.testclient import TestClient
 
-from paperdesk.core.storage import Library
+from papeer.core.storage import Library
 from sidecar import app as runtime
 
 
@@ -18,8 +18,8 @@ def notes_env(tmp_path, monkeypatch):
         paper, _ = lib.import_pdf(source)
         lib.update(paper, title=name)
         ids.append(paper)
-    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPEER_TOKEN", "")
     return lib, ids
 
 
@@ -69,7 +69,7 @@ def test_note_edit_delete_restore_and_authorization(notes_env, monkeypatch):
         assert (restored["note"], restored["anchor_x"], restored["quote"]) == ("check equation", .5, "formula")
         for anchor in [{"anchor_x": 1.1}, {"anchor_y": -.1}]:
             assert client.post(base, json={"page": 1, "side": "original", "quote": "", **anchor}).status_code == 422
-        monkeypatch.setenv("PAPERDESK_TOKEN", "test-secret")
+        monkeypatch.setenv("PAPEER_TOKEN", "test-secret")
         assert client.get("/api/sticky-notes").status_code == 401
         assert client.get(base).status_code == 401
         assert client.get("/api/sticky-notes", headers={"Authorization": "Bearer test-secret"}).status_code == 200

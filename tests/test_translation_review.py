@@ -3,10 +3,10 @@ import json
 import pymupdf as fitz
 from fastapi.testclient import TestClient
 
-from paperdesk.core.storage import Library
+from papeer.core.storage import Library
 from sidecar.app import app
-from paperdesk.core.translation_review import required_translation_pages
-from paperdesk.layout.reference_layout import reference_evidence
+from papeer.core.translation_review import required_translation_pages
+from papeer.layout.reference_layout import reference_evidence
 
 
 def test_review_only_requires_pages_with_translatable_content(tmp_path, monkeypatch):
@@ -25,16 +25,16 @@ def test_review_only_requires_pages_with_translatable_content(tmp_path, monkeypa
     root = tmp_path / "library"
     lib = Library(root)
     paper_id, _ = lib.import_pdf(source)
-    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(root))
-    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(root))
+    monkeypatch.setenv("PAPEER_TOKEN", "")
     with TestClient(app) as client:
         reading = client.get(f"/api/papers/{paper_id}/reading").json()
     assert reading["translation_required_pages"] == [1, 4]
     assert reading["completed_pages"] == []
     assert reading["empty_pages"] == []
 
-    from paperdesk.core.reading_state import translation_state
-    monkeypatch.setattr("paperdesk.core.reading_state.translated_page_numbers", lambda *_: [1, 4])
+    from papeer.core.reading_state import translation_state
+    monkeypatch.setattr("papeer.core.reading_state.translated_page_numbers", lambda *_: [1, 4])
     state = translation_state(lib.folder(paper_id), 4)
     assert state["translation_required_count"] == 2
     assert state["translation_completed_required_count"] == 2

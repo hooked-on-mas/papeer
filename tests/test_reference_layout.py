@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pymupdf as fitz
 
-from paperdesk.pdf.pdf_engine import extract_pdf, translation_units, build_translated_pdf
-from paperdesk.layout.reference_layout import mark_references, reference_evidence
+from papeer.pdf.pdf_engine import extract_pdf, translation_units, build_translated_pdf
+from papeer.layout.reference_layout import mark_references, reference_evidence
 
 
 REF = '[1] A. Smith and B. Jones, Robust control. IEEE Transactions, vol. 4, pp. 10-20, 2020.'

@@ -203,7 +203,7 @@ export const useStore = create<UiState>()(
       })),
     }),
     {
-      name: 'paper-desk-storage',
+      name: 'papeer-storage',
       version: 2,
       migrate: (persisted: any, version) => {
         // v1 stored 0 for "fit width" and absolute scales otherwise.

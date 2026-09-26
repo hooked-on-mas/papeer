@@ -30,7 +30,7 @@ test-frontend:
 lint: lint-backend lint-frontend
 
 lint-backend:
-    uv run ruff check paperdesk sidecar tests tools
+    uv run ruff check papeer sidecar tests tools
     uv run pyright sidecar
 
 [working-directory: 'frontend']
@@ -47,12 +47,12 @@ dev-sidecar:
 # 前回の Vite (1420) とデバッグ版のウィンドウが残っていれば止めてから起動する
 [working-directory: 'frontend']
 dev-frontend:
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../tools/stop_stale_dev.ps1 -Port 1420 -ExePath frontend/src-tauri/target/debug/paperdesk.exe
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../tools/stop_stale_dev.ps1 -Port 1420 -ExePath frontend/src-tauri/target/debug/papeer.exe
     pnpm tauri dev
 
 # Build sidecar binary and place it where Tauri's externalBin expects it
 build-sidecar:
-    uv run python -m paperdesk.core.code_version code-version.txt
+    uv run python -m papeer.core.code_version code-version.txt
     uv run pyinstaller --noconfirm sidecar.spec
     uv run python -c "import shutil; shutil.copy2('dist/sidecar-x86_64-pc-windows-msvc.exe', 'frontend/src-tauri/')"
 

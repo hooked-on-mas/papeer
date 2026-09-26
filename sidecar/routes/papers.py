@@ -11,13 +11,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 
-from paperdesk.core import reading_state, search
-from paperdesk.core.paths import PaperFiles
-from paperdesk.core.reading_tools import validate_terms
-from paperdesk.core.storage import normalize_collection_name
-from paperdesk.core.terminology import global_glossary, save_global_glossary
-from paperdesk.pdf.pdf_viewer import pdf_page_count
-from paperdesk.providers import Cancelled
+from papeer.core import reading_state, search
+from papeer.core.paths import PaperFiles
+from papeer.core.reading_tools import validate_terms
+from papeer.core.storage import normalize_collection_name
+from papeer.core.terminology import global_glossary, save_global_glossary
+from papeer.pdf.pdf_viewer import pdf_page_count
+from papeer.providers import Cancelled
 from sidecar import deps
 from sidecar.jobs import ConcurrencyConflict, TurnQueue
 from sidecar.schemas import (

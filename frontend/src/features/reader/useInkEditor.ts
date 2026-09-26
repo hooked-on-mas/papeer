@@ -14,7 +14,7 @@ type Preferences = {
 export const useInkPreferences = create<Preferences>()(persist(set => ({
   color: "#dc2626", width: 0.003, highColor: "#facc15", highWidth: 0.025, straight: true,
   partial: false, eraserRadius: 10, highlightOnly: false, presets: [], change: values => set(values),
-}), { name: "paperdesk-ink-preferences" }));
+}), { name: "papeer-ink-preferences" }));
 
 const useInkClipboard = create<{ strokes: InkStroke[]; ratio: number; put: (strokes: InkStroke[], ratio: number) => void }>(set => ({
   strokes: [], ratio: 1, put: (strokes, ratio) => set({ strokes: structuredClone(strokes), ratio }),

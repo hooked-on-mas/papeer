@@ -8,10 +8,10 @@ import zipfile
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from paperdesk.core import reading_tools as tools
-from paperdesk.providers import check_cancel
-from paperdesk.core.service import PaperService
-from paperdesk.core.terminology import global_glossary, save_global_glossary, GlossaryConflict
+from papeer.core import reading_tools as tools
+from papeer.providers import check_cancel
+from papeer.core.service import PaperService
+from papeer.core.terminology import global_glossary, save_global_glossary, GlossaryConflict
 from sidecar import deps
 
 
@@ -141,7 +141,7 @@ def get_global_glossary():
 
 @router.post("/api/glossary/export")
 def export_glossary(body: GlossaryFileRequest):
-    from paperdesk.core.glossary_io import export_glossary
+    from papeer.core.glossary_io import export_glossary
     try:
         count = export_glossary(Path(body.path), body.terms)
     except (OSError, ValueError) as exc:
@@ -150,7 +150,7 @@ def export_glossary(body: GlossaryFileRequest):
 
 @router.post("/api/glossary/import")
 def import_glossary(body: GlossaryFileRequest):
-    from paperdesk.core.glossary_io import import_glossary
+    from papeer.core.glossary_io import import_glossary
     try:
         return import_glossary(Path(body.path), body.terms)
     except (OSError, ValueError) as exc:

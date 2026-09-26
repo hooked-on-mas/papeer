@@ -32,13 +32,13 @@ PDF上部の「ペン」で書き込めます。「範囲」または投げ縄�
 ## 構成
 
 ```text
-paperdesk/        翻訳・PDF 処理・ライブラリ管理のコア (Python)
+papeer/        翻訳・PDF 処理・ライブラリ管理のコア (Python)
   core/           設定、ストレージ、サービス層、プロンプト、フォント
   providers/      AI 接続（Codex / Claude Code / Antigravity / OpenAI 互換 API）。1 接続 1 モジュール
   layout/         読み順・数式・表・図・参考文献のレイアウト解析
   pdf/            PDF の抽出と生成 (PyMuPDF)
   translation/    翻訳バッチ処理とプレビュー
-sidecar/          paperdesk を HTTP/WebSocket で公開する FastAPI サーバー
+sidecar/          papeer を HTTP/WebSocket で公開する FastAPI サーバー
 frontend/         デスクトップ UI (Tauri 2 + React 19 + Tailwind v4)
   src/            React アプリ
   src-tauri/      Tauri (Rust)。本番では sidecar を子プロセスとして起動
@@ -110,22 +110,22 @@ CLI は PATH と既定のインストール先から自動検出します。見�
 
 ### 接続先の追加・変更（開発者向け）
 
-接続先ごとの処理は `paperdesk/providers/` に 1 モジュールずつ置いています。CLI のフラグや出力形式が変わったときは、その接続のモジュールだけを直します。
+接続先ごとの処理は `papeer/providers/` に 1 モジュールずつ置いています。CLI のフラグや出力形式が変わったときは、その接続のモジュールだけを直します。
 
-1. `paperdesk/providers/base.py` の `ProviderBackend` を継承し、`spec`（表示名・説明・設定項目）と `_generate()` を実装する。CLI なら `common.CliBackend` も継承すると、パス検出・ログイン・接続確認が付く。
-2. `paperdesk/providers/registry.py` の `BACKENDS` に 1 行追加する。
-3. `paperdesk/core/code_version.py` の `TRANSLATION_SOURCES` に新しいファイルを追加する（`registry.py` は対象外なので、1 行追加だけではキャッシュは無効にならない）。
+1. `papeer/providers/base.py` の `ProviderBackend` を継承し、`spec`（表示名・説明・設定項目）と `_generate()` を実装する。CLI なら `common.CliBackend` も継承すると、パス検出・ログイン・接続確認が付く。
+2. `papeer/providers/registry.py` の `BACKENDS` に 1 行追加する。
+3. `papeer/core/code_version.py` の `TRANSLATION_SOURCES` に新しいファイルを追加する（`registry.py` は対象外なので、1 行追加だけではキャッシュは無効にならない）。
 
 設定画面の選択肢と入力欄は `GET /api/providers` から作られるため、フロントエンドの変更は不要です。接続先ごとの設定（CLI のパス、API URL、最後に選んだモデルと effort）は `settings.json` の `provider_options` に保存されます。
 
-`paperdesk/providers/` のファイルは翻訳キャッシュの識別値に含まれます。編集すると、既存の論文は次回の翻訳で指定ページを訳し直します。
+`papeer/providers/` のファイルは翻訳キャッシュの識別値に含まれます。編集すると、既存の論文は次回の翻訳で指定ページを訳し直します。
 
 ## データの保存場所
 
-既定では `%LOCALAPPDATA%\PaperDesk` に保存します（旧名称の保存先を引き継ぎます）。「設定 → バックアップ」からライブラリ全体を保存・復元できます。手動でコピーする場合は、アプリを閉じてからフォルダー全体をコピーしてください。
+新規環境では `%LOCALAPPDATA%\Papeer` に保存します。新しい保存先がなく、旧 `%LOCALAPPDATA%\PaperDesk` が存在する場合は、その保存先を引き続き使います。「設定 → バックアップ」からライブラリ全体を保存・復元できます。手動でコピーする場合は、アプリを閉じてからフォルダー全体をコピーしてください。
 
 ```text
-PaperDesk/
+Papeer/
   settings.json
   ui-state.json
   library.sqlite3
@@ -147,10 +147,10 @@ PaperDesk/
 
 | 変数 | 用途 |
 | --- | --- |
-| `PAPERDESK_DATA_DIR` | データの保存先を変更する |
-| `PAPERDESK_PORT` | sidecar の待ち受けポート（既定 8000） |
-| `PAPERDESK_TOKEN` | sidecar の認証トークン。未設定なら認証なし（開発用） |
-| `PAPERDESK_API_KEY` | API 接続で使う API キーの初期値（未設定なら `OPENAI_API_KEY`、次に `GEMINI_API_KEY`） |
+| `PAPEER_DATA_DIR` | データの保存先を変更する |
+| `PAPEER_PORT` | sidecar の待ち受けポート（既定 8000） |
+| `PAPEER_TOKEN` | sidecar の認証トークン。未設定なら認証なし（開発用） |
+| `PAPEER_API_KEY` | API 接続で使う API キーの初期値（未設定なら `OPENAI_API_KEY`、次に `GEMINI_API_KEY`） |
 
 ## キーボードショートカット
 
@@ -173,4 +173,8 @@ PaperDesk/
 
 Papeer のコードは AGPL-3.0-or-later で提供します。ライセンス本文は [LICENSE](LICENSE) です。
 
-同梱の源ノ明朝・源ノ角ゴシックは SIL Open Font License 1.1 です。出典は [paperdesk/core/assets/fonts/README.md](paperdesk/core/assets/fonts/README.md) を参照してください。PyMuPDF は AGPL または商用ライセンスで提供されています。その他の依存ライブラリはそれぞれのライセンスに従います。
+同梱の源ノ明朝・源ノ角ゴシックは SIL Open Font License 1.1 です。出典は [papeer/core/assets/fonts/README.md](papeer/core/assets/fonts/README.md) を参照してください。PyMuPDF は AGPL または商用ライセンスで提供されています。その他の依存ライブラリはそれぞれのライセンスに従います。
+
+### 旧名称との互換性
+
+環境変数は `PAPEER_*` を優先し、未設定なら旧 `PAPERDESK_*` も受け付けます。既存の辞書・バックアップ・`paperdesk://` 引用リンクも読み込めます。画面設定と手書きの未保存データは、新しい保存キーへ初回起動時に引き継ぎます。インストール済みアプリと WebView のデータを引き継ぐため、Tauri の内部識別子 `local.paperdesk` は維持しています。ソースのルートディレクトリ名は変更不要です。

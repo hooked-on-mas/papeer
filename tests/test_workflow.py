@@ -10,13 +10,13 @@ import unittest
 
 import pymupdf as fitz
 
-from paperdesk.core.config import Settings
-from paperdesk.pdf.pdf_engine import batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, page_png, translation_units
-from paperdesk.providers import Cancelled, create_provider
-from paperdesk.core.service import PaperService, link_citations
-from paperdesk.translation.translation import validate_translations
-from paperdesk.core.storage import Library, normalize_collection_name
-from paperdesk.layout.math_layout import MATH_TOKEN
+from papeer.core.config import Settings
+from papeer.pdf.pdf_engine import batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, page_png, translation_units
+from papeer.providers import Cancelled, create_provider
+from papeer.core.service import PaperService, link_citations
+from papeer.translation.translation import validate_translations
+from papeer.core.storage import Library, normalize_collection_name
+from papeer.layout.math_layout import MATH_TOKEN
 
 FIXTURE = Path(__file__).parent / "fixtures/sample.pdf"
 
@@ -200,14 +200,14 @@ class WorkflowTests(unittest.TestCase):
         cache = json.loads((folder / "translation-cache.json").read_text("utf-8"))
         self.assertGreater(len(cache["translations"]), 0)
         self.assertFalse((folder / "translated.pdf").exists())
-        from paperdesk.translation.translation_preview import read_preview
+        from papeer.translation.translation_preview import read_preview
         self.assertNotIn(1, read_preview(folder)["pages"], "a partially translated page must not be published")
         provider.interrupt_after = None
         result = PaperService(self.library, provider, self.cancel).translate(self.paper_id)
         self.assertGreaterEqual(result["pages"], 2)
 
     def test_completed_page_is_published_before_next_request_and_survives_failure(self):
-        from paperdesk.translation.translation_preview import read_preview, translated_page
+        from papeer.translation.translation_preview import read_preview, translated_page
 
         folder = self.library.folder(self.paper_id)
         notifications = []
@@ -249,9 +249,9 @@ class WorkflowTests(unittest.TestCase):
         service = PaperService(self.library, FakeProvider(), self.cancel)
         article = service.article(self.paper_id)
         self.assertTrue((self.library.folder(self.paper_id) / "article.md").exists())
-        self.assertIn("paperdesk://", article)
+        self.assertIn("papeer://", article)
         answer = service.ask(self.paper_id, "追従誤差は？")
-        self.assertIn("paperdesk://", answer)
+        self.assertIn("papeer://", answer)
         self.assertEqual(len(self.library.messages(self.paper_id)), 2)
         answer = service.ask(self.paper_id, "実験の限界は？", entire_library=True)
         self.assertIn("抜粋", answer)
@@ -331,9 +331,9 @@ class WorkflowTests(unittest.TestCase):
 
     def test_citation_pages_are_validated(self):
         answer = link_citations(f"[{self.paper_id}:p2] [{self.paper_id}:p999]", {self.paper_id: 2})
-        self.assertIn(f"paperdesk://{self.paper_id}/2", answer)
+        self.assertIn(f"papeer://{self.paper_id}/2", answer)
         self.assertIn("参照未確認", answer)
-        self.assertNotIn(f"paperdesk://{self.paper_id}/999", answer)
+        self.assertNotIn(f"papeer://{self.paper_id}/999", answer)
 
     def test_scanned_pdf_is_reported(self):
         target = self.root / "scan.pdf"

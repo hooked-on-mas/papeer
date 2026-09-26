@@ -3,27 +3,27 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from paperdesk.core.code_version import TRANSLATION_SOURCES, application_version, source_version
+from papeer.core.code_version import TRANSLATION_SOURCES, application_version, source_version
 
 
 class CodeVersionTests(unittest.TestCase):
     def test_only_translation_sources_change_version(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / 'paperdesk').mkdir()
+            (root / 'papeer').mkdir()
             for name in TRANSLATION_SOURCES:
-                target = root / 'paperdesk' / name
+                target = root / 'papeer' / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(b'x = 1\n')
-            module = root / 'paperdesk' / 'translation' / 'translation.py'
+            module = root / 'papeer' / 'translation' / 'translation.py'
             original = source_version(root)
             module.touch()
             module.write_bytes(b'x = 1\r\n')
             (root / 'README.md').write_text('documentation')
-            (root / 'paperdesk' / 'module.pyc').write_bytes(b'bytecode')
+            (root / 'papeer' / 'module.pyc').write_bytes(b'bytecode')
             self.assertEqual(source_version(root), original)
             for name in ('pdf_viewer.py', 'code_version.py', 'storage.py', 'config.py', '__init__.py', 'extra_ui.py'):
-                excluded = root / 'paperdesk' / name
+                excluded = root / 'papeer' / name
                 excluded.write_bytes(b'first version\n')
                 self.assertEqual(source_version(root), original)
                 excluded.write_bytes(b'changed version\n')
@@ -34,13 +34,13 @@ class CodeVersionTests(unittest.TestCase):
             self.assertEqual(source_version(root), original)
             for name in TRANSLATION_SOURCES:
                 with self.subTest(name=name):
-                    path = root / 'paperdesk' / name
+                    path = root / 'papeer' / name
                     path.write_bytes(b'x = 2\n')
                     self.assertNotEqual(source_version(root), original)
                     path.write_bytes(b'x = 1\n')
-            extra = root / 'paperdesk' / 'new_translation.py'
+            extra = root / 'papeer' / 'new_translation.py'
             extra.write_bytes(b'x = 1\n')
-            with patch('paperdesk.core.code_version.TRANSLATION_SOURCES',
+            with patch('papeer.core.code_version.TRANSLATION_SOURCES',
                        (*TRANSLATION_SOURCES, extra.name)):
                 self.assertNotEqual(source_version(root), original)
             module.unlink()

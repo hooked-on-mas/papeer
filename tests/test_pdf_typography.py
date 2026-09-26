@@ -4,8 +4,8 @@ import unittest
 
 import pymupdf as fitz
 
-from paperdesk.pdf.pdf_engine import build_translated_pdf, extract_pdf
-from paperdesk.pdf.pdf_typography import FONT_DIRECTORY, TextStyle, first_line_indented, heading_space, reading_space, running_headers, text_style, text_html
+from papeer.pdf.pdf_engine import build_translated_pdf, extract_pdf
+from papeer.pdf.pdf_typography import FONT_DIRECTORY, TextStyle, first_line_indented, heading_space, reading_space, running_headers, text_style, text_html
 
 
 class TypographyTests(unittest.TestCase):
@@ -206,8 +206,8 @@ class TypographyTests(unittest.TestCase):
             with fitz.open(destination) as pdf:
                 self.assertEqual(pdf.page_count, 1)
                 spans = [s for b in pdf[0].get_text("dict")["blocks"] if b["type"] == 0 for line in b["lines"] for s in line["spans"]]
-                headings = [s for s in spans if "PaperDeskHeading" in s["font"]]
-                body = [s for s in spans if "PaperDeskSerif" in s["font"]]
+                headings = [s for s in spans if "PapeerHeading" in s["font"]]
+                body = [s for s in spans if "PapeerSerif" in s["font"]]
                 self.assertTrue(headings)
                 self.assertTrue(body)
                 self.assertGreater(min(s["size"] for s in headings), max(s["size"] for s in body) * 1.2)

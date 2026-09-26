@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from paperdesk.core.storage import Library
+from papeer.core.storage import Library
 from sidecar import app as runtime
 
 
@@ -15,8 +15,8 @@ def test_bookmark_edit_is_scoped_and_persistent(tmp_path, monkeypatch):
     paper, _ = lib.import_pdf(source)
     source.write_bytes(source.read_bytes() + b"\n% other")
     other, _ = lib.import_pdf(source)
-    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPEER_TOKEN", "")
     with TestClient(runtime.app) as client:
         base = f"/api/papers/{paper}/bookmarks"
         saved = client.post(base, json={"page": 1, "side": "original", "quote": "読書位置", "anchor_y": .6}).json()
@@ -32,5 +32,5 @@ def test_bookmark_edit_is_scoped_and_persistent(tmp_path, monkeypatch):
         assert client.patch(url, json={"note": "x" * 1001}).status_code == 422
         reopened = Library(lib.root).bookmarks(paper)[0]
         assert (reopened["label"], reopened["note"], reopened["quote"]) == ("疑問", "式の意味を確認", "読書位置")
-        monkeypatch.setenv("PAPERDESK_TOKEN", "private-token")
+        monkeypatch.setenv("PAPEER_TOKEN", "private-token")
         assert client.patch(url, json={"label": "重要"}).status_code == 401

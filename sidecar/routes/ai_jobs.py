@@ -7,10 +7,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from paperdesk.core import exports
-from paperdesk.core.paths import PaperFiles
-from paperdesk.core.service import PaperService
-from paperdesk.layout.page_selection import parse_page_selection
+from papeer.core import exports
+from papeer.core.paths import PaperFiles
+from papeer.core.service import PaperService
+from papeer.layout.page_selection import parse_page_selection
 from sidecar import deps
 from sidecar.schemas import AskRequest, ExportRequest, TranslateRequest
 

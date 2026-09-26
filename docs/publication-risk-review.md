@@ -1,4 +1,4 @@
-# PaperDesk 公開前のライセンス・AI 利用条件・知的財産調査
+# Papeer 公開前のライセンス・AI 利用条件・知的財産調査
 
 調査日: 2026-09-25。**今回の公開対象は Git リポジトリのソースコードのみ**。作者による Windows インストーラー・実行ファイルの配布、ホスト型翻訳サービスの提供は予定しない。この作業ツリーとロックファイル、Git の追跡対象、公式規約・公的資料を調べた予備調査である。個別契約の解釈、各国での特許侵害予防調査（FTO）、利用者が持ち込む論文の権利調査を完了したものではない。規約と権利状態は公開直前に再確認する。
 
@@ -16,9 +16,9 @@
 
 ## 実装とデータの流れ
 
-PaperDesk は Tauri/React の Windows アプリと、PyInstaller で単一実行ファイル化する Python/FastAPI の sidecar から成る。PDF を追加すると `%LOCALAPPDATA%\PaperDesk` に原本、抽出結果、SQLite の索引が置かれる。追加だけでは AI へ送らない。[README](../README.md)。翻訳では PDF の文字ブロックを抽出し、チャンクと文脈を選択された接続先へ送る。解説生成では論文のページ本文を広く送り、質問応答では全文が短ければ全文、長ければ関連ページ最大 10 ページと直近の会話を送る。図の切り抜き画像は現在の解説生成ではローカル処理であり、画像バイナリをモデルへ送る実装ではない。送信データは「選択した短い引用だけ」と説明してはいけない。[providers/](../paperdesk/providers/)、[service.py](../paperdesk/core/service.py)。
+Papeer は Tauri/React の Windows アプリと、PyInstaller で単一実行ファイル化する Python/FastAPI の sidecar から成る。PDF を追加すると `%LOCALAPPDATA%\Papeer` に原本、抽出結果、SQLite の索引が置かれる。追加だけでは AI へ送らない。[README](../README.md)。翻訳では PDF の文字ブロックを抽出し、チャンクと文脈を選択された接続先へ送る。解説生成では論文のページ本文を広く送り、質問応答では全文が短ければ全文、長ければ関連ページ最大 10 ページと直近の会話を送る。図の切り抜き画像は現在の解説生成ではローカル処理であり、画像バイナリをモデルへ送る実装ではない。送信データは「選択した短い引用だけ」と説明してはいけない。[providers/](../papeer/providers/)、[service.py](../papeer/core/service.py)。
 
-翻訳結果は、原 PDF の数式・表・図・参考文献等を残しつつ訳文を重ねた PDF、原文と訳文を交互に並べる PDF、左右対訳 PDF、Markdown として書き出せる。[PDF 生成](../paperdesk/pdf/pdf_engine.py)、[README](../README.md)。利用者の原稿に未公開情報、個人データ、査読中原稿、出版社契約上の制限がある場合、外部 AI への送信そのものを確認すべきである。
+翻訳結果は、原 PDF の数式・表・図・参考文献等を残しつつ訳文を重ねた PDF、原文と訳文を交互に並べる PDF、左右対訳 PDF、Markdown として書き出せる。[PDF 生成](../papeer/pdf/pdf_engine.py)、[README](../README.md)。利用者の原稿に未公開情報、個人データ、査読中原稿、出版社契約上の制限がある場合、外部 AI への送信そのものを確認すべきである。
 
 ## 1. ソフトウェアと素材のライセンス
 
@@ -42,8 +42,8 @@ JavaScript の直接依存を固定版でさらに示すと、MIT は `@base-ui/
 1. **Mermaid と ELK は下流のビルド課題。** `mermaid@12.0.0` の間接依存 `elkjs@0.9.3` は EPL-2.0。該当版の[ライセンス原文](https://github.com/kieler/elkjs/blob/0.9.3/LICENSE.md)に GPL 二次ライセンス指定は見当たらず、[FSF](https://www.gnu.org/licenses/license-list.html#EPL2)は無指定の EPL-2.0 を GPL 非互換と扱う。手元の `frontend/dist` には `elk-*.js` があるが、**この `dist` も elkjs 本体も Git に追跡されていない**。したがって、現時点のソース公開を EPL 違反と断定する根拠にはならない。後に結合成果物を再配布できるようにするなら、ELK をビルドから除くか許諾方法を法的に確認する。[Mermaid のレイアウト説明](https://mermaid.js.org/config/layouts)。
 2. **MPL-2.0 crate も同様に未同梱。** ロック内に `cssparser`、`cssparser-macros`、`dtoa-short`、`option-ext`、`selectors` があるが、ソースリポジトリでこれらの crate は再配布していない。ビルド成果物を再配布する場合に元ファイルの MPL 条件を確認する。[MPL-2.0 原文](https://www.mozilla.org/en-US/MPL/2.0/)。
 3. **PyMuPDF、PDFium、PyInstaller は未同梱。** 手元の PyInstaller 成果物では PDFium の `BUILD_LICENSES` 16 ファイル等の通知が不足しているが、その実行ファイルは Git 追跡外であり、**今回のソース公開の修正条件ではない**。作者が後日バイナリ配布する場合は、[pypdfium2 の説明](https://github.com/pypdfium2-team/pypdfium2/blob/5.13.0/README.md#licensing)に従って再点検する。PyInstaller の[bootloader 例外](https://github.com/pyinstaller/pyinstaller/blob/v6.22.3/COPYING.txt)は生成実行ファイルとの結合を許す。
-4. **Git に含む素材。** Adobe の Source Han OTF 2 件と OFL 文、PDF.js の CMap `.bcmap` 168 件とライセンス文、Foxit `.pfb` 10 件とライセンス文、Liberation `.ttf` 4 件とライセンス文が追跡されている。Source Han の出典・ハッシュは[同梱フォントの README](../paperdesk/core/assets/fonts/README.md)に記録済み。[OFL 公式 FAQ](https://openfontlicense.org/ofl-faq/)は著作権・ライセンス文を伴うフォント再配布を認める。[PDF.js v6.3.289 の説明](https://github.com/mozilla/pdf.js/blob/v6.3.289/external/standard_fonts/README.md)によると、現 Liberation は 1.07.4 で GPLv2 とフォント例外の適用対象。`LICENSE_LIBERATION` はあるが、`.ttf` 以外の編集用元データは Git で確認できず、GPLv2 の対応ソースの扱いを確認すべきである。新版の OFL フォントとの混同に注意する。
-5. **その他の実ファイル。** Tauri/PaperDesk のアイコン画像と `tests/fixtures/sample.pdf` も Git で配布される。PDF は「synthetic test document」と書かれた 2 ページの合成例で、実論文の混入は見えないが、作成者と画像・文章の来歴はファイルだけでは確定できない。アイコンも作成来歴を確認する。
+4. **Git に含む素材。** Adobe の Source Han OTF 2 件と OFL 文、PDF.js の CMap `.bcmap` 168 件とライセンス文、Foxit `.pfb` 10 件とライセンス文、Liberation `.ttf` 4 件とライセンス文が追跡されている。Source Han の出典・ハッシュは[同梱フォントの README](../papeer/core/assets/fonts/README.md)に記録済み。[OFL 公式 FAQ](https://openfontlicense.org/ofl-faq/)は著作権・ライセンス文を伴うフォント再配布を認める。[PDF.js v6.3.289 の説明](https://github.com/mozilla/pdf.js/blob/v6.3.289/external/standard_fonts/README.md)によると、現 Liberation は 1.07.4 で GPLv2 とフォント例外の適用対象。`LICENSE_LIBERATION` はあるが、`.ttf` 以外の編集用元データは Git で確認できず、GPLv2 の対応ソースの扱いを確認すべきである。新版の OFL フォントとの混同に注意する。
+5. **その他の実ファイル。** Tauri/Papeer のアイコン画像と `tests/fixtures/sample.pdf` も Git で配布される。PDF は「synthetic test document」と書かれた 2 ページの合成例で、実論文の混入は見えないが、作成者と画像・文章の来歴はファイルだけでは確定できない。アイコンも作成来歴を確認する。
 
 ### 今回のソースリポジトリで整えるもの
 
@@ -55,13 +55,13 @@ Liberation フォント 1.07.4 の上流には[編集用 SFD ソースへの案�
 
 ## 2. Codex、Claude Code、Antigravity を使う条件
 
-**リポジトリの公開と、公開後に誰かが CLI にログインして実行する行為は別**。今回の Git 追跡対象に三つの CLI のバイナリ・認証情報はない。ソースを置くだけで作者が各 AI サービスを利用した、あるいは規約に違反したとは言えない。一方、README は利用者に接続を案内しているため、実行する本人に適用される規約を正確に説明する必要がある。現コードは端末の `codex exec`、`claude -p`、`agy -p` を呼び、API 接続は利用者指定の `/chat/completions` に送る。[providers/](../paperdesk/providers/)、[README](../README.md)。開発者がコーディング補助に使った際の規約・生成コードの権利も、利用者が翻訳に使う際の規約とは分けて扱う。
+**リポジトリの公開と、公開後に誰かが CLI にログインして実行する行為は別**。今回の Git 追跡対象に三つの CLI のバイナリ・認証情報はない。ソースを置くだけで作者が各 AI サービスを利用した、あるいは規約に違反したとは言えない。一方、README は利用者に接続を案内しているため、実行する本人に適用される規約を正確に説明する必要がある。現コードは端末の `codex exec`、`claude -p`、`agy -p` を呼び、API 接続は利用者指定の `/chat/completions` に送る。[providers/](../papeer/providers/)、[README](../README.md)。開発者がコーディング補助に使った際の規約・生成コードの権利も、利用者が翻訳に使う際の規約とは分けて扱う。
 
 | 接続 | 技術的な公式機能 | ローカルで実行する人への注意 |
 | --- | --- | --- |
 | Codex | [`codex exec` の非対話実行](https://learn.chatgpt.com/docs/non-interactive-mode)が公式に文書化されている。 | CLI 実行自体は公式機能。[個人向け利用規約](https://openai.com/policies/row-terms-of-use/)の自動的な Output 抽出禁止と、一般論文翻訳を個人枠で継続実行する場合の関係は明示されていない。本人のプラン条件を確認する。作者によるソース公開そのものの禁止と読み替えない。 |
-| Claude Code | [`claude -p`](https://code.claude.com/docs/en/headless)は公式の非対話機能。 | [法務文書](https://code.claude.com/docs/en/legal-and-compliance)は本人が未改変 CLI にログインする形を認める一方、第三者アプリによる Free/Pro/Max 認証の代理利用を制限する。PaperDesk のローカル自動起動がどちらに該当するかは明確でない。本人が利用条件を確認し、不明なら Anthropic に照会する。 |
-| 個人向け Antigravity | [`agy -p`](https://antigravity.google/docs/cli/headless/)は文書化されている。 | [追加規約 §6](https://antigravity.google/terms)は第三者製品との連携と第三者ソフトによるアクセスを明文で禁じる。PaperDesk 経由のローカル実行には強い規約上の懸念がある。作者がソースを公開する行為とは区別しつつ、README の「対応済み」案内を改める。[企業向け経路](https://antigravity.google/docs/enterprise)には別規約がある。 |
+| Claude Code | [`claude -p`](https://code.claude.com/docs/en/headless)は公式の非対話機能。 | [法務文書](https://code.claude.com/docs/en/legal-and-compliance)は本人が未改変 CLI にログインする形を認める一方、第三者アプリによる Free/Pro/Max 認証の代理利用を制限する。Papeer のローカル自動起動がどちらに該当するかは明確でない。本人が利用条件を確認し、不明なら Anthropic に照会する。 |
+| 個人向け Antigravity | [`agy -p`](https://antigravity.google/docs/cli/headless/)は文書化されている。 | [追加規約 §6](https://antigravity.google/terms)は第三者製品との連携と第三者ソフトによるアクセスを明文で禁じる。Papeer 経由のローカル実行には強い規約上の懸念がある。作者がソースを公開する行為とは区別しつつ、README の「対応済み」案内を改める。[企業向け経路](https://antigravity.google/docs/enterprise)には別規約がある。 |
 | OpenAI 互換 API | 現コードは利用者が設定した URL へ HTTP リクエストを送る。 | 接続先ごとに規約、データ保持、学習設定が違う。設定する本人が確認する。 |
 
 現在の API 実装は `/chat/completions` 形式である。[Anthropic Messages API](https://platform.claude.com/docs/en/api/messages/create)や[Google Gemini API](https://ai.google.dev/gemini-api/docs)とは形式が異なるので、将来これらを正式に直接サポートするなら別の実装が必要になる。
@@ -76,7 +76,7 @@ Liberation フォント 1.07.4 の上流には[編集用 SFD ソースへの案�
 
 今回の Git 追跡対象には、利用者の論文原本や翻訳出力はなく、`tests/fixtures/sample.pdf` が 1 件ある。利用者がクローン後にアプリをローカル実行する場合、作者が当然にその人の論文や会話を受け取るわけでもない。以下は**利用者が PDF を処理・共有する際の注意点と、README で説明すべき動作**である。
 
-日本法では翻訳・翻案は原著作者の権利で、翻訳後も元の著作物に関する権利が残る。PaperDesk の**ソースコードを配布**することと、出版社等の権利がある論文の**翻訳 PDF や図表入りの対訳 PDF を公開**することは違う。[文化庁 FAQ](https://www.bunka.go.jp/seisaku/bunka_gyosei/kibankyoka/faq/index.html)。個人的な読書の例外を、翻訳文の一般公開や、事業者が受け取って処理するサービスへそのまま広げられない。AI 学習・情報解析に関する著作権法 30 条の 4 も、閲覧目的の翻訳と共有を一律に許可する規定ではない。[文化庁の AI と著作権資料](https://www.bunka.go.jp/seisaku/chosakuken/aiandcopyright.html)。
+日本法では翻訳・翻案は原著作者の権利で、翻訳後も元の著作物に関する権利が残る。Papeer の**ソースコードを配布**することと、出版社等の権利がある論文の**翻訳 PDF や図表入りの対訳 PDF を公開**することは違う。[文化庁 FAQ](https://www.bunka.go.jp/seisaku/bunka_gyosei/kibankyoka/faq/index.html)。個人的な読書の例外を、翻訳文の一般公開や、事業者が受け取って処理するサービスへそのまま広げられない。AI 学習・情報解析に関する著作権法 30 条の 4 も、閲覧目的の翻訳と共有を一律に許可する規定ではない。[文化庁の AI と著作権資料](https://www.bunka.go.jp/seisaku/chosakuken/aiandcopyright.html)。
 
 オープンアクセスは自由な再配布の同義語ではない。論文ごとに版・出版社契約・ライセンスを確認する。例えば [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) は出典・変更表示等の条件で翻案共有を許し、[CC BY-ND 4.0](https://creativecommons.org/licenses/by-nd/4.0/) は翻案物の共有を許さない。[CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) は非営利の範囲に制限し、[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) は同種ライセンスの条件が加わる。訳文のみでも原文の翻案に当たり得るし、原文ページ・図表入りの出力では複製の問題も強くなる。デモやスクリーンショットには権利確認済み、または自作の論文を使う。リポジトリの `tests/fixtures/sample.pdf` も作成者・素材の来歴を確認する。
 
@@ -89,12 +89,12 @@ Liberation フォント 1.07.4 の上流には[編集用 SFD ソースへの案�
 | 候補文献 | 実装との関連と未確認点 |
 | --- | --- |
 | 中国 `CN122197914A` | 外部の特許索引で見つけた**調査候補**。**CNIPA 個別公報の原文・審査経過を取得できておらず、番号に対応する請求項・日付・現在の状態は一次資料で未検証**。この候補だけから実装との一致や有効な権利の存在を判断しない。中国での頒布・利用が重要になるなら[CNIPA が案内する公報と審査情報](https://www.cnipa.gov.cn/jact/front/mailpubdetail.do?sysid=6&transactId=528968)で原本を照合する。 |
-| 日本 `JP2025086623A` | [日本国特許庁発行の公開公報 PDF の複製](https://patentimages.storage.googleapis.com/39/be/42/ae7a6be8a301df/JP2025086623A.pdf)で、2025-06-09 公開、出願 `JP2023-200719` と請求項を確認。請求項 1 はレイアウト済みの文字データから抽出すべきテキストを**推定**し、翻訳に供する装置。PaperDesk の文字抽出・整形・翻訳との関係は「推定」の解釈を含め専門判断が必要。請求項 2 は生成 AI に抽出対象の推定をさせる限定で、PaperDesk の主な選別はローカル処理だが、これだけで非侵害とは言えない。公報発行時は審査請求「未請求」。**現在の審査・登録状態は未確認**。[J-PlatPat](https://www.j-platpat.inpit.go.jp/)。 |
-| 米国 OpenText 系 `US11227101B2`、`US11720743B2`、`US12159098B2` | USPTO に[11227101](https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/11227101)、[11720743](https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/11720743)、[12159098](https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/12159098)の登録公報がある。形式に依存しないビューア用の中間表現での翻訳表示を中心とする系列で、PDF 専用・訳文 PDF 生成型の PaperDesk と違いがある。ただし請求項の正式な全要件照合、存続と継続出願の調査は未了。米国での利用・頒布が重要になる場合は専門家の確認が必要。 |
+| 日本 `JP2025086623A` | [日本国特許庁発行の公開公報 PDF の複製](https://patentimages.storage.googleapis.com/39/be/42/ae7a6be8a301df/JP2025086623A.pdf)で、2025-06-09 公開、出願 `JP2023-200719` と請求項を確認。請求項 1 はレイアウト済みの文字データから抽出すべきテキストを**推定**し、翻訳に供する装置。Papeer の文字抽出・整形・翻訳との関係は「推定」の解釈を含め専門判断が必要。請求項 2 は生成 AI に抽出対象の推定をさせる限定で、Papeer の主な選別はローカル処理だが、これだけで非侵害とは言えない。公報発行時は審査請求「未請求」。**現在の審査・登録状態は未確認**。[J-PlatPat](https://www.j-platpat.inpit.go.jp/)。 |
+| 米国 OpenText 系 `US11227101B2`、`US11720743B2`、`US12159098B2` | USPTO に[11227101](https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/11227101)、[11720743](https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/11720743)、[12159098](https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/12159098)の登録公報がある。形式に依存しないビューア用の中間表現での翻訳表示を中心とする系列で、PDF 専用・訳文 PDF 生成型の Papeer と違いがある。ただし請求項の正式な全要件照合、存続と継続出願の調査は未了。米国での利用・頒布が重要になる場合は専門家の確認が必要。 |
 
-中国では、公開後・登録前でも一定の条件で実施に対する費用請求の制度があり、「未登録なら常に無関係」とは言えない。[CNIPA 特許法 §13](https://www.cnipa.gov.cn/art/2020/11/23/art_97_155167.html)。ただし上記中国出願について個別の権利状態を確認したという意味ではない。PaperDesk の実装比較に関係する箇所は[抽出・読順](../paperdesk/pdf/pdf_engine.py)、[翻訳処理](../paperdesk/core/service.py)、[PDF 生成](../paperdesk/pdf/pdf_engine.py)。
+中国では、公開後・登録前でも一定の条件で実施に対する費用請求の制度があり、「未登録なら常に無関係」とは言えない。[CNIPA 特許法 §13](https://www.cnipa.gov.cn/art/2020/11/23/art_97_155167.html)。ただし上記中国出願について個別の権利状態を確認したという意味ではない。Papeer の実装比較に関係する箇所は[抽出・読順](../papeer/pdf/pdf_engine.py)、[翻訳処理](../papeer/core/service.py)、[PDF 生成](../papeer/pdf/pdf_engine.py)。
 
-PaperDesk 固有の新技術を出願する意向があるなら、**GitHub でソースを公開する前**に弁理士へ相談する。日本の新規性喪失の例外には公開後 1 年以内、出願時の申出や証明資料の期限など条件があり、外国の制度は異なる。[JPO 手引き](https://www.jpo.go.jp/system/laws/rule/guideline/patent/document/hatumei_reigai/h30_tebiki.pdf)。また OSS プロジェクト名にも商標上の論点は残る。「PaperDesk」「ペーパーデスク」および類似の称呼・指定商品役務について、[JPO の商標検索案内](https://www.jpo.go.jp/support/startup/shohyo_search.html)に従う調査は未了。
+Papeer 固有の新技術を出願する意向があるなら、**GitHub でソースを公開する前**に弁理士へ相談する。日本の新規性喪失の例外には公開後 1 年以内、出願時の申出や証明資料の期限など条件があり、外国の制度は異なる。[JPO 手引き](https://www.jpo.go.jp/system/laws/rule/guideline/patent/document/hatumei_reigai/h30_tebiki.pdf)。また OSS プロジェクト名にも商標上の論点は残る。「Papeer」「ペーパーデスク」および類似の称呼・指定商品役務について、[JPO の商標検索案内](https://www.jpo.go.jp/support/startup/shohyo_search.html)に従う調査は未了。
 
 ## 5. ソース公開前に実施する順序
 
@@ -102,7 +102,7 @@ PaperDesk 固有の新技術を出願する意向があるなら、**GitHub で�
 2. **本体の権利表示を整える。** `AGPL-3.0-or-later` と著作権者を README、パッケージメタデータ、代表的なソースヘッダで矛盾なく示す。Git の既存 41 コミットには作者・コミッターの通常形式のメールアドレスが含まれる。履歴ごと公開するなら本人が公開を許容できるか確認する。追跡ファイルを主要な秘密鍵・API キー形式で検索した範囲では実値らしいものは見つからなかったが、過去 blob の網羅監査は未実施。
 3. **実際に同梱する素材を確認**する。Source Han/CMap/Foxit の既存ライセンス文を維持し、Liberation 1.07.4 の GPLv2 対応ソースを確認する。アイコンの原画と合成テスト PDF の作成来歴・再配布権を記録する。
 4. **README の AI 接続案内を正す。** ソース公開自体と利用者の実行を分け、Antigravity 個人規約との衝突可能性を明示する。Codex・Claude の利用可否を一律保証せず、本人の契約プラン確認を促す。翻訳・解説・質問で送る本文、関連ページ、会話履歴、ローカル保存先を具体的に記す。[個人情報保護委員会の注意喚起](https://www.ppc.go.jp/files/pdf/230602_alert_generative_AI_service.pdf)。
-5. **特許出願の意向を公開前に決める。** OSS の公開は発明の新規性に影響する。第三者特許については、候補の登録・請求項と配布国を確認し、具体的懸念が残る場合に専門家へ FTO を依頼する。PaperDesk 名の商標検索も行う。
+5. **特許出願の意向を公開前に決める。** OSS の公開は発明の新規性に影響する。第三者特許については、候補の登録・請求項と配布国を確認し、具体的懸念が残る場合に専門家へ FTO を依頼する。Papeer 名の商標検索も行う。
 6. **利用者が実行するコードの安全性を別途点検**する。現実装のローカル API トークンは時刻由来で URL クエリにも載り、Tauri 設定は `csp: null`、Mermaid SVG は HTML として挿入される。ソース公開のライセンス義務ではないが、利用者の PDF を扱うツールとして修正または明確な既知課題化が妥当。[Tauri の CSP 説明](https://tauri.app/security/csp/)、[OWASP のトークン指針](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
 
 この文書の現状確認は Git 追跡ファイル、コード、ロックファイル、手元のビルド成果物と公開資料による。GitHub Release 等で後にバイナリを追加した場合、この結論はそのまま適用できない。

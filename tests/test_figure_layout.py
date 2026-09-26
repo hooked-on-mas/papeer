@@ -2,8 +2,8 @@ from pathlib import Path
 import tempfile
 import unittest
 import pymupdf as fitz
-from paperdesk.pdf.pdf_engine import extract_pdf, translation_units, build_translated_pdf
-from paperdesk.layout.figure_layout import figure_caption, raster_figures
+from papeer.pdf.pdf_engine import extract_pdf, translation_units, build_translated_pdf
+from papeer.layout.figure_layout import figure_caption, raster_figures
 
 
 class FigureLayoutTests(unittest.TestCase):

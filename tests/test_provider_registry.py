@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from paperdesk.core.config import DEFAULT_BASE_URL, Settings
-from paperdesk.providers import BACKENDS, ProviderBackend, create_provider, spec_for, specs
+from papeer.core.config import DEFAULT_BASE_URL, Settings
+from papeer.providers import BACKENDS, ProviderBackend, create_provider, spec_for, specs
 
 
 def test_every_connection_has_a_unique_spec():
@@ -64,12 +64,12 @@ def test_base_url_defaults_for_every_connection():
 
 
 def test_api_key_comes_from_the_environment(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("PAPERDESK_API_KEY", raising=False)
+    monkeypatch.delenv("PAPEER_API_KEY", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "from-openai-env")
     assert Settings.load(tmp_path).api_key == "from-openai-env"
-    monkeypatch.setenv("PAPERDESK_API_KEY", "from-paperdesk-env")
-    assert Settings.load(tmp_path).api_key == "from-paperdesk-env"
-    monkeypatch.delenv("PAPERDESK_API_KEY")
+    monkeypatch.setenv("PAPEER_API_KEY", "from-papeer-env")
+    assert Settings.load(tmp_path).api_key == "from-papeer-env"
+    monkeypatch.delenv("PAPEER_API_KEY")
     monkeypatch.delenv("OPENAI_API_KEY")
     monkeypatch.setenv("GEMINI_API_KEY", "from-gemini-env")
     assert Settings.load(tmp_path).api_key == "from-gemini-env"

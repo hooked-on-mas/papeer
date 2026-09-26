@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
-from paperdesk.core.config import Settings
+from papeer.core.config import Settings
 
 
 class HealthResponse(BaseModel):

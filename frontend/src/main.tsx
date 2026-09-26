@@ -1,3 +1,4 @@
+import "./lib/migrateStorage";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
@@ -10,8 +11,8 @@ async function init() {
   if ((window as any).__TAURI_INTERNALS__) {
     try {
       const [port, token] = await invoke<[number, string]>("get_backend_config");
-      (window as any).__PAPERDESK_PORT = port;
-      (window as any).__PAPERDESK_TOKEN = token;
+      (window as any).__PAPEER_PORT = port;
+      (window as any).__PAPEER_TOKEN = token;
     } catch (e) {
       console.warn("Failed to fetch backend config", e);
     }
@@ -19,7 +20,7 @@ async function init() {
 
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
-      <ThemeProvider defaultTheme="system" storageKey="paperdesk-ui-theme">
+      <ThemeProvider defaultTheme="system" storageKey="papeer-ui-theme">
         <App />
       </ThemeProvider>
     </React.StrictMode>,

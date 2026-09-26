@@ -191,7 +191,7 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
           </Field>
         ))}
         {spec?.needs_api_key && (
-          <Field label="API キー" hint="保存されず、アプリの終了時に破棄されます。環境変数 PAPERDESK_API_KEY でも指定できます。">
+          <Field label="API キー" hint="保存されず、アプリの終了時に破棄されます。環境変数 PAPEER_API_KEY でも指定できます。">
             <Input type="password" value={form.apiKey} onChange={(e) => form.setApiKey(e.target.value)} autoComplete="off" />
           </Field>
         )}

@@ -4,7 +4,7 @@
   "target": "Windows 11 x64; Python 3.12; Rust x86_64-pc-windows-msvc",
   "projectLicense": "AGPL-3.0-or-later (README.md and LICENSE)",
   "method": [
-    "Python: traverse uv.lock from the paperdesk runtime, build, and dev roots; evaluate dependency markers for CPython 3.12 on Windows; read installed wheel METADATA License-Expression/License fields and inspect named local LICENSE files where needed.",
+    "Python: traverse uv.lock from the papeer runtime, build, and dev roots; evaluate dependency markers for CPython 3.12 on Windows; read installed wheel METADATA License-Expression/License fields and inspect named local LICENSE files where needed.",
     "JavaScript: traverse pnpm-lock.yaml snapshots from production and development importer roots, including optional edges; read license values from the exact installed package.json. A missing installed package or license declaration is recorded as unknown.",
     "pnpm licenses list --prod --json groups by package name: it shows 274 grouped records covering 282 exact name/version pairs. The lock traversal has 295 production pairs: 285 installed for Windows x64 and 10 optional binaries for other OS/CPU combinations that were not installed. The pnpm license command omits three installed production pairs listed in summary; their package.json files were inspected directly and declare MIT.",
     "Rust: run cargo tree --locked --offline --target x86_64-pc-windows-msvc (and --edges normal), then read the exact-version cached Cargo.toml package.license. Other-platform entries in Cargo.lock are excluded.",
@@ -14158,14 +14158,14 @@
       "version": "Version 2.003;hotconv 1.1.1;makeotfexe 2.6.0",
       "license": "OFL-1.1",
       "sha256": "e5f502bb193c28829895b098498f0f9dd8f658c760b0f83656ad41c1137a8785",
-      "licenseEvidence": "paperdesk/core/assets/fonts/source-han-serif-LICENSE.txt"
+      "licenseEvidence": "papeer/core/assets/fonts/source-han-serif-LICENSE.txt"
     },
     {
       "name": "SourceHanSansJP-Bold.otf",
       "version": "Version 2.005;addfeatures 5.0.0b21",
       "license": "OFL-1.1",
       "sha256": "3a2722f94c97a53b172579a10ef8fc34b3fa8a6bb4f7947a2ec709ab647fb755",
-      "licenseEvidence": "paperdesk/core/assets/fonts/source-han-sans-LICENSE.txt"
+      "licenseEvidence": "papeer/core/assets/fonts/source-han-sans-LICENSE.txt"
     },
     {
       "name": "PDF.js CMaps copied from pdfjs-dist 6.3.289",

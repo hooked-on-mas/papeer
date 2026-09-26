@@ -7,11 +7,11 @@ from unittest.mock import patch
 
 import pymupdf as fitz
 
-from paperdesk.layout.page_selection import parse_page_selection
-from paperdesk.core.service import PaperService
-from paperdesk.pdf.pdf_engine import build_translated_pdf
-from paperdesk.core.storage import Library
-from paperdesk.translation.translation_preview import read_preview, translated_page, translated_page_numbers
+from papeer.layout.page_selection import parse_page_selection
+from papeer.core.service import PaperService
+from papeer.pdf.pdf_engine import build_translated_pdf
+from papeer.core.storage import Library
+from papeer.translation.translation_preview import read_preview, translated_page, translated_page_numbers
 from test_workflow import FakeProvider
 
 
@@ -46,9 +46,9 @@ class PageSelectionTests(unittest.TestCase):
                 service.page_ready = ready
                 if change == 'model':
                     provider.settings.model = 'another-model'
-                from paperdesk.translation.translation import translation_version
+                from papeer.translation.translation import translation_version
                 version = 'new-version' if change == 'version' else translation_version()
-                with patch('paperdesk.core.service.translation_version', return_value=version):
+                with patch('papeer.core.service.translation_version', return_value=version):
                     report = service.translate(identity, {3})
                 self.assertTrue(seen)
                 self.assertEqual(report['preserved_pages'], [1, 2])
@@ -63,7 +63,7 @@ class PageSelectionTests(unittest.TestCase):
                 self.assertEqual(backup.read_bytes(), old_cache)
 
     def test_retained_pages_survive_interruption_and_next_run(self):
-        from paperdesk.providers import Cancelled
+        from papeer.providers import Cancelled
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / 'source.pdf'
@@ -78,7 +78,7 @@ class PageSelectionTests(unittest.TestCase):
             service = PaperService(library, provider, threading.Event())
             service.translate(identity, {1})
             provider.interrupt_after = provider.calls + 1
-            with patch('paperdesk.core.service.translation_version', return_value='changed'):
+            with patch('papeer.core.service.translation_version', return_value='changed'):
                 with self.assertRaises(Cancelled):
                     service.translate(identity, {2})
                 self.assertEqual(translated_page_numbers(folder, 3), [1])
@@ -90,7 +90,7 @@ class PageSelectionTests(unittest.TestCase):
             self.assertEqual(report['translated_pages'], [1, 3])
 
     def test_interrupted_retranslation_keeps_earlier_translations_and_old_runs_are_removed(self):
-        from paperdesk.providers import Cancelled
+        from papeer.providers import Cancelled
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / 'source.pdf'
@@ -106,7 +106,7 @@ class PageSelectionTests(unittest.TestCase):
             service.translate(identity)
             first_run = read_preview(folder)['run_id']
             provider.interrupt_after = provider.calls + 2
-            with patch('paperdesk.core.service.translation_version', return_value='changed'):
+            with patch('papeer.core.service.translation_version', return_value='changed'):
                 with self.assertRaises(Cancelled):
                     service.translate(identity)
                 # Pages not redone before the interruption still show their earlier translation.
@@ -148,7 +148,7 @@ class PageSelectionTests(unittest.TestCase):
             self.assertEqual(report['translated_pages'], [1, 2])
             service.translate(identity, {1, 2})
             self.assertEqual(second.calls, 1)
-            with patch('paperdesk.core.service.translation_version', return_value='next-version'):
+            with patch('papeer.core.service.translation_version', return_value='next-version'):
                 report = service.translate(identity, {1})
             self.assertEqual(second.calls, 2)
             self.assertEqual(report['already_translated_pages'], [])
@@ -218,7 +218,7 @@ class PageSelectionTests(unittest.TestCase):
                     raise ValueError('Synthetic destination failure')
                 return build_translated_pdf(*args, **kwargs)
             service = PaperService(library, FakeProvider(), threading.Event())
-            with patch('paperdesk.core.service.build_translated_pdf', side_effect=build):
+            with patch('papeer.core.service.build_translated_pdf', side_effect=build):
                 report = service.translate(identity, {1})
             self.assertEqual(report['translated_pages'], [])
             self.assertEqual(report['skipped_pages'], [1, 2])
@@ -231,7 +231,7 @@ class PageSelectionTests(unittest.TestCase):
             library = Library(Path(temporary))
             identity, _ = library.import_pdf(Path(__file__).parent / 'fixtures/sample.pdf')
             service = PaperService(library, FakeProvider(), threading.Event())
-            with patch('paperdesk.core.service.build_translated_pdf', side_effect=OSError('disk full')):
+            with patch('papeer.core.service.build_translated_pdf', side_effect=OSError('disk full')):
                 with self.assertRaisesRegex(OSError, 'disk full'):
                     service.translate(identity)
             self.assertEqual(read_preview(library.folder(identity))['skipped_pages'], [])
@@ -267,7 +267,7 @@ class PageSelectionTests(unittest.TestCase):
                             self.assertEqual(translated_page(folder, number - 1), (folder / 'original.pdf', number - 1))
 
                 service = PaperService(library, provider, threading.Event(), messages.append, ready)
-                with patch('paperdesk.core.service.build_translated_pdf', side_effect=build):
+                with patch('papeer.core.service.build_translated_pdf', side_effect=build):
                     report = service.translate(identity)
                 self.assertEqual(attempted, [1, 2, 3])
                 self.assertEqual(report['skipped_pages'], sorted(failed))

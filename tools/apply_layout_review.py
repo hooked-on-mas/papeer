@@ -1,7 +1,7 @@
 """Apply inspected fresh review pages to the library, with backups."""
 import argparse
 from pathlib import Path
-from paperdesk.core.review_publish import apply_review
+from papeer.core.review_publish import apply_review
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)

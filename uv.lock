@@ -264,7 +264,7 @@ wheels = [
 ]
 
 [[package]]
-name = "paperdesk"
+name = "papeer"
 version = "0.2.0"
 source = { virtual = "." }
 dependencies = [

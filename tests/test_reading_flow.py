@@ -5,10 +5,10 @@ import tempfile
 import unittest
 import pymupdf as fitz
 
-from paperdesk.layout.reading_flow import (order_page, continuation_groups, split_flow_text, materialize_flows, unit_pages, expand_pages)
-from paperdesk.pdf.pdf_engine import translation_units, build_translated_pdf
-from paperdesk.layout.math_layout import MATH_TOKEN
-from paperdesk.translation.translation_context import contextual_units
+from papeer.layout.reading_flow import (order_page, continuation_groups, split_flow_text, materialize_flows, unit_pages, expand_pages)
+from papeer.pdf.pdf_engine import translation_units, build_translated_pdf
+from papeer.layout.math_layout import MATH_TOKEN
+from papeer.translation.translation_context import contextual_units
 
 
 def block(identity, page, box, text, size=10, kind='text'):
@@ -115,7 +115,7 @@ class ReadingFlowTests(unittest.TestCase):
                 self.assertTrue(images)
                 raw=output.extract_image(images[0][0])['image']
                 # Crop cannot be the same-position FIRST glyphs from page 1.
-                from paperdesk.pdf.pdf_math_crops import formula_crop,page_glyph_bounds
+                from papeer.pdf.pdf_math_crops import formula_crop,page_glyph_bounds
                 crop=formula_crop(b['formulas'][0],page_glyph_bounds(original[1])) & original[1].rect
                 expected=original[1].get_pixmap(matrix=fitz.Matrix(4,4),clip=crop,alpha=False)
                 self.assertEqual(fitz.Pixmap(raw).samples,expected.samples)

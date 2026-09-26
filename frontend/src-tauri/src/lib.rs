@@ -17,9 +17,9 @@ fn get_backend_config(state: tauri::State<BackendConfig>) -> (u16, String) {
     (state.port, state.token.clone())
 }
 
-/// Mirrors `paperdesk.core.config.data_directory` in the sidecar.
+/// Mirrors `papeer.core.config.data_directory` in the sidecar.
 fn data_directory(app: &tauri::App) -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("PAPERDESK_DATA_DIR").filter(|v| !v.is_empty()) {
+    if let Some(dir) = std::env::var_os("PAPEER_DATA_DIR").or_else(|| std::env::var_os("PAPERDESK_DATA_DIR")).filter(|v| !v.is_empty()) {
         let dir = PathBuf::from(dir);
         let dir = match dir.strip_prefix("~") {
             Ok(rest) => app.path().home_dir().ok()?.join(rest),
@@ -31,7 +31,11 @@ fn data_directory(app: &tauri::App) -> Option<PathBuf> {
         Some(dir) => PathBuf::from(dir),
         None => app.path().home_dir().ok()?.join(".local/share"),
     };
-    Some(base.join("PaperDesk"))
+    let current = base.join("Papeer");
+    let legacy = base.join("PaperDesk");
+    // A stray, empty Papeer folder must not hide a PaperDesk library that holds papers.
+    let has_papers = |root: &PathBuf| std::fs::read_dir(root.join("papers")).map_or(false, |mut it| it.next().is_some());
+    Some(if (!current.exists() && legacy.is_dir()) || (has_papers(&legacy) && !has_papers(&current)) { legacy } else { current })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -110,8 +114,8 @@ pub fn run() {
             {
                 use tauri_plugin_shell::ShellExt;
                 let sidecar_command = app.shell().sidecar("sidecar").unwrap()
-                    .env("PAPERDESK_PORT", port.to_string())
-                    .env("PAPERDESK_TOKEN", token);
+                    .env("PAPEER_PORT", port.to_string())
+                    .env("PAPEER_TOKEN", token);
                 let (_rx, child) = sidecar_command.spawn().expect("Failed to spawn sidecar");
                 app.manage(SidecarState(std::sync::Mutex::new(Some(child))));
             }

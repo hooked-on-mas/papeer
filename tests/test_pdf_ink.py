@@ -9,9 +9,9 @@ from PIL import Image
 import pymupdf as fitz
 import pytest
 
-from paperdesk.core.storage import Library
-from paperdesk.pdf.pdf_ink import annotated_pdf
-from paperdesk.pdf.pdf_viewer import page_png
+from papeer.core.storage import Library
+from papeer.pdf.pdf_ink import annotated_pdf
+from papeer.pdf.pdf_viewer import page_png
 from sidecar.app import app
 
 
@@ -22,8 +22,8 @@ def stroke(identity="stroke-1", **kwargs):
 
 @pytest.fixture
 def ink_env(tmp_path, monkeypatch):
-    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(tmp_path / "library"))
-    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(tmp_path / "library"))
+    monkeypatch.setenv("PAPEER_TOKEN", "")
     source = tmp_path / "sample.pdf"
     with fitz.open() as pdf:
         for _ in range(2):
@@ -70,7 +70,7 @@ def test_ink_api_auth_and_missing_pages(ink_env, monkeypatch):
     for side, page, status in [("original", 0, 400), ("original", 3, 400), ("translated", 1, 400), ("wrong", 1, 422)]:
         assert client.put(f"{path}/ink/{side}/{page}", json={"strokes": []}).status_code == status
     assert client.get("/api/papers/missing/ink/original/1").status_code == 404
-    monkeypatch.setenv("PAPERDESK_TOKEN", "ink-secret")
+    monkeypatch.setenv("PAPEER_TOKEN", "ink-secret")
     assert client.get(path + "/ink/original/1").status_code == 401
     assert client.put(path + "/ink/original/1", json={"strokes": []}).status_code == 401
     assert client.post(path + "/ink-export", json={"side": "original"}).status_code == 401
@@ -128,7 +128,7 @@ def test_export_all_pages_preserves_sources_and_blocks_library_overwrite(ink_env
 
 
 def test_ink_is_in_library_backup(ink_env, tmp_path):
-    from paperdesk.core.reading_tools import create_backup, restore_backup
+    from papeer.core.reading_tools import create_backup, restore_backup
     _, lib, identity = ink_env
     lib.save_ink(identity, "original", 1, [stroke()])
     archive = tmp_path / "backup.zip"
@@ -204,7 +204,7 @@ def test_capture_is_scoped_to_page_and_usable_as_note_media(ink_env, monkeypatch
         assert image.size == (900, 540)
     assert client.post(path + "/ink-capture", json={**body, "x": 0.9}).status_code == 422
     assert client.post(path + "/ink-capture", json={**body, "page": 100}).status_code == 400
-    monkeypatch.setenv("PAPERDESK_TOKEN", "secret")
+    monkeypatch.setenv("PAPEER_TOKEN", "secret")
     assert client.post(path + "/ink-capture", json=body).status_code == 401
     assert client.get(path + "/ink-pages").status_code == 401
 

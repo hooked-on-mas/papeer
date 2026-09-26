@@ -19,7 +19,7 @@ interface TranslationDialogProps {
   currentPage: number;
 }
 
-/** Same rules and messages as paperdesk.layout.page_selection, for feedback while typing. */
+/** Same rules and messages as papeer.layout.page_selection, for feedback while typing. */
 export function parsePageSelection(value: string, pageCount: number): number[] {
   const text = value.normalize("NFKC").replace(/、/g, ",").replace(/[～~–—−]/g, "-");
   if (!text.trim()) throw new Error("翻訳するページを入力してください。例: 1, 3-5, 8");

@@ -5,14 +5,14 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
-from paperdesk.core.config import Settings
-from paperdesk.providers import create_provider, parse_json_answer
-from paperdesk.providers.antigravity import AntigravityProvider
-from paperdesk.providers.claude_code import ClaudeCodeProvider
-from paperdesk.providers.codex import CodexProvider, codex_limit_windows
+from papeer.core.config import Settings
+from papeer.providers import create_provider, parse_json_answer
+from papeer.providers.antigravity import AntigravityProvider
+from papeer.providers.claude_code import ClaudeCodeProvider
+from papeer.providers.codex import CodexProvider, codex_limit_windows
 
-POPEN = "paperdesk.providers.common.subprocess.Popen"
-RUN = "paperdesk.providers.common.subprocess.run"
+POPEN = "papeer.providers.common.subprocess.Popen"
+RUN = "papeer.providers.common.subprocess.run"
 
 
 def cli(provider_cls):
@@ -134,15 +134,15 @@ class ProvidersTests(unittest.TestCase):
 
     def test_models_fall_back_when_the_cli_fails(self):
         with patch(RUN, side_effect=OSError("CLI not found")), \
-             patch("paperdesk.providers.antigravity.subprocess.run", side_effect=OSError("CLI not found")), \
-             patch("paperdesk.providers.codex.subprocess.run", side_effect=OSError("CLI not found")):
+             patch("papeer.providers.antigravity.subprocess.run", side_effect=OSError("CLI not found")), \
+             patch("papeer.providers.codex.subprocess.run", side_effect=OSError("CLI not found")):
             self.assertTrue(AntigravityProvider(Settings(provider="antigravity")).list_models())
             self.assertTrue(CodexProvider(Settings()).list_models())
 
     def test_efforts(self):
         self.assertEqual(AntigravityProvider(Settings(provider="antigravity")).list_efforts(), [])
         self.assertIn("xhigh", [e[0] for e in CodexProvider(Settings()).list_efforts()])
-        with patch("paperdesk.providers.claude_code._catalog_models", return_value=[]):
+        with patch("papeer.providers.claude_code._catalog_models", return_value=[]):
             self.assertIn("max", [e[0] for e in ClaudeCodeProvider(Settings(provider="claude")).list_efforts("opus")])
 
     def run_cli(self, provider_cls, provider_id, stdout_lines):

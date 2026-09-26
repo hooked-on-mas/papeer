@@ -7,8 +7,8 @@ import unittest
 from PIL import Image
 import pymupdf as fitz
 
-from paperdesk.pdf.pdf_typography import FONT_CSS, font_archive
-from paperdesk.pdf.pdf_viewer import page_png
+from papeer.pdf.pdf_typography import FONT_CSS, font_archive
+from papeer.pdf.pdf_viewer import page_png
 
 
 class PdfViewerTests(unittest.TestCase):
@@ -21,8 +21,8 @@ class PdfViewerTests(unittest.TestCase):
                 page = pdf.new_page(width=360, height=180)
                 page.insert_htmlbox(
                     fitz.Rect(10, 10, 350, 170),
-                    '<p style="font-family:PaperDeskSerif;font-size:22pt">日本語の数式表示を確認</p>'
-                    '<p style="font-family:PaperDeskHeading;font-weight:bold;font-size:24pt">制御器の設計</p>',
+                    '<p style="font-family:PapeerSerif;font-size:22pt">日本語の数式表示を確認</p>'
+                    '<p style="font-family:PapeerHeading;font-weight:bold;font-size:24pt">制御器の設計</p>',
                     css=FONT_CSS,
                     archive=font_archive(text),
                 )
@@ -39,7 +39,7 @@ class PdfViewerTests(unittest.TestCase):
                 pdf.save(source)
             renderers = {
                 "pdfium": (
-                    "import sys; from pathlib import Path; from paperdesk.pdf.pdf_viewer import page_png; "
+                    "import sys; from pathlib import Path; from papeer.pdf.pdf_viewer import page_png; "
                     "Path(sys.argv[2]).write_bytes(page_png(Path(sys.argv[1]),0,1080))"
                 ),
                 "mupdf": (

@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pymupdf as fitz
 
-from paperdesk.pdf.pdf_math_crops import formula_crop, page_glyph_bounds
+from papeer.pdf.pdf_math_crops import formula_crop, page_glyph_bounds
 
 
 class MathCropTests(unittest.TestCase):
@@ -14,7 +14,7 @@ class MathCropTests(unittest.TestCase):
             parent=SimpleNamespace(extract_font=lambda _: ("font", "pfa", "Type1", b"test")),
             get_texttrace=lambda: [{"font": "CMSY10", "dir": (1, 0), "size": 10,
                                    "chars": [(123, 0, (40, 100), (40, 92, 45, 111))]}])
-        with patch("paperdesk.pdf.pdf_math_crops._outline_bounds", return_value=[(72, -250, 427, 750)]):
+        with patch("papeer.pdf.pdf_math_crops._outline_bounds", return_value=[(72, -250, 427, 750)]):
             bounds = page_glyph_bounds(page)
         formula = {"bbox": [40, 92, 45, 111], "glyph_origins": [[40, 100]]}
         crop = formula_crop(formula, bounds)

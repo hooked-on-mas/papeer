@@ -11,9 +11,9 @@ from fastapi.testclient import TestClient
 import pymupdf as fitz
 import pytest
 
-from paperdesk.core.config import Settings
-from paperdesk.providers import Cancelled
-from paperdesk.layout.math_layout import MATH_TOKEN
+from papeer.core.config import Settings
+from papeer.providers import Cancelled
+from papeer.layout.math_layout import MATH_TOKEN
 from sidecar.app import app
 from sidecar.deps import job_manager
 
@@ -64,7 +64,7 @@ class FakeProvider:
 def test_env():
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
-        with patch.dict("os.environ", {"PAPERDESK_DATA_DIR": str(tmp_path), "PAPERDESK_TOKEN": ""}):
+        with patch.dict("os.environ", {"PAPEER_DATA_DIR": str(tmp_path), "PAPEER_TOKEN": ""}):
             client = TestClient(app)
             yield client, tmp_path
 
@@ -81,7 +81,7 @@ def test_health(test_env):
 
 def test_auth_token():
     with tempfile.TemporaryDirectory() as tmp_dir:
-        with patch.dict("os.environ", {"PAPERDESK_DATA_DIR": str(tmp_dir), "PAPERDESK_TOKEN": "secret-token-123"}):
+        with patch.dict("os.environ", {"PAPEER_DATA_DIR": str(tmp_dir), "PAPEER_TOKEN": "secret-token-123"}):
             client = TestClient(app)
             # Without token
             resp = client.get("/api/settings")
@@ -264,7 +264,7 @@ def test_translate_ask_export_workflow(test_env):
                 break
             time.sleep(0.05)
         assert job.result is not None
-        assert "paperdesk://" in job.result["answer"]  # Citation link!
+        assert "papeer://" in job.result["answer"]  # Citation link!
 
     # Messages
     msgs = client.get(f"/api/papers/{paper_id}/messages").json()

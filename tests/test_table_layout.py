@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pymupdf as fitz
 
-from paperdesk.pdf.pdf_engine import build_translated_pdf, extract_pdf, translation_units
-from paperdesk.layout.table_layout import separate_tables, table_regions
+from papeer.pdf.pdf_engine import build_translated_pdf, extract_pdf, translation_units
+from papeer.layout.table_layout import separate_tables, table_regions
 
 
 def make_table(path, horizontal_only=False, rotation=0):

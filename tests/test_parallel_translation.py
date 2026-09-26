@@ -10,13 +10,13 @@ import unittest
 
 import pymupdf as fitz
 
-from paperdesk.core.config import Settings
-from paperdesk.providers import Cancelled, create_provider
-from paperdesk.providers.openai_compat import API_RETRIES
-from paperdesk.core.service import PaperService
-from paperdesk.core.storage import Library
-from paperdesk.translation.translation import RetryState, translate_batches
-from paperdesk.translation.translation_preview import translated_page_numbers
+from papeer.core.config import Settings
+from papeer.providers import Cancelled, create_provider
+from papeer.providers.openai_compat import API_RETRIES
+from papeer.core.service import PaperService
+from papeer.core.storage import Library
+from papeer.translation.translation import RetryState, translate_batches
+from papeer.translation.translation_preview import translated_page_numbers
 from test_workflow import FakeProvider
 
 

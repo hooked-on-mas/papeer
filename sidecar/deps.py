@@ -8,17 +8,16 @@ API key in one place.
 from __future__ import annotations
 
 from dataclasses import replace
-import os
 from pathlib import Path
 import threading
 from typing import Any, Callable
 
 from fastapi import Header, HTTPException, Query, status
 
-from paperdesk.core.config import Settings, api_key_from_env
-from paperdesk.core.paths import data_directory
-from paperdesk.core.storage import Library
-from paperdesk.providers import ProviderBackend, create_provider
+from papeer.core.config import Settings, api_key_from_env
+from papeer.core.paths import app_env, data_directory
+from papeer.core.storage import Library
+from papeer.providers import ProviderBackend, create_provider
 from sidecar.jobs import ConcurrencyConflict, JobManager
 from sidecar.schemas import ProviderActionRequest
 
@@ -34,7 +33,7 @@ SNAPSHOT_JOBS = {"backup", "restore"}
 # --- Access ---
 
 def get_auth_token() -> str | None:
-    return os.environ.get("PAPERDESK_TOKEN")
+    return app_env("TOKEN")
 
 
 def verify_token(authorization: str | None = Header(None), token: str | None = Query(None)) -> None:

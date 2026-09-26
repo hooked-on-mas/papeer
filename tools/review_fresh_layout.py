@@ -7,12 +7,12 @@ from pathlib import Path
 import random
 import threading
 import pymupdf as fitz
-from paperdesk.core.config import Settings, data_directory
-from paperdesk.pdf.pdf_engine import extract_pdf, translation_units, batches, build_translated_pdf, bilingual_pdf, save_json
-from paperdesk.providers import create_provider
-from paperdesk.translation.translation import translate_batch, RetryState
-from paperdesk.translation.translation_context import contextual_units
-from paperdesk.layout.reading_flow import unit_pages, expand_pages
+from papeer.core.config import Settings, data_directory
+from papeer.pdf.pdf_engine import extract_pdf, translation_units, batches, build_translated_pdf, bilingual_pdf, save_json
+from papeer.providers import create_provider
+from papeer.translation.translation import translate_batch, RetryState
+from papeer.translation.translation_context import contextual_units
+from papeer.layout.reading_flow import unit_pages, expand_pages
 
 
 def review(papers: Path, output: Path, seed: int, count: int, cases: list[str], settings: Settings | None = None):

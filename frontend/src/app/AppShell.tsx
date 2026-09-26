@@ -293,7 +293,7 @@ export function AppShell() {
                 title="左パネルを閉じる（Ctrl+B）"
               >
                 <span className="flex size-8 shrink-0 items-center justify-center">
-                  <img src="/paperdesk.png" alt="" className="size-8 object-contain" />
+                  <img src="/papeer.png" alt="" className="size-8 object-contain" />
                 </span>
                 Papeer
               </div>
@@ -316,7 +316,7 @@ export function AppShell() {
             <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title="ライブラリを表示（Ctrl+B）"
               onClick={() => useStore.getState().setSidebarCollapsed(false)}>
               <span className="flex size-8 shrink-0 items-center justify-center">
-                <img src="/paperdesk.png" alt="Papeer" className="size-8 object-contain" />
+                <img src="/papeer.png" alt="Papeer" className="size-8 object-contain" />
               </span>
             </button>
             <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title="PDFを追加（Ctrl+O）" onClick={importPdfs}>

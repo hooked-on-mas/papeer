@@ -1,5 +1,5 @@
 [package]
-name = "paperdesk"
+name = "papeer"
 version = "0.2.0"
 description = "Papeer: desktop reader for translating and reading academic papers in Japanese"
 authors = ["hooked-on-mas"]
@@ -12,7 +12,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "paperdesk_lib"
+name = "papeer_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

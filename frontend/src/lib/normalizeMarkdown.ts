@@ -1,4 +1,4 @@
-const CITATION = String.raw`\[p\.\s*\d+\]\(paperdesk:\/\/[^\s/)]+\/\d+\)`;
+const CITATION = String.raw`\[p\.\s*\d+\]\((?:papeer|paperdesk):\/\/[^\s/)]+\/\d+\)`;
 const CITATIONS_ONLY = new RegExp(String.raw`^[\s\[\],、]*(?:${CITATION}[\s\[\],、]*)+$`);
 
 /** Only unfold lines with an unambiguous header, delimiter row and matching data rows. */

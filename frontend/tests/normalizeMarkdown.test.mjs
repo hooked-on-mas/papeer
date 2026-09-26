@@ -8,6 +8,11 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { normalizeMarkdown } from "../src/lib/normalizeMarkdown.ts";
 
+test("legacy citation links are extracted from math as well", () => {
+  const normalized = normalizeMarkdown(String.raw`\[ x [p.3](paperdesk://abc123/3) \]`);
+  assert.match(normalized, /\$\$\n\n \[p\.3\]\(paperdesk:\/\/abc123\/3\)/);
+});
+
 function render(content) {
   return renderToStaticMarkup(createElement(ReactMarkdown, {
     remarkPlugins: [remarkGfm, remarkMath],
@@ -25,12 +30,12 @@ test("Japanese emphasis with punctuation, whitespace and inline math renders as 
 });
 
 test("citations accidentally enclosed in math become real links outside KaTeX", () => {
-  const input = String.raw`\[ \hat p = \frac{1}{N} [p.3](paperdesk://abc123/3) \]`;
+  const input = String.raw`\[ \hat p = \frac{1}{N} [p.3](papeer://abc123/3) \]`;
   const normalized = normalizeMarkdown(input);
-  assert.match(normalized, /\$\$\n\n \[p\.3\]\(paperdesk:\/\/abc123\/3\)/);
+  assert.match(normalized, /\$\$\n\n \[p\.3\]\(papeer:\/\/abc123\/3\)/);
   const html = render(input);
   assert.ok(html.includes('class="katex-display"'));
-  assert.ok(html.includes('<a href="paperdesk://abc123/3">p.3</a>'));
+  assert.ok(html.includes('<a href="papeer://abc123/3">p.3</a>'));
   assert.ok(!html.includes("katex-error"));
 });
 
@@ -40,7 +45,7 @@ test("code examples are untouched, including math delimiters and emphasis", () =
 });
 
 test("valid formulas, citation destinations and unmatched emphasis survive", () => {
-  const input = String.raw`$x_i^2$ と **未完の強調 [p.2](paperdesk://abc123/2)`;
+  const input = String.raw`$x_i^2$ と **未完の強調 [p.2](papeer://abc123/2)`;
   assert.equal(normalizeMarkdown(input), input);
   assert.equal(normalizeMarkdown("**valid**"), " **valid** ");
 });

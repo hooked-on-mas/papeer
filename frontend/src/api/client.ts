@@ -2,11 +2,11 @@ import createClient from "openapi-fetch";
 import type { paths } from "./schema";
 
 export function backendPort(): number {
-  return Number((window as any).__PAPERDESK_PORT || import.meta.env.VITE_PAPERDESK_PORT || 8000);
+  return Number((window as any).__PAPEER_PORT || import.meta.env.VITE_PAPEER_PORT || import.meta.env.VITE_PAPERDESK_PORT || 8000);
 }
 
 export function authToken(): string {
-  return (window as any).__PAPERDESK_TOKEN || import.meta.env.VITE_PAPERDESK_TOKEN || "";
+  return (window as any).__PAPEER_TOKEN || import.meta.env.VITE_PAPEER_TOKEN || import.meta.env.VITE_PAPERDESK_TOKEN || "";
 }
 
 export function backendUrl(path: string): string {

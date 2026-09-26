@@ -22,7 +22,7 @@ class InkPage {
   private version = 0;
   private draftKey: string;
   constructor(readonly paperId: string, readonly side: InkSide, readonly page: number) {
-    this.draftKey = `paperdesk-ink:${paperId}:${side}:${page}`;
+    this.draftKey = `papeer-ink:${paperId}:${side}:${page}`;
   }
   // Older sidecars silently discard unknown stroke properties. The v2 route prevents
   // a hot-reloaded editor from losing typed text or highlighter styles on an old server.
