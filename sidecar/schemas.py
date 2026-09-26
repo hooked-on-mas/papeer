@@ -93,6 +93,8 @@ class UpdatePaperRequest(BaseModel):
     year: str | None = None  # "" clears it; otherwise four digits
     collection: str | None = None
     note: str | None = None
+    tags: list[str] | None = None
+    read_status: str | None = None
 
 
 class RenamePaperRequest(BaseModel):

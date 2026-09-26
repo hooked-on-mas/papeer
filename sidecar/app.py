@@ -540,6 +540,10 @@ def update_paper(paper_id: str, body: UpdatePaperRequest, dependencies: None = D
         updates["collection_name"] = body.collection
     if body.note is not None:
         updates["note"] = body.note
+    if body.tags is not None:
+        updates["tags"] = body.tags
+    if body.read_status is not None:
+        updates["read_status"] = body.read_status
     try:
         if updates:
             lib.update(paper_id, **updates)
@@ -1163,6 +1167,11 @@ async def ws_events(websocket: WebSocket, token: str | None = Query(None)) -> No
         pass
     finally:
         job_manager.remove_listener(queue)
+
+
+from sidecar.reading_api import register_reading_api
+
+register_reading_api(app, verify_token)
 
 
 def main() -> None:

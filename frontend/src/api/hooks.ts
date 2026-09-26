@@ -11,6 +11,8 @@ export type PaperData = {
   publication_year?: string;
   collection_name?: string;
   note?: string;
+  tags?: string[];
+  read_status?: string;
   status?: string;
   has_article?: boolean;
   has_translated?: boolean;

@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { openPaperFolder } from "@/app/actions";
 import { showError } from "@/features/jobs/jobEvents";
+import { ReadingOrganization } from "./ReadingOrganization";
+import { NoteTemplates } from "./NoteTemplates";
 
 /** Pending memo saves, flushed before the window closes. */
 export const pendingNoteSaves = new Set<() => Promise<void>>();
@@ -58,6 +60,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
   const [preview, setPreview] = useState(false);
   const savedNote = useRef<string | null>(null);
   const latestNote = useRef<string | null>(null);
+  const savingNote = useRef<Promise<void>>(Promise.resolve());
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const noteInsert = useStore((state) => state.noteInsert);
 
@@ -96,20 +99,26 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
     });
   }, [noteInsert, note, paperId]);
 
-  const saveNote = useRef(async () => {
-    const text = latestNote.current;
-    if (text === null || text === savedNote.current) return;
-    setNoteState("saving");
-    // Update the cache first so reopening the tab mid-save shows the new text.
-    queryClient.setQueryData<PaperData | null>(["papers", paperId], (old) => old ? { ...old, note: text } : old);
-    try {
-      await apiRequest("PATCH", `/api/papers/${paperId}`, { note: text });
-      savedNote.current = text;
-      if (latestNote.current === text) setNoteState("saved");
-    } catch (error) {
-      setNoteState("dirty");
-      showError(error, "メモを保存できませんでした");
-    }
+  const saveNote = useRef(() => {
+    const task = savingNote.current.catch(() => undefined).then(async () => {
+      const text = latestNote.current;
+      if (text === null || text === savedNote.current) return;
+      setNoteState("saving");
+      // Update the cache first so reopening the tab mid-save shows the new text.
+      queryClient.setQueryData<PaperData | null>(["papers", paperId], (old) => old ? { ...old, note: text } : old);
+      try {
+        await apiRequest("PATCH", `/api/papers/${paperId}`, { note: text });
+        queryClient.invalidateQueries({ queryKey: ["library-search"] });
+        savedNote.current = text;
+        if (latestNote.current === text) setNoteState("saved");
+      } catch (error) {
+        setNoteState("dirty");
+        showError(error, "メモを保存できませんでした");
+        throw error;
+      }
+    });
+    savingNote.current = task;
+    return task;
   }).current;
 
   useEffect(() => {
@@ -117,7 +126,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
     latestNote.current = note;
     if (note === savedNote.current) return;
     setNoteState("dirty");
-    const timer = setTimeout(saveNote, 600);
+    const timer = setTimeout(() => void saveNote().catch(() => undefined), 600);
     return () => clearTimeout(timer);
   }, [note, saveNote]);
 
@@ -125,7 +134,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
     pendingNoteSaves.add(saveNote);
     return () => {
       pendingNoteSaves.delete(saveNote);
-      saveNote();
+      void saveNote().catch(() => undefined);
     };
   }, [saveNote]);
 
@@ -146,6 +155,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
       }
       queryClient.invalidateQueries({ queryKey: ["papers"] });
       queryClient.invalidateQueries({ queryKey: ["collections"] });
+      queryClient.invalidateQueries({ queryKey: ["library-search"] });
       store.setStatus("論文情報・フォルダーを保存しました。");
     } catch (error) {
       showError(error, "論文情報");
@@ -162,7 +172,8 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
   return (
     <div className="flex h-full w-full bg-background overflow-hidden">
       {!compact && <div className="w-[340px] shrink-0 border-r overflow-y-auto p-4 space-y-5">
-        <section className="space-y-3">
+        {paper && <ReadingOrganization paper={paper} />}
+        <section className="space-y-3 border-t pt-4">
           <h3 className="text-[13px] font-semibold">論文情報</h3>
           {paper && (
             <div className="text-[12px] text-muted-foreground space-y-0.5">
@@ -199,7 +210,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
           </form>
         </section>
 
-        <section className="space-y-2">
+        <section className="space-y-2 border-t pt-4">
           <h3 className="text-[13px] font-semibold">ファイル</h3>
           <div className="text-[12px] text-muted-foreground space-y-0.5">
             <div>{paper?.original_name ?? "original.pdf"}（原文）</div>
@@ -234,6 +245,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
             </button>
           </div>
         </div>
+        {note !== null && <NoteTemplates note={note} onInsert={content => { setNote(current => `${current?.trimEnd() ?? ""}${current?.trim() ? "\n\n" : ""}${content}\n`); setPreview(false); }} />}
         <div className="flex-1 p-4 flex flex-col min-h-0">
           {preview ? (
             <div className="flex-1 overflow-y-auto border rounded-lg p-4">
@@ -245,7 +257,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
               value={note ?? ""}
               disabled={note === null}
               onChange={(e) => setNote(e.target.value)}
-              onBlur={saveNote}
+              onBlur={() => void saveNote().catch(() => undefined)}
               placeholder="論文に関するメモを自由に記述できます…"
               className="flex-1 w-full p-4 text-[14px] leading-relaxed resize-none border rounded-lg focus:outline-none focus:ring-1 focus:ring-ring bg-transparent font-mono"
             />

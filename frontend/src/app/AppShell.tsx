@@ -1,3 +1,4 @@
+import { useSettingsNavigation } from "../features/settings/settingsNavigation";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useHotkeys } from "react-hotkeys-hook";
@@ -147,7 +148,8 @@ export function AppShell() {
   const activeJobs = useStore((s) => s.activeJobs);
   // Passages attached from the reader, waiting to be sent.
   const attachmentCount = useStore((s) => s.chatAttachments.filter((item) => item.paperId === s.activePaperId).length);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const isSettingsOpen = useSettingsNavigation(s => s.open);
+  const setIsSettingsOpen = useSettingsNavigation(s => s.setOpen);
   const queryClient = useQueryClient();
   const { data: activePaper, error: activePaperError } = usePaper(activePaperId);
   const lastCollectionPaper = useRef<string | null>(null);

@@ -166,6 +166,7 @@ function handleFinished(event: JobFinished, queryClient: QueryClient): void {
     queryClient.invalidateQueries({ queryKey: ["reading", event.paper_id] });
     if (event.kind === "translate") {
       queryClient.invalidateQueries({ queryKey: ["paper-search", event.paper_id] });
+      queryClient.invalidateQueries({ queryKey: ["library-search"] });
     }
   }
 
@@ -245,6 +246,8 @@ export function useJobEvents(): void {
         } else if (data.type === "library.changed") {
           queryClient.invalidateQueries({ queryKey: ["papers"] });
           queryClient.invalidateQueries({ queryKey: ["collections"] });
+          queryClient.invalidateQueries({ queryKey: ["library-search"] });
+          queryClient.invalidateQueries({ queryKey: ["tags"] });
         } else if (data.type === "import.pages") {
           setPendingPages(data.pages ?? {});
         } else if (data.type === "import.item") {

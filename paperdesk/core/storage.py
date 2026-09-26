@@ -72,6 +72,25 @@ class Library:
             if "attachments" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
                 db.execute("ALTER TABLE messages ADD COLUMN attachments TEXT")
             columns = {row[1] for row in db.execute("PRAGMA table_info(papers)")}
+            if "tags" not in columns:
+                db.execute("ALTER TABLE papers ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+            if "read_status" not in columns:
+                db.execute("ALTER TABLE papers ADD COLUMN read_status TEXT NOT NULL DEFAULT '未読'")
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reading_status_choices'").fetchone():
+                db.execute("CREATE TABLE reading_status_choices (name TEXT PRIMARY KEY)")
+                db.executemany("INSERT INTO reading_status_choices VALUES(?)",
+                               [(name,) for name in ("未読", "読書中", "読了", "再読したい")])
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS note_templates (name TEXT PRIMARY KEY, content TEXT NOT NULL);
+            """)
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tag_choices'").fetchone():
+                db.execute("CREATE TABLE tag_choices (kind TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(kind,name))")
+                db.executemany("INSERT INTO tag_choices VALUES('sticky',?)",
+                               [(name,) for name in ("重要", "疑問", "あとで確認", "引用", "確認済み")])
+                db.execute("INSERT OR IGNORE INTO tag_choices SELECT 'sticky',label FROM bookmarks WHERE label<>''")
+                for row in db.execute("SELECT tags FROM papers").fetchall():
+                    db.executemany("INSERT OR IGNORE INTO tag_choices VALUES('paper',?)",
+                                   [(name,) for name in json.loads(row[0])])
             for name in ("first_author", "publication_year"):
                 if name not in columns:
                     db.execute(f"ALTER TABLE papers ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
@@ -128,6 +147,8 @@ class Library:
                            VALUES(?,?,?,?,?,?,?,?,1)""",
                            (paper_id, digest, info["title"], original_name or source.name, info["page_count"],
                             normalize_collection_name(collection_name), info["first_author"], info["publication_year"]))
+                if not db.execute("SELECT 1 FROM reading_status_choices WHERE name='未読'").fetchone():
+                    db.execute("UPDATE papers SET read_status='' WHERE id=?", (paper_id,))
                 db.executemany("INSERT INTO pages(paper_id,number,text) VALUES(?,?,?)",
                                [(paper_id, p["number"], p["text"]) for p in info["pages"]])
         except Exception:
@@ -141,19 +162,20 @@ class Library:
         if query.strip():
             sql += """ AND (instr(lower(p.title),lower(?))>0 OR instr(lower(p.note),lower(?))>0
                 OR instr(lower(p.first_author),lower(?))>0 OR instr(p.publication_year,?)>0
-                OR instr(lower(p.collection_name),lower(?))>0 OR instr(lower(p.original_name),lower(?))>0 OR EXISTS
+                OR instr(lower(p.collection_name),lower(?))>0 OR instr(lower(p.original_name),lower(?))>0
+                OR instr(lower(p.tags),lower(?))>0 OR EXISTS
                 (SELECT 1 FROM pages x WHERE x.paper_id=p.id AND instr(lower(x.text),lower(?))>0))"""
-            arguments += [query.strip()] * 7
+            arguments += [query.strip()] * 8
         sql += " ORDER BY created_at DESC, id"
         with self.connection() as db:
-            return [dict(row) for row in db.execute(sql, arguments)]
+            return [dict(row, tags=json.loads(row["tags"])) for row in db.execute(sql, arguments)]
 
     def paper(self, paper_id: str) -> dict:
         with self.connection() as db:
             row = db.execute("SELECT * FROM papers WHERE id=?", (paper_id,)).fetchone()
         if not row:
             raise KeyError("論文が見つかりません。")
-        return dict(row)
+        return dict(row, tags=json.loads(row["tags"]))
 
     def collections(self) -> list[str]:
         with self.connection() as db:
@@ -173,9 +195,30 @@ class Library:
             db.execute("INSERT OR IGNORE INTO collections(name) VALUES(?)", (name,))
         return name
 
+    def remove_tag(self, name: str) -> int:
+        """Remove an exact tag across the library without replacing other paper data."""
+        if not name.strip() or len(name) > 80:
+            raise ValueError("タグ名は1〜80文字で指定してください。")
+        affected = 0
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("DELETE FROM tag_choices WHERE kind='paper' AND name=?", (name,))
+            for row in db.execute("SELECT id,tags FROM papers").fetchall():
+                tags = json.loads(row["tags"])
+                if name in tags:
+                    db.execute("UPDATE papers SET tags=? WHERE id=?",
+                               (json.dumps([tag for tag in tags if tag != name], ensure_ascii=False), row["id"]))
+                    affected += 1
+        return affected
+
     def update(self, paper_id: str, **values) -> None:
-        if not values or not set(values) <= {"title", "status", "collection_name", "note", "first_author", "publication_year"}:
+        if not values or not set(values) <= {"title", "status", "collection_name", "note", "first_author", "publication_year", "tags", "read_status"}:
             raise ValueError("Invalid fields")
+        if "tags" in values:
+            tags = list(dict.fromkeys(tag.strip() for tag in values["tags"] if tag.strip()))
+            if len(tags) > 100 or any(len(tag) > 80 for tag in tags):
+                raise ValueError("タグは100件まで、名前は80文字までです。")
+            values["tags"] = json.dumps(tags, ensure_ascii=False)
         for name in ("first_author", "publication_year"):
             if name in values:
                 values[name] = values[name].strip()
@@ -184,8 +227,14 @@ class Library:
         if "collection_name" in values:
             values["collection_name"] = normalize_collection_name(values["collection_name"])
         with self.connection() as db:
+            if values.get("read_status") and not db.execute(
+                "SELECT 1 FROM reading_status_choices WHERE name=?", (values["read_status"],)
+            ).fetchone():
+                raise ValueError("読書状態が不正です。")
             fields = ",".join(f"{name}=?" for name in values)
             db.execute(f"UPDATE papers SET {fields} WHERE id=?", [*values.values(), paper_id])
+            if "tags" in values:
+                db.executemany("INSERT OR IGNORE INTO tag_choices VALUES('paper',?)", [(name,) for name in tags])
         if "note" in values:
             (self.folder(paper_id) / "note.md").write_text(values["note"], "utf-8")
 

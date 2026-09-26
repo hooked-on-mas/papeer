@@ -1,4 +1,7 @@
+import { useTagChoices } from "@/features/settings/TagsSection";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/api/client";
 import {
   DndContext, DragOverlay, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors,
   type DragEndEvent, type DragOverEvent, type DragStartEvent,
@@ -22,10 +25,13 @@ import {
 } from "@/app/actions";
 import { useDropTarget } from "@/app/fileDrop";
 import { usePendingImports, type PendingImport } from "@/app/pendingImports";
+import { LibraryTags } from "./LibraryTags";
+import { TagChip } from "@/components/ui/TagChip";
 import { PaperStatusBadge } from "@/components/ui/PaperStatusBadge";
 import { paperTranslationStatus } from "@/lib/paperStatus";
 
 export const SORT_LABELS = ["追加が新しい順", "追加が古い順", "名前順（昇順）", "名前順（降順）"];
+type LibraryHit = { paper_id: string; title: string; side: "metadata" | "note" | "original" | "translated"; page: number | null; snippet: string };
 
 type FolderNode = {
   path: string;
@@ -85,6 +91,7 @@ function allFolderPaths(nodes: FolderNode[]): string[] {
 }
 
 export function LibrarySidebar() {
+  const { data: readingStatuses = [] } = useTagChoices("status");
   const librarySearch = useStore((s) => s.librarySearch);
   const setLibrarySearch = useStore((s) => s.setLibrarySearch);
   const sortOrder = useStore((s) => s.sortOrder);
@@ -100,8 +107,21 @@ export function LibrarySidebar() {
     return () => clearTimeout(timer);
   }, [searchText, setLibrarySearch]);
 
-  const filtered = !!librarySearch.trim();
-  const { data: papers = [] } = usePaperList(librarySearch, sortOrder);
+  const [tagFilter, setTagFilter] = useState("");
+  const [readFilter, setReadFilter] = useState("");
+  const filtered = !!librarySearch.trim() || !!tagFilter || !!readFilter;
+  const { data: allPapers = [], isSuccess: papersLoaded } = usePaperList("", sortOrder);
+  useEffect(() => {
+    if (papersLoaded && tagFilter && !allPapers.some(paper => paper.tags?.includes(tagFilter))) setTagFilter("");
+  }, [allPapers, papersLoaded, tagFilter]);
+  const { data: searchResults, isFetching: searching, isError: searchError } = useQuery({
+    queryKey: ["library-search", librarySearch],
+    queryFn: () => apiRequest<{ results: LibraryHit[]; limited: boolean }>("GET", `/api/library-search?q=${encodeURIComponent(librarySearch)}`),
+    enabled: !!librarySearch.trim(),
+  });
+  const papers = allPapers.filter(p => (!tagFilter || p.tags?.includes(tagFilter)) && (!readFilter || p.read_status === readFilter)
+    && (!librarySearch.trim() || searchResults?.results.some(hit => hit.paper_id === p.id)));
+  const hits = searchResults?.results.filter(hit => papers.some(p => p.id === hit.paper_id)) ?? [];
   const { data: collections = [] } = useCollections();
   const pending = usePendingImports((s) => s.items);
   const tree = useMemo(() => buildTree(collections, papers, pending, filtered), [collections, papers, pending, filtered]);
@@ -161,6 +181,7 @@ export function LibrarySidebar() {
   const clearFilters = () => {
     setSearchText("");
     setLibrarySearch("");
+    setTagFilter(""); setReadFilter("");
   };
 
   return (
@@ -223,6 +244,12 @@ export function LibrarySidebar() {
             <FolderPlus className="w-4 h-4 text-muted-foreground" />
           </button>
         </div>
+        <div className="flex gap-1.5">
+          <select aria-label="読書状態で絞り込み" className="min-w-0 flex-1 border rounded bg-background h-7 px-1 text-xs" value={readFilter} onChange={e => setReadFilter(e.target.value)}>
+            <option value="">すべての読書状態</option>{Array.from(new Set([...readingStatuses, ...allPapers.map(p => p.read_status).filter((s): s is string => !!s)])).map(status => <option key={status}>{status}</option>)}
+          </select>
+        </div>
+        <LibraryTags papers={allPapers} selected={tagFilter} onSelect={setTagFilter} />
       </div>
 
       <DndContext sensors={sensors} collisionDetection={pointerWithin}
@@ -233,9 +260,23 @@ export function LibrarySidebar() {
           tabIndex={-1}
           title="右クリックで名前変更・子フォルダー作成。論文をドラッグしてフォルダーへ移動（F2：名前変更）"
         >
-          {tree.map((node) => (
+          {librarySearch.trim() && <div className="px-2 text-xs">
+            {searching && <p className="p-2 text-muted-foreground">検索中…</p>}
+            {searchError && <p className="p-2 text-destructive">検索できませんでした。</p>}
+            {hits.map((hit, index) => <button key={index} className="w-full border-b text-left p-2 hover:bg-muted" onClick={() => {
+              const store = useStore.getState(); store.setSelectedFolder(null); store.setTranslatedOnly(false);
+              store.setActivePaperId(hit.paper_id, hit.page ?? undefined);
+              store.setCurrentCollection(allPapers.find(p => p.id === hit.paper_id)?.collection_name ?? "");
+              store.setActiveTab(hit.side === "note" ? "notes" : "reader");
+              if (hit.page) store.setReaderJump({ paperId: hit.paper_id, page: hit.page, side: hit.side === "translated" ? "translated" : "original", text: librarySearch, anchor_y: 0 });
+            }}><span className="block font-medium truncate">{hit.title}</span>
+              <span className="text-primary">{{ metadata: "論文情報", note: "メモ", original: "原文", translated: "訳文" }[hit.side]}{hit.page && ` p.${hit.page}`}</span>
+              <span className="block text-muted-foreground line-clamp-2">{hit.snippet}</span></button>)}
+            {searchResults?.limited && <p className="p-2 text-muted-foreground">先頭200件を表示しています。検索語を追加して絞り込めます。</p>}
+          </div>}
+          {!librarySearch.trim() && tree.map((node) => (
             <FolderRow key={node.path || "(unfiled)"} node={node} depth={0} papers={papers} collections={collections}
-              isExpanded={isExpanded} setExpanded={setExpanded} dragOver={dragOver} />
+              isExpanded={isExpanded} setExpanded={setExpanded} dragOver={dragOver} onTagSelect={setTagFilter} />
           ))}
           {papers.length === 0 && pending.length === 0 && (
             <div className="px-4 py-6 text-center text-muted-foreground text-[12px] leading-relaxed">
@@ -269,6 +310,7 @@ export function LibrarySidebar() {
 }
 
 type RowProps = {
+  onTagSelect: (name: string) => void;
   papers: PaperData[];
   collections: string[];
   isExpanded: (path: string) => boolean;
@@ -343,7 +385,7 @@ function FolderRow({ node, depth, ...rest }: { node: FolderNode; depth: number }
           ))}
           {node.pending.map((item) => <PendingRow key={item.path} item={item} depth={depth + 1} />)}
           {node.papers.map((paper) => (
-            <PaperRow key={paper.id} paper={paper} depth={depth + 1} collections={rest.collections} />
+            <PaperRow key={paper.id} paper={paper} depth={depth + 1} collections={rest.collections} onTagSelect={rest.onTagSelect} />
           ))}
         </div>
       )}
@@ -374,7 +416,8 @@ function PendingRow({ item, depth }: { item: PendingImport; depth: number }) {
   );
 }
 
-function PaperRow({ paper, depth, collections }: { paper: PaperData; depth: number; collections: string[] }) {
+function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData; depth: number; collections: string[]; onTagSelect: (name: string) => void }) {
+  const [allTags, setAllTags] = useState(false);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: paper.id });
   const activePaperId = useStore((s) => s.activePaperId);
   const selectedFolder = useStore((s) => s.selectedFolder);
@@ -422,8 +465,14 @@ function PaperRow({ paper, depth, collections }: { paper: PaperData; depth: numb
               className="mt-1.5 h-1 max-w-40 overflow-hidden rounded-full bg-muted-foreground/10">
               <div className={`h-full rounded-full transition-[width] ${translating ? "bg-primary" : "bg-amber-500/60"}`} style={{ width: `${translation.progress}%` }} />
             </div>}
-            {(paper.has_article || (running && !translating)) && <div className="mt-1 text-[10px] text-muted-foreground">{paper.has_article && "サマリーあり"}
-              {running && !translating && <span className="text-primary"> · AI処理中</span>}</div>}
+            <div className="mt-1 text-[10px] text-muted-foreground">{paper.read_status || "未設定"}{paper.has_article && " · サマリーあり"}
+              {running && !translating && <span className="text-primary"> · AI処理中</span>}</div>
+            {!!paper.tags?.length && <div className="mt-1.5 flex flex-wrap items-center gap-1">
+              {(allTags ? paper.tags : paper.tags.slice(0, 2)).map(name => <TagChip key={name} name={name} onClick={() => onTagSelect(name)} />)}
+              {paper.tags.length > 2 && <button className="rounded px-1 text-[10px] text-muted-foreground hover:bg-muted" title={paper.tags.join("、")}
+                onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setAllTags(!allTags); }}>
+                {allTags ? "閉じる" : `+${paper.tags.length - 2}`}</button>}
+            </div>}
           </div>
           {running && !translating && <Loader2 className="w-3.5 h-3.5 ml-1 mt-0.5 animate-spin text-primary shrink-0" />}
         </div>
