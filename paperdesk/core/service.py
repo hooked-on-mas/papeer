@@ -19,9 +19,10 @@ import uuid
 import shutil
 from typing import Callable
 
-from paperdesk.pdf.pdf_engine import PDF_LOCK, batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, save_json, translation_units
+from paperdesk.pdf.pdf_engine import PDF_LOCK, batches, interleaved_pdf, build_translated_pdf, save_json, translation_units
 import pymupdf as fitz
-from paperdesk.core.providers import Provider, check_cancel
+from paperdesk.providers import ProviderBackend, check_cancel
+from paperdesk.core.paths import PaperFiles
 from paperdesk.core.storage import Library
 from paperdesk.layout.math_layout import restore_formula_text
 from paperdesk.translation.translation import RetryState, translate_batches, translation_fingerprint
@@ -73,7 +74,7 @@ def page_translation_text(folder: Path, document: dict, page: int) -> list[str]:
     units = translation_units(document)
     glossary = glossary_for_folder(folder)
     apply_glossary(units, glossary)
-    cache_path = folder / "translation-cache.json"
+    cache_path = PaperFiles(folder).translation_cache
     cache = json.loads(cache_path.read_text("utf-8")) if cache_path.exists() else {}
     # Cached pages count only while they match the current extraction: after a re-extraction
     # the math tokens of renumbered blocks would resolve to other formulas.
@@ -93,23 +94,19 @@ def page_translation_text(folder: Path, document: dict, page: int) -> list[str]:
               if b["page"] == page and b["id"] in rendered_text]
     if blocks:
         return blocks
-    # Otherwise the last completed translation, whose sections read "## p.<page> / <block id>".
-    markdown_path = folder / "translation.md"
-    if not markdown_path.is_file():
-        return []
-    parts = re.split(r"^## p\.(\d+) / \S+[ \t]*$", markdown_path.read_text("utf-8"), flags=re.M)
-    return [body.strip() for number, body in zip(parts[1::2], parts[2::2]) if int(number) == page and body.strip()]
+    # Otherwise the last completed translation.
+    return [text for number, _, text in PaperFiles(folder).translation_sections() if number == page and text]
 
 
 def _remove_other_runs(folder: Path, run_id: str) -> None:
     """Delete page previews of earlier runs; the current preview no longer points into them."""
-    for run in (folder / "translation-pages").glob("*"):
+    for run in (PaperFiles(folder).translation_pages).glob("*"):
         if run.is_dir() and run.name != run_id:
             shutil.rmtree(run, ignore_errors=True)
 
 
 class PaperService:
-    def __init__(self, library: Library, provider: Provider, cancel: threading.Event,
+    def __init__(self, library: Library, provider: ProviderBackend, cancel: threading.Event,
                  progress: Callable[[str], None] = lambda _: None,
                  page_ready: Callable[[str, int], None] = lambda *_: None):
         self.library, self.provider = library, provider
@@ -124,6 +121,7 @@ class PaperService:
     def translate(self, paper_id: str, pages: set[int] | None = None,
                   replacements: dict[str, str] | None = None) -> dict:
         folder = self.library.folder(paper_id)
+        files = PaperFiles(folder)
         document = self.library.document(paper_id)
         selected = set(range(1, document["page_count"] + 1)) if pages is None else set(pages)
         if not selected or any(type(p) is not int or not 1 <= p <= document["page_count"] for p in selected):
@@ -142,7 +140,7 @@ class PaperService:
         # Effort controls future requests, not cache identity: changing it must not
         # discard completed translations or reset recovery attempt limits.
         fingerprint = translation_fingerprint(settings, units)
-        cache_path = folder / "translation-cache.json"
+        cache_path = files.translation_cache
         cache = json.loads(cache_path.read_text("utf-8")) if cache_path.exists() else {}
         version = translation_version()
         compatible = (cache.get("fingerprint") == fingerprint
@@ -182,7 +180,7 @@ class PaperService:
         preview = {"fingerprint": fingerprint, "run_id": uuid.uuid4().hex,
                    "requested_pages": sorted(requested), "pages": [], "skipped_pages": [], "page_errors": {}, "target_pages": sorted(selected),
                    "total_pages": document["page_count"], "complete": False}
-        preview_path = folder / "translation-preview.json"
+        preview_path = files.translation_preview
         # Rendered pages remain valid reading material even when extraction IDs,
         # provider settings or code versions invalidate their translation cache.
         earlier = set(translated_page_numbers(folder, document["page_count"]))
@@ -203,8 +201,8 @@ class PaperService:
             with PDF_LOCK, fitz.open(source) as previous, fitz.open() as single:
                 single.insert_pdf(previous, from_page=index, to_page=index)
                 single.save(destination)
-        previous_markdown = (folder / "translation.md").read_text("utf-8") if (folder / "translation.md").exists() else ""
-        previous_report_path = folder / "translation-report.json"
+        previous_markdown = files.translation_md.read_text("utf-8") if files.translation_md.exists() else ""
+        previous_report_path = files.translation_report
         previous_report = json.loads(previous_report_path.read_text("utf-8")) if previous_report_path.exists() else {}
         preview["pages"] = sorted(retained)
         preview["preserved_pages"] = sorted(retained)
@@ -232,7 +230,7 @@ class PaperService:
                         block_text.setdefault(unit["block"], []).append(done.get(unit["id"], unit["text"]))
                     self.progress(f"p.{number} の日本語PDFを作成しています…")
                     try:
-                        build_translated_pdf(folder / "original.pdf", document,
+                        build_translated_pdf(files.original_pdf, document,
                             {key: "\n".join(parts) for key, parts in block_text.items()},
                             preview_page(folder, preview, number), page_numbers={number})
                     except Exception as error:
@@ -311,7 +309,7 @@ class PaperService:
             translated = {key: "\n".join(parts) for key, parts in block_text.items()}
             self.progress("日本語PDFを作成しています…")
             staged = preview_page(folder, preview, 1).parent / "assembled.pdf"
-            report = build_translated_pdf(folder / "original.pdf", document, translated, staged,
+            report = build_translated_pdf(files.original_pdf, document, translated, staged,
                                           translate_page_numbers=set(preview["pages"]) - retained)
             if retained:
                 with PDF_LOCK, fitz.open(staged) as assembled:
@@ -322,9 +320,9 @@ class PaperService:
                     merged = staged.with_name("merged.pdf")
                     assembled.save(merged)
                 safe_replace(merged, staged)
-            safe_replace(staged, folder / "translated.pdf")
+            safe_replace(staged, files.translated_pdf)
             self.progress("原文と日本語訳を交互に並べたPDFを作成しています…")
-            interleaved_pdf(folder / "original.pdf", folder / "translated.pdf", folder / "interleaved.pdf")
+            interleaved_pdf(files.original_pdf, files.translated_pdf, files.interleaved_pdf)
             report["skipped_blocks"] = [u["id"] for u in units if unit_pages(u) & (set(preview["pages"]) - retained) and skipped(u)]
             previous_skipped = set(previous_report.get("skipped_blocks", []))
             report["skipped_blocks"] += [u["id"] for u in units if u["id"] in previous_skipped and unit_pages(u) <= retained]
@@ -343,7 +341,7 @@ class PaperService:
             report["page_errors"] = preview["page_errors"]
             report["model"] = settings.model
             report["usage"] = self.usage()
-            save_json(folder / "translation-report.json", report)
+            save_json(files.translation_report, report)
             preview["complete"] = True
             save_json(preview_path, preview)
             self.page_ready(paper_id, document["page_count"])
@@ -361,9 +359,11 @@ class PaperService:
                               restore_formula_text(rendered_text[block["id"]], block), ""]
                 elif block.get("kind") in {"formula", "table", "reference", "figure", "algorithm"} and block["page"] in preview["pages"]:
                     lines += [f"## p.{block['page']} / {block['id']}", "", block["text"], ""]
-            (folder / "translation.md").write_text("\n".join(lines), "utf-8")
+            files.translation_md.write_text("\n".join(lines), "utf-8")
             self.library.update(paper_id, status="一部翻訳済み" if report["untranslated_pages"] or report["skipped_blocks"] else "翻訳済み")
             _remove_other_runs(folder, preview["run_id"])
+            for number in superseded:
+                previous_page(number).unlink(missing_ok=True)
             return report
         except Exception:
             try:
@@ -372,6 +372,8 @@ class PaperService:
                 for number in restored:
                     previous_page(number).replace(preview_page(folder, preview, number))
                     preview["pages"].append(number)
+                for number in superseded - set(restored):
+                    previous_page(number).unlink(missing_ok=True)
                 if restored:
                     save_json(preview_path, preview)
                     self.page_ready(paper_id, 0)
@@ -383,16 +385,17 @@ class PaperService:
 
     def article(self, paper_id: str) -> str:
         folder = self.library.folder(paper_id)
+        files = PaperFiles(folder)
         document = self.library.document(paper_id)
 
-        media_dir = folder / "media"
+        media_dir = files.media
         if media_dir.exists():
             for f in media_dir.glob("*.png"):
                 f.unlink(missing_ok=True)
         media_dir.mkdir(exist_ok=True)
         # Extraction finds vector plots and ruled tables only, so embedded raster figures are added here.
         figures_by_page = {}
-        with PDF_LOCK, fitz.open(folder / "original.pdf") as pdf:
+        with PDF_LOCK, fitz.open(files.original_pdf) as pdf:
             for number in range(1, len(pdf) + 1):
                 page = pdf[number - 1]
                 page.set_rotation(0)
@@ -437,8 +440,8 @@ class PaperService:
             prompts.load("summary_article"),
             "\n\n".join(notes) + catalog)
         article = link_citations(article, {paper_id: document["page_count"]})
-        (folder / "article.md").write_text(article, "utf-8")
-        usage_path = folder / "article-usage.json"
+        files.article_md.write_text(article, "utf-8")
+        usage_path = files.article_usage
         if usage := self.usage():
             save_json(usage_path, usage)
         else:
@@ -518,11 +521,3 @@ class PaperService:
         self.library.add_exchange(paper_id, question, answer, self.usage(), scope=scope_key,
                                   attachments=attachments)
         return answer
-
-    def export_bilingual(self, paper_id: str, destination: Path) -> None:
-        folder = self.library.folder(paper_id)
-        bilingual_pdf(folder / "original.pdf", folder / "translated.pdf", destination)
-
-    def export_interleaved(self, paper_id: str, destination: Path) -> None:
-        folder = self.library.folder(paper_id)
-        interleaved_pdf(folder / "original.pdf", folder / "translated.pdf", destination)

@@ -2,10 +2,11 @@
 import json
 from pathlib import Path
 import re
+from paperdesk.core.paths import PaperFiles
 
 
 def read_preview(folder: Path) -> dict | None:
-    path = folder / "translation-preview.json"
+    path = PaperFiles(folder).translation_preview
     if not path.exists():
         return None
     value = json.loads(path.read_text("utf-8"))
@@ -15,7 +16,7 @@ def read_preview(folder: Path) -> dict | None:
 
 
 def preview_page(folder: Path, preview: dict, number: int) -> Path:
-    return folder / "translation-pages" / preview["run_id"] / f"page-{number}.pdf"
+    return PaperFiles(folder).translation_pages / preview["run_id"] / f"page-{number}.pdf"
 
 
 def translated_page(folder: Path, index: int) -> tuple[Path | None, int]:
@@ -23,20 +24,20 @@ def translated_page(folder: Path, index: int) -> tuple[Path | None, int]:
     if preview and not preview["complete"]:
         if index + 1 not in preview["pages"]:
             if index + 1 in preview.get("skipped_pages", []):
-                return folder / "original.pdf", index
+                return PaperFiles(folder).original_pdf, index
             if index + 1 not in preview.get("target_pages", range(1, preview["total_pages"] + 1)):
-                return folder / "original.pdf", index
+                return PaperFiles(folder).original_pdf, index
             return None, 0
         return preview_page(folder, preview, index + 1), 0
-    return folder / "translated.pdf", index
+    return PaperFiles(folder).translated_pdf, index
 
 
 def translated_page_numbers(folder: Path, page_count: int) -> list[int]:
     preview = read_preview(folder)
     if preview is not None:
         numbers = preview["pages"]
-    elif (folder / "translated.pdf").is_file():
-        report_path = folder / "translation-report.json"
+    elif PaperFiles(folder).translated_pdf.is_file():
+        report_path = PaperFiles(folder).translation_report
         report = json.loads(report_path.read_text("utf-8")) if report_path.exists() else {}
         numbers = report.get("translated_pages", range(1, page_count + 1))
     else:

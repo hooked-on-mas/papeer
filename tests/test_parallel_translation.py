@@ -11,7 +11,8 @@ import unittest
 import pymupdf as fitz
 
 from paperdesk.core.config import Settings
-from paperdesk.core.providers import API_RETRIES, Cancelled, Provider
+from paperdesk.providers import Cancelled, create_provider
+from paperdesk.providers.openai_compat import API_RETRIES
 from paperdesk.core.service import PaperService
 from paperdesk.core.storage import Library
 from paperdesk.translation.translation import RetryState, translate_batches
@@ -133,10 +134,10 @@ class ConcurrencySettingTests(unittest.TestCase):
     def test_automatic_is_serial_only_for_local_models(self):
         self.assertEqual(Settings().translation_requests(), 3)
         self.assertEqual(Settings(provider="claude").translation_requests(), 3)
-        self.assertEqual(Settings(provider="api", base_url="https://api.openai.com/v1").translation_requests(), 3)
-        self.assertEqual(Settings(provider="api", base_url="http://localhost:11434/v1").translation_requests(), 1)
-        self.assertEqual(Settings(provider="api", base_url="http://127.0.0.1:1234/v1").translation_requests(), 1)
-        self.assertEqual(Settings(provider="api", base_url="http://localhost:11434/v1",
+        self.assertEqual(Settings(provider="api", provider_options={"api": {"base_url": "https://api.openai.com/v1"}}).translation_requests(), 3)
+        self.assertEqual(Settings(provider="api", provider_options={"api": {"base_url": "http://localhost:11434/v1"}}).translation_requests(), 1)
+        self.assertEqual(Settings(provider="api", provider_options={"api": {"base_url": "http://127.0.0.1:1234/v1"}}).translation_requests(), 1)
+        self.assertEqual(Settings(provider="api", provider_options={"api": {"base_url": "http://localhost:11434/v1"}},
                                   translation_concurrency=2).translation_requests(), 2)
         self.assertEqual(Settings(translation_concurrency=1).translation_requests(), 1)
 
@@ -207,8 +208,9 @@ class ApiRateLimitTests(unittest.TestCase):
         self.addCleanup(thread.join)
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
-        settings = Settings(provider="api", model="test-model", base_url=f"http://127.0.0.1:{server.server_port}/v1")
-        return Provider(settings, threading.Event()), requests
+        settings = Settings(provider="api", model="test-model",
+                            provider_options={"api": {"base_url": f"http://127.0.0.1:{server.server_port}/v1"}})
+        return create_provider(settings, threading.Event()), requests
 
     def test_rate_limited_request_is_retried(self):
         provider, requests = self.serve([429, 503, 200])

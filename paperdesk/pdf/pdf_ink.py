@@ -1,7 +1,6 @@
 """Persistent freehand ink in normalized, displayed-page coordinates."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pymupdf as fitz
@@ -33,20 +32,6 @@ def _draw_text(page, stroke, points, color, font):
                          color=color, morph=(baseline, matrix), overlay=True)
 
 
-def load_ink(lib, paper_id: str, side: str, page: int) -> list[dict]:
-    with lib.connection() as db:
-        row = db.execute("SELECT strokes FROM pdf_ink WHERE paper_id=? AND side=? AND page=?",
-                         (paper_id, side, page)).fetchone()
-    return json.loads(row[0]) if row else []
-
-
-def save_ink(lib, paper_id: str, side: str, page: int, strokes: list[dict]) -> None:
-    with lib.connection() as db:
-        db.execute("INSERT INTO pdf_ink(paper_id,side,page,strokes) VALUES(?,?,?,?) "
-                   "ON CONFLICT(paper_id,side,page) DO UPDATE SET strokes=excluded.strokes",
-                   (paper_id, side, page, json.dumps(strokes, separators=(",", ":"))))
-
-
 def _draw_strokes(page, strokes, font=None):
     width, height = page.rect.width, page.rect.height
     rotation, derotation = page.rotation, page.derotation_matrix
@@ -76,10 +61,8 @@ def _draw_strokes(page, strokes, font=None):
     return font
 
 
-def annotated_pdf(lib, paper_id: str, side: str, source: Path) -> bytes:
-    with lib.connection() as db:
-        pages = {row["page"]: json.loads(row["strokes"]) for row in db.execute(
-            "SELECT page,strokes FROM pdf_ink WHERE paper_id=? AND side=?", (paper_id, side))}
+def annotated_pdf(source: Path, pages: dict[int, list[dict]]) -> bytes:
+    """A copy of source with the ink of each page number painted in."""
     with PDF_LOCK, fitz.open(source) as pdf:
         font = None
         for number, strokes in pages.items():

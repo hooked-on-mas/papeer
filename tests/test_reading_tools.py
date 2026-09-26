@@ -88,7 +88,7 @@ def test_delete_tag_preserves_papers_notes_and_other_tags(library, tmp_path, mon
     lib.update(other_id, tags=[tag, "別のタグ"])
     monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
     monkeypatch.setenv("PAPERDESK_TOKEN", "")
-    monkeypatch.setattr(runtime, "job_manager", JobManager())
+    monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     with TestClient(runtime.app) as client:
         response = client.delete("/api/tags", params={"name": tag})
         assert response.status_code == 200
@@ -111,7 +111,7 @@ def test_tag_choices_persist_without_papers_and_deleted_labels_stay_deleted(libr
     lib, identity = library
     monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
     monkeypatch.setenv("PAPERDESK_TOKEN", "")
-    monkeypatch.setattr(runtime, "job_manager", JobManager())
+    monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     bookmark = lib.add_bookmark(identity, 1, "original", "引用", label="重要", note="残すメモ")
     with TestClient(runtime.app) as client:
         assert client.post("/api/tags", json={"name": " 未使用のタグ "}).status_code == 200
@@ -168,7 +168,7 @@ def test_delete_tag_requires_authentication(library, monkeypatch):
     lib.update(identity, tags=["残す"])
     monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
     monkeypatch.setenv("PAPERDESK_TOKEN", "test-secret")
-    monkeypatch.setattr(runtime, "job_manager", JobManager())
+    monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     with TestClient(runtime.app) as client:
         assert client.delete("/api/tags", params={"name": "残す"}).status_code == 401
         for path in ("/api/tags", "/api/sticky-labels", "/api/reading-statuses"):
@@ -275,11 +275,12 @@ def test_maintenance_jobs_exclude_other_jobs():
 
 def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
     from sidecar import app as runtime
+    from sidecar import deps
     lib, identity = library
     monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
     monkeypatch.setenv("PAPERDESK_TOKEN", "")
-    monkeypatch.setattr(runtime, "job_manager", JobManager())
-    monkeypatch.setattr("sidecar.reading_api.Provider", FakeProvider)
+    monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
+    monkeypatch.setattr("sidecar.deps.create_provider", FakeProvider)
     PaperService(lib, FakeProvider(), threading.Event()).translate(identity)
     with TestClient(runtime.app) as client:
         assert client.patch(f"/api/papers/{identity}", json={"tags": ["自由なタグ"], "read_status": "読了"}).status_code == 200
@@ -291,7 +292,7 @@ def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
         assert client.post(f"/api/papers/{identity}/revision", json={"unit_id": paragraph["id"], "text": "修正", "expected_text": "stale"}).status_code == 409
         response = client.post(f"/api/papers/{identity}/revision-draft", json={"unit_id": paragraph["id"]})
         assert response.status_code == 200
-        job = runtime.job_manager.get_job(response.json()["job_id"])
+        job = deps.job_manager.get_job(response.json()["job_id"])
         deadline = time.monotonic() + 10
         while job.running and time.monotonic() < deadline:
             time.sleep(.02)
@@ -299,7 +300,7 @@ def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
         assert "修正した" in job.result["text"]
         response = client.post(f"/api/papers/{identity}/revision", json={"unit_id": paragraph["id"], "text": job.result["text"], "expected_text": paragraph["text"]})
         assert response.status_code == 200
-        job = runtime.job_manager.get_job(response.json()["job_id"])
+        job = deps.job_manager.get_job(response.json()["job_id"])
         deadline = time.monotonic() + 10
         while job.running and time.monotonic() < deadline:
             time.sleep(.02)
@@ -324,12 +325,13 @@ def test_restore_rejects_windows_unsafe_paths(library, tmp_path, name):
 
 def test_snapshot_api_and_write_guard(library, tmp_path, monkeypatch):
     from sidecar import app as runtime
+    from sidecar import deps
     lib, identity = library
     monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
     monkeypatch.setenv("PAPERDESK_TOKEN", "")
-    monkeypatch.setattr(runtime, "job_manager", JobManager())
+    monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     def wait(job_id):
-        job = runtime.job_manager.get_job(job_id)
+        job = deps.job_manager.get_job(job_id)
         deadline = time.monotonic() + 10
         while job.running and time.monotonic() < deadline:
             time.sleep(.02)
@@ -337,7 +339,7 @@ def test_snapshot_api_and_write_guard(library, tmp_path, monkeypatch):
         return job
     with TestClient(runtime.app) as client:
         gate = threading.Event()
-        active = runtime.job_manager.submit_job("backup", lambda *_: gate.wait(3))
+        active = deps.job_manager.submit_job("backup", lambda *_: gate.wait(3))
         try:
             assert client.put("/api/prompts", json={"chat_answer": "changed"}).status_code == 409
             assert client.patch(f"/api/papers/{identity}", json={"note": "changed"}).status_code == 409
@@ -371,11 +373,11 @@ def test_chat_explicit_reference_pages(library):
 
 def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
     from sidecar import app as runtime
-    from sidecar import reading_api
+    from sidecar import deps
     lib, identity = library
     monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
     monkeypatch.setenv("PAPERDESK_TOKEN", "")
-    monkeypatch.setattr(runtime, "job_manager", JobManager())
+    monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     with lib.connection() as db:
         db.execute("UPDATE pages SET text=? WHERE paper_id=?",
                    ("Adaptive control improves tracking error.", identity))
@@ -394,14 +396,14 @@ def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
                 {"source": "tracking error", "target": "追従誤差"},
                 {"source": "invented term", "target": "原文にない用語"}]})
 
-    monkeypatch.setattr(reading_api, "Provider", GlossaryProvider)
+    monkeypatch.setattr("sidecar.deps.create_provider", GlossaryProvider)
     with TestClient(runtime.app) as client:
         base = f"/api/papers/{identity}"
         assert client.put(base + "/glossary", json={"terms": existing}).status_code == 200
         response = client.post(base + "/glossary-draft", json={
             "terms": existing, "model": "draft-model", "effort": "low"})
         assert response.status_code == 200
-        job = runtime.job_manager.get_job(response.json()["job_id"])
+        job = deps.job_manager.get_job(response.json()["job_id"])
         deadline = time.monotonic() + 10
         while job.running and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -416,7 +418,7 @@ def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
 
 def test_ai_glossary_failure_and_cancel_leave_dictionary_untouched(library):
     from paperdesk.core.reading_tools import draft_glossary
-    from paperdesk.core.providers import Cancelled
+    from paperdesk.providers import Cancelled
     lib, identity = library
     path = lib.folder(identity) / "glossary.json"
     path.write_text("[]", encoding="utf-8")
@@ -442,7 +444,7 @@ def test_global_glossary_applies_to_unrelated_papers_and_checks_stale_edits(libr
     other_id, _ = lib.import_pdf(other, "unrelated")
     monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
     monkeypatch.setenv("PAPERDESK_TOKEN", "")
-    monkeypatch.setattr(runtime, "job_manager", JobManager())
+    monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     terms = [{"source": f"term {i}", "target": f"訳語 {i}"} for i in range(250)]
     with TestClient(runtime.app) as client:
         assert client.get("/api/glossary").json() == []

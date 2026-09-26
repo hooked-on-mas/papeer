@@ -15,6 +15,7 @@ from paperdesk.core.translation_review import cached_required_translation_pages
 from paperdesk.core.bibliography import extract_bibliography
 import pymupdf as fitz
 from paperdesk.layout.math_layout import LAYOUT_VERSION
+from paperdesk.core.paths import PaperFiles
 
 
 def normalize_collection_name(value: str) -> str:
@@ -25,6 +26,16 @@ def normalize_collection_name(value: str) -> str:
 # The sidecar opens a Library per request; concurrent first requests after an upgrade must not
 # both see a column missing and both try to add it.
 _SCHEMA_LOCK = threading.Lock()
+# SQLite's schema_version of each database after it was migrated in this process.
+# Opening a Library then costs one pragma instead of the full migration, and any
+# schema change made elsewhere (a restore, an older copy) triggers the migration again.
+_MIGRATED: dict[str, int] = {}
+
+
+def forget_schema(root: Path) -> None:
+    """Migrate again on next open, e.g. after a restore replaced the database."""
+    with _SCHEMA_LOCK:
+        _MIGRATED.pop(str(Path(root).resolve()), None)
 
 
 class Library:
@@ -32,7 +43,19 @@ class Library:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
         (root / "papers").mkdir(exist_ok=True)
-        with _SCHEMA_LOCK, self.connection() as db:
+        key = str(root.resolve())
+        with _SCHEMA_LOCK:
+            if _MIGRATED.get(key) != self._schema_version():
+                self._migrate()
+                _MIGRATED[key] = self._schema_version()
+
+    def _schema_version(self) -> int:
+        with self.connection() as db:
+            return db.execute("PRAGMA schema_version").fetchone()[0]
+
+    def _migrate(self) -> None:
+        """Create tables and add columns introduced by later versions."""
+        with self.connection() as db:
             db.executescript("""
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS papers (
@@ -114,7 +137,7 @@ class Library:
                 db.execute("ALTER TABLE papers ADD COLUMN bibliography_version INTEGER NOT NULL DEFAULT 0")
             for row in db.execute("SELECT id FROM papers WHERE bibliography_version=0").fetchall():
                 try:
-                    with PDF_LOCK, fitz.open(self.folder(row["id"]) / "original.pdf") as document:
+                    with PDF_LOCK, fitz.open(PaperFiles(self.folder(row["id"])).original_pdf) as document:
                         info = extract_bibliography(document)
                 except (OSError, ValueError, RuntimeError):
                     continue
@@ -156,8 +179,8 @@ class Library:
         folder = self.folder(paper_id)
         folder.mkdir()
         try:
-            shutil.copyfile(source, folder / "original.pdf")
-            save_json(folder / "document.json", info)
+            shutil.copyfile(source, PaperFiles(folder).original_pdf)
+            save_json(PaperFiles(folder).document_json, info)
             with self.connection() as db:
                 db.execute("""INSERT INTO papers(id,sha256,title,original_name,pages,collection_name,first_author,publication_year,bibliography_version)
                            VALUES(?,?,?,?,?,?,?,?,1)""",
@@ -252,7 +275,7 @@ class Library:
             if "tags" in values:
                 db.executemany("INSERT OR IGNORE INTO tag_choices VALUES('paper',?)", [(name,) for name in tags])
         if "note" in values:
-            (self.folder(paper_id) / "note.md").write_text(values["note"], "utf-8")
+            PaperFiles(self.folder(paper_id)).note_md.write_text(values["note"], "utf-8")
 
     def rename_collection(self, path: str, leaf: str) -> str:
         path = normalize_collection_name(path)
@@ -338,10 +361,10 @@ class Library:
 
     def document(self, paper_id: str) -> dict:
         folder = self.folder(paper_id)
-        path = folder / "document.json"
+        path = PaperFiles(folder).document_json
         document = json.loads(path.read_text("utf-8"))
         if document.get("layout_version") != LAYOUT_VERSION:
-            refreshed = extract_pdf(folder / "original.pdf")
+            refreshed = extract_pdf(PaperFiles(folder).original_pdf)
             refreshed["title"] = document["title"]
             save_json(path, refreshed)
             document = refreshed
@@ -420,6 +443,95 @@ class Library:
             if not updated.rowcount:
                 raise ValueError("付箋が見つかりません。")
             return dict(db.execute("SELECT * FROM bookmarks WHERE id=?", (bookmark_id,)).fetchone())
+
+    def delete_paper(self, paper_id: str) -> None:
+        """Remove a paper, its records and its folder."""
+        folder = self.folder(paper_id)
+        with self.connection() as db:
+            db.execute("DELETE FROM messages WHERE paper_id=?", (paper_id,))
+            db.execute("DELETE FROM pages WHERE paper_id=?", (paper_id,))
+            db.execute("DELETE FROM papers WHERE id=?", (paper_id,))
+        if folder.exists():
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def page_texts(self, paper_id: str) -> list[tuple[int, str]]:
+        """(page number, extracted text) of every page, in order."""
+        with self.connection() as db:
+            return [(row["number"], row["text"]) for row in db.execute(
+                "SELECT number,text FROM pages WHERE paper_id=? ORDER BY number", (paper_id,))]
+
+    def page_text(self, paper_id: str, number: int) -> str:
+        with self.connection() as db:
+            row = db.execute("SELECT text FROM pages WHERE paper_id=? AND number=?", (paper_id, number)).fetchone()
+        return row[0] if row else ""
+
+    # --- Choices offered in the UI: paper tags, sticky-note labels, reading statuses ---
+
+    def tag_choices(self, kind: str) -> list[str]:
+        """Choices of one kind ('paper' or 'sticky'), in the order they were added."""
+        with self.connection() as db:
+            return [row[0] for row in db.execute("SELECT name FROM tag_choices WHERE kind=? ORDER BY rowid", (kind,))]
+
+    def add_tag_choice(self, kind: str, name: str) -> None:
+        with self.connection() as db:
+            db.execute("INSERT OR IGNORE INTO tag_choices VALUES(?,?)", (kind, name))
+
+    def delete_tag_choice(self, kind: str, name: str) -> None:
+        with self.connection() as db:
+            db.execute("DELETE FROM tag_choices WHERE kind=? AND name=?", (kind, name))
+
+    def reading_statuses(self) -> list[str]:
+        with self.connection() as db:
+            return [row[0] for row in db.execute("SELECT name FROM reading_status_choices ORDER BY rowid")]
+
+    def add_reading_status(self, name: str) -> None:
+        with self.connection() as db:
+            db.execute("INSERT OR IGNORE INTO reading_status_choices VALUES(?)", (name,))
+
+    def delete_reading_status(self, name: str) -> None:
+        with self.connection() as db:
+            db.execute("DELETE FROM reading_status_choices WHERE name=?", (name,))
+
+    # --- Note templates ---
+
+    def note_templates(self) -> list[dict]:
+        with self.connection() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM note_templates ORDER BY name")]
+
+    def save_note_template(self, name: str, content: str) -> None:
+        with self.connection() as db:
+            db.execute("INSERT OR REPLACE INTO note_templates(name,content) VALUES(?,?)", (name, content))
+
+    def delete_note_template(self, name: str) -> None:
+        with self.connection() as db:
+            db.execute("DELETE FROM note_templates WHERE name=?", (name,))
+
+    # --- Freehand ink, per paper, side ("original"/"translated") and page ---
+
+    def ink(self, paper_id: str, side: str, page: int) -> list[dict]:
+        with self.connection() as db:
+            row = db.execute("SELECT strokes FROM pdf_ink WHERE paper_id=? AND side=? AND page=?",
+                             (paper_id, side, page)).fetchone()
+        return json.loads(row["strokes"]) if row else []
+
+    def save_ink(self, paper_id: str, side: str, page: int, strokes: list[dict]) -> None:
+        with self.connection() as db:
+            db.execute("INSERT INTO pdf_ink(paper_id,side,page,strokes) VALUES(?,?,?,?) "
+                       "ON CONFLICT(paper_id,side,page) DO UPDATE SET strokes=excluded.strokes",
+                       (paper_id, side, page, json.dumps(strokes, separators=(",", ":"))))
+
+    def ink_by_page(self, paper_id: str, side: str) -> dict[int, list[dict]]:
+        with self.connection() as db:
+            return {row["page"]: json.loads(row["strokes"]) for row in db.execute(
+                "SELECT page,strokes FROM pdf_ink WHERE paper_id=? AND side=?", (paper_id, side))}
+
+    def ink_pages(self, paper_id: str) -> list[dict]:
+        """Pages that have ink, with the number of strokes on each."""
+        with self.connection() as db:
+            rows = db.execute("SELECT side,page,strokes FROM pdf_ink WHERE paper_id=? ORDER BY page,side",
+                              (paper_id,)).fetchall()
+        return [{"side": row["side"], "page": row["page"], "count": len(value)}
+                for row in rows if (value := json.loads(row["strokes"]))]
 
     def delete_bookmark(self, paper_id: str, bookmark_id: int) -> bool:
         self.paper(paper_id)

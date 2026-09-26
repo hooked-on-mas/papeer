@@ -16,7 +16,7 @@
 
 ## 実装とデータの流れ
 
-PaperDesk は Tauri/React の Windows アプリと、PyInstaller で単一実行ファイル化する Python/FastAPI の sidecar から成る。PDF を追加すると `%LOCALAPPDATA%\PaperDesk` に原本、抽出結果、SQLite の索引が置かれる。追加だけでは AI へ送らない。[README](../README.md)。翻訳では PDF の文字ブロックを抽出し、チャンクと文脈を選択された接続先へ送る。解説生成では論文のページ本文を広く送り、質問応答では全文が短ければ全文、長ければ関連ページ最大 10 ページと直近の会話を送る。図の切り抜き画像は現在の解説生成ではローカル処理であり、画像バイナリをモデルへ送る実装ではない。送信データは「選択した短い引用だけ」と説明してはいけない。[providers.py](../paperdesk/core/providers.py)、[service.py](../paperdesk/core/service.py)。
+PaperDesk は Tauri/React の Windows アプリと、PyInstaller で単一実行ファイル化する Python/FastAPI の sidecar から成る。PDF を追加すると `%LOCALAPPDATA%\PaperDesk` に原本、抽出結果、SQLite の索引が置かれる。追加だけでは AI へ送らない。[README](../README.md)。翻訳では PDF の文字ブロックを抽出し、チャンクと文脈を選択された接続先へ送る。解説生成では論文のページ本文を広く送り、質問応答では全文が短ければ全文、長ければ関連ページ最大 10 ページと直近の会話を送る。図の切り抜き画像は現在の解説生成ではローカル処理であり、画像バイナリをモデルへ送る実装ではない。送信データは「選択した短い引用だけ」と説明してはいけない。[providers/](../paperdesk/providers/)、[service.py](../paperdesk/core/service.py)。
 
 翻訳結果は、原 PDF の数式・表・図・参考文献等を残しつつ訳文を重ねた PDF、原文と訳文を交互に並べる PDF、左右対訳 PDF、Markdown として書き出せる。[PDF 生成](../paperdesk/pdf/pdf_engine.py)、[README](../README.md)。利用者の原稿に未公開情報、個人データ、査読中原稿、出版社契約上の制限がある場合、外部 AI への送信そのものを確認すべきである。
 
@@ -55,7 +55,7 @@ Liberation フォント 1.07.4 の上流には[編集用 SFD ソースへの案�
 
 ## 2. Codex、Claude Code、Antigravity を使う条件
 
-**リポジトリの公開と、公開後に誰かが CLI にログインして実行する行為は別**。今回の Git 追跡対象に三つの CLI のバイナリ・認証情報はない。ソースを置くだけで作者が各 AI サービスを利用した、あるいは規約に違反したとは言えない。一方、README は利用者に接続を案内しているため、実行する本人に適用される規約を正確に説明する必要がある。現コードは端末の `codex exec`、`claude -p`、`agy -p` を呼び、API 接続は利用者指定の `/chat/completions` に送る。[providers.py](../paperdesk/core/providers.py)、[README](../README.md)。開発者がコーディング補助に使った際の規約・生成コードの権利も、利用者が翻訳に使う際の規約とは分けて扱う。
+**リポジトリの公開と、公開後に誰かが CLI にログインして実行する行為は別**。今回の Git 追跡対象に三つの CLI のバイナリ・認証情報はない。ソースを置くだけで作者が各 AI サービスを利用した、あるいは規約に違反したとは言えない。一方、README は利用者に接続を案内しているため、実行する本人に適用される規約を正確に説明する必要がある。現コードは端末の `codex exec`、`claude -p`、`agy -p` を呼び、API 接続は利用者指定の `/chat/completions` に送る。[providers/](../paperdesk/providers/)、[README](../README.md)。開発者がコーディング補助に使った際の規約・生成コードの権利も、利用者が翻訳に使う際の規約とは分けて扱う。
 
 | 接続 | 技術的な公式機能 | ローカルで実行する人への注意 |
 | --- | --- | --- |

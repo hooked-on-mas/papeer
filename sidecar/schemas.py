@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from paperdesk.core.config import Settings
 
 
 class HealthResponse(BaseModel):
@@ -10,15 +12,20 @@ class HealthResponse(BaseModel):
     code_version: str
 
 
+_DEFAULTS = Settings()
+
+
 class SettingsModel(BaseModel):
-    provider: str = "codex"
-    model: str = "gpt-5.6-sol"
-    reasoning_effort: str = "medium"
-    api_base: str = "https://api.openai.com/v1"
-    codex_path: str = "codex"
-    claude_path: str = "claude"
-    gemini_path: str = "agy"
-    translation_concurrency: int = 0  # 0: automatic (1 for a local model, else 3)
+    # Older clients send codex_path/api_base etc.; Settings.from_values migrates them.
+    model_config = ConfigDict(extra="allow")
+
+    provider: str = _DEFAULTS.provider
+    model: str = _DEFAULTS.model
+    reasoning_effort: str = _DEFAULTS.reasoning_effort
+    timeout_seconds: int = _DEFAULTS.timeout_seconds
+    translation_concurrency: int = _DEFAULTS.translation_concurrency  # 0: automatic (1 for a local model, else 3)
+    # By provider id: that connection's own settings (cli_path, base_url, model, reasoning_effort).
+    provider_options: dict[str, dict[str, str]] = Field(default_factory=dict)
     api_key: str | None = None
 
 
@@ -27,11 +34,19 @@ class ProviderActionRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
-    api_base: str | None = None
+    provider_options: dict[str, dict[str, str]] | None = None
     api_key: str | None = None
-    codex_path: str | None = None
-    claude_path: str | None = None
-    gemini_path: str | None = None
+
+
+class ProviderSpecModel(BaseModel):
+    id: str
+    label: str
+    description: str
+    kind: str
+    needs_login: bool
+    needs_api_key: bool
+    login_service: str
+    fields: list[dict[str, str]]
 
 
 class TranslateRequest(BaseModel):

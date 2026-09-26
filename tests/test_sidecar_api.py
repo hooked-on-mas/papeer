@@ -12,9 +12,10 @@ import pymupdf as fitz
 import pytest
 
 from paperdesk.core.config import Settings
-from paperdesk.core.providers import Cancelled
+from paperdesk.providers import Cancelled
 from paperdesk.layout.math_layout import MATH_TOKEN
-from sidecar.app import app, job_manager
+from sidecar.app import app
+from sidecar.deps import job_manager
 
 FIXTURE_PDF = Path(__file__).parent / "fixtures/sample.pdf"
 
@@ -231,7 +232,7 @@ def test_translate_ask_export_workflow(test_env):
     paper_id = client.get("/api/papers").json()[0]["id"]
 
     # 2. Translate with FakeProvider
-    with patch("sidecar.app.Provider", FakeProvider):
+    with patch("sidecar.deps.create_provider", FakeProvider):
         tr_resp = client.post(f"/api/papers/{paper_id}/translate", json={"pages": "1"})
         assert tr_resp.status_code == 200
         tr_job_id = tr_resp.json()["job_id"]
@@ -253,7 +254,7 @@ def test_translate_ask_export_workflow(test_env):
     assert len(tr_pdf_resp.content) > 0
 
     # 3. Ask question
-    with patch("sidecar.app.Provider", FakeProvider):
+    with patch("sidecar.deps.create_provider", FakeProvider):
         ask_resp = client.post(f"/api/papers/{paper_id}/ask", json={"question": "追従誤差はいくつですか？"})
         assert ask_resp.status_code == 200
         ask_job_id = ask_resp.json()["job_id"]
@@ -320,7 +321,7 @@ def test_reader_search_bookmarks_glossary_and_scoped_question(test_env):
     assert client.put(f"{base}/glossary", json={"terms": terms}).status_code == 200
     assert client.get(f"{base}/glossary").json() == terms
     assert client.put(f"{base}/glossary", json={"terms": terms * 2}).status_code == 400
-    with patch("sidecar.app.Provider", FakeProvider):
+    with patch("sidecar.deps.create_provider", FakeProvider):
         job = _wait(client.post(f"{base}/translate", json={"pages": "1"}).json()["job_id"])
         assert job.status == "succeeded"
         first_fingerprint = job.result["translation_version"]
@@ -330,7 +331,7 @@ def test_reader_search_bookmarks_glossary_and_scoped_question(test_env):
     assert client.get(f"{base}/reading-blocks/1").json()["translations"]
     # Changing a term must make the next translation use a new cache identity.
     assert client.put(f"{base}/glossary", json={"terms": [{"source": word.group(), "target": "別の訳語"}]}).status_code == 200
-    with patch("sidecar.app.Provider", FakeProvider):
+    with patch("sidecar.deps.create_provider", FakeProvider):
         updated = _wait(client.post(f"{base}/translate", json={"pages": "1"}).json()["job_id"])
     assert updated.status == "succeeded"
     assert updated.result["already_translated_pages"] == []
@@ -348,7 +349,7 @@ def test_scoped_question_only_uses_selected_papers(test_env):
             doc.save(path)
         job = _wait(client.post("/api/papers/import", json={"paths": [str(path)], "collection": collection}).json()["job_id"])
         ids.append(job.result["paper_ids"][0])
-    with patch("sidecar.app.Provider", FakeProvider):
+    with patch("sidecar.deps.create_provider", FakeProvider):
         selected = _wait(client.post(f"/api/papers/{ids[0]}/ask", json={"question": "tracking error?",
             "scope": "selected", "paper_ids": [ids[1]]}).json()["job_id"])
         collection = _wait(client.post(f"/api/papers/{ids[0]}/ask", json={"question": "tracking error?",
@@ -437,7 +438,7 @@ def test_paper_metadata_reading_and_export_guards(test_env):
     same = client.post(f"/api/papers/{paper_id}/export", json={"kind": "original", "destination": str(folder / "original.pdf")})
     assert same.status_code == 400
 
-    with patch("sidecar.app.Provider", FakeProvider):
+    with patch("sidecar.deps.create_provider", FakeProvider):
         _wait(client.post(f"/api/papers/{paper_id}/translate", json={"pages": "1"}).json()["job_id"])
     reading = client.get(f"/api/papers/{paper_id}/reading").json()
     assert reading["translated_pages"]["1"]["file"] == "translated.pdf"
@@ -484,6 +485,59 @@ def test_translation_concurrency_setting_round_trips(test_env):
     assert client.get("/api/settings").json()["translation_concurrency"] == 2
 
 
+def test_providers_are_listed_for_the_settings_dialog(test_env):
+    client, _ = test_env
+    providers = client.get("/api/providers").json()
+    assert [p["id"] for p in providers] == ["codex", "claude", "antigravity", "api"]
+    api = providers[-1]
+    assert api["needs_api_key"] and not api["needs_login"]
+    assert [f["key"] for f in api["fields"]] == ["base_url"] and api["fields"][0]["hint"]
+    assert client.get("/api/providers/bogus/models").status_code == 400
+    assert client.get("/api/providers/api/efforts").json() == [{"id": "", "name": "既定値"}]
+
+
+def test_connection_settings_round_trip_per_provider(test_env):
+    client, tmp_path = test_env
+    settings = client.get("/api/settings").json()
+    body = {**settings, "provider": "api", "model": "local-model",
+            "provider_options": {"api": {"base_url": "http://localhost:11434/v1"},
+                                 "claude": {"cli_path": "C:/claude.exe"}}}
+    assert client.put("/api/settings", json=body).status_code == 200
+    saved = client.get("/api/settings").json()
+    assert saved["provider"] == "api"
+    assert saved["provider_options"]["api"]["base_url"] == "http://localhost:11434/v1"
+    assert saved["provider_options"]["api"]["model"] == "local-model"
+    assert saved["provider_options"]["claude"] == {"cli_path": "C:/claude.exe"}
+    assert client.put("/api/settings", json={**body, "provider": "bogus"}).status_code == 400
+
+    # A partial update, or one from an older client, keeps every other saved value.
+    assert client.put("/api/settings", json={"translation_concurrency": 2}).status_code == 200
+    partial = client.get("/api/settings").json()
+    assert partial["translation_concurrency"] == 2
+    assert partial["provider"] == "api" and partial["provider_options"]["claude"] == {"cli_path": "C:/claude.exe"}
+    assert client.put("/api/settings", json={"provider": "codex", "codex_path": "C:/codex.exe"}).status_code == 200
+    legacy = client.get("/api/settings").json()
+    assert legacy["provider"] == "codex" and legacy["provider_options"]["codex"]["cli_path"] == "C:/codex.exe"
+    assert legacy["provider_options"]["api"]["base_url"] == "http://localhost:11434/v1"
+
+
+def test_legacy_settings_file_is_served_in_the_new_shape(test_env):
+    client, tmp_path = test_env
+    (tmp_path / "settings.json").write_text(json.dumps(
+        {"provider": "gemini", "model": "gemini-x", "gemini_path": "C:/agy.exe"}), "utf-8")
+    settings = client.get("/api/settings").json()
+    assert settings["provider"] == "antigravity"
+    assert settings["provider_options"]["antigravity"]["cli_path"] == "C:/agy.exe"
+
+
+def test_api_connection_needs_no_login(test_env):
+    client, _ = test_env
+    response = client.post("/api/providers/login", json={"provider": "api"})
+    assert response.status_code == 200
+    assert response.json()["already"] is False
+    assert client.post("/api/providers/login", json={"provider": "bogus"}).status_code == 400
+
+
 def test_ask_with_attached_passages(test_env):
     client, _ = test_env
     imported = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
@@ -497,7 +551,7 @@ def test_ask_with_attached_passages(test_env):
 
     attachment = {"page": 1, "side": "original", "text": "  tracking error was reduced  ",
                   "anchor_y": 0.3, "start": 10, "end": 37, "raw": "tracking error was\nreduced"}
-    with patch("sidecar.app.Provider", RecordingProvider):
+    with patch("sidecar.deps.create_provider", RecordingProvider):
         job = _wait(client.post(f"{base}/ask", json={"question": "これはどういう意味？",
             "attachments": [attachment]}).json()["job_id"])
         assert job.status == "succeeded"

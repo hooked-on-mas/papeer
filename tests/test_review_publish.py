@@ -25,7 +25,7 @@ class ReviewPublishTests(unittest.TestCase):
                 pdf.new_page().insert_text((40,70),'class of systems under these assumptions.')
                 pdf.save(folder/'original.pdf')
             fake=FakeProvider()
-            with patch('tools.review_fresh_layout.Provider',return_value=fake):
+            with patch('tools.review_fresh_layout.create_provider',return_value=fake):
                 manifest=review(root/'papers',root/'review',1,1,['aaaa:2'])
             self.assertEqual({r['page'] for r in manifest['results']},{1,2})
             self.assertEqual(fake.calls,1)
@@ -53,7 +53,7 @@ class ReviewPublishTests(unittest.TestCase):
                 pdf.save(folder/name)
         save_json(folder/'translation-report.json',dict(pages=3,translated_pages=[1,2,3],readability_warnings=[dict(page=2,scale=.2,font_size=2)]))
         (folder/'translation.md').write_text('# Paper\n\n## p.1 / old\n\nKeep first\n\n## p.2 / old\n\nRemove old\n\n## p.3 / old\n\nKeep last\n', 'utf8')
-        with patch('tools.review_fresh_layout.Provider', return_value=FakeProvider()):
+        with patch('tools.review_fresh_layout.create_provider', return_value=FakeProvider()):
             review(root/'papers', root/'review', 1, 1, ['aaaa:2'], settings=Settings())
         return folder
 

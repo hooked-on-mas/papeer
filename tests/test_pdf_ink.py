@@ -10,7 +10,7 @@ import pymupdf as fitz
 import pytest
 
 from paperdesk.core.storage import Library
-from paperdesk.pdf.pdf_ink import annotated_pdf, load_ink, save_ink
+from paperdesk.pdf.pdf_ink import annotated_pdf
 from paperdesk.pdf.pdf_viewer import page_png
 from sidecar.app import app
 
@@ -42,13 +42,13 @@ def test_ink_persists_and_isolated_by_page_side_and_paper(ink_env):
     for side, page, value in [("original", 1, stroke()), ("original", 2, stroke("second")), ("translated", 1, stroke("translation"))]:
         assert client.put(f"{path}/{side}/{page}", json={"strokes": [value]}).status_code == 200
     reopened = Library(lib.root)
-    assert load_ink(reopened, identity, "original", 1) == [stroke()]
-    assert load_ink(reopened, identity, "original", 2)[0]["id"] == "second"
-    assert load_ink(reopened, identity, "translated", 1)[0]["id"] == "translation"
-    assert load_ink(reopened, "another-paper", "original", 1) == []
+    assert reopened.ink(identity, "original", 1) == [stroke()]
+    assert reopened.ink(identity, "original", 2)[0]["id"] == "second"
+    assert reopened.ink(identity, "translated", 1)[0]["id"] == "translation"
+    assert reopened.ink("another-paper", "original", 1) == []
     assert client.put(path + "/original/1", json={"strokes": []}).status_code == 200
     assert client.get(path + "/original/1").json() == {"strokes": []}
-    assert load_ink(reopened, identity, "original", 2)
+    assert reopened.ink(identity, "original", 2)
     with lib.connection() as db:
         db.execute("DELETE FROM papers WHERE id=?", (identity,))
         assert db.execute("SELECT COUNT(*) FROM pdf_ink").fetchone()[0] == 0
@@ -86,9 +86,9 @@ def test_export_renders_same_coordinates_on_rotated_cropped_pages(ink_env, tmp_p
         page.set_rotation(rotation)
         pdf.save(source)
     before = source.read_bytes()
-    save_ink(lib, identity, "original", 1, [stroke(), stroke("dot", points=[[0.5, 0.7]])])
+    lib.save_ink(identity, "original", 1, [stroke(), stroke("dot", points=[[0.5, 0.7]])])
     result = tmp_path / f"ink-{rotation}.pdf"
-    result.write_bytes(annotated_pdf(lib, identity, "original", source))
+    result.write_bytes(annotated_pdf(source, lib.ink_by_page(identity, "original")))
     assert source.read_bytes() == before
     png = page_png(result, 0, 800)
     assert png
@@ -105,8 +105,8 @@ def test_export_all_pages_preserves_sources_and_blocks_library_overwrite(ink_env
     folder = lib.folder(identity)
     original = (folder / "original.pdf").read_bytes()
     (folder / "translated.pdf").write_bytes(original)
-    save_ink(lib, identity, "original", 2, [stroke()])
-    save_ink(lib, identity, "translated", 1, [stroke("translation", color="#2563eb")])
+    lib.save_ink(identity, "original", 2, [stroke()])
+    lib.save_ink(identity, "translated", 1, [stroke("translation", color="#2563eb")])
     path = f"/api/papers/{identity}/ink-export"
     for side in ["original", "translated"]:
         response = client.post(path, json={"side": side})
@@ -130,12 +130,12 @@ def test_export_all_pages_preserves_sources_and_blocks_library_overwrite(ink_env
 def test_ink_is_in_library_backup(ink_env, tmp_path):
     from paperdesk.core.reading_tools import create_backup, restore_backup
     _, lib, identity = ink_env
-    save_ink(lib, identity, "original", 1, [stroke()])
+    lib.save_ink(identity, "original", 1, [stroke()])
     archive = tmp_path / "backup.zip"
     create_backup(lib, archive)
-    save_ink(lib, identity, "original", 1, [])
+    lib.save_ink(identity, "original", 1, [])
     restore_backup(lib, archive)
-    assert load_ink(Library(lib.root), identity, "original", 1) == [stroke()]
+    assert Library(lib.root).ink(identity, "original", 1) == [stroke()]
 
 
 def test_new_objects_and_page_inventory(ink_env):
@@ -152,7 +152,7 @@ def test_new_objects_and_page_inventory(ink_env):
     invalid = [stroke(kind="text", text="text"), stroke(kind="wrong"), stroke(kind="text", text="", points=items[1]["points"])]
     for item in invalid:
         assert client.put(path + "/ink/original/1", json={"strokes": [item]}).status_code == 422
-    assert load_ink(lib, identity, "original", 1) == items
+    assert lib.ink(identity, "original", 1) == items
 
 
 @pytest.mark.parametrize("page_rotation", [0, 90, 180, 270])
@@ -169,12 +169,12 @@ def test_export_japanese_text_rotated_box_and_transparent_highlighter(ink_env, t
     points = [[0.25, 0.3], [0.65, 0.3], [0.65, 0.42], [0.25, 0.42]]
     rotated = [[0.25 + (x - 0.25) * math.cos(angle) - (y - 0.3) * ratio * math.sin(angle),
                 0.3 + (x - 0.25) * math.sin(angle) / ratio + (y - 0.3) * math.cos(angle)] for x, y in points]
-    save_ink(lib, identity, "original", 1, [
+    lib.save_ink(identity, "original", 1, [
         stroke("highlight", kind="highlighter", width=0.04, color="#facc15", points=[[0.1, 0.8], [0.8, 0.8]]),
         stroke("text", kind="text", text="日本語の注釈\nTest 123", color="#dc2626", points=rotated),
     ])
     output = tmp_path / "annotated-text.pdf"
-    output.write_bytes(annotated_pdf(lib, identity, "original", source))
+    output.write_bytes(annotated_pdf(source, lib.ink_by_page(identity, "original")))
     with fitz.open(output) as pdf:
         assert "日本語の注釈" in pdf[0].get_text()
         assert "Test 123" in pdf[0].get_text()
@@ -229,7 +229,7 @@ def test_capture_can_include_ink_on_rotated_and_preview_pages(ink_env, side, rot
         pdf[0 if side == "translated" else 1].set_rotation(rotation)
         pdf.saveIncr()
     before = source.read_bytes()
-    save_ink(lib, identity, side, 2, [stroke(width=0.02), stroke("text", kind="text", color="#0000ff", text="確認",
+    lib.save_ink(identity, side, 2, [stroke(width=0.02), stroke("text", kind="text", color="#0000ff", text="確認",
         points=[[.2, .4], [.4, .4], [.4, .5], [.2, .5]])])
     base = f"/api/papers/{identity}"
     body = {"side": side, "page": 2, "x": .1, "y": .2, "width": .8, "height": .4}

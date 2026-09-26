@@ -7,11 +7,12 @@ import re
 from paperdesk.layout.reading_flow import unit_pages
 from paperdesk.layout.reference_layout import mark_references
 from paperdesk.pdf.pdf_engine import translation_units
+from paperdesk.core.paths import PaperFiles
 
 
 def cached_required_translation_pages(folder: Path, page_count: int) -> list[int]:
     try:
-        document = json.loads((folder / "document.json").read_text("utf-8"))
+        document = json.loads((PaperFiles(folder).document_json).read_text("utf-8"))
         return required_translation_pages(document)
     except (OSError, ValueError, KeyError, TypeError):
         return list(range(1, page_count + 1))

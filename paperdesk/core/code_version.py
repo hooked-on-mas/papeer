@@ -10,7 +10,9 @@ import sys
 # Explicit scope: UI, viewing, Windows integration and library management must
 # not invalidate translations. Add new translation pipeline modules here.
 TRANSLATION_SOURCES = (
-    "translation/translation.py", "translation/translation_context.py", "core/providers.py", "core/service.py",
+    "translation/translation.py", "translation/translation_context.py", "core/service.py",
+    "providers/__init__.py", "providers/base.py", "providers/common.py", "providers/registry.py",
+    "providers/codex.py", "providers/claude_code.py", "providers/antigravity.py", "providers/openai_compat.py",
     "layout/reading_flow.py", "pdf/pdf_engine.py", "layout/math_layout.py", "layout/figure_layout.py",
     "layout/table_layout.py", "layout/algorithm_layout.py", "layout/reference_layout.py", "pdf/pdf_math_crops.py",
     "pdf/pdf_typography.py", "pdf/pdf_fonts.py", "core/terminology.py",

@@ -13,7 +13,7 @@ import threading
 
 from paperdesk.core.config import Settings, data_directory
 from paperdesk.pdf.pdf_engine import batches, build_translated_pdf, extract_pdf, save_json, translation_units
-from paperdesk.core.providers import Provider
+from paperdesk.providers import create_provider
 from paperdesk.translation.translation import RetryState, translate_batch
 from paperdesk.translation.translation_context import contextual_units
 from paperdesk.layout.reading_flow import unit_pages, expand_pages
@@ -24,7 +24,7 @@ def run(snapshot: Path, output: Path):
     output.mkdir(parents=True, exist_ok=True)
     cancel = threading.Event()
     settings = Settings.load(data_directory())
-    provider = Provider(settings, cancel)
+    provider = create_provider(settings, cancel)
     reports = {}
     for sample in samples:
         identity, selected = sample["id"], set(sample["pages"])

@@ -63,7 +63,7 @@ class PageSelectionTests(unittest.TestCase):
                 self.assertEqual(backup.read_bytes(), old_cache)
 
     def test_retained_pages_survive_interruption_and_next_run(self):
-        from paperdesk.core.providers import Cancelled
+        from paperdesk.providers import Cancelled
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / 'source.pdf'
@@ -90,7 +90,7 @@ class PageSelectionTests(unittest.TestCase):
             self.assertEqual(report['translated_pages'], [1, 3])
 
     def test_interrupted_retranslation_keeps_earlier_translations_and_old_runs_are_removed(self):
-        from paperdesk.core.providers import Cancelled
+        from paperdesk.providers import Cancelled
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / 'source.pdf'

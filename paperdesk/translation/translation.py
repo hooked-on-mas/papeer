@@ -10,7 +10,7 @@ import re
 import unicodedata
 
 from paperdesk.layout.math_layout import MATH_TOKEN
-from paperdesk.core.providers import check_cancel, parse_json_answer
+from paperdesk.providers import check_cancel, parse_json_answer
 from paperdesk.translation.translation_context import recovery_context
 from paperdesk.core.code_version import application_version
 

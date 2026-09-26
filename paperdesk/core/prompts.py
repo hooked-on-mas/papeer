@@ -1,17 +1,42 @@
-import os
+"""Instructions sent to the AI: built-in texts, which the user may override in the data directory."""
 from pathlib import Path
-from paperdesk.core.config import data_directory
+
+from paperdesk.core.paths import data_directory
 
 _BUILTIN_DIR = Path(__file__).parent / "prompts"
 
-def _get_custom_dir() -> Path:
-    env_dir = os.environ.get("PAPERDESK_DATA_DIR")
-    if env_dir:
-        return Path(env_dir).resolve() / "prompts"
+
+def _custom_dir() -> Path:
     return data_directory() / "prompts"
 
+
 def load(name: str) -> str:
-    custom_path = _get_custom_dir() / f"{name}.txt"
+    custom_path = _custom_dir() / f"{name}.txt"
     if custom_path.exists():
         return custom_path.read_text(encoding="utf-8").strip()
     return (_BUILTIN_DIR / f"{name}.txt").read_text(encoding="utf-8").strip()
+
+
+def defaults() -> dict[str, str]:
+    """Built-in texts by name, so the settings dialog can show and restore them."""
+    return {p.stem: p.read_text("utf-8").strip() for p in sorted(_BUILTIN_DIR.glob("*.txt"))}
+
+
+def current() -> dict[str, str]:
+    """The text in use for every prompt: the user's override, else the built-in one."""
+    return {name: load(name) for name in defaults()}
+
+
+def save_overrides(texts: dict[str, str]) -> None:
+    """Store edited prompts; an empty text removes the override and restores the built-in one."""
+    known = set(defaults())
+    directory = _custom_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, content in texts.items():
+        if name not in known:
+            raise ValueError(f"不明なプロンプトです: {name}")
+        path = directory / f"{name}.txt"
+        if content.strip():
+            path.write_text(content.strip(), "utf-8")
+        elif path.exists():
+            path.unlink()

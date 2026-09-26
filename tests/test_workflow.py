@@ -12,7 +12,7 @@ import pymupdf as fitz
 
 from paperdesk.core.config import Settings
 from paperdesk.pdf.pdf_engine import batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, page_png, translation_units
-from paperdesk.core.providers import Cancelled, Provider
+from paperdesk.providers import Cancelled, create_provider
 from paperdesk.core.service import PaperService, link_citations
 from paperdesk.translation.translation import validate_translations
 from paperdesk.core.storage import Library, normalize_collection_name
@@ -365,8 +365,9 @@ class WorkflowTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            settings = Settings(provider="api", model="test-model", base_url=f"http://127.0.0.1:{server.server_port}/v1")
-            self.assertEqual(Provider(settings, self.cancel).generate("test", "日本語"), "接続確認")
+            settings = Settings(provider="api", model="test-model",
+                            provider_options={"api": {"base_url": f"http://127.0.0.1:{server.server_port}/v1"}})
+            self.assertEqual(create_provider(settings, self.cancel).generate("test", "日本語"), "接続確認")
         finally:
             server.shutdown()
             server.server_close()
@@ -380,8 +381,8 @@ class WorkflowTests(unittest.TestCase):
                         "out=sys.argv[sys.argv.index('--output-last-message')+1]\n"
                         "pathlib.Path(out).write_text('回答',encoding='utf-8')\n", "utf-8")
         fake.chmod(0o755)
-        settings = Settings(codex_path=str(fake), timeout_seconds=10)
-        result = Provider(settings, self.cancel).generate("read", "日本語 & test `literal` $(literal)")
+        settings = Settings(provider_options={"codex": {"cli_path": str(fake)}}, timeout_seconds=10)
+        result = create_provider(settings, self.cancel).generate("read", "日本語 & test `literal` $(literal)")
         self.assertEqual(result, "回答")
 
 

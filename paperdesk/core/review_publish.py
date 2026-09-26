@@ -16,7 +16,7 @@ from paperdesk.pdf.pdf_engine import PDF_LOCK, translation_units, interleaved_pd
 from paperdesk.translation.translation import translation_fingerprint, validate_translations
 from paperdesk.translation.translation_preview import translated_page, translated_page_numbers
 from paperdesk.layout.reading_flow import unit_pages, materialize_flows
-from paperdesk.core.terminology import apply_glossary, global_glossary
+from paperdesk.core.terminology import apply_glossary, glossary_for_folder
 
 
 def _read(path, default=None):
@@ -129,12 +129,11 @@ def _publish(folder, review, manifest, entries):
     interleaved_pdf(folder/'original.pdf', stage/'translated.pdf', stage/'interleaved.pdf')
     if 'bilingual.pdf' in names:
         bilingual_pdf(folder/'original.pdf', stage/'translated.pdf', stage/'bilingual.pdf')
-    settings = Settings(provider=manifest['provider'], model=manifest['model'],
-                        base_url=manifest.get('base_url', Settings().base_url))
+    settings = Settings.from_values({'provider': manifest['provider'], 'model': manifest['model'],
+                                     'base_url': manifest.get('base_url', Settings().base_url)})
     # With the glossary applied, as PaperService.translate fingerprints it.
     units = translation_units(document)
-    root = folder.parent.parent
-    apply_glossary(units, global_glossary(root) if (root/'library.sqlite3').exists() else [])
+    apply_glossary(units, glossary_for_folder(folder))
     fingerprint = translation_fingerprint(settings, units)
     old_cache = _read(folder/'translation-cache.json', {})
     cache = old_cache if old_cache.get('fingerprint') == fingerprint else {'fingerprint': fingerprint, 'translations': {}}

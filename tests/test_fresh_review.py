@@ -17,7 +17,7 @@ class FreshReviewTests(unittest.TestCase):
             for name in ('translated.pdf', 'translation-cache.json', 'document.json'):
                 (folder / name).write_bytes(b'invalid stale data')
             fake = FakeProvider()
-            with patch('tools.review_fresh_layout.Provider', return_value=fake):
+            with patch('tools.review_fresh_layout.create_provider', return_value=fake):
                 first = review(root / 'papers', root / 'first', 1, 1, ['aaaa:1'])
                 calls = fake.calls
                 self.assertGreater(calls, 0)

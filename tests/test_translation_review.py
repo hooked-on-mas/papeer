@@ -33,8 +33,8 @@ def test_review_only_requires_pages_with_translatable_content(tmp_path, monkeypa
     assert reading["completed_pages"] == []
     assert reading["empty_pages"] == []
 
-    from sidecar.app import translation_state
-    monkeypatch.setattr("sidecar.app.translated_page_numbers", lambda *_: [1, 4])
+    from paperdesk.core.reading_state import translation_state
+    monkeypatch.setattr("paperdesk.core.reading_state.translated_page_numbers", lambda *_: [1, 4])
     state = translation_state(lib.folder(paper_id), 4)
     assert state["translation_required_count"] == 2
     assert state["translation_completed_required_count"] == 2
