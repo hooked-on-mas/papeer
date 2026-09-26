@@ -62,9 +62,18 @@ class Library:
                     anchor_y REAL NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS pdf_ink (
+                    paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+                    side TEXT NOT NULL,
+                    page INTEGER NOT NULL,
+                    strokes TEXT NOT NULL,
+                    PRIMARY KEY(paper_id, side, page)
+                );
             """)
             if "anchor_y" not in {row[1] for row in db.execute("PRAGMA table_info(bookmarks)")}:
                 db.execute("ALTER TABLE bookmarks ADD COLUMN anchor_y REAL NOT NULL DEFAULT 0")
+            if "anchor_x" not in {row[1] for row in db.execute("PRAGMA table_info(bookmarks)")}:
+                db.execute("ALTER TABLE bookmarks ADD COLUMN anchor_x REAL NOT NULL DEFAULT 0")
             if "usage" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
                 db.execute("ALTER TABLE messages ADD COLUMN usage TEXT")
             if "scope" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
@@ -378,18 +387,33 @@ class Library:
             return [dict(row) for row in db.execute(
                 "SELECT * FROM bookmarks WHERE paper_id=? ORDER BY page,id", (paper_id,))]
 
+    def sticky_notes(self) -> list[dict]:
+        with self.connection() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT b.*, p.title AS paper_title, p.original_name AS paper_name "
+                "FROM bookmarks b JOIN papers p ON p.id=b.paper_id ORDER BY b.id DESC")]
+
     def add_bookmark(self, paper_id: str, page: int, side: str, quote: str,
-                     label: str = "重要", note: str = "", anchor_y: float = 0) -> dict:
+                     label: str = "重要", note: str = "", anchor_y: float = 0, anchor_x: float = 0) -> dict:
         paper = self.paper(paper_id)
-        if not 1 <= page <= paper["pages"] or side not in {"original", "translated"} or not 0 <= anchor_y <= 1:
+        if not 1 <= page <= paper["pages"] or side not in {"original", "translated"} or not 0 <= anchor_y <= 1 or not 0 <= anchor_x <= 1:
             raise ValueError("ページまたは原文・訳文の指定が不正です。")
         quote = quote.strip()[:2000]
-        if not quote:
-            raise ValueError("保存する文章を選択してください。")
         with self.connection() as db:
-            cursor = db.execute("INSERT INTO bookmarks(paper_id,page,side,quote,label,note,anchor_y) VALUES(?,?,?,?,?,?,?)",
-                                (paper_id, page, side, quote, label[:40], note[:1000], anchor_y))
+            cursor = db.execute("INSERT INTO bookmarks(paper_id,page,side,quote,label,note,anchor_y,anchor_x) VALUES(?,?,?,?,?,?,?,?)",
+                                (paper_id, page, side, quote, label[:40], note[:1000], anchor_y, anchor_x))
             return dict(db.execute("SELECT * FROM bookmarks WHERE id=?", (cursor.lastrowid,)).fetchone())
+
+    def update_bookmark(self, paper_id: str, bookmark_id: int, label: str, note: str,
+                        *, anchor_x: float | None = None, anchor_y: float | None = None) -> dict:
+        self.paper(paper_id)
+        with self.connection() as db:
+            updated = db.execute("UPDATE bookmarks SET label=?,note=?,anchor_x=COALESCE(?,anchor_x),"
+                                 "anchor_y=COALESCE(?,anchor_y) WHERE paper_id=? AND id=?",
+                                 (label.strip()[:40] or "重要", note[:1000], anchor_x, anchor_y, paper_id, bookmark_id))
+            if not updated.rowcount:
+                raise ValueError("付箋が見つかりません。")
+            return dict(db.execute("SELECT * FROM bookmarks WHERE id=?", (bookmark_id,)).fetchone())
 
     def delete_bookmark(self, paper_id: str, bookmark_id: int) -> bool:
         self.paper(paper_id)

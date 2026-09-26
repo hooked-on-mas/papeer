@@ -26,7 +26,7 @@ def pdf_page_count(path: Path) -> int | None:
         return None
 
 
-def page_png(path: Path, index: int, width: int = 650) -> bytes | None:
+def page_png(path: Path | bytes, index: int, width: int = 650) -> bytes | None:
     if not math.isfinite(width) or width <= 0:
         raise ValueError("PDFの描画幅は正の数で指定してください。")
     with _RENDER_LOCK, pdfium.PdfDocument(path) as document:

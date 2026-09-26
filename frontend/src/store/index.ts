@@ -157,9 +157,10 @@ export const useStore = create<UiState>()(
           paperPages: id ? { ...state.paperPages, [id]: target } : state.paperPages,
         };
       }),
-      // In focus mode the other tabs open beside the reader instead of replacing it.
+      // Sticky notes always open as a full tab; other tools can open beside the focused reader.
       setActiveTab: (tab) => set((state) =>
-        state.focusMode && tab !== "reader" ? { focusPanel: tab } : { activeTab: tab }),
+        tab === "sticky-notes" ? { activeTab: tab, focusMode: false, focusPanel: null }
+          : state.focusMode && tab !== "reader" ? { focusPanel: tab } : { activeTab: tab }),
       setZoom: (zoom) => set({ zoom: Math.max(ZOOM_PRESETS[0], Math.min(ZOOM_PRESETS[ZOOM_PRESETS.length - 1], zoom)) }),
       setCurrentPage: (page) => set((state) => ({
         currentPage: page,

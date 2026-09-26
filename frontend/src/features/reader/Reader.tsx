@@ -11,7 +11,8 @@ import { importPdfs } from "@/app/actions";
 import { changeZoom } from "./navigation";
 import { createScrollSync } from "./scrollSync";
 import { apiRequest } from "@/api/client";
-import { ReaderExtras, type BookmarkData, type PendingBookmark } from "./ReaderExtras";
+import { ReaderExtras } from "./ReaderExtras";
+import type { StickyNote } from "./stickyNotes";
 import type { JumpTarget } from "./PdfPane";
 
 /** Caption for the translation pane, following the old reader's rules. */
@@ -37,11 +38,10 @@ export function Reader() {
   const translatedOnly = useStore((s) => s.translatedOnly);
   const activeJobs = useStore((s) => s.activeJobs);
   const [search, setSearch] = useState<{ query: string; side: "original" | "translated" }>({ query: "", side: "original" });
-  const [bookmarkQuote, setBookmarkQuote] = useState<PendingBookmark | null>(null);
   const [bookmarkTarget, setBookmarkTarget] = useState<JumpTarget | null>(null);
   const { data: bookmarks = [] } = useQuery({
-    queryKey: ["bookmarks", activePaperId],
-    queryFn: () => apiRequest<BookmarkData[]>("GET", `/api/papers/${activePaperId}/bookmarks`),
+    queryKey: ["sticky-notes", activePaperId],
+    queryFn: () => apiRequest<StickyNote[]>("GET", `/api/papers/${activePaperId}/sticky-notes`),
     enabled: !!activePaperId,
   });
   const sourceHighlights = useMemo(() => bookmarks.filter(item => item.page === currentPage && item.side === "original"), [bookmarks, currentPage]);
@@ -56,15 +56,7 @@ export function Reader() {
 
   const pageCount = reading?.page_count ?? 0;
   const completed = reading?.completed_pages ?? [];
-  useEffect(() => {
-    const onBookmark = (event: Event) => {
-      const detail = (event as CustomEvent<PendingBookmark>).detail;
-      if (detail.paperId === useStore.getState().activePaperId) setBookmarkQuote(detail);
-    };
-    window.addEventListener("bookmark-selection", onBookmark);
-    return () => window.removeEventListener("bookmark-selection", onBookmark);
-  }, []);
-  useEffect(() => { setBookmarkQuote(null); setSearch({ query: "", side: "original" }); }, [activePaperId]);
+  useEffect(() => { setBookmarkTarget(null); setSearch({ query: "", side: "original" }); }, [activePaperId]);
   // A passage opened from the chat. Taken from the store so that it is shown once, not on every remount.
   const readerJump = useStore((s) => s.readerJump);
   useEffect(() => {
@@ -72,7 +64,7 @@ export function Reader() {
     if (!jump) return;
     useStore.getState().setReaderJump(null);
     if (jump.paperId !== activePaperId) return;
-    setBookmarkTarget({ id: Date.now(), page: jump.page, side: jump.side, anchor_y: jump.anchor_y, passage: jump });
+    setBookmarkTarget({ id: Date.now(), page: jump.page, side: jump.side, anchor_y: jump.anchor_y, anchor_x: jump.anchor_x, passage: jump });
   }, [readerJump, activePaperId]);
 
   // Keep the page valid for the paper and the 翻訳済みページのみ filter.
@@ -181,7 +173,6 @@ export function Reader() {
     <div ref={readerRef} className="flex flex-col h-full w-full bg-reader-bg">
       <ReaderToolbar />
       <ReaderExtras paperId={activePaperId} search={search} setSearch={setSearch}
-        bookmarkQuote={bookmarkQuote} setBookmarkQuote={setBookmarkQuote} onBookmarkJump={item => setBookmarkTarget({ ...item })}
         onSearchJump={(item, index) => setBookmarkTarget({ id: -index - 1, page: item.page, side: search.side, anchor_y: item.anchor_y })} />
       {noTranslatedPages ? (
         <div className="flex-1 flex items-center justify-center text-muted-foreground p-8 text-[13px]">
@@ -204,6 +195,7 @@ export function Reader() {
             <div className="flex-1 relative min-h-0">
               <PdfPane
                 url={leftUrl}
+                inkPage={reading ? { paperId: activePaperId, page: currentPage } : undefined}
                 pageNumber={currentPage}
                 zoom={zoom}
                 onScroll={(e) => syncScroll(e.currentTarget, rightScrollRef.current)}
@@ -230,6 +222,7 @@ export function Reader() {
             <div className="flex-1 relative min-h-0">
               <PdfPane
                 url={rightUrl}
+                inkPage={{ paperId: activePaperId, page: currentPage }}
                 pageNumber={(ref?.index ?? 0) + 1}
                 zoom={zoom}
                 onScroll={(e) => syncScroll(e.currentTarget, leftScrollRef.current)}

@@ -1,7 +1,7 @@
 import React, { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Bookmark, ChevronLeft, ChevronRight, Copy, Languages, MoveHorizontal, NotebookPen, Paperclip, Sparkles, ZoomIn, ZoomOut,
+  StickyNote, ChevronLeft, ChevronRight, Copy, Languages, MoveHorizontal, NotebookPen, Paperclip, Sparkles, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { useStore, type PassageAttachment } from "@/store";
 import {
@@ -12,6 +12,7 @@ import { cleanPdfSelection, quoteForNote, restoreFormulas } from "@/lib/pdfSelec
 import { showError } from "@/features/jobs/jobEvents";
 import { changeZoom, movePage } from "./navigation";
 import { askText } from "@/components/AppDialogs";
+import { openStickyNote } from "./stickyNotesStore";
 import { textLayerOffsets } from "./textLayerRange";
 
 /** Raw selected text inside `area`, or "" when the selection is empty or elsewhere. */
@@ -153,11 +154,11 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
               <NotebookPen /> メモに引用
             </ContextMenuItem>
             <ContextMenuItem onClick={withPassage((text, _source, paperId, anchorY) => {
-              window.dispatchEvent(new CustomEvent("bookmark-selection", { detail: {
-                paperId, page: passage.current?.page, side: translated ? "translated" : "original", quote: text, anchorY,
-              } }));
+              void openStickyNote({
+                paperId, page: passage.current!.page, side: translated ? "translated" : "original", quote: text, anchorY,
+              });
             })}>
-              <Bookmark /> しおりに保存…
+              <StickyNote /> 選択した文章に付箋を貼る…
             </ContextMenuItem>
           </>
         ) : (

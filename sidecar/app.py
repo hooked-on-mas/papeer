@@ -38,6 +38,7 @@ from sidecar.jobs import ConcurrencyConflict, JobManager, TurnQueue
 from sidecar.schemas import (
     AskRequest,
     BookmarkRequest,
+    BookmarkEditRequest,
     GlossaryRequest,
     CreateCollectionRequest,
     ExportRequest,
@@ -852,24 +853,43 @@ def search_paper(paper_id: str, q: str = "", side: str = "original",
     return {"results": results, "total": len(results), "limited": len(results) == 200}
 
 
+@app.get("/api/sticky-notes")
+def get_sticky_notes(dependencies: None = Depends(verify_token)) -> list[dict]:
+    return get_library().sticky_notes()
+
+
+@app.get("/api/papers/{paper_id}/sticky-notes")
 @app.get("/api/papers/{paper_id}/bookmarks")
 def get_bookmarks(paper_id: str, dependencies: None = Depends(verify_token)) -> list[dict]:
     return get_library().bookmarks(paper_id)
 
 
+@app.post("/api/papers/{paper_id}/sticky-notes")
 @app.post("/api/papers/{paper_id}/bookmarks")
 def add_bookmark(paper_id: str, body: BookmarkRequest,
                  dependencies: None = Depends(verify_token)) -> dict:
     try:
-        return get_library().add_bookmark(paper_id, body.page, body.side, body.quote, body.label, body.note, body.anchor_y)
+        return get_library().add_bookmark(paper_id, body.page, body.side, body.quote, body.label, body.note, body.anchor_y, body.anchor_x)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.delete("/api/papers/{paper_id}/sticky-notes/{bookmark_id}")
 @app.delete("/api/papers/{paper_id}/bookmarks/{bookmark_id}")
 def delete_bookmark(paper_id: str, bookmark_id: int,
                     dependencies: None = Depends(verify_token)) -> dict[str, bool]:
     return {"deleted": get_library().delete_bookmark(paper_id, bookmark_id)}
+
+
+@app.patch("/api/papers/{paper_id}/sticky-notes/{bookmark_id}")
+@app.patch("/api/papers/{paper_id}/bookmarks/{bookmark_id}")
+def update_bookmark(paper_id: str, bookmark_id: int, body: BookmarkEditRequest,
+                    dependencies: None = Depends(verify_token)) -> dict:
+    try:
+        return get_library().update_bookmark(paper_id, bookmark_id, body.label, body.note,
+                                             anchor_x=body.anchor_x, anchor_y=body.anchor_y)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.get("/api/papers/{paper_id}/glossary")
@@ -1179,6 +1199,10 @@ from sidecar.reading_api import register_reading_api
 
 register_reading_api(app, verify_token)
 
+from sidecar.ink_api import register_ink_api
+
+register_ink_api(app, verify_token)
+
 
 def main() -> None:
     import uvicorn
@@ -1189,4 +1213,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

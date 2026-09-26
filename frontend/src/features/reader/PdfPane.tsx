@@ -9,11 +9,20 @@ import "react-pdf/dist/Page/TextLayer.css";
 import { authToken } from "@/api/client";
 import { PdfContextMenu } from "./PdfContextMenu";
 import { selectInTextLayer } from "./textLayerRange";
+import { useInkEditor } from "./useInkEditor";
+import { InkOverlay } from "./InkOverlay";
+import { InkToolbar } from "./InkToolbar";
+import { InkCapture } from "./InkCapture";
+import type { Bounds } from "./inkGeometry";
+import type { StickyNote } from "./stickyNotes";
+import { StickyNoteMarker } from "./StickyNoteMarker";
+import { openStickyNote } from "./stickyNotesStore";
 
 // Bundled worker, cMaps and fonts keep PDFs (including CJK text) readable offline.
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 interface PdfPaneProps {
+  inkPage?: { paperId: string; page: number };
   url: string | null;
   pageNumber: number;
   /** Multiplier over the width that fits the pane. */
@@ -27,7 +36,7 @@ interface PdfPaneProps {
   translated?: boolean;
   searchTerm?: string;
   jumpTarget?: JumpTarget | null;
-  savedHighlights?: { id: number; quote: string; anchor_y: number }[];
+  savedHighlights?: StickyNote[];
 }
 
 /** A place to scroll to, from a bookmark, a search result or a chat attachment. */
@@ -36,6 +45,7 @@ export interface JumpTarget {
   page: number;
   side: "original" | "translated";
   anchor_y: number;
+  anchor_x?: number;
   /** A chat attachment's passage, selected once its text layer is ready. */
   passage?: { start?: number | null; end?: number | null; raw?: string };
 }
@@ -68,7 +78,16 @@ function fitTextLayer(layer: HTMLElement, content: TextContent, scale: number) {
 
 export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholder, missingPageMessage,
   translated = false, searchTerm = "", jumpTarget,
-  savedHighlights = [] }: PdfPaneProps) {
+  savedHighlights = [], inkPage }: PdfPaneProps) {
+  const [inkViewport, setInkViewport] = useState<{ key: string; ratio: number } | null>(null);
+  const editor = useInkEditor(url && !placeholder ? inkPage?.paperId : undefined, translated ? "translated" : "original", inkPage?.page ?? pageNumber, inkViewport?.ratio ?? 1);
+  const { ink } = editor;
+  const [capture, setCapture] = useState<Bounds | null>(null);
+  useEffect(() => setCapture(null), [url, pageNumber, editor.tool]);
+  const [placingNote, setPlacingNote] = useState(false);
+  useEffect(() => setPlacingNote(false), [url, pageNumber]);
+  useEffect(() => { if (editor.tool !== "select") setPlacingNote(false); }, [editor.tool]);
+  const inkKey = `${url}:${pageNumber}`;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [numPages, setNumPages] = useState<number | null>(null);
@@ -139,6 +158,10 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     if (!page || !scroller) return;
     const top = page.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
     scroller.scrollTop = Math.max(0, top + jumpTarget.anchor_y * page.clientHeight - scroller.clientHeight * 0.25);
+    if (jumpTarget.anchor_x !== undefined) {
+      const left = page.getBoundingClientRect().left - scroller.getBoundingClientRect().left + scroller.scrollLeft;
+      scroller.scrollLeft = Math.max(0, left + jumpTarget.anchor_x * page.clientWidth - scroller.clientWidth * 0.5);
+    }
   }, [jumpTarget, translated]);
   useEffect(() => { jumpToBookmark(); }, [jumpToBookmark, pageNumber, url]);
 
@@ -210,6 +233,23 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   );
 
   return (
+    <div ref={editor.scopeRef} className="flex flex-col h-full min-h-0" onPointerDownCapture={editor.activate} onFocusCapture={editor.activate}>
+    {inkPage && url && !placeholder && <InkToolbar editor={editor} disabled={inkViewport?.key !== inkKey} onStickyNote={selection => {
+      const box = editor.selection;
+      if (selection && box) {
+        void openStickyNote({ paperId: inkPage.paperId, page: inkPage.page, side: translated ? "translated" : "original",
+          anchorY: box.y, anchorX: box.x, quote: editor.selected.map(s => s.text ?? "").filter(Boolean).join("\n") });
+      } else {
+        editor.setTool("select"); setCapture(null); setPlacingNote(value => !value);
+      }
+    }} />}
+    {placingNote && <div role="status" className="flex items-center gap-2 border-b bg-amber-50 px-3 py-2 text-xs text-amber-950">
+      PDF上の貼りたい場所をクリックしてください。
+      <button className="ml-auto underline" onClick={() => setPlacingNote(false)}>キャンセル</button>
+    </div>}
+    <div className="flex-1 min-h-0 relative">
+    {capture && inkPage && <InkCapture key={`${inkPage.paperId}:${inkPage.page}`} paperId={inkPage.paperId} page={inkPage.page}
+      side={translated ? "translated" : "original"} box={capture} onClose={() => setCapture(null)} />}
     <PdfContextMenu translated={translated}>
       <div
         ref={(node) => {
@@ -237,7 +277,11 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                     inputRef={pageRef}
                     onLoadSuccess={(page) => { loadedPage.current = page; }}
                     onGetTextSuccess={(content) => { textContent.current = content; }}
-                    onRenderSuccess={() => { setCovering(false); jumpToBookmark(); }}
+                    onRenderSuccess={(page) => {
+                      setCovering(false); jumpToBookmark();
+                      const viewport = page.getViewport({ scale: 1 });
+                      setInkViewport({ key: inkKey, ratio: viewport.height / viewport.width });
+                    }}
                     onRenderError={() => setCovering(false)}
                     onRenderTextLayerSuccess={handleTextLayerRendered}
                     renderTextLayer
@@ -246,13 +290,26 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                     className="shadow-sm border bg-white"
                   />
                   {matches.map(({ saved, ...rect }, index) => <div key={index} className={`absolute pointer-events-none ${saved ? "bg-amber-400/30" : "bg-yellow-300/50"}`} style={rect} />)}
-                  {savedHighlights.map(item => <div key={`bookmark-${item.id}`} className="absolute left-0 w-1.5 h-3 bg-amber-500 pointer-events-none" style={{ top: item.anchor_y * (pageRef.current?.clientHeight ?? 0) }} />)}
+                  {savedHighlights.map(item => <StickyNoteMarker key={`sticky-${item.id}`} item={item}
+                    movable={!editor.locked && !placingNote && ["select", "region", "lasso"].includes(editor.tool)} />)}
+                  {placingNote && inkPage && <button autoFocus aria-label="PDFのこの位置に付箋を貼る" className="absolute inset-0 z-30 cursor-copy bg-amber-100/10 outline-2 outline-amber-400"
+                    onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setPlacingNote(false); } }}
+                    onClick={e => {
+                      e.stopPropagation();
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      void openStickyNote({ paperId: inkPage.paperId, page: inkPage.page, side: translated ? "translated" : "original", quote: "",
+                        anchorY: e.detail === 0 ? 0.5 : Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
+                        anchorX: e.detail === 0 ? 0.5 : Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) });
+                      setPlacingNote(false);
+                    }} />}
                   {/* Sits over the canvas, inside the page's 1px border. */}
                   <canvas
                     ref={snapshotRef}
                     hidden={!covering}
                     className="absolute left-px top-px w-[calc(100%-2px)] h-[calc(100%-2px)] pointer-events-none"
                   />
+                  {ink.entry && (ink.ready || editor.tool === "capture") && inkViewport?.key === inkKey && <InkOverlay key={`${inkPage?.paperId}:${inkPage?.page}:${inkKey}:${editor.tool}:${editor.locked}:${editor.visible}`}
+                    editor={editor} aspectRatio={inkViewport.ratio} onCapture={setCapture} />}
                 </div>
               )}
             </Document>
@@ -260,6 +317,8 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
         )}
       </div>
     </PdfContextMenu>
+    </div>
+    </div>
   );
 }
 

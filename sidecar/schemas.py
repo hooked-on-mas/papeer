@@ -75,7 +75,15 @@ class BookmarkRequest(BaseModel):
     quote: str
     label: str = "重要"
     note: str = ""
-    anchor_y: float = 0
+    anchor_y: float = Field(default=0, ge=0, le=1)
+    anchor_x: float = Field(default=0, ge=0, le=1)
+
+
+class BookmarkEditRequest(BaseModel):
+    label: str = Field(default="重要", max_length=40)
+    note: str = Field(default="", max_length=1000)
+    anchor_x: float | None = Field(default=None, ge=0, le=1)
+    anchor_y: float | None = Field(default=None, ge=0, le=1)
 
 
 class GlossaryRequest(BaseModel):

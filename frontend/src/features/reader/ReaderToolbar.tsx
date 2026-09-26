@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Maximize2, MessageSquare, Minimize2, NotebookPen, ScrollText, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, MessageSquare, Minimize2, NotebookPen, ScrollText, StickyNote, ZoomIn, ZoomOut } from "lucide-react";
 import { useStore, ZOOM_PRESETS } from "@/store";
 import { useArticle, useMessages, useReading } from "@/api/hooks";
 import { changeZoom, jumpToPage, movePage } from "./navigation";
@@ -125,6 +125,9 @@ export function ReaderToolbar() {
         <div className="w-px h-4 bg-border mx-2" />
         {focusMode && (
           <>
+            <button onClick={() => useStore.getState().setActiveTab("sticky-notes")} className={button} title="付箋タブへ（Ctrl+5）" aria-label="付箋タブへ">
+              <StickyNote className="w-4 h-4" />
+            </button>
             {FOCUS_PANELS.map(({ tab, label, icon: Icon, key }) => (
               <button
                 key={tab}

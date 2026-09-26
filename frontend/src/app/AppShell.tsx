@@ -13,6 +13,9 @@ import { Header } from "./Header";
 import { StatusBar } from "./StatusBar";
 import { LibrarySidebar } from "../features/library/LibrarySidebar";
 import { Reader } from "../features/reader/Reader";
+import { StickyNotesTab } from "../features/reader/StickyNotesTab";
+import { StickyNoteDialog } from "../features/reader/StickyNoteDialog";
+import { flushInkSaves } from "../features/reader/inkStore";
 import { SummaryPane } from "../features/summary/SummaryPane";
 import { ChatPane } from "../features/chat/ChatPane";
 import { NotesPane, pendingNoteSaves } from "../features/notes/NotesPane";
@@ -23,7 +26,7 @@ import { bindQueryClient, createFolder, importPdfs, normalizeCollection, renameF
 import { useDropTarget, useFileDrop } from "./fileDrop";
 import { flushUiState, initUiStateSync } from "./uiStateSync";
 
-const TABS = ["reader", "summary", "chat", "notes"];
+const TABS = ["reader", "summary", "chat", "notes", "sticky-notes"];
 
 async function waitForJobs(timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -66,6 +69,13 @@ function useCloseHandling(): void {
         await waitForJobs(15_000);
       }
       await Promise.all([...pendingNoteSaves].map((save) => save().catch(() => undefined)));
+      try {
+        await flushInkSaves();
+      } catch {
+        closing = false;
+        useStore.getState().setStatus("書き込みを保存できませんでした。PDFの保存ボタンで再試行してから終了してください。");
+        return;
+      }
       await flushUiState();
       try {
         await apiRequest("POST", "/shutdown");
@@ -212,6 +222,7 @@ export function AppShell() {
   useHotkeys("ctrl+f, meta+f", () => {
     if (useStore.getState().activeTab === "reader" && useStore.getState().activePaperId)
       window.dispatchEvent(new Event("open-reader-search"));
+    else if (useStore.getState().activeTab === "sticky-notes") document.getElementById("sticky-note-search")?.focus();
     else focusSearch();
   }, { preventDefault: true, enableOnFormTags: true });
   useHotkeys("ctrl+shift+f, meta+shift+f", focusSearch, { preventDefault: true, enableOnFormTags: true });
@@ -246,7 +257,7 @@ export function AppShell() {
   useHotkeys("ctrl+equal, meta+equal, ctrl+add, ctrl+semicolon, ctrl+shift+semicolon, ctrl+shift+equal", () => changeZoom(1), hotkeyOptions);
   useHotkeys("ctrl+minus, meta+minus, ctrl+subtract", () => changeZoom(-1), hotkeyOptions);
   useHotkeys("ctrl+0, meta+0", () => useStore.getState().setZoom(1), hotkeyOptions);
-  useHotkeys("ctrl+1, ctrl+2, ctrl+3, ctrl+4", (_e, handler) => {
+  useHotkeys("ctrl+1, ctrl+2, ctrl+3, ctrl+4, ctrl+5", (_e, handler) => {
     const tab = TABS[Number(handler.keys?.join("")) - 1];
     if (!tab) return;
     const store = useStore.getState();
@@ -283,6 +294,7 @@ export function AppShell() {
           )}
         </ResizablePanelGroup>
         {anyRunning && <StatusBar />}
+        <StickyNoteDialog />
         <AppDialogs />
         <Lightbox />
         <DropOverlay />
@@ -357,6 +369,7 @@ export function AppShell() {
                   )}
                 </TabsTrigger>
                 <TabsTrigger value="notes" title="Ctrl+4">メモ・整理</TabsTrigger>
+                <TabsTrigger value="sticky-notes" title="Ctrl+5">付箋</TabsTrigger>
               </TabsList>
             </div>
 
@@ -372,12 +385,16 @@ export function AppShell() {
             <TabsContent value="notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
               <NotesPane />
             </TabsContent>
+            <TabsContent value="sticky-notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+              <StickyNotesTab />
+            </TabsContent>
           </Tabs>
         </ResizablePanel>
       </ResizablePanelGroup>
 
       <StatusBar />
       <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
+      <StickyNoteDialog />
       <AppDialogs />
       <Lightbox />
       <DropOverlay />
