@@ -165,8 +165,6 @@ function handleFinished(event: JobFinished, queryClient: QueryClient): void {
     queryClient.invalidateQueries({ queryKey: ["messages", event.paper_id] });
     queryClient.invalidateQueries({ queryKey: ["reading", event.paper_id] });
     if (event.kind === "translate") {
-      queryClient.invalidateQueries({ queryKey: ["reading-blocks", event.paper_id] });
-      queryClient.invalidateQueries({ queryKey: ["translation-document", event.paper_id] });
       queryClient.invalidateQueries({ queryKey: ["paper-search", event.paper_id] });
     }
   }
@@ -239,7 +237,6 @@ export function useJobEvents(): void {
         } else if (data.type === "job.page_ready") {
           if (data.paper_id) {
             queryClient.invalidateQueries({ queryKey: ["reading", data.paper_id] });
-            queryClient.invalidateQueries({ queryKey: ["reading-blocks", data.paper_id] });
             queryClient.invalidateQueries({ queryKey: ["paper-search", data.paper_id] });
           }
         } else if (data.type === "job.finished") {

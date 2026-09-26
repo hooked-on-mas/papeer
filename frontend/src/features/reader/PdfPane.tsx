@@ -26,10 +26,6 @@ interface PdfPaneProps {
   /** Marks quotes taken from this pane as coming from the translation. */
   translated?: boolean;
   searchTerm?: string;
-  blocks?: { id: string; bbox: number[] }[];
-  pageSize?: { width: number; height: number };
-  activeBlock?: string | null;
-  onBlockClick?: (id: string) => void;
   jumpTarget?: JumpTarget | null;
   savedHighlights?: { id: number; quote: string; anchor_y: number }[];
 }
@@ -71,7 +67,7 @@ function fitTextLayer(layer: HTMLElement, content: TextContent, scale: number) {
 }
 
 export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholder, missingPageMessage,
-  translated = false, searchTerm = "", blocks = [], pageSize, activeBlock, onBlockClick, jumpTarget,
+  translated = false, searchTerm = "", jumpTarget,
   savedHighlights = [] }: PdfPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -234,16 +230,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
               className="mx-auto w-fit"
             >
               {numPages !== null && pageNumber > numPages ? message(missingPageMessage ?? "このページはありません。") : drawnWidth > 0 && (
-                <div className="relative" style={{ zoom: pageWidth === drawnWidth ? undefined : pageWidth / drawnWidth }}
-                  onClick={e => {
-                    if (!onBlockClick || !pageSize || window.getSelection()?.toString().trim()) return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = (e.clientX - rect.left) / rect.width * pageSize.width;
-                    const y = (e.clientY - rect.top) / rect.height * pageSize.height;
-                    const hit = blocks.filter(b => x >= b.bbox[0] && x <= b.bbox[2] && y >= b.bbox[1] && y <= b.bbox[3])
-                      .sort((a, b) => (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) - (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]))[0];
-                    if (hit) onBlockClick(hit.id);
-                  }}>
+                <div className="relative" style={{ zoom: pageWidth === drawnWidth ? undefined : pageWidth / drawnWidth }}>
                   <Page
                     pageNumber={pageNumber}
                     width={drawnWidth}
@@ -260,12 +247,6 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                   />
                   {matches.map(({ saved, ...rect }, index) => <div key={index} className={`absolute pointer-events-none ${saved ? "bg-amber-400/30" : "bg-yellow-300/50"}`} style={rect} />)}
                   {savedHighlights.map(item => <div key={`bookmark-${item.id}`} className="absolute left-0 w-1.5 h-3 bg-amber-500 pointer-events-none" style={{ top: item.anchor_y * (pageRef.current?.clientHeight ?? 0) }} />)}
-                  {activeBlock && pageSize && blocks.filter(b => b.id === activeBlock).map(b => <div key={b.id}
-                    className="absolute border-2 border-primary bg-primary/15 pointer-events-none"
-                    style={{ left: b.bbox[0] / pageSize.width * drawnWidth,
-                      top: b.bbox[1] / pageSize.height * (pageRef.current?.clientHeight ?? drawnWidth * pageSize.height / pageSize.width),
-                      width: (b.bbox[2] - b.bbox[0]) / pageSize.width * drawnWidth,
-                      height: (b.bbox[3] - b.bbox[1]) / pageSize.height * (pageRef.current?.clientHeight ?? drawnWidth * pageSize.height / pageSize.width) }} />)}
                   {/* Sits over the canvas, inside the page's 1px border. */}
                   <canvas
                     ref={snapshotRef}

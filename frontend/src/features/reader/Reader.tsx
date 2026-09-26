@@ -9,8 +9,9 @@ import { ReaderToolbar } from "./ReaderToolbar";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { importPdfs } from "@/app/actions";
 import { changeZoom } from "./navigation";
+import { createScrollSync } from "./scrollSync";
 import { apiRequest } from "@/api/client";
-import { ReaderExtras, TranslationTextView, type BookmarkData, type PendingBookmark } from "./ReaderExtras";
+import { ReaderExtras, type BookmarkData, type PendingBookmark } from "./ReaderExtras";
 import type { JumpTarget } from "./PdfPane";
 
 /** Caption for the translation pane, following the old reader's rules. */
@@ -35,18 +36,9 @@ export function Reader() {
   const setReaderSplit = useStore((s) => s.setReaderSplit);
   const translatedOnly = useStore((s) => s.translatedOnly);
   const activeJobs = useStore((s) => s.activeJobs);
-  const [mode, setMode] = useState<"pdf" | "text">("pdf");
   const [search, setSearch] = useState<{ query: string; side: "original" | "translated" }>({ query: "", side: "original" });
   const [bookmarkQuote, setBookmarkQuote] = useState<PendingBookmark | null>(null);
-  const [activeBlock, setActiveBlock] = useState<string | null>(null);
   const [bookmarkTarget, setBookmarkTarget] = useState<JumpTarget | null>(null);
-  const { data: readingBlocks } = useQuery({
-    queryKey: ["reading-blocks", activePaperId, currentPage],
-    queryFn: () => apiRequest<{ source: { id: string; text: string; bbox: number[] }[];
-      translations: { id: string; text: string }[]; width: number; height: number }>(
-        "GET", `/api/papers/${activePaperId}/reading-blocks/${currentPage}`),
-    enabled: !!activePaperId,
-  });
   const { data: bookmarks = [] } = useQuery({
     queryKey: ["bookmarks", activePaperId],
     queryFn: () => apiRequest<BookmarkData[]>("GET", `/api/papers/${activePaperId}/bookmarks`),
@@ -60,7 +52,7 @@ export function Reader() {
   const readerRef = useRef<HTMLDivElement>(null);
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
-  const syncing = useRef(false);
+  const syncScroll = useMemo(() => createScrollSync(), [activePaperId, currentPage]);
 
   const pageCount = reading?.page_count ?? 0;
   const completed = reading?.completed_pages ?? [];
@@ -72,7 +64,7 @@ export function Reader() {
     window.addEventListener("bookmark-selection", onBookmark);
     return () => window.removeEventListener("bookmark-selection", onBookmark);
   }, []);
-  useEffect(() => { setActiveBlock(null); setBookmarkQuote(null); setSearch({ query: "", side: "original" }); }, [activePaperId]);
+  useEffect(() => { setBookmarkQuote(null); setSearch({ query: "", side: "original" }); }, [activePaperId]);
   // A passage opened from the chat. Taken from the store so that it is shown once, not on every remount.
   const readerJump = useStore((s) => s.readerJump);
   useEffect(() => {
@@ -82,11 +74,6 @@ export function Reader() {
     if (jump.paperId !== activePaperId) return;
     setBookmarkTarget({ id: Date.now(), page: jump.page, side: jump.side, anchor_y: jump.anchor_y, passage: jump });
   }, [readerJump, activePaperId]);
-  useEffect(() => {
-    if (!activeBlock) return;
-    const timer = setTimeout(() => setActiveBlock(null), 4000);
-    return () => clearTimeout(timer);
-  }, [activeBlock]);
 
   // Keep the page valid for the paper and the 翻訳済みページのみ filter.
   useEffect(() => {
@@ -148,17 +135,6 @@ export function Reader() {
     return () => element.removeEventListener("wheel", onWheel);
   }, [activePaperId]);
 
-  // Keep both panes at the same fraction of their scroll range.
-  const syncScroll = (source: HTMLDivElement, target: HTMLDivElement | null) => {
-    if (!target || syncing.current) return;
-    syncing.current = true;
-    const ratioY = source.scrollTop / Math.max(1, source.scrollHeight - source.clientHeight);
-    const ratioX = source.scrollLeft / Math.max(1, source.scrollWidth - source.clientWidth);
-    target.scrollTop = ratioY * (target.scrollHeight - target.clientHeight);
-    target.scrollLeft = ratioX * (target.scrollWidth - target.clientWidth);
-    requestAnimationFrame(() => { syncing.current = false; });
-  };
-
   if (!activePaperId) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8">
@@ -204,7 +180,7 @@ export function Reader() {
   return (
     <div ref={readerRef} className="flex flex-col h-full w-full bg-reader-bg">
       <ReaderToolbar />
-      <ReaderExtras paperId={activePaperId} mode={mode} setMode={setMode} search={search} setSearch={setSearch}
+      <ReaderExtras paperId={activePaperId} search={search} setSearch={setSearch}
         bookmarkQuote={bookmarkQuote} setBookmarkQuote={setBookmarkQuote} onBookmarkJump={item => setBookmarkTarget({ ...item })}
         onSearchJump={(item, index) => setBookmarkTarget({ id: -index - 1, page: item.page, side: search.side, anchor_y: item.anchor_y })} />
       {noTranslatedPages ? (
@@ -234,10 +210,6 @@ export function Reader() {
                 scrollRef={leftScrollRef}
                 missingPageMessage="対応する原文ページがありません。"
                 searchTerm={search.side === "original" ? search.query : ""}
-                blocks={readingBlocks?.source}
-                pageSize={readingBlocks}
-                activeBlock={activeBlock}
-                onBlockClick={setActiveBlock}
                 jumpTarget={bookmarkTarget?.page === currentPage ? bookmarkTarget : null}
                 savedHighlights={sourceHighlights}
               />
@@ -248,7 +220,7 @@ export function Reader() {
 
           <ResizablePanel id="translated" defaultSize={`${(1 - readerSplit) * 100}%`} minSize="15%" className="flex flex-col">
             <div className="h-[28px] border-b flex items-center px-4 bg-background shrink-0 justify-between">
-              <span className="text-muted-foreground font-medium text-xs">{mode === "text" ? "日本語訳（本文）" : caption}</span>
+              <span className="text-muted-foreground font-medium text-xs">{caption}</span>
               {translating && (
                 <span className="flex items-center gap-1 text-[11px] text-primary">
                   <Loader2 className="w-3 h-3 animate-spin" /> 翻訳中
@@ -256,8 +228,7 @@ export function Reader() {
               )}
             </div>
             <div className="flex-1 relative min-h-0">
-              {mode === "text" ? <TranslationTextView paperId={activePaperId} currentPage={currentPage}
-                onPage={(page) => { useStore.getState().setCurrentPage(page); setMode("pdf"); }} /> : <PdfPane
+              <PdfPane
                 url={rightUrl}
                 pageNumber={(ref?.index ?? 0) + 1}
                 zoom={zoom}
@@ -267,14 +238,9 @@ export function Reader() {
                 translated
                 missingPageMessage="対応する原文ページがありません。再翻訳すると原文と同じページ数になります。"
                 searchTerm={search.side === "translated" ? search.query : ""}
-                blocks={readingBlocks?.source}
-                pageSize={readingBlocks}
-                activeBlock={activeBlock}
-                onBlockClick={setActiveBlock}
                 jumpTarget={bookmarkTarget?.page === currentPage ? bookmarkTarget : null}
                 savedHighlights={translatedHighlights}
               />
-              }
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>

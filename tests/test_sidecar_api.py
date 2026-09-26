@@ -327,7 +327,6 @@ def test_reader_search_bookmarks_glossary_and_scoped_question(test_env):
         scoped = _wait(client.post(f"{base}/ask", json={"question": "結果は？",
             "scope": "selected", "paper_ids": [paper_id]}).json()["job_id"])
         assert scoped.status == "succeeded"
-    assert client.get(f"{base}/translation-document").json()
     assert client.get(f"{base}/reading-blocks/1").json()["translations"]
     # Changing a term must make the next translation use a new cache identity.
     assert client.put(f"{base}/glossary", json={"terms": [{"source": word.group(), "target": "別の訳語"}]}).status_code == 200

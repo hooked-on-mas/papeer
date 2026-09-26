@@ -790,18 +790,6 @@ def get_reading_blocks(paper_id: str, page: int, dependencies: None = Depends(ve
             "width": document["pages"][page - 1]["width"], "height": document["pages"][page - 1]["height"]}
 
 
-@app.get("/api/papers/{paper_id}/translation-document")
-def get_translation_document(paper_id: str,
-                             dependencies: None = Depends(verify_token)) -> list[dict[str, Any]]:
-    folder = paper_folder(get_library(), paper_id)
-    markdown = folder / "translation.md"
-    if not markdown.exists():
-        return []
-    parts = re.split(r"^## p\.(\d+) / (\S+)[ \t]*$", markdown.read_text("utf-8"), flags=re.M)
-    return [{"page": int(number), "id": block_id, "text": body.strip()} for number, block_id, body in
-            zip(parts[1::3], parts[2::3], parts[3::3]) if body.strip()]
-
-
 @app.get("/api/papers/{paper_id}/search")
 def search_paper(paper_id: str, q: str = "", side: str = "original",
                  dependencies: None = Depends(verify_token)) -> dict[str, Any]:
