@@ -9,6 +9,88 @@ from paperdesk.layout.algorithm_layout import separate_algorithms
 
 
 class AlgorithmLayoutTests(unittest.TestCase):
+    def test_relaxed_numbering_and_frames(self):
+        for marker in ('1:', '0:', '4:', '1.', '1)', '1 :'):
+            for rules in ((65, 85, 170), (65, 170), (85, 170)):
+                with self.subTest(marker=marker, rules=rules), fitz.open() as pdf:
+                    page = pdf.new_page()
+                    for index, y in enumerate(rules):
+                        # Publishers do not always align rule endpoints exactly.
+                        page.draw_line((40 + index * 2, y), (380 - index * 2, y))
+                    page.insert_text((40, 80), 'Algorithm11 [Lsave, Lelim] = CleanL(bounds)', fontsize=10)
+                    # No Require/Ensure and no space after the line number.
+                    page.insert_text((45, 100), marker + 'Initialize lists of patches', fontsize=10)
+                    page.insert_text((45, 125), '2: Append patch to the list', fontsize=10)
+                    page.insert_text((45, 150), '3: return the list', fontsize=10)
+                    page.insert_text((40, 200), 'This paragraph explains the algorithm.', fontsize=10)
+                    remaining, algorithms, regions = separate_algorithms(page, page.get_text('rawdict')['blocks'])
+                    self.assertEqual(len(regions), 1)
+                    self.assertEqual(len(algorithms), 4)
+                    text = ''.join(c['c'] for b in remaining for line in b['lines']
+                                   for span in line['spans'] for c in span['chars'])
+                    self.assertEqual(text, 'This paragraph explains the algorithm.')
+
+    def test_split_number_and_long_math_caption(self):
+        with fitz.open() as pdf:
+            page = pdf.new_page()
+            for y in (65, 85, 170):
+                page.draw_line((40, y), (300, y))
+            page.insert_text((40, 80), 'Algorithm 11 ' + '[Lsave, Lelim] = CleanL(bounds) ' * 2, fontsize=10)
+            page.insert_text((45, 100), '1:', fontsize=10)
+            page.insert_text((80, 100), 'Initialize lists for patches', fontsize=10)
+            page.insert_text((45, 150), '2: return the list', fontsize=10)
+            _, algorithms, regions = separate_algorithms(page, page.get_text('rawdict')['blocks'])
+            self.assertEqual(len(regions), 1)
+            self.assertEqual(len(algorithms), 3)
+
+    def test_unnumbered_control_flow(self):
+        with fitz.open() as pdf:
+            page = pdf.new_page()
+            for y in (65, 170):
+                page.draw_line((40, y), (380, y))
+            page.insert_text((40, 80), 'Algorithm 2 Clean patches', fontsize=10)
+            page.insert_text((45, 100), 'for each patch do', fontsize=10)
+            page.insert_text((55, 125), 'Append patch to the list', fontsize=10)
+            page.insert_text((45, 150), 'return the list', fontsize=10)
+            _, algorithms, regions = separate_algorithms(page, page.get_text('rawdict')['blocks'])
+            self.assertEqual(len(regions), 1)
+            self.assertTrue(algorithms)
+
+    def test_caption_font_bounds_can_cross_rules(self):
+        # Font ascent/descent boxes extend beyond visible ink. Real publishers
+        # place rules closer to captions than these boxes allow.
+        for top, separator in ((65, 82), (70, 85), (70, 82)):
+            with self.subTest(top=top, separator=separator), fitz.open() as pdf:
+                page = pdf.new_page()
+                for y in (top, separator, 170):
+                    page.draw_line((40, y), (380, y))
+                page.insert_text((40, 80), 'Algorithm 1 An iterative implementation of GAPM', fontsize=11)
+                page.insert_text((40, 100), 'Require: A stopping threshold', fontsize=10)
+                page.insert_text((40, 120), 'Ensure: An optimal partition', fontsize=10)
+                page.insert_text((45, 140), '1: Solve the problem', fontsize=10)
+                page.insert_text((45, 160), '2: return the optimal solution', fontsize=10)
+                page.insert_text((40, 200), 'Algorithm 1 is discussed in this paragraph.', fontsize=10)
+                remaining, algorithms, regions = separate_algorithms(page, page.get_text('rawdict')['blocks'])
+                self.assertEqual([tuple(r) for r in regions], [(40, top, 380, 170)])
+                self.assertEqual(len(algorithms), 5)
+                text = ''.join(c['c'] for b in remaining for line in b['lines']
+                               for span in line['spans'] for c in span['chars'])
+                self.assertEqual(text, 'Algorithm 1 is discussed in this paragraph.')
+                with tempfile.TemporaryDirectory() as directory:
+                    source = Path(directory) / 'source.pdf'
+                    output = Path(directory) / 'output.pdf'
+                    pdf.save(source)
+                    document = extract_pdf(source)
+                    units = translation_units(document)
+                    self.assertEqual([u['text'] for u in units], [text])
+                    report = build_translated_pdf(source, document,
+                        {u['block']: 'この段落で手順を説明します。' for u in units}, output)
+                    self.assertEqual(report['preserved_algorithm_blocks'], 5)
+                    with fitz.open(output) as translated:
+                        clip = regions[0] + (-1, -3, 1, 1)
+                        self.assertEqual(page.get_pixmap(clip=clip).samples,
+                                         translated[0].get_pixmap(clip=clip).samples)
+
     def test_indented_caption_and_case_variants(self):
         for inset in (0, 7.5, 12):
             for label in ('input:', 'output:', 'Input:', 'OUTPUT :'):

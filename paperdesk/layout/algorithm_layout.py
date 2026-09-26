@@ -8,33 +8,72 @@ import pymupdf as fitz
 from paperdesk.layout.table_layout import _horizontal_rules
 
 
+_CAPTION = re.compile(r"\s*Algorithm\s*\d+", re.I)
+_STEP = re.compile(r"^\s*(\d+\s*[:.)]|(?:Require|Ensure|Input|Output)\s*:)", re.I)
+
+
+def _has_algorithm_body(page, region):
+    # PDF extraction may separate a line number from its text, omit the
+    # following space, or start numbering at zero/on a continuation page.
+    body = page.get_text("text", clip=region)
+    if any(_STEP.match(line) for line in body.splitlines()):
+        return True
+    # Unnumbered pseudocode is also common. Require multiple control lines
+    # so a single prose mention or a table column called "output" is not enough.
+    controls = re.findall(r"^\s*(?:for\b[^\n]*\bdo\b|while\b[^\n]*\bdo\b|"
+                          r"if\b[^\n]*\bthen\b|return\b|end\s+(?:if|for|while)\b)",
+                          body, re.I | re.M)
+    return len(controls) >= 2
+
+
 def separate_algorithms(page, items):
     rules = _horizontal_rules(page)
     regions = []
     for item in items:
         for line in item.get("lines", []):
             text = "".join(c["c"] for s in line["spans"] for c in s["chars"])
-            if not re.match(r"\s*Algorithm\s+\d+\b", text, re.I):
+            caption = _CAPTION.match(text)
+            if not caption:
                 continue
-            box = fitz.Rect(line["bbox"])
+            # Measure only "Algorithm N". A formula in the title can extend
+            # beyond the rule or use a different baseline from the label.
+            label = [c for s in line["spans"] for c in s["chars"]][:caption.end()]
+            label_box = fitz.Rect(label[0]["bbox"])
+            for char in label[1:]:
+                label_box |= fitz.Rect(char["bbox"])
+            # Font boxes include unused ascent/descent space and can overlap
+            # either caption rule. Anchor on the dominant text baseline instead
+            # (small superscripts must not move the anchor).
+            baseline = Counter(round(c["origin"][1], 2) for c in label
+                               if c["c"].strip()).most_common(1)[0][0]
+            caption_center = (label_box.y0 + baseline) / 2
             # 罫線より内側に字下げされた見出しに対応。 (Support arbitrary indentation inside the rule)
             below = [(l, r, y) for l, r, y in rules
-                     if l - 2 <= box.x0 and r >= box.x1 - 2 and y > box.y1]
-            if len(below) < 2:
+                     if l - 6 <= label_box.x0 and r >= label_box.x1 - 6 and y > baseline]
+            if not below:
                 continue
-            l, r, top = min(below, key=lambda rule: rule[2])
-            bottoms = [y for a, b, y in below if y > top + 20 and abs(a-l) < 2 and abs(b-r) < 2]
-            if bottoms:
-                upper = [y for a, b, y in rules if abs(a-l) < 2 and abs(b-r) < 2
-                         and box.y0 - 20 < y <= box.y0]
-                if not upper:
-                    continue
-                region = fitz.Rect(l, max(upper), r, min(bottoms))
-                body = page.get_text("text", clip=region)
-                if not re.search(r"^\s*(?:(?:Require|Ensure|Input|Output)\s*:|1:\s)", body, re.I | re.M):
-                    continue
-                if not any(region.intersects(existing) for existing in regions):
-                    regions.append(region)
+            l, r, first = min(below, key=lambda rule: rule[2])
+            tolerance = max(6, (r - l) * .02)
+            aligned = [(a, b, y) for a, b, y in rules
+                       if abs(a-l) <= tolerance and abs(b-r) <= tolerance]
+            upper = [y for a, b, y in aligned if label_box.y0 - 24 < y < caption_center]
+            # Accept a frame with only top/bottom rules. A nearby rule below
+            # the caption is a separator, rather than the algorithm's bottom.
+            separator = first - baseline <= max(24, label_box.height * 2)
+            bottoms = [y for a, b, y in aligned
+                       if y > first + 12] if separator else [first]
+            if not bottoms and upper:
+                bottoms = [first]
+            if not bottoms or (not upper and not separator):
+                continue
+            top = max(upper) if upper else label_box.y0 - 1
+            bottom = min(bottoms)
+            frame = [(a, b) for a, b, y in aligned if top <= y <= bottom]
+            region = fitz.Rect(min(a for a, b in frame), top, max(b for a, b in frame), bottom)
+            if not _has_algorithm_body(page, region):
+                continue
+            if not any(region.intersects(existing) for existing in regions):
+                regions.append(region)
 
     remaining = []
     extracted = [[] for _ in regions]
@@ -70,7 +109,7 @@ def separate_algorithms(page, items):
         for _, row in rows:
             row.sort(key=lambda c: c["bbox"][0])
             text = "".join(c["c"] for c in row).strip()
-            start = re.match(r"^(\d+:|(?:Require|Ensure|Input|Output)\s*:)", text, re.I)
+            start = _STEP.match(text)
             if start and start[1][0].isdigit():
                 for c in row[:len(start[1])]:
                     c.update(math_font=False, flags=0, size=size)

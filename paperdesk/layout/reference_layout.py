@@ -25,6 +25,10 @@ def reference_evidence(text: str) -> list[str]:
     """Broad OR cues, used only inside a heading-gated candidate range."""
     text = unicodedata.normalize("NFKC", text)
     entries = list(_ENTRY.finditer(text))
+    # In a punctuated list, a wrapped journal volume ("59 (2014)") is
+    # continuation text, not a new unpunctuated reference number.
+    if any(m.group(1) or m.group(2) for m in entries):
+        entries = [m for m in entries if m.group(1) or m.group(2)]
     if entries and text[:entries[0].start()].strip():
         return []  # A mixed prose/reference block must not hide its prose.
     parts = [text[m.end():entries[i + 1].start() if i + 1 < len(entries) else len(text)]
