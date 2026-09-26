@@ -114,7 +114,7 @@ CLI は PATH と既定のインストール先から自動検出します。見�
 
 1. `paperdesk/providers/base.py` の `ProviderBackend` を継承し、`spec`（表示名・説明・設定項目）と `_generate()` を実装する。CLI なら `common.CliBackend` も継承すると、パス検出・ログイン・接続確認が付く。
 2. `paperdesk/providers/registry.py` の `BACKENDS` に 1 行追加する。
-3. `paperdesk/core/code_version.py` の `TRANSLATION_SOURCES` に新しいファイルを追加する。
+3. `paperdesk/core/code_version.py` の `TRANSLATION_SOURCES` に新しいファイルを追加する（`registry.py` は対象外なので、1 行追加だけではキャッシュは無効にならない）。
 
 設定画面の選択肢と入力欄は `GET /api/providers` から作られるため、フロントエンドの変更は不要です。接続先ごとの設定（CLI のパス、API URL、最後に選んだモデルと effort）は `settings.json` の `provider_options` に保存されます。
 
@@ -150,7 +150,7 @@ PaperDesk/
 | `PAPERDESK_DATA_DIR` | データの保存先を変更する |
 | `PAPERDESK_PORT` | sidecar の待ち受けポート（既定 8000） |
 | `PAPERDESK_TOKEN` | sidecar の認証トークン。未設定なら認証なし（開発用） |
-| `PAPERDESK_API_KEY` | API 接続で使う API キーの初期値（未設定なら `OPENAI_API_KEY`） |
+| `PAPERDESK_API_KEY` | API 接続で使う API キーの初期値（未設定なら `OPENAI_API_KEY`、次に `GEMINI_API_KEY`） |
 
 ## キーボードショートカット
 

@@ -54,7 +54,7 @@ def reading_state(lib: Library, paper_id: str, last_page: int = 0) -> dict[str, 
     # the original for pages outside the request, or nothing while it waits.
     translated_pages: dict[str, dict[str, Any] | None] = {}
     for index in range(page_count):
-        path, page_index = translated_page(folder, index)
+        path, page_index = translated_page(folder, index, preview)
         if path is None or not path.is_file():
             translated_pages[str(index + 1)] = None
         else:

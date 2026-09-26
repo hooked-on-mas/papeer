@@ -14,13 +14,15 @@ DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
 # settings.json before provider_options: flat per-connection fields, and "gemini" for agy.
 _LEGACY_OPTION_FIELDS = {"codex_path": ("codex", "cli_path"), "claude_path": ("claude", "cli_path"),
-                         "gemini_path": ("antigravity", "cli_path"), "base_url": ("api", "base_url")}
+                         "gemini_path": ("antigravity", "cli_path"), "base_url": ("api", "base_url"),
+                         "api_base": ("api", "base_url")}
 _RENAMED_PROVIDERS = {"gemini": "antigravity"}
 
 
 def api_key_from_env() -> str:
     """The API key given at launch; it is never written to settings.json."""
-    return os.environ.get("PAPERDESK_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
+    return (os.environ.get("PAPERDESK_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
+            or os.environ.get("GEMINI_API_KEY", ""))
 
 
 @dataclass
@@ -78,7 +80,7 @@ class Settings:
         options = {k: dict(v) for k, v in (values.get("provider_options") or {}).items() if isinstance(v, dict)}
         for legacy, (provider, key) in _LEGACY_OPTION_FIELDS.items():
             value = values.pop(legacy, None)
-            if isinstance(value, str) and value and key not in options.get(provider, {}):
+            if isinstance(value, str) and value:
                 options.setdefault(provider, {})[key] = value
         for old, new in _RENAMED_PROVIDERS.items():
             if old in options:

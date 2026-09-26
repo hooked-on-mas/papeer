@@ -29,12 +29,12 @@ def current() -> dict[str, str]:
 
 def save_overrides(texts: dict[str, str]) -> None:
     """Store edited prompts; an empty text removes the override and restores the built-in one."""
-    known = set(defaults())
+    unknown = set(texts) - set(defaults())
+    if unknown:
+        raise ValueError("不明なプロンプトです: " + ", ".join(sorted(unknown)))
     directory = _custom_dir()
     directory.mkdir(parents=True, exist_ok=True)
     for name, content in texts.items():
-        if name not in known:
-            raise ValueError(f"不明なプロンプトです: {name}")
         path = directory / f"{name}.txt"
         if content.strip():
             path.write_text(content.strip(), "utf-8")

@@ -128,10 +128,3 @@ class OpenAICompatProvider(ProviderBackend):
             if limit > 0:
                 windows.append({"label": label, "used_percent": (limit - remaining) / limit * 100, "resets_at": None})
         remember_limits(self.spec.id, windows)
-
-    def list_efforts(self, model: str = "") -> list[tuple[str, str]]:
-        return [("", "既定値")]
-
-    def check(self) -> str:
-        answer = self.generate("Reply with OK only.", "Connection test, no document data.")
-        return "APIから応答を受信しました: " + answer[:120]

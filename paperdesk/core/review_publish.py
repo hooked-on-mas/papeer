@@ -11,6 +11,7 @@ import sqlite3
 import uuid
 import pymupdf as fitz
 from paperdesk.core.config import Settings
+from paperdesk.core.paths import PaperFiles
 from paperdesk.layout.math_layout import LAYOUT_VERSION, restore_formula_text
 from paperdesk.pdf.pdf_engine import PDF_LOCK, translation_units, interleaved_pdf, bilingual_pdf, save_json
 from paperdesk.translation.translation import translation_fingerprint, validate_translations
@@ -56,7 +57,7 @@ def apply_review(papers: Path, review: Path, cases: list[str] | None = None) -> 
             raise ValueError('論文IDまたはページ番号が不正です。')
         folder = papers / identity
         label = f'{identity[:4]}-p{number}'
-        if _digest(folder/'original.pdf') != result['source_sha256']:
+        if _digest(PaperFiles(folder).original_pdf) != result['source_sha256']:
             raise ValueError('原文PDFが検証時から変更されています。再検証してください。')
         pdf = review/(label+'.pdf')
         if result.get('pdf_sha256') and _digest(pdf) != result['pdf_sha256']:
@@ -66,7 +67,7 @@ def apply_review(papers: Path, review: Path, cases: list[str] | None = None) -> 
             raise ValueError('抽出処理が更新されています。現在の処理で再検証してください。')
         if not 1 <= number <= document['page_count']:
             raise ValueError('ページ番号が範囲外です。')
-        with fitz.open(pdf) as page_pdf, fitz.open(folder/'original.pdf') as original:
+        with fitz.open(pdf) as page_pdf, fitz.open(PaperFiles(folder).original_pdf) as original:
             if len(page_pdf) != 1 or page_pdf[0].rect != original[number-1].rect:
                 raise ValueError('差し替えPDFのページ数または寸法が一致しません。')
         values = _read(review/(label+'-translation.json'))['translations']
@@ -106,29 +107,29 @@ def _publish(folder, review, manifest, entries):
     stage.mkdir(parents=True)
     names = ['translated.pdf', 'interleaved.pdf', 'document.json', 'translation-cache.json',
              'translation-report.json', 'translation-preview.json', 'translation.md']
-    if (folder/'bilingual.pdf').exists():
+    if PaperFiles(folder).bilingual_pdf.exists():
         names.append('bilingual.pdf')
     existed = {name for name in names if (folder/name).exists()}
     for name in existed:
         shutil.copy2(folder/name, backup/name)
-    with fitz.open() as output, fitz.open(folder/'original.pdf') as original:
+    with fitz.open() as output, fitz.open(PaperFiles(folder).original_pdf) as original:
         for number in range(1, count+1):
             if number in replacements:
                 path, index = replacements[number], 0
             else:
                 path, index = translated_page(folder, number-1)
                 if path is None or not path.exists():
-                    path, index = folder/'original.pdf', number-1
+                    path, index = PaperFiles(folder).original_pdf, number-1
             with fitz.open(path) as source:
                 if index >= len(source):
                     raise ValueError('既存の訳文PDFのページ数が原文と一致しません。')
                 output.insert_pdf(source, from_page=index, to_page=index)
         output.set_metadata(dict(original.metadata, title=document['title']+' - 日本語訳', creator='Papeer'))
         output.set_toc(original.get_toc())
-        output.save(stage/'translated.pdf', garbage=4, deflate=True)
-    interleaved_pdf(folder/'original.pdf', stage/'translated.pdf', stage/'interleaved.pdf')
+        output.save(PaperFiles(stage).translated_pdf, garbage=4, deflate=True)
+    interleaved_pdf(PaperFiles(folder).original_pdf, PaperFiles(stage).translated_pdf, PaperFiles(stage).interleaved_pdf)
     if 'bilingual.pdf' in names:
-        bilingual_pdf(folder/'original.pdf', stage/'translated.pdf', stage/'bilingual.pdf')
+        bilingual_pdf(PaperFiles(folder).original_pdf, PaperFiles(stage).translated_pdf, PaperFiles(stage).bilingual_pdf)
     settings = Settings.from_values({'provider': manifest['provider'], 'model': manifest['model'],
                                      'base_url': manifest.get('base_url', Settings().base_url)})
     # With the glossary applied, as PaperService.translate fingerprints it.
@@ -195,7 +196,7 @@ def _publish(folder, review, manifest, entries):
     body.sort(key=lambda s:int(re.match(r'## p\.(\d+)', s)[1]))
     (stage/'translation.md').write_text(''.join(head+body), 'utf-8')
     # Detect concurrent app writes before publishing; keep staging for diagnosis.
-    if (_digest(folder/'original.pdf') != entries[0][0]['source_sha256'] or
+    if (_digest(PaperFiles(folder).original_pdf) != entries[0][0]['source_sha256'] or
             any((folder/n).exists() != (n in existed) or (n in existed and _digest(folder/n) != _digest(backup/n)) for n in names)):
         raise RuntimeError('反映の準備中にライブラリが更新されました。再実行してください。')
     replaced = []

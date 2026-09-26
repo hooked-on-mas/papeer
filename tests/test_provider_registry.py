@@ -70,3 +70,7 @@ def test_api_key_comes_from_the_environment(tmp_path: Path, monkeypatch):
     assert Settings.load(tmp_path).api_key == "from-openai-env"
     monkeypatch.setenv("PAPERDESK_API_KEY", "from-paperdesk-env")
     assert Settings.load(tmp_path).api_key == "from-paperdesk-env"
+    monkeypatch.delenv("PAPERDESK_API_KEY")
+    monkeypatch.delenv("OPENAI_API_KEY")
+    monkeypatch.setenv("GEMINI_API_KEY", "from-gemini-env")
+    assert Settings.load(tmp_path).api_key == "from-gemini-env"

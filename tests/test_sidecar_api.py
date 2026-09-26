@@ -515,10 +515,11 @@ def test_connection_settings_round_trip_per_provider(test_env):
     partial = client.get("/api/settings").json()
     assert partial["translation_concurrency"] == 2
     assert partial["provider"] == "api" and partial["provider_options"]["claude"] == {"cli_path": "C:/claude.exe"}
-    assert client.put("/api/settings", json={"provider": "codex", "codex_path": "C:/codex.exe"}).status_code == 200
+    assert client.put("/api/settings", json={"provider": "codex", "codex_path": "C:/codex.exe",
+                                             "api_base": "http://localhost:9999/v1"}).status_code == 200
     legacy = client.get("/api/settings").json()
     assert legacy["provider"] == "codex" and legacy["provider_options"]["codex"]["cli_path"] == "C:/codex.exe"
-    assert legacy["provider_options"]["api"]["base_url"] == "http://localhost:11434/v1"
+    assert legacy["provider_options"]["api"]["base_url"] == "http://localhost:9999/v1"
 
 
 def test_legacy_settings_file_is_served_in_the_new_shape(test_env):

@@ -81,7 +81,7 @@ class ProviderBackend(ABC):
 
     def check(self) -> str:
         answer = self.generate("Reply with OK only.", "Connection test, no document data.")
-        return "応答を受信しました: " + answer[:120]
+        return f"{self.spec.label}から応答を受信しました: " + answer[:120]
 
     def limits(self) -> dict | None:
         """Plan usage for this connection, or None when the service does not report one."""

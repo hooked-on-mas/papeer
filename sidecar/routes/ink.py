@@ -140,7 +140,8 @@ def export_ink(paper_id: str, body: InkExportRequest):
         preview = read_preview(folder)
         if preview and not preview["complete"]:
             raise HTTPException(400, "翻訳が完了してから書き込み付きPDFを保存してください。")
-    source = folder / f"{body.side}.pdf"
+    files = PaperFiles(folder)
+    source = files.original_pdf if body.side == "original" else files.translated_pdf
     if not source.is_file():
         raise HTTPException(400, "保存するPDFがありません。")
     destination = Path(body.destination).resolve() if body.destination else None

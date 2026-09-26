@@ -29,9 +29,12 @@ function useDebounced<T>(value: T, delay: number): T {
   return debounced;
 }
 
-function trimmed(options: ProviderOptions): ProviderOptions {
+/** The connection fields to save. Model and effort per connection are remembered by the sidecar. */
+function optionFields(options: ProviderOptions): ProviderOptions {
   return Object.fromEntries(Object.entries(options).map(([id, values]) =>
-    [id, Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value.trim()]))]));
+    [id, Object.fromEntries(Object.entries(values)
+      .filter(([key]) => key !== "model" && key !== "reasoning_effort")
+      .map(([key, value]) => [key, value.trim()]))]));
 }
 
 /** Form state of the 接続 section; the dialog owns it so that one 保存 covers every section. */
@@ -96,7 +99,7 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
     reasoning_effort: hasEfforts ? effort : "",
     timeout_seconds: settings?.timeout_seconds ?? 900,
     translation_concurrency: concurrency,
-    provider_options: trimmed(options),
+    provider_options: optionFields(options),
     api_key: apiKey.trim(),
   });
 

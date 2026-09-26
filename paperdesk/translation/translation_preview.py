@@ -19,8 +19,10 @@ def preview_page(folder: Path, preview: dict, number: int) -> Path:
     return PaperFiles(folder).translation_pages / preview["run_id"] / f"page-{number}.pdf"
 
 
-def translated_page(folder: Path, index: int) -> tuple[Path | None, int]:
-    preview = read_preview(folder)
+def translated_page(folder: Path, index: int, preview: dict | None = None) -> tuple[Path | None, int]:
+    """(file, page index in it) shown for a page; pass the preview when calling for many pages."""
+    if preview is None:
+        preview = read_preview(folder)
     if preview and not preview["complete"]:
         if index + 1 not in preview["pages"]:
             if index + 1 in preview.get("skipped_pages", []):
