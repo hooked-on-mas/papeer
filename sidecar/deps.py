@@ -119,6 +119,12 @@ def settings_from_request(body: ProviderActionRequest | None) -> Settings:
     return settings
 
 
+def settings_for_run(model: str | None, effort: str | None) -> Settings:
+    """Saved settings with the model/effort a dialog chose for one job; ValueError for an unknown effort."""
+    settings = get_settings()
+    return replace(settings, model=model or settings.model, reasoning_effort=effort or settings.reasoning_effort)
+
+
 def provider_for(settings: Settings | None = None, cancel: threading.Event | None = None,
                  api_key: str | None = None) -> ProviderBackend:
     """The AI connection for these settings (the saved ones by default).

@@ -87,8 +87,7 @@ def translation_paragraphs(lib: Library, paper_id: str) -> list[dict]:
     document = lib.document(paper_id)
     units = translation_units(document)
     apply_glossary(units, effective_glossary(lib, paper_id))
-    cache_path = PaperFiles(folder).translation_cache
-    cache = json.loads(cache_path.read_text("utf-8")) if cache_path.exists() else {}
+    cache = PaperFiles.read_json(PaperFiles(folder).translation_cache, {})
     from paperdesk.translation.translation import page_fingerprint
     from paperdesk.layout.reading_flow import unit_pages
     done = {}
@@ -234,7 +233,7 @@ def revision_history(folder: Path) -> list[dict]:
 
 def save_revision_history(folder: Path, unit_id: str, before: str, after: str) -> None:
     path = PaperFiles(folder).translation_revisions
-    history = json.loads(path.read_text("utf-8")) if path.exists() else []
+    history = PaperFiles.read_json(path, [])
     history.append({"id": uuid.uuid4().hex, "unit_id": unit_id, "before": before, "after": after,
                     "created_at": datetime.now().isoformat(timespec="seconds")})
     save_json(path, history[-500:])

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 
+from paperdesk.core.config import REASONING_EFFORTS
 from paperdesk.providers.base import OptionField, ProviderBackend, ProviderSpec
 from paperdesk.providers.common import (
     CliBackend, json_lines, remember_limits, run_cli_process, to_int, wrap_document_prompt,
@@ -131,7 +132,8 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
         try:
             for m in _catalog_models():
                 if m.get("id") == model or m.get("short_name", "").lower() == model.lower():
-                    options = [(o["id"], o["id"]) for o in m.get("thinking", {}).get("effort_options", []) if o.get("id")]
+                    options = [(o["id"], o["id"]) for o in m.get("thinking", {}).get("effort_options", [])
+                               if o.get("id") in REASONING_EFFORTS]
                     break
         except Exception:
             pass

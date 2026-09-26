@@ -1,7 +1,6 @@
 """Reading aids: tags and statuses, note templates, library search, the glossary, paragraph revisions, backup."""
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 import sqlite3
 import zipfile
@@ -184,9 +183,10 @@ def glossary_draft(paper_id: str, body: GlossaryDraftRequest):
         existing = tools.validate_terms(body.terms)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    settings = deps.get_settings()
-    settings = replace(settings, model=body.model or settings.model,
-                       reasoning_effort=body.effort or settings.reasoning_effort)
+    try:
+        settings = deps.settings_for_run(body.model, body.effort)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     def action(cancel, progress, _page_ready):
         return tools.draft_glossary(lib, paper_id, deps.provider_for(settings, cancel), cancel, progress, existing)
     return deps.submit_job("glossary-draft", action, paper_id)

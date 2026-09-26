@@ -74,8 +74,7 @@ def page_translation_text(folder: Path, document: dict, page: int) -> list[str]:
     units = translation_units(document)
     glossary = glossary_for_folder(folder)
     apply_glossary(units, glossary)
-    cache_path = PaperFiles(folder).translation_cache
-    cache = json.loads(cache_path.read_text("utf-8")) if cache_path.exists() else {}
+    cache = PaperFiles.read_json(PaperFiles(folder).translation_cache, {})
     # Cached pages count only while they match the current extraction: after a re-extraction
     # the math tokens of renumbered blocks would resolve to other formulas.
     done = {}
@@ -141,7 +140,7 @@ class PaperService:
         # discard completed translations or reset recovery attempt limits.
         fingerprint = translation_fingerprint(settings, units)
         cache_path = files.translation_cache
-        cache = json.loads(cache_path.read_text("utf-8")) if cache_path.exists() else {}
+        cache = files.read_json(cache_path, {})
         version = translation_version()
         compatible = (cache.get("fingerprint") == fingerprint
                       and cache.get("translation_version") == version)

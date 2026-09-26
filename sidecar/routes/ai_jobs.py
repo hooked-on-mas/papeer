@@ -1,7 +1,6 @@
 """Background work on one paper: translation, summary, questions, and exported PDFs."""
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 import threading
 from typing import Any
@@ -30,10 +29,11 @@ def translate_paper(paper_id: str, body: TranslateRequest) -> dict[str, str]:
             selected_pages = parse_page_selection(body.pages, lib.document(paper_id)["page_count"])
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    # The translation dialog may pick another model or effort for this run only.
-    settings = deps.get_settings()
-    settings = replace(settings, model=body.model or settings.model,
-                       reasoning_effort=body.effort or settings.reasoning_effort)
+    try:
+        # The translation dialog may pick another model or effort for this run only.
+        settings = deps.settings_for_run(body.model, body.effort)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     def action(cancel: threading.Event, progress: Any, page_ready: Any) -> dict:
         service = PaperService(lib, deps.provider_for(settings, cancel), cancel, progress=progress, page_ready=page_ready)

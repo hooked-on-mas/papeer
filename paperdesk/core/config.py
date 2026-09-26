@@ -36,7 +36,7 @@ class Settings:
     # Session-only; never saved.
     api_key: str = ""
     # Settings that belong to one connection, by provider id: CLI paths, the API URL,
-    # and the model/effort last chosen for that connection.
+    # and the model/effort last chosen for that connection (kept by the settings dialog).
     provider_options: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -98,9 +98,6 @@ class Settings:
 
     def save(self, root: Path) -> None:
         root.mkdir(parents=True, exist_ok=True)
-        # Remember the model and effort per connection, so switching back restores them.
-        self.set_option(self.provider, "model", self.model)
-        self.set_option(self.provider, "reasoning_effort", self.reasoning_effort)
         values = asdict(self)
         values.pop("api_key")  # Session-only; never write credentials into the library.
         target = root / "settings.json"

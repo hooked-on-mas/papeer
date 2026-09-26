@@ -53,8 +53,7 @@ def test_legacy_flat_settings_are_migrated(tmp_path: Path):
     saved = json.loads((tmp_path / "settings.json").read_text("utf-8"))
     assert not {"codex_path", "claude_path", "gemini_path", "base_url", "api_key"} & saved.keys()
     assert saved["provider"] == "antigravity"
-    assert saved["provider_options"]["antigravity"] == {
-        "cli_path": "C:/agy.exe", "model": "gemini-3.8-flash", "reasoning_effort": ""}
+    assert saved["provider_options"]["antigravity"] == {"cli_path": "C:/agy.exe"}
     assert Settings.load(tmp_path).base_url == "http://localhost:11434/v1"
 
 

@@ -500,7 +500,7 @@ def test_connection_settings_round_trip_per_provider(test_env):
     client, tmp_path = test_env
     settings = client.get("/api/settings").json()
     body = {**settings, "provider": "api", "model": "local-model",
-            "provider_options": {"api": {"base_url": "http://localhost:11434/v1"},
+            "provider_options": {"api": {"base_url": "http://localhost:11434/v1", "model": "local-model"},
                                  "claude": {"cli_path": "C:/claude.exe"}}}
     assert client.put("/api/settings", json=body).status_code == 200
     saved = client.get("/api/settings").json()
@@ -529,6 +529,14 @@ def test_legacy_settings_file_is_served_in_the_new_shape(test_env):
     settings = client.get("/api/settings").json()
     assert settings["provider"] == "antigravity"
     assert settings["provider_options"]["antigravity"]["cli_path"] == "C:/agy.exe"
+
+
+def test_unknown_effort_for_one_run_is_rejected(test_env):
+    client, _ = test_env
+    imported = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
+    paper_id = imported.result["paper_ids"][0]
+    response = client.post(f"/api/papers/{paper_id}/translate", json={"pages": "1", "effort": "ultra"})
+    assert response.status_code == 400 and "effort" in response.json()["detail"]
 
 
 def test_api_connection_needs_no_login(test_env):
