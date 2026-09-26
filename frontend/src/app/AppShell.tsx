@@ -15,16 +15,19 @@ import { LibrarySidebar } from "../features/library/LibrarySidebar";
 import { Reader } from "../features/reader/Reader";
 import { StickyNotesTab } from "../features/reader/StickyNotesTab";
 import { StickyNoteDialog } from "../features/reader/StickyNoteDialog";
-import { flushInkSaves } from "../features/reader/inkStore";
 import { SummaryPane } from "../features/summary/SummaryPane";
 import { ChatPane } from "../features/chat/ChatPane";
-import { NotesPane, pendingNoteSaves } from "../features/notes/NotesPane";
+import { NotesPane } from "../features/notes/NotesPane";
 import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { useJobEvents } from "../features/jobs/jobEvents";
 import { bindReaderQueryClient, changeZoom, focusPageInput, movePage } from "../features/reader/navigation";
 import { bindQueryClient, createFolder, importPdfs, normalizeCollection, renameFolder, renamePaperFile } from "./actions";
 import { useDropTarget, useFileDrop } from "./fileDrop";
 import { flushUiState, initUiStateSync } from "./uiStateSync";
+import { flushPendingSaves } from "@/lib/pendingSaves";
+import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
+import { isJobKind, SNAPSHOT_JOBS } from "@/features/jobs/jobKinds";
+import { registerAllJobHandlers } from "./jobHandlers";
 
 const TABS = ["reader", "summary", "chat", "notes", "sticky-notes"];
 
@@ -41,6 +44,8 @@ async function waitForJobs(timeoutMs: number): Promise<void> {
   }
 }
 
+registerAllJobHandlers();
+
 function useCloseHandling(): void {
   useEffect(() => {
     // @ts-ignore injected by Tauri
@@ -51,7 +56,7 @@ function useCloseHandling(): void {
     const handleClose = async () => {
       if (closing) return;
       const running = useStore.getState().activeJobs.filter(isRunning);
-      if (running.some(job => job.kind === "backup" || job.kind === "restore")) {
+      if (running.some(job => isJobKind(job.kind, SNAPSHOT_JOBS))) {
         useStore.getState().setStatus("バックアップ・復元が完了してから終了してください。");
         return;
       }
@@ -68,17 +73,10 @@ function useCloseHandling(): void {
         // Let CLI subprocesses stop before the sidecar exits.
         await waitForJobs(15_000);
       }
-      const noteSaves = await Promise.allSettled([...pendingNoteSaves].map((save) => save()));
-      if (noteSaves.some((result) => result.status === "rejected")) {
+      const failure = await flushPendingSaves();
+      if (failure) {
         closing = false;
-        useStore.getState().setStatus("メモを保存できませんでした。内容を確認してから終了してください。");
-        return;
-      }
-      try {
-        await flushInkSaves();
-      } catch {
-        closing = false;
-        useStore.getState().setStatus("書き込みを保存できませんでした。PDFの保存ボタンで再試行してから終了してください。");
+        useStore.getState().setStatus(`${failure.message} 終了を中止しました。`);
         return;
       }
       await flushUiState();
@@ -128,9 +126,7 @@ function useBlockWebviewZoom(): void {
 function Lightbox() {
   const [image, setImage] = useState<{ src: string; alt?: string } | null>(null);
   useEffect(() => {
-    const open = (e: Event) => setImage((e as CustomEvent).detail);
-    window.addEventListener("open-lightbox", open);
-    return () => window.removeEventListener("open-lightbox", open);
+    return onAppEvent("open-lightbox", setImage);
   }, []);
   useHotkeys("esc", () => setImage(null), { enabled: !!image });
   if (!image) return null;
@@ -231,7 +227,7 @@ export function AppShell() {
   useHotkeys("ctrl+o, meta+o", () => importPdfs(), { preventDefault: true, enableOnFormTags: true });
   useHotkeys("ctrl+f, meta+f", () => {
     if (useStore.getState().activeTab === "reader" && useStore.getState().activePaperId)
-      window.dispatchEvent(new Event("open-reader-search"));
+      emitAppEvent("open-reader-search");
     else if (useStore.getState().activeTab === "sticky-notes") document.getElementById("sticky-note-search")?.focus();
     else focusSearch();
   }, { preventDefault: true, enableOnFormTags: true });
@@ -244,14 +240,14 @@ export function AppShell() {
     store.setLibrarySearch("");
     store.setSelectedFolder(null);
     const paperId = store.activePaperId;
-    setTimeout(() => window.dispatchEvent(new CustomEvent("reveal-paper", { detail: { paperId, focus: true } })), 300);
+    setTimeout(() => emitAppEvent("reveal-paper", { paperId, focus: true }), 300);
   }, { preventDefault: true, enableOnFormTags: true });
   useHotkeys("ctrl+g, meta+g", focusPageInput, { preventDefault: true, enableOnFormTags: true });
   useHotkeys("ctrl+b, meta+b", () => {
     const store = useStore.getState();
     store.setSidebarCollapsed(!store.sidebarCollapsed);
   }, hotkeyOptions);
-  useHotkeys("ctrl+t, meta+t", () => window.dispatchEvent(new Event("open-translate-dialog")), hotkeyOptions);
+  useHotkeys("ctrl+t, meta+t", () => emitAppEvent("open-translate-dialog"), hotkeyOptions);
   useHotkeys("f2", () => {
     const store = useStore.getState();
     if (store.selectedFolder) renameFolder(store.selectedFolder);

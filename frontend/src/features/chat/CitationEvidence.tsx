@@ -2,10 +2,11 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/api/client";
 import { followCitation } from "@/app/actions";
+import { QK } from "@/lib/queryKeys";
 
 function Excerpt({ id, page }: { id: string; page: number }) {
   const [open, setOpen] = useState(false);
-  const { data, isFetching, isError } = useQuery({ queryKey: ["citation-excerpts", id, page],
+  const { data, isFetching, isError } = useQuery({ queryKey: [QK.citationExcerpts, id, page],
     queryFn: () => apiRequest<{ text: string }>("GET", `/api/papers/${id}/citation-excerpts?page=${page}`), enabled: open });
   return <div className="border rounded p-2">
     <button className="text-primary hover:underline" onClick={() => setOpen(!open)}>p.{page} の原文抜粋を{open ? "閉じる" : "見る"}（{id.slice(0, 8)}）</button>

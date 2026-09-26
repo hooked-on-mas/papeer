@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, apiRequest } from "./client";
 import type { Usage, UsageLimits } from "@/lib/usage";
 import type { PassageLocation } from "@/store";
+import { QK } from "@/lib/queryKeys";
 
 export type PaperData = {
   id: string;
@@ -68,24 +69,39 @@ export type ReadingData = {
   original_mtime: number;
 };
 
+/** Settings of one AI connection, by provider id: cli_path, base_url, and the model/effort last chosen. */
+export type ProviderOptions = Record<string, Record<string, string>>;
+
 export type SettingsData = {
   provider: string;
   model: string;
   reasoning_effort: string;
-  api_base: string;
-  codex_path: string;
-  claude_path: string;
-  gemini_path: string;
+  timeout_seconds: number;
   /** 0 lets the sidecar decide: 1 for a local model, else 3. */
   translation_concurrency: number;
+  provider_options: ProviderOptions;
   api_key?: string | null;
 };
+
+/** An AI connection as the sidecar describes it; the settings dialog is built from these. */
+export type ProviderSpec = {
+  id: string;
+  label: string;
+  description: string;
+  kind: "cli" | "http";
+  needs_login: boolean;
+  needs_api_key: boolean;
+  login_service: string;
+  fields: { key: string; label: string; placeholder: string; hint: string }[];
+};
+
+export type ProviderOption = { id: string; name: string };
 
 export type Message = { role: "user" | "assistant"; content: string; usage?: Usage | null; attachments?: PassageLocation[] };
 
 export function usePaper(id: string | null) {
   return useQuery({
-    queryKey: ["papers", id],
+    queryKey: [QK.papers, id],
     queryFn: async (): Promise<PaperData | null> => {
       if (!id) return null;
       return apiRequest<PaperData>("GET", `/api/papers/${id}`);
@@ -97,7 +113,7 @@ export function usePaper(id: string | null) {
 
 export function usePaperList(query: string, sort: number) {
   return useQuery({
-    queryKey: ["papers", "list", query, sort],
+    queryKey: [QK.papers, "list", query, sort],
     queryFn: () => apiRequest<PaperData[]>(
       "GET", `/api/papers?query=${encodeURIComponent(query)}&sort=${sort}`),
     placeholderData: (previous) => previous,
@@ -106,14 +122,14 @@ export function usePaperList(query: string, sort: number) {
 
 export function useCollections() {
   return useQuery({
-    queryKey: ["collections"],
+    queryKey: [QK.collections],
     queryFn: () => apiRequest<string[]>("GET", "/api/collections"),
   });
 }
 
 export function useReading(id: string | null) {
   return useQuery({
-    queryKey: ["reading", id],
+    queryKey: [QK.reading, id],
     queryFn: async (): Promise<ReadingData | null> => {
       if (!id) return null;
       return apiRequest<ReadingData>("GET", `/api/papers/${id}/reading`);
@@ -125,7 +141,7 @@ export function useReading(id: string | null) {
 
 export function useArticle(id: string | null) {
   return useQuery({
-    queryKey: ["article", id],
+    queryKey: [QK.article, id],
     queryFn: async () => {
       if (!id) return null;
       const res = await api.GET("/api/papers/{paper_id}/article", {
@@ -145,7 +161,7 @@ export function useArticle(id: string | null) {
 
 export function useMessages(id: string | null) {
   return useQuery({
-    queryKey: ["messages", id],
+    queryKey: [QK.messages, id],
     queryFn: async (): Promise<Message[]> => {
       if (!id) return [];
       return apiRequest<Message[]>("GET", `/api/papers/${id}/messages`);
@@ -154,17 +170,18 @@ export function useMessages(id: string | null) {
   });
 }
 
-export function useSettings() {
+export function useSettings(enabled = true) {
   return useQuery({
-    queryKey: ["settings"],
+    queryKey: [QK.settings],
     queryFn: () => apiRequest<SettingsData>("GET", "/api/settings"),
+    enabled,
   });
 }
 
 /** Plan usage of the connected AI; refreshed after each AI job. null when the service reports none. */
 export function useUsageLimits(provider: string | undefined) {
   return useQuery({
-    queryKey: ["usage-limits", provider],
+    queryKey: [QK.usageLimits, provider],
     queryFn: () => apiRequest<UsageLimits | null>("GET", "/api/usage/limits"),
     enabled: !!provider,
     staleTime: 5 * 60_000,
@@ -174,7 +191,7 @@ export function useUsageLimits(provider: string | undefined) {
 
 export function useHealth() {
   return useQuery({
-    queryKey: ["health"],
+    queryKey: [QK.health],
     queryFn: () => apiRequest<{ version: string; code_version: string }>("GET", "/health"),
     staleTime: Infinity,
   });
@@ -189,9 +206,37 @@ export function paperDisplayName(paper: Pick<PaperData, "title" | "original_name
   return prefix ? `${prefix} ${title}` : title;
 }
 
-export const PROVIDER_LABELS: Record<string, string> = {
-  gemini: "Google Gemini (agy CLI)",
-  claude: "Claude Code CLI",
-  codex: "ChatGPT / Codex CLI",
-  api: "API / ローカルモデル（OpenAI互換）",
-};
+export function useProviders() {
+  return useQuery({
+    queryKey: [QK.providers],
+    queryFn: () => apiRequest<ProviderSpec[]>("GET", "/api/providers"),
+    staleTime: Infinity,
+  });
+}
+
+export function providerLabel(providers: ProviderSpec[] | undefined, id: string | undefined): string {
+  if (!id) return "";
+  return providers?.find((p) => p.id === id)?.label ?? id;
+}
+
+/** Models the connection offers; cliPath (unsaved in the dialog) overrides the saved path. */
+export function useProviderModels(provider: string, options: { cliPath?: string; enabled?: boolean } = {}) {
+  const path = options.cliPath === undefined ? "" : `?cli_path=${encodeURIComponent(options.cliPath)}`;
+  return useQuery({
+    queryKey: [QK.models, provider, options.cliPath ?? null],
+    queryFn: () => apiRequest<ProviderOption[]>("GET", `/api/providers/${provider}/models${path}`),
+    enabled: (options.enabled ?? true) && !!provider,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useProviderEfforts(provider: string, model: string, options: { cliPath?: string; enabled?: boolean } = {}) {
+  const params = new URLSearchParams({ model });
+  if (options.cliPath !== undefined) params.set("cli_path", options.cliPath);
+  return useQuery({
+    queryKey: [QK.efforts, provider, model, options.cliPath ?? null],
+    queryFn: () => apiRequest<ProviderOption[]>("GET", `/api/providers/${provider}/efforts?${params}`),
+    enabled: (options.enabled ?? true) && !!provider,
+    staleTime: 5 * 60_000,
+  });
+}

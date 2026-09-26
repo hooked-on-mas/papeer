@@ -6,7 +6,8 @@ import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { UsageLine } from "@/components/UsageLine";
 import { apiRequest } from "@/api/client";
 import { useCollections, useMessages, usePaperList } from "@/api/hooks";
-import { showError, startJob } from "@/features/jobs/jobEvents";
+import { startJob } from "@/features/jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
 import { showPassage } from "@/features/reader/navigation";
 import { CitationEvidence } from "./CitationEvidence";
 

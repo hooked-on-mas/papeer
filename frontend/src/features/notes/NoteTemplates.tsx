@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
-import { showError } from "@/features/jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
 
 type Template = { name: string; content: string; builtin: boolean };
 type Draft = { originalName: string | null; name: string; content: string; initialName: string; initialContent: string };

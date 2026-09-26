@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Search, StickyNote as StickyIcon, Trash2 } from "lucide-react";
 import { apiRequest } from "@/api/client";
-import { useTagChoices } from "@/features/settings/TagsSection";
+import { useTagChoices } from "@/api/tagChoices";
 import { useStore } from "@/store";
 import { filterStickyNotes, noteDraft, stickyColors, stickyQuote, type StickyNote } from "./stickyNotes";
 import { openStickyNote, useStickyNotes } from "./stickyNotesStore";
+import { QK } from "@/lib/queryKeys";
 
 const field = "w-full rounded-md border bg-background px-2 py-1.5 text-xs";
 const action = "rounded px-2 py-1.5 text-xs hover:bg-muted disabled:opacity-40";
@@ -20,7 +21,7 @@ export function StickyNotesTab() {
   const listRef = useRef<HTMLDivElement>(null);
   const client = useQueryClient();
   const { data: notes = [], isPending, isError, refetch } = useQuery({
-    queryKey: ["sticky-notes", "all"], queryFn: () => apiRequest<StickyNote[]>("GET", "/api/sticky-notes"),
+    queryKey: [QK.stickyNotes, "all"], queryFn: () => apiRequest<StickyNote[]>("GET", "/api/sticky-notes"),
   });
   const visible = filterStickyNotes(notes, paperId ?? "", { ...filters, scope: effectiveScope });
   const scoped = notes.filter(item => effectiveScope === "all" || item.paper_id === paperId);
@@ -30,7 +31,7 @@ export function StickyNotesTab() {
   };
   useEffect(() => { if (listRef.current) listRef.current.scrollTop = useStickyNotes.getState().scrollTop; }, [isPending]);
   const refresh = () => Promise.all([
-    client.invalidateQueries({ queryKey: ["sticky-notes"] }), client.invalidateQueries({ queryKey: ["library-search"] }),
+    client.invalidateQueries({ queryKey: [QK.stickyNotes] }), client.invalidateQueries({ queryKey: [QK.librarySearch] }),
   ]);
   const jump = (item: StickyNote) => {
     const store = useStore.getState();

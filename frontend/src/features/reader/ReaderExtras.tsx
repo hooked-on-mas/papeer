@@ -4,6 +4,8 @@ import { Search, X } from "lucide-react";
 import { apiRequest } from "@/api/client";
 import { useStore } from "@/store";
 import { TranslationReview } from "./TranslationReview";
+import { onAppEvent } from "@/lib/appEvents";
+import { QK } from "@/lib/queryKeys";
 
 export type SearchResult = { page: number; snippet: string; anchor_y: number };
 export function ReaderExtras({ paperId, search, setSearch, onSearchJump }: {
@@ -15,7 +17,7 @@ export function ReaderExtras({ paperId, search, setSearch, onSearchJump }: {
   const [panel, setPanel] = useState<"search" | null>(null);
   const [input, setInput] = useState(search.query);
   const { data: found } = useQuery({
-    queryKey: ["paper-search", paperId, search.query, search.side],
+    queryKey: [QK.paperSearch, paperId, search.query, search.side],
     queryFn: () => apiRequest<{ results: SearchResult[]; total: number; limited: boolean }>(
       "GET", `/api/papers/${paperId}/search?q=${encodeURIComponent(search.query)}&side=${search.side}`),
     enabled: !!search.query.trim(),
@@ -26,9 +28,7 @@ export function ReaderExtras({ paperId, search, setSearch, onSearchJump }: {
     return () => clearTimeout(timer);
   }, [input, search.side, paperId]);
   useEffect(() => {
-    const open = () => setPanel("search");
-    window.addEventListener("open-reader-search", open);
-    return () => window.removeEventListener("open-reader-search", open);
+    return onAppEvent("open-reader-search", () => setPanel("search"));
   }, []);
   return <div className="border-b bg-background text-[12px] shrink-0">
     <div className="flex flex-wrap items-center gap-2 px-3 py-1">

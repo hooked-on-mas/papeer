@@ -5,9 +5,12 @@ import { useReading } from "@/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { askConfirm } from "@/components/AppDialogs";
-import { showError, startJob } from "@/features/jobs/jobEvents";
+import { startJob } from "@/features/jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
 import { paperBusy, useStore } from "@/store";
 import { jumpToPage } from "./navigation";
+import { onAppEvent } from "@/lib/appEvents";
+import { QK } from "@/lib/queryKeys";
 
 type Paragraph = { id: string; page: number; pages: number[]; source: string; text: string };
 type Revision = { id: string; unit_id: string; before: string; after: string; created_at: string };
@@ -28,14 +31,12 @@ function PaperReview({ paperId }: { paperId: string }) {
   const [instruction, setInstruction] = useState("自然な日本語にしてください。");
   const [pending, setPending] = useState(false);
   const dirty = !!selected && text !== selected.text;
-  const { data: paragraphs = [], isFetching, isError } = useQuery({ queryKey: ["paragraphs", paperId],
+  const { data: paragraphs = [], isFetching, isError } = useQuery({ queryKey: [QK.paragraphs, paperId],
     queryFn: () => apiRequest<Paragraph[]>("GET", `/api/papers/${paperId}/paragraphs`), enabled: open && tab === "edit" });
-  const { data: history = [] } = useQuery({ queryKey: ["revisions", paperId],
+  const { data: history = [] } = useQuery({ queryKey: [QK.revisions, paperId],
     queryFn: () => apiRequest<Revision[]>("GET", `/api/papers/${paperId}/revisions`), enabled: open && tab === "edit" });
   useEffect(() => {
-    const edit = () => { setOpen(true); setTab("edit"); };
-    window.addEventListener("open-paragraph-editor", edit);
-    return () => window.removeEventListener("open-paragraph-editor", edit);
+    return onAppEvent("open-paragraph-editor", () => { setOpen(true); setTab("edit"); });
   }, []);
   const issues = new Map<number, Set<string>>();
   const add = (page: number, message: string) => { if (!issues.has(page)) issues.set(page, new Set()); issues.get(page)!.add(message); };
@@ -65,8 +66,8 @@ function PaperReview({ paperId }: { paperId: string }) {
           if (draft) setText(event.result.text);
           else {
             setSelected(null); setText("");
-            client.invalidateQueries({ queryKey: ["paragraphs", paperId] });
-            client.invalidateQueries({ queryKey: ["revisions", paperId] });
+            client.invalidateQueries({ queryKey: [QK.paragraphs, paperId] });
+            client.invalidateQueries({ queryKey: [QK.revisions, paperId] });
           }
         });
     } catch (error) { setPending(false); showError(error, "段落の修正を実行できませんでした"); }

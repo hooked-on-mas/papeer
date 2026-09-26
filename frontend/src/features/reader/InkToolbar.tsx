@@ -5,7 +5,7 @@ import type { PaperData } from "@/api/hooks";
 import { paperExportFilename } from "@/lib/exportFilename";
 import { shell, tauriShell } from "@/shell";
 import { useStore } from "@/store";
-import { showError } from "@/features/jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
 import { flushInkSaves } from "./inkStore";
 import type { InkEditor } from "./useInkEditor";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";

@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useErrorDialog } from "@/features/jobs/jobEvents";
+import { useErrorDialog } from "@/components/errorDialog";
 
 type Request =
   | { kind: "text"; title: string; label: string; defaultValue: string; resolve: (value: string | null) => void }

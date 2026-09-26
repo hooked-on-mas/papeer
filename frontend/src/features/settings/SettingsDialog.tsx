@@ -1,14 +1,14 @@
 import { useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { BookOpen, FileText, Keyboard, LayoutTemplate, Palette, PlugZap, StickyNote, Tags, type LucideIcon } from "lucide-react";
 import { cn } from "cn";
 import { apiRequest } from "../../api/client";
-import { usePaper, type SettingsData } from "../../api/hooks";
+import { usePaper, useSettings } from "../../api/hooks";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../../components/ui/dialog";
 import { Button } from "../../components/ui/button";
 import { askConfirm } from "../../components/AppDialogs";
 import { useStore } from "../../store";
-import { showError } from "../jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
 import { ConnectionSection, useConnectionForm } from "./ConnectionSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { PromptsSection, usePromptsForm } from "./PromptsSection";
@@ -17,6 +17,7 @@ import { TagManager } from "./TagsSection";
 import { BackupSection } from "./BackupSection";
 import { NoteTemplates, type TemplateLeaveGuard } from "../notes/NoteTemplates";
 import { useSettingsNavigation, type SettingsSection } from "./settingsNavigation";
+import { QK } from "@/lib/queryKeys";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -44,11 +45,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [saving, setSaving] = useState(false);
   const confirming = useRef(false);
 
-  const { data: settings, isError } = useQuery({
-    queryKey: ["settings"],
-    queryFn: () => apiRequest<SettingsData>("GET", "/api/settings"),
-    enabled: open,
-  });
+  const { data: settings, isError } = useSettings(open);
   const connection = useConnectionForm(open, settings);
   const prompts = usePromptsForm(open);
   const dirty = connection.dirty || prompts.dirty;
@@ -78,10 +75,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       if (connection.dirty) await apiRequest("PUT", "/api/settings", connection.values());
       const promptChanges = prompts.pendingChanges();
       if (Object.keys(promptChanges).length) await apiRequest("PUT", "/api/prompts", promptChanges);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["settings"] }),
-        queryClient.invalidateQueries({ queryKey: ["prompts"] }),
-      ]);
+      // Model lists depend on the CLI path, and the plan usage on the connection.
+      await Promise.all([QK.settings, QK.prompts, QK.models, QK.efforts, QK.usageLimits].map((root) =>
+        queryClient.invalidateQueries({ queryKey: [root] })));
       useStore.getState().setStatus(connection.values().api_key
         ? "設定を保存しました。APIキーはこの起動中のみ保持します。"
         : "設定を保存しました。");

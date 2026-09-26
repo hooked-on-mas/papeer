@@ -1,0 +1,31 @@
+/**
+ * First elements of the TanStack Query keys. Queries and invalidations use these names,
+ * so a refresh after a job cannot miss a query through a typo.
+ */
+export const QK = {
+  papers: "papers",
+  collections: "collections",
+  reading: "reading",
+  article: "article",
+  messages: "messages",
+  settings: "settings",
+  providers: "providers",
+  models: "models",
+  efforts: "efforts",
+  usageLimits: "usage-limits",
+  health: "health",
+  prompts: "prompts",
+  promptDefaults: "prompt-defaults",
+  paperSearch: "paper-search",
+  librarySearch: "library-search",
+  paragraphs: "paragraphs",
+  revisions: "revisions",
+  tags: "tags",
+  glossary: "glossary",
+  inkPages: "ink-pages",
+  stickyNotes: "sticky-notes",
+  effectiveGlossary: "effective-glossary",
+  citationExcerpts: "citation-excerpts",
+  readingStatuses: "reading-statuses",
+  stickyLabels: "sticky-labels",
+} as const;

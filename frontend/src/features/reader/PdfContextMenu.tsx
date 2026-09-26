@@ -9,11 +9,13 @@ import {
 } from "@/components/ui/context-menu";
 import { apiRequest } from "@/api/client";
 import { cleanPdfSelection, quoteForNote, restoreFormulas } from "@/lib/pdfSelection";
-import { showError } from "@/features/jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
 import { changeZoom, movePage } from "./navigation";
 import { askText } from "@/components/AppDialogs";
 import { openStickyNote } from "./stickyNotesStore";
 import { textLayerOffsets } from "./textLayerRange";
+import { emitAppEvent } from "@/lib/appEvents";
+import { QK } from "@/lib/queryKeys";
 
 /** Raw selected text inside `area`, or "" when the selection is empty or elsewhere. */
 function selectionWithin(area: HTMLElement | null): string {
@@ -124,7 +126,7 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
             <ContextMenuItem onClick={copy}>
               <Copy /> コピー <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
             </ContextMenuItem>
-            <ContextMenuItem onClick={() => window.dispatchEvent(new Event("open-paragraph-editor"))}>
+            <ContextMenuItem onClick={() => emitAppEvent("open-paragraph-editor")}>
               <Languages /> このページの段落を修正…
             </ContextMenuItem>
             <ContextMenuItem onClick={withPassage(async (text) => {
@@ -135,9 +137,9 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
               try {
                 const terms = await apiRequest<{ source: string; target: string }[]>("GET", "/api/glossary");
                 await apiRequest("PUT", "/api/glossary", { expected_terms: terms, terms: [...terms.filter(t => t.source.toLocaleLowerCase() !== source.trim().toLocaleLowerCase()), { source: source.trim(), target: target.trim() }] });
-                queryClient.invalidateQueries({ queryKey: ["glossary"] });
-                queryClient.invalidateQueries({ queryKey: ["effective-glossary"] });
-                queryClient.invalidateQueries({ queryKey: ["paragraphs"] });
+                queryClient.invalidateQueries({ queryKey: [QK.glossary] });
+                queryClient.invalidateQueries({ queryKey: [QK.effectiveGlossary] });
+                queryClient.invalidateQueries({ queryKey: [QK.paragraphs] });
                 useStore.getState().setStatus("共通辞書に登録しました。すべての論文の次の翻訳から適用します。");
               } catch (error) { showError(error, "用語を登録できませんでした"); }
             })}>
@@ -180,7 +182,7 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
               <MoveHorizontal /> 幅に合わせる <ContextMenuShortcut>Ctrl+0</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem onClick={() => window.dispatchEvent(new Event("open-translate-dialog"))}>
+            <ContextMenuItem onClick={() => emitAppEvent("open-translate-dialog")}>
               <Languages /> 翻訳する… <ContextMenuShortcut>Ctrl+T</ContextMenuShortcut>
             </ContextMenuItem>
           </>

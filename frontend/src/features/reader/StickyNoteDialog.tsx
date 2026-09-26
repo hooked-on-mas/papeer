@@ -5,10 +5,11 @@ import { ApiError, apiRequest } from "@/api/client";
 import { paperDisplayName, usePaper } from "@/api/hooks";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useStore } from "@/store";
-import { useTagChoices } from "@/features/settings/TagsSection";
+import { useTagChoices } from "@/api/tagChoices";
 import { AnnotationTextEditor } from "./AnnotationTextEditor";
 import { stickyQuote, type StickyNote } from "./stickyNotes";
 import { openStickyNote, useStickyNotes } from "./stickyNotesStore";
+import { QK } from "@/lib/queryKeys";
 
 /** One small editor shared by PDF markers, selections, and the sticky-notes tab. */
 export function StickyNoteDialog() {
@@ -33,7 +34,7 @@ export function StickyNoteDialog() {
         { page: item.page, side: item.side, quote: item.quote, anchor_y: item.anchorY, anchor_x: item.anchorX ?? 0, label: item.label ?? labels[0] ?? "未分類", note: item.note ?? "" });
       useStickyNotes.setState({ draft: null, dirty: false, selectedId: saved.id });
       useStore.getState().setStatus("付箋を保存しました。");
-      await Promise.all([client.invalidateQueries({ queryKey: ["sticky-notes"] }), client.invalidateQueries({ queryKey: ["library-search"] })]);
+      await Promise.all([client.invalidateQueries({ queryKey: [QK.stickyNotes] }), client.invalidateQueries({ queryKey: [QK.librarySearch] })]);
     } catch (e) {
       setError(e instanceof ApiError && e.status === 404 && e.message === "Not Found"
         ? "起動中のバックエンドが付箋の保存に対応していません。バックエンドを再起動してから、もう一度「確定」を押してください。入力内容は保持しています。"

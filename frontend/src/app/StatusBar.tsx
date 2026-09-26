@@ -1,6 +1,6 @@
 import { Gauge, Loader2, Square, Undo2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import { PROVIDER_LABELS, useHealth, useSettings, useUsageLimits } from "@/api/hooks";
+import { providerLabel, useHealth, useProviders, useSettings, useUsageLimits } from "@/api/hooks";
 import { formatTokens, limitsDetails, limitsSummary, useLastUsage, usageDetails } from "@/lib/usage";
 import { isRunning, useStore } from "@/store";
 import { cancelVisibleJobs } from "@/features/jobs/jobEvents";
@@ -13,6 +13,7 @@ export function StatusBar() {
   const moveHistory = useStore((s) => s.moveHistory);
   const { data: settings } = useSettings();
   const { data: health } = useHealth();
+  const { data: providers } = useProviders();
   const { data: limits } = useUsageLimits(settings?.provider);
   const lastUsage = useLastUsage((s) => s.usage);
 
@@ -66,7 +67,7 @@ export function StatusBar() {
         </span>
       )}
       <span className="shrink-0 hidden md:inline" title="AI接続">
-        {settings ? (PROVIDER_LABELS[settings.provider] ?? settings.provider) : ""}
+        {providerLabel(providers, settings?.provider)}
       </span>
       {health?.version && (
         <span className="shrink-0 tabular-nums" title={health.version}>

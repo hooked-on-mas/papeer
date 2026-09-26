@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { ReadingData } from "@/api/hooks";
 import { useStore, ZOOM_PRESETS, type PassageLocation } from "@/store";
+import { QK } from "@/lib/queryKeys";
 
 let queryClient: QueryClient | null = null;
 
@@ -10,7 +11,7 @@ export function bindReaderQueryClient(client: QueryClient): void {
 
 function reading(): ReadingData | null | undefined {
   const id = useStore.getState().activePaperId;
-  return id ? queryClient?.getQueryData<ReadingData>(["reading", id]) : null;
+  return id ? queryClient?.getQueryData<ReadingData>([QK.reading, id]) : null;
 }
 
 export function pageCount(): number {

@@ -5,10 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiRequest } from "@/api/client";
-import { PROVIDER_LABELS, useReading, useSettings, type SettingsData } from "@/api/hooks";
-import { showError, startJob } from "@/features/jobs/jobEvents";
+import { providerLabel, useProviderEfforts, useProviderModels, useProviders, useReading, useSettings } from "@/api/hooks";
+import { startJob } from "@/features/jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
 import { askConfirm } from "@/components/AppDialogs";
 import { GlossaryTransfer } from "./GlossaryTransfer";
+import { QK } from "@/lib/queryKeys";
 
 interface TranslationDialogProps {
   open: boolean;
@@ -16,8 +18,6 @@ interface TranslationDialogProps {
   paperId: string;
   currentPage: number;
 }
-
-type Option = { id: string; name: string };
 
 /** Same rules and messages as paperdesk.layout.page_selection, for feedback while typing. */
 export function parsePageSelection(value: string, pageCount: number): number[] {
@@ -35,13 +35,6 @@ export function parsePageSelection(value: string, pageCount: number): number[] {
     for (let page = first; page <= last; page++) pages.add(page);
   }
   return [...pages].sort((a, b) => a - b);
-}
-
-function cliPath(settings: SettingsData | undefined): string {
-  if (!settings) return "";
-  return settings.provider === "claude" ? settings.claude_path
-    : settings.provider === "gemini" ? settings.gemini_path
-    : settings.provider === "codex" ? settings.codex_path : "";
 }
 
 export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: TranslationDialogProps) {
@@ -77,7 +70,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   const { data: settings } = useSettings();
   const { data: reading } = useReading(open ? paperId : null);
   const { data: savedGlossary } = useQuery({
-    queryKey: ["glossary"],
+    queryKey: [QK.glossary],
     queryFn: () => apiRequest<{ source: string; target: string }[]>("GET", "/api/glossary"),
     enabled: open,
   });
@@ -86,22 +79,11 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   const provider = settings?.provider ?? "";
   const pageCount = reading?.source_page_count ?? reading?.page_count ?? 0;
 
-  const { data: models = [], isFetching: loadingModels } = useQuery({
-    queryKey: ["models", provider, cliPath(settings)],
-    queryFn: () => apiRequest<Option[]>("GET",
-      `/api/providers/${provider}/models?cli_path=${encodeURIComponent(cliPath(settings))}`),
-    enabled: open && !!provider,
-    staleTime: 5 * 60_000,
-  });
-
+  // The saved connection settings (CLI path included) apply; only model and effort change here.
+  const { data: providers } = useProviders();
+  const { data: models = [], isFetching: loadingModels } = useProviderModels(provider, { enabled: open });
   const effectiveModel = model || settings?.model || "";
-  const { data: efforts = [] } = useQuery({
-    queryKey: ["efforts", provider, effectiveModel],
-    queryFn: () => apiRequest<Option[]>("GET",
-      `/api/providers/${provider}/efforts?model=${encodeURIComponent(effectiveModel)}&cli_path=${encodeURIComponent(cliPath(settings))}`),
-    enabled: open && !!provider,
-    staleTime: 5 * 60_000,
-  });
+  const { data: efforts = [] } = useProviderEfforts(provider, effectiveModel, { enabled: open });
 
   useEffect(() => {
     if (!open) return;
@@ -153,8 +135,8 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     const terms = glossary.filter(item => item.source.trim() || item.target.trim()).map(t => ({ source: t.source.trim(), target: t.target.trim() }));
     await apiRequest("PUT", "/api/glossary", { terms, expected_terms: savedSnapshot.current });
     savedSnapshot.current = terms;
-    await queryClient.invalidateQueries({ queryKey: ["glossary"] });
-    await queryClient.invalidateQueries({ queryKey: ["effective-glossary"] });
+    await queryClient.invalidateQueries({ queryKey: [QK.glossary] });
+    await queryClient.invalidateQueries({ queryKey: [QK.effectiveGlossary] });
     setGlossaryDirty(false);
   };
 
@@ -190,7 +172,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     }
   };
 
-  const connection = PROVIDER_LABELS[provider] ?? provider;
+  const connection = providerLabel(providers, provider);
   const shownEffort = effort || settings?.reasoning_effort || "";
 
   return (

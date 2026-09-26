@@ -3,9 +3,9 @@ import { Button } from "@/components/ui/button";
 import { askConfirm, showMessage } from "@/components/AppDialogs";
 import { shell } from "@/shell";
 import { isRunning, useStore } from "@/store";
-import { showError, startJob } from "@/features/jobs/jobEvents";
-import { pendingNoteSaves } from "@/features/notes/NotesPane";
-import { flushInkSaves } from "@/features/reader/inkStore";
+import { startJob } from "@/features/jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
+import { describeFailure, flushPendingSaves } from "@/lib/pendingSaves";
 import { flushUiState, suspendUiStateSync } from "@/app/uiStateSync";
 
 export function BackupSection() {
@@ -14,8 +14,8 @@ export function BackupSection() {
   const backup = async (restore: boolean) => {
     setPending(true);
     try {
-      await Promise.all([...pendingNoteSaves].map(save => save()));
-      await flushInkSaves();
+      const failure = await flushPendingSaves();
+      if (failure) throw new Error(describeFailure(failure));
       const path = restore ? (await shell.openFiles([{ name: "Papeer バックアップ", extensions: ["zip"] }]))[0]
         : await shell.saveFile(`Papeer-${new Date().toISOString().slice(0, 10)}.zip`, [{ name: "Papeer バックアップ", extensions: ["zip"] }]);
       if (!path) { setPending(false); return; }

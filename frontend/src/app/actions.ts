@@ -2,11 +2,14 @@ import type { QueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/api/client";
 import type { PaperData, ReadingData } from "@/api/hooks";
 import { askConfirm, askText, showMessage } from "@/components/AppDialogs";
-import { showError, showStartedJob, startJob } from "@/features/jobs/jobEvents";
+import { showStartedJob, startJob } from "@/features/jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
 import { joinPath, shell } from "@/shell";
 import { useStore } from "@/store";
 import { paperExportFilename } from "@/lib/exportFilename";
 import { addPendingImports, removePendingImports, usePendingImports } from "./pendingImports";
+import { emitAppEvent } from "@/lib/appEvents";
+import { QK } from "@/lib/queryKeys";
 
 let queryClient: QueryClient | null = null;
 
@@ -15,8 +18,8 @@ export function bindQueryClient(client: QueryClient): void {
 }
 
 function refreshLibrary(): void {
-  queryClient?.invalidateQueries({ queryKey: ["papers"] });
-  queryClient?.invalidateQueries({ queryKey: ["collections"] });
+  queryClient?.invalidateQueries({ queryKey: [QK.papers] });
+  queryClient?.invalidateQueries({ queryKey: [QK.collections] });
 }
 
 async function paper(id: string): Promise<PaperData> {
@@ -51,7 +54,7 @@ export async function importPaths(paths: string[], collection?: string): Promise
   try {
     // Rows still pending at the end (failure, cancel, lost events) go once the list has caught up.
     await startJob("/api/papers/import", { paths: pdfs, collection: destination }, { kind: "import", paperId: null },
-      () => void Promise.resolve(queryClient?.invalidateQueries({ queryKey: ["papers"] }))
+      () => void Promise.resolve(queryClient?.invalidateQueries({ queryKey: [QK.papers] }))
         .finally(() => removePendingImports(pdfs)));
   } catch (error) {
     removePendingImports(pdfs);
@@ -93,7 +96,7 @@ export async function movePaper(paperId: string, collection: string, record = tr
   if (paperId === current.activePaperId && current.selectedFolder === null) current.setCurrentCollection(destination);
   expandToCollection(destination);
   refreshLibrary();
-  queryClient?.invalidateQueries({ queryKey: ["papers", paperId] });
+  queryClient?.invalidateQueries({ queryKey: [QK.papers, paperId] });
   store.setStatus(`「${destination || "未分類"}」へ移動しました。`);
   return true;
 }
@@ -187,7 +190,7 @@ export async function renameFolder(path: string): Promise<void> {
     expandedCollections: s.expandedCollections?.map(mapped) ?? null,
   });
   refreshLibrary();
-  queryClient?.invalidateQueries({ queryKey: ["papers"] });
+  queryClient?.invalidateQueries({ queryKey: [QK.papers] });
   s.setStatus(`「${path}」を「${destination}」に変更しました。`);
 }
 
@@ -304,7 +307,7 @@ export async function saveOriginal(paperId: string): Promise<void> {
 export type PdfExportKind = "translated" | "interleaved" | "bilingual";
 
 export async function exportPdf(paperId: string, kind: PdfExportKind): Promise<void> {
-  const reading = queryClient?.getQueryData<ReadingData>(["reading", paperId]);
+  const reading = queryClient?.getQueryData<ReadingData>([QK.reading, paperId]);
   if (reading?.in_progress) {
     await showMessage("翻訳途中", "指定したページの翻訳が終わると書き出せます。完了したページはアプリ内で確認できます。");
     return;
@@ -329,7 +332,7 @@ export async function exportPdf(paperId: string, kind: PdfExportKind): Promise<v
 }
 
 export async function exportMarkdown(paperId: string): Promise<void> {
-  const reading = queryClient?.getQueryData<ReadingData>(["reading", paperId]);
+  const reading = queryClient?.getQueryData<ReadingData>([QK.reading, paperId]);
   if (reading && !reading.has_article) {
     await showMessage("未作成", "先に解説を作成してください。");
     return;
@@ -368,5 +371,5 @@ export async function followCitation(paperId: string, page: number): Promise<voi
   store.setTranslatedOnly(false);
   store.setActivePaperId(paperId, page);
   store.setActiveTab("reader");
-  window.dispatchEvent(new CustomEvent("reveal-paper", { detail: { paperId, focus: false } }));
+  emitAppEvent("reveal-paper", { paperId, focus: false });
 }

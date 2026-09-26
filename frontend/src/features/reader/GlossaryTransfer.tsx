@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { apiRequest } from "@/api/client";
 import { Button } from "@/components/ui/button";
-import { showError } from "@/features/jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
 import { shell } from "@/shell";
 
 type Term = { source: string; target: string };

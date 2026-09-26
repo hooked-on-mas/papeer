@@ -2,9 +2,10 @@ import { useRef, useState, type PointerEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { StickyNote as StickyIcon } from "lucide-react";
 import { apiRequest } from "@/api/client";
-import { showError } from "@/features/jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
 import { noteDraft, stickyColors, stickyQuote, type StickyNote } from "./stickyNotes";
 import { openStickyNote, useStickyNotes } from "./stickyNotesStore";
+import { QK } from "@/lib/queryKeys";
 
 type Position = { anchor_x: number; anchor_y: number };
 export function StickyNoteMarker({ item, movable }: { item: StickyNote; movable: boolean }) {
@@ -21,8 +22,8 @@ export function StickyNoteMarker({ item, movable }: { item: StickyNote; movable:
     try {
       const saved = await apiRequest<StickyNote>("PATCH", `/api/papers/${item.paper_id}/sticky-notes/${item.id}`,
         { label: item.label, note: item.note, ...next });
-      client.setQueriesData<StickyNote[]>({ queryKey: ["sticky-notes"] }, notes => notes?.map(note => note.id === saved.id ? { ...note, ...saved } : note));
-      await client.invalidateQueries({ queryKey: ["sticky-notes"] });
+      client.setQueriesData<StickyNote[]>({ queryKey: [QK.stickyNotes] }, notes => notes?.map(note => note.id === saved.id ? { ...note, ...saved } : note));
+      await client.invalidateQueries({ queryKey: [QK.stickyNotes] });
     } catch (error) { showError(error, "付箋を移動できませんでした"); }
     finally { busy.current = false; setSaving(false); setPosition(null); }
   };

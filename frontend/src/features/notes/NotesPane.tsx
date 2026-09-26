@@ -7,12 +7,19 @@ import { useCollections, usePaper, useReading, type PaperData, type ReadingData 
 import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { openPaperFolder } from "@/app/actions";
-import { showError } from "@/features/jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
 import { ReadingOrganization } from "./ReadingOrganization";
 import { NoteTemplates } from "./NoteTemplates";
+import { registerPendingSaves } from "@/lib/pendingSaves";
+import { QK } from "@/lib/queryKeys";
 
-/** Pending memo saves, flushed before the window closes. */
-export const pendingNoteSaves = new Set<() => Promise<void>>();
+/** Memo saves of the open panes, flushed before closing or backing up. */
+const pendingNoteSaves = new Set<() => Promise<void>>();
+registerPendingSaves(async () => {
+  const results = await Promise.allSettled([...pendingNoteSaves].map((save) => save()));
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed) throw failed.reason;
+}, "メモを保存できませんでした。内容を確認してください。");
 
 /** `compact` shows only the memo, for the side panel in focus mode. */
 export function NotesPane({ compact = false }: { compact?: boolean }) {
@@ -71,7 +78,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
     if (paper && note === null) {
       // From the cache rather than this render: a pane closing in the same commit (entering or
       // leaving focus mode) has just put its unsaved text there.
-      const text = queryClient.getQueryData<PaperData | null>(["papers", paperId])?.note ?? paper.note ?? "";
+      const text = queryClient.getQueryData<PaperData | null>([QK.papers, paperId])?.note ?? paper.note ?? "";
       setNote(text);
       savedNote.current = text;
       latestNote.current = text;
@@ -103,10 +110,10 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
       if (text === null || text === savedNote.current) return;
       setNoteState("saving");
       // Update the cache first so reopening the tab mid-save shows the new text.
-      queryClient.setQueryData<PaperData | null>(["papers", paperId], (old) => old ? { ...old, note: text } : old);
+      queryClient.setQueryData<PaperData | null>([QK.papers, paperId], (old) => old ? { ...old, note: text } : old);
       try {
         await apiRequest("PATCH", `/api/papers/${paperId}`, { note: text });
-        queryClient.invalidateQueries({ queryKey: ["library-search"] });
+        queryClient.invalidateQueries({ queryKey: [QK.librarySearch] });
         savedNote.current = text;
         if (latestNote.current === text) setNoteState("saved");
       } catch (error) {
@@ -135,7 +142,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
       // Synchronously, so that a pane opening in the same commit starts from this text.
       const text = latestNote.current;
       if (text !== null && text !== savedNote.current) {
-        queryClient.setQueryData<PaperData | null>(["papers", paperId], (old) => old ? { ...old, note: text } : old);
+        queryClient.setQueryData<PaperData | null>([QK.papers, paperId], (old) => old ? { ...old, note: text } : old);
       }
       void saveNote().catch(() => undefined);
     };
@@ -156,9 +163,9 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
       if (store.selectedFolder === null && store.activePaperId === paperId) {
         store.setCurrentCollection(collection.split(/[\\/]/).map((p) => p.trim()).filter(Boolean).join(" / "));
       }
-      queryClient.invalidateQueries({ queryKey: ["papers"] });
-      queryClient.invalidateQueries({ queryKey: ["collections"] });
-      queryClient.invalidateQueries({ queryKey: ["library-search"] });
+      queryClient.invalidateQueries({ queryKey: [QK.papers] });
+      queryClient.invalidateQueries({ queryKey: [QK.collections] });
+      queryClient.invalidateQueries({ queryKey: [QK.librarySearch] });
       store.setStatus("論文情報・フォルダーを保存しました。");
     } catch (error) {
       showError(error, "論文情報");

@@ -4,13 +4,14 @@ import { ChevronDown } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/api/client";
 import type { PaperData } from "@/api/hooks";
-import { useTagChoices } from "@/features/settings/TagsSection";
-import { showError } from "@/features/jobs/jobEvents";
+import { useTagChoices } from "@/api/tagChoices";
+import { showError } from "@/components/errorDialog";
 import { TagChip } from "@/components/ui/TagChip";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel,
   DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
+import { QK } from "@/lib/queryKeys";
 
 export function ReadingOrganization({ paper }: { paper: PaperData }) {
   const client = useQueryClient();
@@ -27,7 +28,7 @@ export function ReadingOrganization({ paper }: { paper: PaperData }) {
     setSaving(true);
     try {
       await apiRequest("PATCH", `/api/papers/${paper.id}`, values);
-      await Promise.all([client.invalidateQueries({ queryKey: ["papers"] }), client.invalidateQueries({ queryKey: ["tags"] }), client.invalidateQueries({ queryKey: ["library-search"] })]);
+      await Promise.all([client.invalidateQueries({ queryKey: [QK.papers] }), client.invalidateQueries({ queryKey: [QK.tags] }), client.invalidateQueries({ queryKey: [QK.librarySearch] })]);
     } catch (error) { showError(error, "読書状態・タグを保存できませんでした"); }
     finally { saveInFlight.current = false; setSaving(false); }
   };

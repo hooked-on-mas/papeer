@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { apiRequest, ApiError } from "@/api/client";
 import { useStore } from "@/store";
+import { registerPendingSaves } from "@/lib/pendingSaves";
+import { emitAppEvent } from "@/lib/appEvents";
 
 export type InkSide = "original" | "translated";
 import type { InkStroke } from "./inkGeometry";
@@ -58,7 +60,7 @@ class InkPage {
     // A local journal also protects ink if the app exits while the server is unavailable.
     try { localStorage.setItem(this.draftKey, JSON.stringify(strokes)); } catch { /* Keep the in-memory draft. */ }
     this.update({ strokes, dirty: true, error: "" });
-    window.dispatchEvent(new CustomEvent("ink-changed", { detail: { paperId: this.paperId } }));
+    emitAppEvent("ink-changed", { paperId: this.paperId });
     void this.save().catch(() => {});
   }
   change = (strokes: InkStroke[]) => {
@@ -134,3 +136,5 @@ window.addEventListener("beforeunload", event => {
   if ([...pages.values()].some(entry => entry.snapshot.dirty)) { event.preventDefault(); event.returnValue = ""; }
 });
 window.addEventListener("online", () => { void flushInkSaves().catch(() => {}); });
+registerPendingSaves(() => flushInkSaves(),
+  "書き込みを保存できませんでした。PDFの保存ボタンで再試行してください。");

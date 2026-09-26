@@ -1,10 +1,11 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { JobKind } from "@/features/jobs/jobKinds";
 
 export interface Job {
   job_id: string;
   paper_id?: string | null;
-  kind?: string;
+  kind?: JobKind;
   message?: string;
   done?: number | null;
   total?: number | null;

@@ -1,4 +1,4 @@
-import { useTagChoices } from "@/features/settings/TagsSection";
+import { useTagChoices } from "@/api/tagChoices";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/api/client";
@@ -29,6 +29,9 @@ import { LibraryTags } from "./LibraryTags";
 import { TagChip } from "@/components/ui/TagChip";
 import { PaperStatusBadge } from "@/components/ui/PaperStatusBadge";
 import { paperTranslationStatus } from "@/lib/paperStatus";
+import { isJobKind, TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
+import { onAppEvent } from "@/lib/appEvents";
+import { QK } from "@/lib/queryKeys";
 
 export const SORT_LABELS = ["追加が新しい順", "追加が古い順", "名前順（昇順）", "名前順（降順）"];
 type LibraryHit = { paper_id: string; title: string; side: "metadata" | "note" | "original" | "translated"; page: number | null; snippet: string };
@@ -115,7 +118,7 @@ export function LibrarySidebar() {
     if (papersLoaded && tagFilter && !allPapers.some(paper => paper.tags?.includes(tagFilter))) setTagFilter("");
   }, [allPapers, papersLoaded, tagFilter]);
   const { data: searchResults, isFetching: searching, isError: searchError } = useQuery({
-    queryKey: ["library-search", librarySearch],
+    queryKey: [QK.librarySearch, librarySearch],
     queryFn: () => apiRequest<{ results: LibraryHit[]; limited: boolean }>("GET", `/api/library-search?q=${encodeURIComponent(librarySearch)}`),
     enabled: !!librarySearch.trim(),
   });
@@ -158,8 +161,7 @@ export function LibrarySidebar() {
 
   useEffect(() => {
     // Ctrl+L and citations reveal the paper: open its ancestors and scroll to it.
-    const reveal = (e: Event) => {
-      const { paperId, focus } = (e as CustomEvent).detail as { paperId: string; focus: boolean };
+    return onAppEvent("reveal-paper", ({ paperId, focus }) => {
       const paper = papers.find((p) => p.id === paperId);
       if (paper && expandedCollections !== null) {
         const parts = normalizeCollection(paper.collection_name || "").split(" / ").filter(Boolean);
@@ -173,9 +175,7 @@ export function LibrarySidebar() {
         row?.scrollIntoView({ block: "nearest" });
         if (focus) row?.focus();
       }, 50);
-    };
-    window.addEventListener("reveal-paper", reveal);
-    return () => window.removeEventListener("reveal-paper", reveal);
+    });
   }, [papers, expandedCollections, setExpandedCollections]);
 
   const clearFilters = () => {
@@ -423,7 +423,7 @@ function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData
   const selectedFolder = useStore((s) => s.selectedFolder);
   const jobs = useStore((s) => s.activeJobs);
   const running = jobs.some((j) => isRunning(j) && j.paper_id === paper.id);
-  const translating = jobs.some(j => isRunning(j) && j.paper_id === paper.id && (j.kind === "translate" || j.kind === "revision"));
+  const translating = jobs.some(j => isRunning(j) && j.paper_id === paper.id && isJobKind(j.kind, TRANSLATION_JOBS));
   const isActive = paper.id === activePaperId && selectedFolder === null;
   const collection = normalizeCollection(paper.collection_name || "");
 

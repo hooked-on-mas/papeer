@@ -15,6 +15,8 @@ import { apiRequest } from "@/api/client";
 import {
   deletePaper, exportMarkdown, exportPdf, generateArticle, openPaperFile, openPaperFolder, renamePaperFile, saveOriginal,
 } from "./actions";
+import { isJobKind, TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
+import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
 
 export function Header() {
   const activePaperId = useStore((s) => s.activePaperId);
@@ -47,7 +49,7 @@ export function Header() {
     );
   }
 
-  const translateJob = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && (j.kind === "translate" || j.kind === "revision"));
+  const translateJob = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && isJobKind(j.kind, TRANSLATION_JOBS));
   const busy = paperBusy(activeJobs, activePaperId);
   const translation = paperTranslationStatus(paper, !!translateJob, reading);
   const { status } = translation;
@@ -92,7 +94,7 @@ export function Header() {
           </button>
         ) : (
           <button
-            onClick={() => window.dispatchEvent(new Event("open-translate-dialog"))}
+            onClick={() => emitAppEvent("open-translate-dialog")}
             disabled={busy}
             title="翻訳するページとモデルを選んで開始します（Ctrl+T）。保存済みの訳文は再利用します。"
             className="flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
@@ -160,9 +162,7 @@ export function TranslationDialogHost() {
   const currentPage = useStore((s) => s.currentPage);
   const [open, setOpen] = useState(false);
   useEffect(() => {
-    const show = () => { if (useStore.getState().activePaperId) setOpen(true); };
-    window.addEventListener("open-translate-dialog", show);
-    return () => window.removeEventListener("open-translate-dialog", show);
+    return onAppEvent("open-translate-dialog", () => { if (useStore.getState().activePaperId) setOpen(true); });
   }, []);
   if (!activePaperId) return null;
   return <TranslationDialog open={open} onOpenChange={setOpen} paperId={activePaperId} currentPage={currentPage} />;

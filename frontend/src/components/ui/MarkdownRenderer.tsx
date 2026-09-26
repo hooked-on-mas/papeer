@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { authorizedUrl } from "@/api/client";
 import { followCitation } from "@/app/actions";
 import { normalizeMarkdown } from "@/lib/normalizeMarkdown";
+import { emitAppEvent } from "@/lib/appEvents";
 
 interface Props {
   content: string;
@@ -123,7 +124,7 @@ export function MarkdownRenderer({ content, className, paperId, onCitationClick,
               src = authorizedUrl(`/api/papers/${owner}/${src}`);
             }
             return <img {...props} src={src} className="max-w-full h-auto rounded-md shadow-sm my-4 cursor-zoom-in" loading="lazy"
-              onClick={() => window.dispatchEvent(new CustomEvent("open-lightbox", { detail: { src, alt: props.alt } }))} />;
+              onClick={() => emitAppEvent("open-lightbox", { src, alt: props.alt })} />;
           }
         }}
       >

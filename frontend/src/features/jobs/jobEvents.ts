@@ -1,21 +1,16 @@
 import { useEffect } from "react";
-import { create } from "zustand";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiRequest, authToken, backendPort } from "@/api/client";
 import { isRunning, useStore, type Job } from "@/store";
 import { notifyIfAway, shell } from "@/shell";
 import { removePendingImports, setPendingPages } from "@/app/pendingImports";
+import { useErrorDialog } from "@/components/errorDialog";
+import { QK } from "@/lib/queryKeys";
 import { useLastUsage, usageSummary, type Usage } from "@/lib/usage";
+import { jobHandler, type JobFinished } from "./jobHandlers";
+import { AI_PLAN_JOBS, isJobKind, type JobKind } from "./jobKinds";
 
-export type JobFinished = {
-  job_id: string;
-  paper_id: string | null;
-  kind: string;
-  status: "succeeded" | "failed" | "cancelled";
-  result?: any;
-  error?: string;
-  cancelled?: boolean;
-};
+export type { JobFinished } from "./jobHandlers";
 
 type Watcher = (event: JobFinished) => void;
 
@@ -34,7 +29,7 @@ export function watchJob(jobId: string, watcher: Watcher): void {
 }
 
 /** Show a just-started job as running, unless its finished event already arrived. */
-export function showStartedJob(jobId: string, meta: { kind: string; paperId: string | null }): void {
+export function showStartedJob(jobId: string, meta: { kind: JobKind; paperId: string | null }): void {
   if (recentlyFinished.has(jobId)) return;
   useStore.getState().addJob({
     job_id: jobId,
@@ -49,7 +44,7 @@ export function showStartedJob(jobId: string, meta: { kind: string; paperId: str
 export async function startJob(
   path: string,
   body: unknown,
-  meta: { kind: string; paperId: string | null },
+  meta: { kind: JobKind; paperId: string | null },
   watcher?: Watcher,
 ): Promise<string> {
   const response = await apiRequest<{ job_id: string }>("POST", path, body ?? {});
@@ -71,80 +66,13 @@ export async function cancelVisibleJobs(): Promise<boolean> {
   return true;
 }
 
-// --- Error dialog -----------------------------------------------------------------
-
-type ErrorDialogState = {
-  error: { title: string; message: string } | null;
-  show: (title: string, message: string) => void;
-  close: () => void;
-};
-
-export const useErrorDialog = create<ErrorDialogState>((set) => ({
-  error: null,
-  show: (title, message) => set({ error: { title, message } }),
-  close: () => set({ error: null }),
-}));
-
-export function showError(error: unknown, title = "処理を完了できませんでした"): void {
-  const message = error instanceof Error ? error.message : String(error);
-  useErrorDialog.getState().show(title, message);
-}
-
-// --- Completion messages -----------------------------------------------------------
-
-function translateMessage(report: any): string {
-  let message = `指定した${report.selected_pages?.length ?? 0}ページの翻訳処理が終了しました。`
-    + `全${report.pages}ページ中${report.translated_pages?.length ?? 0}ページ翻訳済み。`;
-  if (report.skipped_pages?.length) {
-    message += " PDF生成に失敗したページは原文のままです：p." + report.skipped_pages.join(", ");
-  }
-  return message;
-}
-
 function handleSuccess(event: JobFinished, visible: boolean): void {
-  const store = useStore.getState();
   const usage: Usage | null = event.result?.usage ?? null;
   if (usage) useLastUsage.setState({ usage, kind: event.kind });
   const status = (message: string) => {
-    if (visible) store.setStatus(usage ? `${message}（${usageSummary(usage)}）` : message);
+    if (visible) useStore.getState().setStatus(usage ? `${message}（${usageSummary(usage)}）` : message);
   };
-  switch (event.kind) {
-    case "translate": {
-      const message = translateMessage(event.result ?? {});
-      status(message);
-      notifyIfAway("翻訳処理が終了しました", message);
-      break;
-    }
-    case "article":
-      status("解説を保存しました。ページ参照をクリックすると原文へ移動します。");
-      notifyIfAway("解説ができました", "「サマリー」タブで確認できます。");
-      if (event.paper_id && event.paper_id === store.activePaperId) store.setActiveTab("summary");
-      break;
-    case "ask":
-      status("回答を保存しました。参照リンクから原文を確認できます。");
-      notifyIfAway("回答ができました", "「チャット」タブで確認できます。");
-      break;
-    case "import": {
-      const ids: string[] = event.result?.paper_ids ?? [];
-      const message = `${event.result?.added ?? 0}件を追加しました。重複するPDFは既存の論文を開きます。`;
-      if (ids.length) store.setActivePaperId(ids[ids.length - 1]);
-      store.setStatus(message);
-      notifyIfAway("PDFを追加しました", message);
-      break;
-    }
-    case "check":
-      status(String(event.result ?? "接続を確認しました。"));
-      break;
-    case "export":
-      status(event.result?.kind === "bilingual" ? "対訳PDFを保存しました。" : "原文・日本語訳の交互PDFを保存しました。");
-      break;
-    case "interleaved":
-      if (event.result?.path) {
-        shell.openPath(event.result.path).catch(() =>
-          store.setStatus("PDFを開けませんでした。既定のPDFアプリを確認してください。"));
-      }
-      break;
-  }
+  jobHandler(event.kind)?.succeeded?.(event, { visible, status });
 }
 
 function handleFinished(event: JobFinished, queryClient: QueryClient): void {
@@ -162,21 +90,12 @@ function handleFinished(event: JobFinished, queryClient: QueryClient): void {
     useErrorDialog.getState().show("処理を完了できませんでした", message);
   }
 
-  queryClient.invalidateQueries({ queryKey: ["papers"] });
-  queryClient.invalidateQueries({ queryKey: ["collections"] });
-  // A failed job may have hit the plan limit, so refresh after those too.
-  if (["translate", "article", "ask"].includes(event.kind)) queryClient.invalidateQueries({ queryKey: ["usage-limits"] });
-  if (event.paper_id) {
-    queryClient.invalidateQueries({ queryKey: ["article", event.paper_id] });
-    queryClient.invalidateQueries({ queryKey: ["messages", event.paper_id] });
-    queryClient.invalidateQueries({ queryKey: ["reading", event.paper_id] });
-    if (["translate", "revision"].includes(event.kind)) {
-      queryClient.invalidateQueries({ queryKey: ["paper-search", event.paper_id] });
-      queryClient.invalidateQueries({ queryKey: ["paragraphs", event.paper_id] });
-      queryClient.invalidateQueries({ queryKey: ["revisions", event.paper_id] });
-      queryClient.invalidateQueries({ queryKey: ["library-search"] });
-    }
-  }
+  // Any job may change the list and the paper's state; the job's feature names what else is stale
+  // (also after a failure, which may have hit the plan limit).
+  const stale = [[QK.papers], [QK.collections], ...(jobHandler(event.kind)?.refresh?.(event) ?? [])];
+  if (isJobKind(event.kind, AI_PLAN_JOBS)) stale.push([QK.usageLimits]);
+  if (event.paper_id) stale.push([QK.article, event.paper_id], [QK.messages, event.paper_id], [QK.reading, event.paper_id]);
+  stale.forEach((queryKey) => queryClient.invalidateQueries({ queryKey }));
 
   recentlyFinished.set(event.job_id, event);
   setTimeout(() => recentlyFinished.delete(event.job_id), 60_000);
@@ -245,23 +164,22 @@ export function useJobEvents(): void {
           });
         } else if (data.type === "job.page_ready") {
           if (data.paper_id) {
-            queryClient.invalidateQueries({ queryKey: ["reading", data.paper_id] });
-            queryClient.invalidateQueries({ queryKey: ["paper-search", data.paper_id] });
+            queryClient.invalidateQueries({ queryKey: [QK.reading, data.paper_id] });
+            queryClient.invalidateQueries({ queryKey: [QK.paperSearch, data.paper_id] });
           }
         } else if (data.type === "job.finished") {
           store.removeJob(data.job_id);
           handleFinished(data as JobFinished, queryClient);
         } else if (data.type === "library.changed") {
-          queryClient.invalidateQueries({ queryKey: ["papers"] });
-          queryClient.invalidateQueries({ queryKey: ["collections"] });
-          queryClient.invalidateQueries({ queryKey: ["library-search"] });
-          queryClient.invalidateQueries({ queryKey: ["tags"] });
+          for (const root of [QK.papers, QK.collections, QK.librarySearch, QK.tags]) {
+            queryClient.invalidateQueries({ queryKey: [root] });
+          }
         } else if (data.type === "import.pages") {
           setPendingPages(data.pages ?? {});
         } else if (data.type === "import.item") {
           // Keep the placeholder until the real row is in the list, so nothing flickers.
-          queryClient.invalidateQueries({ queryKey: ["collections"] });
-          queryClient.invalidateQueries({ queryKey: ["papers"] }).finally(() => removePendingImports([data.path]));
+          queryClient.invalidateQueries({ queryKey: [QK.collections] });
+          queryClient.invalidateQueries({ queryKey: [QK.papers] }).finally(() => removePendingImports([data.path]));
         }
       };
       ws.onclose = () => {

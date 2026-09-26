@@ -1,20 +1,10 @@
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
-export type TagKind = "paper" | "sticky" | "status";
-export const DEFAULT_READING_STATUSES = ["未読", "読書中", "読了", "再読したい"];
-export const DEFAULT_STICKY_LABELS = ["重要", "疑問", "あとで確認", "引用", "確認済み"];
-const endpoint = (kind: TagKind) => kind === "paper" ? "/api/tags" : kind === "status" ? "/api/reading-statuses" : "/api/sticky-labels";
-export function useTagChoices(kind: TagKind) {
-  const query = useQuery({ queryKey: [kind === "paper" ? "tags" : kind === "status" ? "reading-statuses" : "sticky-labels"], queryFn: () => apiRequest<string[]>("GET", endpoint(kind)) });
-  // Missing data is not an empty saved list. Keep the defaults while loading or offline,
-  // but respect an explicitly saved empty list when every choice was deleted.
-  const defaults = kind === "status" ? DEFAULT_READING_STATUSES : kind === "sticky" ? DEFAULT_STICKY_LABELS : undefined;
-  return { ...query, data: query.data ?? defaults };
-}
+import { tagChoicesEndpoint as endpoint, useTagChoices, type TagKind } from "@/api/tagChoices";
+import { QK } from "@/lib/queryKeys";
 
 export function TagManager({ kind }: { kind: TagKind }) {
   const { data: names = [], isPending, isError } = useTagChoices(kind);
@@ -28,7 +18,7 @@ export function TagManager({ kind }: { kind: TagKind }) {
     try {
       const value = remove ?? name.trim();
       await apiRequest(remove === undefined ? "POST" : "DELETE", `${endpoint(kind)}${remove === undefined ? "" : `?name=${encodeURIComponent(remove)}`}`, remove === undefined ? { name: value } : undefined);
-      await Promise.all(["tags", "sticky-labels", "reading-statuses", "papers", "library-search"].map(key => client.invalidateQueries({ queryKey: [key] })));
+      await Promise.all([QK.tags, QK.stickyLabels, QK.readingStatuses, QK.papers, QK.librarySearch].map(key => client.invalidateQueries({ queryKey: [key] })));
       setDeleting(null);
       if (remove === undefined) setName("");
     } catch (e) { setError(e instanceof Error ? e.message : "保存できませんでした。"); }

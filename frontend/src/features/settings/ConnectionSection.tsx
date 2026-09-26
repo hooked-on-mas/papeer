@@ -1,35 +1,24 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Globe, Loader2, LogIn, PlugZap, RefreshCw, SquareTerminal, XCircle } from "lucide-react";
 import { cn } from "cn";
 import { apiRequest } from "../../api/client";
-import { PROVIDER_LABELS, type SettingsData } from "../../api/hooks";
+import {
+  useProviderEfforts, useProviderModels, useProviders,
+  type ProviderOptions, type ProviderSpec, type SettingsData,
+} from "../../api/hooks";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { NativeSelect } from "../../components/ui/native-select";
 import { showMessage } from "../../components/AppDialogs";
-import { showError, startJob } from "../jobs/jobEvents";
+import { startJob } from "../jobs/jobEvents";
+import { showError } from "@/components/errorDialog";
 
-type Option = { id: string; name: string };
-type CliProvider = "codex" | "claude" | "gemini";
-
-const PROVIDERS: { id: string; description: string }[] = [
-  { id: "codex", description: "Codex CLI のログインで ChatGPT の利用枠を使います" },
-  { id: "claude", description: "Claude Code のログイン状態と利用枠を使います" },
-  { id: "gemini", description: "Antigravity CLI (agy) 経由で Gemini を使います" },
-  { id: "api", description: "API キー、または Ollama などのローカルモデル" },
-];
 // 0 is automatic: one request at a time for a local model, three otherwise.
 const CONCURRENCY_OPTIONS: { value: number; label: string }[] = [
   { value: 0, label: "自動（ローカルモデルは1、それ以外は3）" },
   { value: 1, label: "1（1件ずつ）" },
   ...[2, 3, 4, 6, 8].map((value) => ({ value, label: String(value) })),
 ];
-const CLI_LABELS: Record<CliProvider, { label: string; placeholder: string }> = {
-  codex: { label: "Codex のパス", placeholder: "空欄なら自動検出（codex.cmd など）" },
-  claude: { label: "Claude Code のパス", placeholder: "空欄なら自動検出（claude.cmd など）" },
-  gemini: { label: "agy のパス", placeholder: "空欄なら自動検出（agy.exe など）" },
-};
 
 function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -40,13 +29,17 @@ function useDebounced<T>(value: T, delay: number): T {
   return debounced;
 }
 
+function trimmed(options: ProviderOptions): ProviderOptions {
+  return Object.fromEntries(Object.entries(options).map(([id, values]) =>
+    [id, Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value.trim()]))]));
+}
+
 /** Form state of the 接続 section; the dialog owns it so that one 保存 covers every section. */
 export function useConnectionForm(open: boolean, settings: SettingsData | undefined) {
+  const { data: providers = [] } = useProviders();
   const [provider, setProvider] = useState("codex");
-  const [cliPaths, setCliPaths] = useState<Record<CliProvider, string>>({ codex: "", claude: "", gemini: "" });
-  const [models, setModels] = useState<Record<string, string>>({});
-  const [efforts, setEfforts] = useState<Record<string, string>>({});
-  const [apiBase, setApiBase] = useState("");
+  // Per connection: its fields (cli_path, base_url) and the model/effort chosen for it.
+  const [options, setOptions] = useState<ProviderOptions>({});
   const [apiKey, setApiKey] = useState("");
   const [concurrency, setConcurrency] = useState(0);
   const [dirty, setDirty] = useState(false);
@@ -56,38 +49,33 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
   useEffect(() => {
     if (!open || !settings) return;
     setProvider(settings.provider || "codex");
-    setCliPaths({ codex: settings.codex_path || "", claude: settings.claude_path || "", gemini: settings.gemini_path || "" });
-    // Model and effort are remembered per connection while the dialog is open.
-    setModels({ [settings.provider]: settings.model || "" });
-    setEfforts({ [settings.provider]: settings.reasoning_effort || "" });
-    setApiBase(settings.api_base || "");
+    setOptions({
+      ...settings.provider_options,
+      [settings.provider]: {
+        ...settings.provider_options?.[settings.provider],
+        model: settings.model || "",
+        reasoning_effort: settings.reasoning_effort || "",
+      },
+    });
     setApiKey(settings.api_key || "");
     setConcurrency(settings.translation_concurrency ?? 0);
     setDirty(false);
     setCheckResult(null);
   }, [open, settings]);
 
-  const isApi = provider === "api";
-  const cliPath = isApi ? "" : cliPaths[provider as CliProvider] ?? "";
+  const spec: ProviderSpec | undefined = providers.find((p) => p.id === provider);
+  const current = options[provider] ?? {};
+  const option = (key: string) => current[key] ?? "";
+  const isCli = spec?.kind === "cli";
   // Listing models runs the CLI, so wait until the path stops changing.
-  const queryPath = useDebounced(cliPath, 600);
-  const modelsQuery = useQuery({
-    queryKey: ["models", provider, queryPath],
-    queryFn: () => apiRequest<Option[]>("GET", `/api/providers/${provider}/models?cli_path=${encodeURIComponent(queryPath)}`),
-    enabled: open && !!settings,
-    staleTime: 5 * 60_000,
-  });
+  const queryPath = useDebounced(isCli ? option("cli_path") : undefined, 600);
+  const modelsQuery = useProviderModels(provider, { cliPath: queryPath, enabled: open && !!settings });
   const modelOptions = modelsQuery.data ?? [];
-  const model = models[provider] ?? modelOptions[0]?.id ?? "";
+  const model = current.model ?? modelOptions[0]?.id ?? "";
   const debouncedModel = useDebounced(model, 400);
-  const { data: effortOptions = [] } = useQuery({
-    queryKey: ["efforts", provider, debouncedModel],
-    queryFn: () => apiRequest<Option[]>("GET",
-      `/api/providers/${provider}/efforts?model=${encodeURIComponent(debouncedModel)}&cli_path=${encodeURIComponent(queryPath)}`),
-    enabled: open && !!settings,
-    staleTime: 5 * 60_000,
-  });
-  const chosenEffort = efforts[provider] ?? "";
+  const { data: effortOptions = [] } = useProviderEfforts(provider, debouncedModel,
+    { cliPath: queryPath, enabled: open && !!settings });
+  const chosenEffort = option("reasoning_effort");
   // Fall back to the first choice when the model does not offer the saved value.
   const effort = effortOptions.some((o) => o.id === chosenEffort) ? chosenEffort : (effortOptions[0]?.id ?? "");
   const hasEfforts = effortOptions.length > 1;
@@ -99,17 +87,17 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
       setCheckResult(null);
     };
   }
+  const setOption = (key: string) => edit((value: string) =>
+    setOptions((prev) => ({ ...prev, [provider]: { ...prev[provider], [key]: value } })));
 
   const values = () => ({
     provider,
     model: model.trim(),
     reasoning_effort: hasEfforts ? effort : "",
-    api_base: apiBase.trim(),
-    api_key: apiKey.trim(),
-    codex_path: cliPaths.codex.trim(),
-    claude_path: cliPaths.claude.trim(),
-    gemini_path: cliPaths.gemini.trim(),
+    timeout_seconds: settings?.timeout_seconds ?? 900,
     translation_concurrency: concurrency,
+    provider_options: trimmed(options),
+    api_key: apiKey.trim(),
   });
 
   const login = async () => {
@@ -137,14 +125,13 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
   };
 
   return {
-    provider, setProvider: edit(setProvider),
-    cliPath, setCliPath: edit((path: string) => setCliPaths((prev) => ({ ...prev, [provider]: path }))),
-    model, setModel: edit((value: string) => setModels((prev) => ({ ...prev, [provider]: value }))),
-    effort, setEffort: edit((value: string) => setEfforts((prev) => ({ ...prev, [provider]: value }))),
-    apiBase, setApiBase: edit(setApiBase),
+    providers, spec, provider, setProvider: edit(setProvider),
+    option, setOption,
+    model, setModel: setOption("model"),
+    effort, setEffort: setOption("reasoning_effort"),
     apiKey, setApiKey: edit(setApiKey),
     concurrency, setConcurrency: edit(setConcurrency),
-    isApi, hasEfforts, effortOptions, modelOptions,
+    hasEfforts, effortOptions, modelOptions,
     loadingModels: modelsQuery.isFetching, refetchModels: modelsQuery.refetch,
     dirty, values, login, check, checking, checkResult,
   };
@@ -165,13 +152,14 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 export function ConnectionSection({ form }: { form: ConnectionForm }) {
-  const cli = form.isApi ? null : CLI_LABELS[form.provider as CliProvider];
+  const spec = form.spec;
+  const isCli = spec?.kind === "cli";
   return (
     <div className="space-y-5">
       <div role="radiogroup" aria-label="接続先" className="grid grid-cols-2 gap-2">
-        {PROVIDERS.map(({ id, description }) => {
+        {form.providers.map(({ id, label, description, kind }) => {
           const selected = form.provider === id;
-          const Icon = id === "api" ? Globe : SquareTerminal;
+          const Icon = kind === "http" ? Globe : SquareTerminal;
           return (
             <button
               key={id}
@@ -186,7 +174,7 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
             >
               <Icon className={cn("mt-0.5 size-4 shrink-0", selected ? "text-primary" : "text-muted-foreground")} />
               <span className="min-w-0">
-                <span className="block font-medium">{PROVIDER_LABELS[id]}</span>
+                <span className="block font-medium">{label}</span>
                 <span className="block text-[12px] leading-snug text-muted-foreground">{description}</span>
               </span>
             </button>
@@ -195,24 +183,20 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
       </div>
 
       <div className="space-y-3">
-        {cli && (
-          <Field label={cli.label}>
-            <Input value={form.cliPath} onChange={(e) => form.setCliPath(e.target.value)} placeholder={cli.placeholder} />
+        {spec?.fields.map((field) => (
+          <Field key={field.key} label={field.label} hint={field.hint || undefined}>
+            <Input value={form.option(field.key)} onChange={(e) => form.setOption(field.key)(e.target.value)}
+              placeholder={field.placeholder} />
           </Field>
-        )}
-        {form.isApi && (
-          <>
-            <Field label="API URL" hint="ローカル例: http://localhost:11434/v1（Ollama）">
-              <Input value={form.apiBase} onChange={(e) => form.setApiBase(e.target.value)} placeholder="https://api.openai.com/v1" />
-            </Field>
-            <Field label="API キー" hint="保存されず、アプリの終了時に破棄されます。環境変数 PAPERDESK_API_KEY でも指定できます。">
-              <Input type="password" value={form.apiKey} onChange={(e) => form.setApiKey(e.target.value)} autoComplete="off" />
-            </Field>
-          </>
+        ))}
+        {spec?.needs_api_key && (
+          <Field label="API キー" hint="保存されず、アプリの終了時に破棄されます。環境変数 PAPERDESK_API_KEY でも指定できます。">
+            <Input type="password" value={form.apiKey} onChange={(e) => form.setApiKey(e.target.value)} autoComplete="off" />
+          </Field>
         )}
         <Field label="モデル">
           <div className="flex gap-2">
-            {form.isApi ? (
+            {!isCli ? (
               <Input value={form.model} onChange={(e) => form.setModel(e.target.value)} placeholder="モデル名" />
             ) : (
               <NativeSelect
@@ -229,7 +213,7 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
               再取得
             </Button>
           </div>
-          {!form.isApi && !form.modelOptions.some((m) => m.id === form.model) && (
+          {isCli && !form.modelOptions.some((m) => m.id === form.model) && (
             <Input
               aria-label="モデル名を直接入力"
               value={form.model}
@@ -254,7 +238,7 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
 
       <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
         <div className="flex items-center gap-2">
-          {!form.isApi && (
+          {spec?.needs_login && (
             <Button variant="outline" onClick={form.login}>
               <LogIn /> ログイン
             </Button>
@@ -275,7 +259,7 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
       </div>
 
       <p className="text-[12px] leading-relaxed text-muted-foreground">
-        {form.isApi
+        {!isCli
           ? "翻訳・解説・チャットを実行すると、対象テキストがこの API へ送られます。接続先によっては従量課金になります。"
           : "翻訳・解説・チャットを実行すると、対象テキストがこの CLI へ送られます。実行できるかどうかは各ツールのログイン状態と利用枠に従います。"}
       </p>

@@ -14,6 +14,8 @@ import { apiRequest } from "@/api/client";
 import { ReaderExtras } from "./ReaderExtras";
 import type { StickyNote } from "./stickyNotes";
 import type { JumpTarget } from "./PdfPane";
+import { emitAppEvent } from "@/lib/appEvents";
+import { QK } from "@/lib/queryKeys";
 
 // Stable while the notes are loading or failed: a new array would redraw the text layer on every render.
 const NO_NOTES: StickyNote[] = [];
@@ -43,7 +45,7 @@ export function Reader() {
   const [search, setSearch] = useState<{ query: string; side: "original" | "translated" }>({ query: "", side: "original" });
   const [bookmarkTarget, setBookmarkTarget] = useState<JumpTarget | null>(null);
   const { data: bookmarks = NO_NOTES } = useQuery({
-    queryKey: ["sticky-notes", activePaperId],
+    queryKey: [QK.stickyNotes, activePaperId],
     queryFn: () => apiRequest<StickyNote[]>("GET", `/api/papers/${activePaperId}/sticky-notes`),
     enabled: !!activePaperId,
   });
@@ -162,7 +164,7 @@ export function Reader() {
       <span className="inline-flex flex-col items-center gap-3">
         まだ翻訳していません。「翻訳する」で訳文を作成します。
         <button
-          onClick={() => window.dispatchEvent(new Event("open-translate-dialog"))}
+          onClick={() => emitAppEvent("open-translate-dialog")}
           className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90"
         >
           <Languages className="w-4 h-4" /> 翻訳する
