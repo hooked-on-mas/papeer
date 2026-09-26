@@ -145,6 +145,8 @@ export function AppShell() {
   const focusPanelWidth = useStore((s) => s.focusPanelWidth);
   const activePaperId = useStore((s) => s.activePaperId);
   const activeJobs = useStore((s) => s.activeJobs);
+  // Passages attached from the reader, waiting to be sent.
+  const attachmentCount = useStore((s) => s.chatAttachments.filter((item) => item.paperId === s.activePaperId).length);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const queryClient = useQueryClient();
   const { data: activePaper, error: activePaperError } = usePaper(activePaperId);
@@ -340,7 +342,14 @@ export function AppShell() {
               <TabsList variant="line" className="h-[40px] bg-transparent border-b-0 space-x-2">
                 <TabsTrigger value="reader" title="Ctrl+1">PDFを読む</TabsTrigger>
                 <TabsTrigger value="summary" title="Ctrl+2">サマリー</TabsTrigger>
-                <TabsTrigger value="chat" title="Ctrl+3">質問</TabsTrigger>
+                <TabsTrigger value="chat" title="Ctrl+3">
+                  チャット
+                  {attachmentCount > 0 && (
+                    <span className="min-w-4 rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground" title={`添付 ${attachmentCount} 件`}>
+                      {attachmentCount}
+                    </span>
+                  )}
+                </TabsTrigger>
                 <TabsTrigger value="notes" title="Ctrl+4">メモ・整理</TabsTrigger>
               </TabsList>
             </div>

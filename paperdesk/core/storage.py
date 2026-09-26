@@ -68,6 +68,8 @@ class Library:
                 db.execute("ALTER TABLE messages ADD COLUMN usage TEXT")
             if "scope" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
                 db.execute("ALTER TABLE messages ADD COLUMN scope TEXT NOT NULL DEFAULT 'paper'")
+            if "attachments" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
+                db.execute("ALTER TABLE messages ADD COLUMN attachments TEXT")
             columns = {row[1] for row in db.execute("PRAGMA table_info(papers)")}
             for name in ("first_author", "publication_year"):
                 if name not in columns:
@@ -274,17 +276,24 @@ class Library:
         with self.connection() as db:
             condition = " WHERE paper_id=?" + (" AND scope=?" if scope is not None else "")
             values = (paper_id, scope) if scope is not None else (paper_id,)
-            if not with_usage:
-                return [dict(x) for x in db.execute("SELECT role,content FROM messages" + condition + " ORDER BY id", values)]
-            rows = db.execute("SELECT role,content,usage FROM messages" + condition + " ORDER BY id", values)
-            return [dict(x, usage=json.loads(x["usage"]) if x["usage"] else None) for x in rows]
+            rows = db.execute("SELECT role,content,usage,attachments FROM messages" + condition + " ORDER BY id", values)
+            result = []
+            for row in rows:
+                item = {"role": row["role"], "content": row["content"]}
+                if row["attachments"]:
+                    item["attachments"] = json.loads(row["attachments"])
+                if with_usage:
+                    item["usage"] = json.loads(row["usage"]) if row["usage"] else None
+                result.append(item)
+            return result
 
     def add_exchange(self, paper_id: str, question: str, answer: str, usage: dict | None = None,
-                     scope: str = "paper") -> None:
+                     scope: str = "paper", attachments: list[dict] | None = None) -> None:
         with self.connection() as db:
-            db.executemany("INSERT INTO messages(paper_id,role,content,usage,scope) VALUES(?,?,?,?,?)",
-                           [(paper_id, "user", question, None, scope),
-                            (paper_id, "assistant", answer, json.dumps(usage) if usage else None, scope)])
+            db.executemany("INSERT INTO messages(paper_id,role,content,usage,scope,attachments) VALUES(?,?,?,?,?,?)",
+                           [(paper_id, "user", question, None, scope,
+                             json.dumps(attachments, ensure_ascii=False) if attachments else None),
+                            (paper_id, "assistant", answer, json.dumps(usage) if usage else None, scope, None)])
 
     def search_pages(self, question: str, paper_id: str | None = None, limit: int = 10,
                      paper_ids: set[str] | None = None) -> list[dict]:

@@ -483,3 +483,39 @@ def test_translation_concurrency_setting_round_trips(test_env):
     rejected = client.put("/api/settings", json={**settings, "translation_concurrency": 99})
     assert rejected.status_code == 400
     assert client.get("/api/settings").json()["translation_concurrency"] == 2
+
+
+def test_ask_with_attached_passages(test_env):
+    client, _ = test_env
+    imported = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
+    base = f"/api/papers/{imported.result['paper_ids'][0]}"
+    requests = []
+
+    class RecordingProvider(FakeProvider):
+        def generate(self, instruction, data, schema=None):
+            requests.append(data)
+            return super().generate(instruction, data, schema)
+
+    attachment = {"page": 1, "side": "original", "text": "  tracking error was reduced  ",
+                  "anchor_y": 0.3, "start": 10, "end": 37, "raw": "tracking error was\nreduced"}
+    with patch("sidecar.app.Provider", RecordingProvider):
+        job = _wait(client.post(f"{base}/ask", json={"question": "これはどういう意味？",
+            "attachments": [attachment]}).json()["job_id"])
+        assert job.status == "succeeded"
+        sent = json.loads(requests[-1])
+        assert sent["attached_passages"] == [{"page": 1, "side": "原文", "text": "tracking error was reduced"}]
+
+        # Earlier attachments stay in the dialogue the next answer sees.
+        followup = _wait(client.post(f"{base}/ask", json={"question": "続けて"}).json()["job_id"])
+        assert followup.status == "succeeded"
+        sent = json.loads(requests[-1])
+        assert "attached_passages" not in sent
+        assert "[添付 p.1] tracking error was reduced" in sent["previous_dialogue"][0]["content"]
+
+        invalid = _wait(client.post(f"{base}/ask", json={"question": "?",
+            "attachments": [{**attachment, "page": 999}]}).json()["job_id"])
+        assert invalid.status == "failed"
+
+    messages = client.get(f"{base}/messages").json()
+    assert messages[0]["attachments"] == [{**attachment, "text": "tracking error was reduced"}]
+    assert "attachments" not in messages[2]

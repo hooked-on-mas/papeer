@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { ReadingData } from "@/api/hooks";
-import { useStore, ZOOM_PRESETS } from "@/store";
+import { useStore, ZOOM_PRESETS, type PassageLocation } from "@/store";
 
 let queryClient: QueryClient | null = null;
 
@@ -40,6 +40,16 @@ export function jumpToPage(page: number): void {
   const count = pageCount() || page;
   store.setTranslatedOnly(false);
   store.setCurrentPage(Math.max(1, Math.min(Math.round(page), count)));
+  store.setActiveTab("reader");
+}
+
+/** Opens the reader at a passage attached to the chat, with the passage selected. */
+export function showPassage(paperId: string, passage: PassageLocation): void {
+  const store = useStore.getState();
+  if (store.activePaperId !== paperId) return;
+  if (store.translatedOnly && !(reading()?.completed_pages ?? []).includes(passage.page)) store.setTranslatedOnly(false);
+  store.setCurrentPage(passage.page);
+  store.setReaderJump({ ...passage, paperId });
   store.setActiveTab("reader");
 }
 

@@ -966,11 +966,15 @@ def ask_paper(paper_id: str, body: AskRequest, dependencies: None = Depends(veri
         provider = Provider(replace(s, api_key=api_key or s.api_key), cancel)
         service = PaperService(lib, provider, cancel, progress=progress)
         if body.scope not in {"paper", "selected", "collection", "all"}:
-            raise ValueError("質問の検索範囲が不正です。")
+            raise ValueError("チャットの参照範囲が不正です。")
         answer = service.ask(paper_id, body.question,
+                             attachments=[item.model_dump() for item in body.attachments],
                              entire_library=body.scope == "all" or body.search_all,
                              paper_ids=set(body.paper_ids) if body.scope == "selected" else None,
-                             collection=body.collection if body.scope == "collection" else None)
+                             collection=body.collection if body.scope == "collection" else None,
+                             reference_pages=parse_page_selection(body.reference_pages, lib.paper(paper_id)["pages"])
+                             if body.reference_pages.strip() else None,
+                             retrieval_query=body.retrieval_query, max_pages=body.max_pages)
         return {"answer": answer, "usage": service.usage()}
 
     try:

@@ -276,8 +276,8 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
 
       <p className="text-[12px] leading-relaxed text-muted-foreground">
         {form.isApi
-          ? "翻訳・解説・質問を実行すると、対象テキストがこの API へ送られます。接続先によっては従量課金になります。"
-          : "翻訳・解説・質問を実行すると、対象テキストがこの CLI へ送られます。実行できるかどうかは各ツールのログイン状態と利用枠に従います。"}
+          ? "翻訳・解説・チャットを実行すると、対象テキストがこの API へ送られます。接続先によっては従量課金になります。"
+          : "翻訳・解説・チャットを実行すると、対象テキストがこの CLI へ送られます。実行できるかどうかは各ツールのログイン状態と利用枠に従います。"}
       </p>
     </div>
   );

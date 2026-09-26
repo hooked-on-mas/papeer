@@ -11,6 +11,7 @@ import { importPdfs } from "@/app/actions";
 import { changeZoom } from "./navigation";
 import { apiRequest } from "@/api/client";
 import { ReaderExtras, TranslationTextView, type BookmarkData, type PendingBookmark } from "./ReaderExtras";
+import type { JumpTarget } from "./PdfPane";
 
 /** Caption for the translation pane, following the old reader's rules. */
 function translatedCaption(reading: ReadingData | null | undefined, page: number): string {
@@ -38,7 +39,7 @@ export function Reader() {
   const [search, setSearch] = useState<{ query: string; side: "original" | "translated" }>({ query: "", side: "original" });
   const [bookmarkQuote, setBookmarkQuote] = useState<PendingBookmark | null>(null);
   const [activeBlock, setActiveBlock] = useState<string | null>(null);
-  const [bookmarkTarget, setBookmarkTarget] = useState<Pick<BookmarkData, "id" | "page" | "side" | "anchor_y"> | null>(null);
+  const [bookmarkTarget, setBookmarkTarget] = useState<JumpTarget | null>(null);
   const { data: readingBlocks } = useQuery({
     queryKey: ["reading-blocks", activePaperId, currentPage],
     queryFn: () => apiRequest<{ source: { id: string; text: string; bbox: number[] }[];
@@ -72,6 +73,15 @@ export function Reader() {
     return () => window.removeEventListener("bookmark-selection", onBookmark);
   }, []);
   useEffect(() => { setActiveBlock(null); setBookmarkQuote(null); setSearch({ query: "", side: "original" }); }, [activePaperId]);
+  // A passage opened from the chat. Taken from the store so that it is shown once, not on every remount.
+  const readerJump = useStore((s) => s.readerJump);
+  useEffect(() => {
+    const jump = useStore.getState().readerJump;
+    if (!jump) return;
+    useStore.getState().setReaderJump(null);
+    if (jump.paperId !== activePaperId) return;
+    setBookmarkTarget({ id: Date.now(), page: jump.page, side: jump.side, anchor_y: jump.anchor_y, passage: jump });
+  }, [readerJump, activePaperId]);
   useEffect(() => {
     if (!activeBlock) return;
     const timer = setTimeout(() => setActiveBlock(null), 4000);

@@ -22,7 +22,7 @@ interface SettingsDialogProps {
 type SectionId = "connection" | "appearance" | "prompts" | "shortcuts";
 
 const SECTIONS: { id: SectionId; label: string; icon: LucideIcon; description: string }[] = [
-  { id: "connection", label: "AI 接続", icon: PlugZap, description: "翻訳・解説・質問に使う AI の接続先とモデル" },
+  { id: "connection", label: "AI 接続", icon: PlugZap, description: "翻訳・解説・チャットに使う AI の接続先とモデル" },
   { id: "appearance", label: "表示", icon: Palette, description: "画面の見た目" },
   { id: "prompts", label: "プロンプト", icon: FileText, description: "AI へ渡す指示文のカスタマイズ" },
   { id: "shortcuts", label: "ショートカット", icon: Keyboard, description: "キーボード操作の一覧" },

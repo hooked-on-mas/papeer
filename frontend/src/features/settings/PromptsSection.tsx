@@ -11,8 +11,8 @@ const PROMPT_LABELS: Record<string, string> = {
   translation_recovery: "翻訳（再試行）",
   summary_notes: "サマリー（ノート作成）",
   summary_article: "サマリー（記事）",
-  chat_keywords: "質問（検索キーワード）",
-  chat_answer: "質問（回答）",
+  chat_keywords: "チャット（検索キーワード）",
+  chat_answer: "チャット（回答）",
 };
 
 /** Edited prompt texts; the dialog owns it so that one 保存 covers every section. */
@@ -92,7 +92,7 @@ export function PromptsSection({ form }: { form: PromptsForm }) {
         aria-label={PROMPT_LABELS[name] ?? name}
       />
       <p className="text-[12px] text-muted-foreground">
-        AI への指示文です。変更は新しく実行する翻訳・サマリー・質問から使われます。
+        AI への指示文です。変更は新しく実行する翻訳・サマリー・チャットから使われます。
       </p>
     </div>
   );

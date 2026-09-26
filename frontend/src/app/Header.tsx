@@ -48,7 +48,7 @@ export function Header() {
         {toggleSidebar}
         <div className="flex flex-col">
           <h1 className="text-[15px] font-semibold">論文を追加して、読み始めよう</h1>
-          <span className="text-[12px] text-muted-foreground">PDFを追加 → AI接続を設定 → 翻訳・解説・質問</span>
+          <span className="text-[12px] text-muted-foreground">PDFを追加 → AI接続を設定 → 翻訳・解説・チャット</span>
         </div>
       </header>
     );

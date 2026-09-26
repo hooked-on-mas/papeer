@@ -5,7 +5,7 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
     items: [
       { keys: ["Ctrl", "O"], label: "PDF を追加" },
       { keys: ["Ctrl", "B"], label: "ライブラリの表示を切り替え" },
-      { keys: ["Ctrl", "1〜4"], label: "タブを切り替え（PDF を読む / サマリー / 質問 / メモ・整理）。集中表示中は右パネルに開閉" },
+      { keys: ["Ctrl", "1〜4"], label: "タブを切り替え（PDF を読む / サマリー / チャット / メモ・整理）。集中表示中は右パネルに開閉" },
       { keys: ["F11"], label: "集中表示" },
       { keys: ["Esc"], label: "集中表示を終了" },
     ],

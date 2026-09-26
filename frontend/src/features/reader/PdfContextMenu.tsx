@@ -1,8 +1,8 @@
 import React, { useRef, useState } from "react";
 import {
-  Bookmark, ChevronLeft, ChevronRight, Copy, Languages, MessageSquareQuote, MoveHorizontal, NotebookPen, Sparkles, ZoomIn, ZoomOut,
+  Bookmark, ChevronLeft, ChevronRight, Copy, Languages, MoveHorizontal, NotebookPen, Paperclip, Sparkles, ZoomIn, ZoomOut,
 } from "lucide-react";
-import { useStore } from "@/store";
+import { useStore, type PassageAttachment } from "@/store";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
@@ -10,6 +10,7 @@ import { apiRequest } from "@/api/client";
 import { cleanPdfSelection, quoteForNote, restoreFormulas } from "@/lib/pdfSelection";
 import { showError } from "@/features/jobs/jobEvents";
 import { changeZoom, movePage } from "./navigation";
+import { textLayerOffsets } from "./textLayerRange";
 
 /** Raw selected text inside `area`, or "" when the selection is empty or elsewhere. */
 function selectionWithin(area: HTMLElement | null): string {
@@ -31,13 +32,16 @@ async function translatedPassage(raw: string, paperId: string, page: number): Pr
 
 /**
  * Replaces the webview's browser menu (戻る, 印刷, 検査…) over a PDF page:
- * selected text goes to the clipboard, 質問 or メモ; otherwise it offers page and zoom controls.
+ * selected text goes to the clipboard, チャット or メモ; otherwise it offers page and zoom controls.
  */
 export function PdfContextMenu({ translated, children }: { translated: boolean; children: React.ReactNode }) {
   const areaRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState(false);
   // Resolved when the menu opens, so the translation text is usually loaded before an item is chosen.
-  const passage = useRef<{ paperId: string; page: number; text: Promise<string>; anchorY: number } | null>(null);
+  const passage = useRef<{
+    paperId: string; page: number; text: Promise<string>; anchorY: number;
+    offsets: ReturnType<typeof textLayerOffsets>;
+  } | null>(null);
 
   const handleOpen = (open: boolean) => {
     if (!open) return;
@@ -45,7 +49,8 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
     const { activePaperId, currentPage } = useStore.getState();
     const cleaned = cleanPdfSelection(raw);
     const selection = window.getSelection();
-    const selectedRect = selection?.rangeCount ? selection.getRangeAt(0).getClientRects()[0] : null;
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const selectedRect = range?.getClientRects()[0];
     const pageRect = areaRef.current?.querySelector(".react-pdf__Page")?.getBoundingClientRect();
     const anchorY = selectedRect && pageRect ? Math.max(0, Math.min(1, (selectedRect.top - pageRect.top) / pageRect.height)) : 0;
     setSelected(!!cleaned);
@@ -53,6 +58,7 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
       paperId: activePaperId,
       page: currentPage,
       anchorY,
+      offsets: range && textLayerOffsets(range),
       text: translated ? translatedPassage(raw, activePaperId, currentPage) : Promise.resolve(cleaned),
     } : null;
   };
@@ -63,13 +69,39 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
     action(await current.text, `p.${current.page}${translated ? "（訳文）" : ""}`, current.paperId, current.anchorY);
   };
 
-  const handOff = (tab: "chat" | "notes", paperId: string, text: string, send = false) => {
+  const attachment = async (): Promise<PassageAttachment | null> => {
+    const current = passage.current;
+    if (!current) return null;
+    return {
+      id: crypto.randomUUID(), paperId: current.paperId, page: current.page, side: translated ? "translated" : "original",
+      text: await current.text, anchor_y: current.anchorY, ...current.offsets,
+    };
+  };
+
+  const quoteInNote = (paperId: string, text: string) => {
     const store = useStore.getState();
     if (store.activePaperId !== paperId) return;
-    const handoff = { paperId, text, send };
-    if (tab === "chat") store.setChatDraft(handoff);
-    else store.setNoteInsert(handoff);
-    store.setActiveTab(tab);
+    store.setNoteInsert({ paperId, text });
+    store.setActiveTab("notes");
+  };
+
+  const explain = async () => {
+    const item = await attachment();
+    const store = useStore.getState();
+    if (!item || store.activePaperId !== item.paperId) return;
+    store.setChatDraft({ paperId: item.paperId, text: "この箇所をわかりやすく説明してください。", send: true, attachments: [item] });
+    store.setActiveTab("chat");
+  };
+
+  // Stays in the reader so that more passages can be attached; focus mode opens the chat beside it.
+  const attach = async () => {
+    const item = await attachment();
+    const store = useStore.getState();
+    if (!item || store.activePaperId !== item.paperId) return;
+    store.addChatAttachment(item);
+    if (store.focusMode) store.setActiveTab("chat");
+    const count = useStore.getState().chatAttachments.filter((x) => x.paperId === item.paperId).length;
+    store.setStatus(`チャットに添付しました（${count}件）。「チャット」タブで送信できます。`);
   };
 
   const copy = withPassage((text) => {
@@ -89,14 +121,13 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
               <Copy /> コピー <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem onClick={withPassage((text, source, paperId) =>
-              handOff("chat", paperId, `次の箇所をわかりやすく説明してください（${source}）。\n\n> ${text}`, true))}>
+            <ContextMenuItem onClick={explain}>
               <Sparkles /> この箇所を説明してもらう
             </ContextMenuItem>
-            <ContextMenuItem onClick={withPassage((text, _source, paperId) => handOff("chat", paperId, `> ${text}\n\n`))}>
-              <MessageSquareQuote /> この箇所について質問…
+            <ContextMenuItem onClick={attach}>
+              <Paperclip /> この箇所をチャットに添付
             </ContextMenuItem>
-            <ContextMenuItem onClick={withPassage((text, source, paperId) => handOff("notes", paperId, quoteForNote(text, source)))}>
+            <ContextMenuItem onClick={withPassage((text, source, paperId) => quoteInNote(paperId, quoteForNote(text, source)))}>
               <NotebookPen /> メモに引用
             </ContextMenuItem>
             <ContextMenuItem onClick={withPassage((text, _source, paperId, anchorY) => {

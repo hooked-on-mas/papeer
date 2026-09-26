@@ -116,7 +116,7 @@ function handleSuccess(event: JobFinished, visible: boolean): void {
       break;
     case "ask":
       status("回答を保存しました。参照リンクから原文を確認できます。");
-      notifyIfAway("回答ができました", "「質問」タブで確認できます。");
+      notifyIfAway("回答ができました", "「チャット」タブで確認できます。");
       break;
     case "import": {
       const ids: string[] = event.result?.paper_ids ?? [];

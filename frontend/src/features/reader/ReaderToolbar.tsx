@@ -9,7 +9,7 @@ const ZOOM_LABELS: Record<number, string> = { 1: "幅に合わせる" };
 /** Tabs that focus mode can open beside the reader. */
 const FOCUS_PANELS = [
   { tab: "summary", label: "サマリー", icon: ScrollText, key: "Ctrl+2" },
-  { tab: "chat", label: "質問", icon: MessageSquare, key: "Ctrl+3" },
+  { tab: "chat", label: "チャット", icon: MessageSquare, key: "Ctrl+3" },
   { tab: "notes", label: "メモ", icon: NotebookPen, key: "Ctrl+4" },
 ];
 

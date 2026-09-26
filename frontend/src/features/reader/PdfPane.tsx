@@ -8,6 +8,7 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { authToken } from "@/api/client";
 import { PdfContextMenu } from "./PdfContextMenu";
+import { selectInTextLayer } from "./textLayerRange";
 
 // Bundled worker, cMaps and fonts keep PDFs (including CJK text) readable offline.
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -29,8 +30,18 @@ interface PdfPaneProps {
   pageSize?: { width: number; height: number };
   activeBlock?: string | null;
   onBlockClick?: (id: string) => void;
-  jumpTarget?: { page: number; side: "original" | "translated"; anchor_y: number; id: number } | null;
+  jumpTarget?: JumpTarget | null;
   savedHighlights?: { id: number; quote: string; anchor_y: number }[];
+}
+
+/** A place to scroll to, from a bookmark, a search result or a chat attachment. */
+export interface JumpTarget {
+  id: number;
+  page: number;
+  side: "original" | "translated";
+  anchor_y: number;
+  /** A chat attachment's passage, selected once its text layer is ready. */
+  passage?: { start?: number | null; end?: number | null; raw?: string };
 }
 
 const PADDING = 16;
@@ -122,7 +133,9 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     return () => clearTimeout(timer);
   }, [containerWidth, pageWidth, drawnWidth]);
 
-  useEffect(() => { setCovering(false); setMatches([]); }, [url, pageNumber]);
+  // Whether the text layer shows this page yet, rather than the one before it.
+  const textLayerReady = useRef(false);
+  useEffect(() => { setCovering(false); setMatches([]); textLayerReady.current = false; }, [url, pageNumber]);
   const jumpToBookmark = useCallback(() => {
     if (!jumpTarget || jumpTarget.side !== (translated ? "translated" : "original")) return;
     const page = pageRef.current;
@@ -132,6 +145,21 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     scroller.scrollTop = Math.max(0, top + jumpTarget.anchor_y * page.clientHeight - scroller.clientHeight * 0.25);
   }, [jumpTarget, translated]);
   useEffect(() => { jumpToBookmark(); }, [jumpToBookmark, pageNumber, url]);
+
+  // Read through a ref: the text layer callback must stay stable (see below).
+  const jumpRef = useRef(jumpTarget);
+  jumpRef.current = jumpTarget;
+  const selectedJump = useRef<JumpTarget | null>(null);
+  const selectJumpPassage = useCallback(() => {
+    const target = jumpRef.current;
+    if (!target?.passage || selectedJump.current === target || target.side !== (translated ? "translated" : "original")) return;
+    const layer = pageRef.current?.querySelector<HTMLElement>(".textLayer");
+    if (!textLayerReady.current || !layer?.textContent) return;
+    // Once per jump, so that a redraw after zooming keeps whatever the user selected since.
+    selectedJump.current = target;
+    selectInTextLayer(layer, target.passage);
+  }, [translated]);
+  useEffect(() => { selectJumpPassage(); }, [selectJumpPassage, jumpTarget]);
 
   // Stable, since react-pdf redraws the text layer whenever this callback changes.
   const onTextLayerRendered = useCallback(() => {
@@ -173,6 +201,11 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     setMatches(rects);
   }, [drawnWidth, searchTerm, savedHighlights]);
   useEffect(() => { onTextLayerRendered(); }, [onTextLayerRendered, pageNumber]);
+  const handleTextLayerRendered = useCallback(() => {
+    textLayerReady.current = true;
+    onTextLayerRendered();
+    selectJumpPassage();
+  }, [onTextLayerRendered, selectJumpPassage]);
 
   const message = (text: React.ReactNode) => (
     <div className="h-full flex items-center justify-center p-8 text-center text-[13px] text-muted-foreground leading-relaxed">
@@ -219,7 +252,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                     onGetTextSuccess={(content) => { textContent.current = content; }}
                     onRenderSuccess={() => { setCovering(false); jumpToBookmark(); }}
                     onRenderError={() => setCovering(false)}
-                    onRenderTextLayerSuccess={onTextLayerRendered}
+                    onRenderTextLayerSuccess={handleTextLayerRendered}
                     renderTextLayer
                     renderAnnotationLayer
                     loading={<PageSkeleton width={drawnWidth} />}

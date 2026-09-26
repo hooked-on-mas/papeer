@@ -235,7 +235,7 @@ export async function deletePaper(paperId: string): Promise<void> {
     return;
   }
   const ok = await askConfirm("論文を削除",
-    `「${current.title}」をライブラリから削除しますか？\n訳文・サマリー・質問履歴・メモも削除され、元に戻せません。`, "削除", true);
+    `「${current.title}」をライブラリから削除しますか？\n訳文・サマリー・チャット履歴・メモも削除され、元に戻せません。`, "削除", true);
   if (!ok) return;
   try {
     await apiRequest("DELETE", `/api/papers/${paperId}`);

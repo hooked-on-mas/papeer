@@ -411,11 +411,22 @@ class PaperService:
         return article
 
     def ask(self, paper_id: str, question: str, entire_library: bool = False,
-            paper_ids: set[str] | None = None, collection: str | None = None) -> str:
+            paper_ids: set[str] | None = None, collection: str | None = None,
+            attachments: list[dict] | None = None, reference_pages: set[int] | None = None,
+            retrieval_query: str = "", max_pages: int = 10) -> str:
         question = question.strip()
         if not question:
-            raise ValueError("質問を入力してください。")
+            raise ValueError("メッセージを入力してください。")
         document = self.library.document(paper_id)
+        attachments = [dict(item, text=item["text"].strip()[:4000]) for item in (attachments or [])[:20]
+                       if item.get("text", "").strip()]
+        for item in attachments:
+            if item.get("side") not in {"original", "translated"} or not 1 <= int(item["page"]) <= document["page_count"]:
+                raise ValueError("添付した箇所のページが不正です。")
+        passages = [{"page": item["page"], "side": "原文" if item["side"] == "original" else "日本語訳",
+                     "text": item["text"]} for item in attachments]
+        # Attached passages say what the question is about, so they also steer the page search.
+        search_text = " ".join([retrieval_query, question, *(item["text"][:500] for item in attachments)])
         all_text = "\n\n".join(f"[{paper_id}:p{x['number']}]\n{x['text']}" for x in document["pages"])
         allowed = {paper_id: document["page_count"]}
         context = all_text
@@ -427,7 +438,7 @@ class PaperService:
                 raise ValueError("指定したフォルダーに論文がありません。")
         if paper_ids is not None:
             if not paper_ids or any(not re.fullmatch(r"[0-9a-f]{32}", item) for item in paper_ids):
-                raise ValueError("質問対象の論文を選択してください。")
+                raise ValueError("参照する論文を選択してください。")
             for item in paper_ids:
                 self.library.paper(item)
             allowed = {}
@@ -435,10 +446,10 @@ class PaperService:
                      else "all" if entire_library else "paper")
         if entire_library or paper_ids is not None or len(all_text) > 55000:
             self.progress("関連ページを検索しています…")
-            keywords = self.provider.generate(prompts.load("chat_keywords"), question)
-            pages = self.library.search_pages(keywords + " " + question,
+            keywords = self.provider.generate(prompts.load("chat_keywords"), search_text)
+            pages = self.library.search_pages(keywords + " " + search_text,
                                               None if entire_library or paper_ids is not None else paper_id,
-                                              limit=10, paper_ids=paper_ids)
+                                              limit=max_pages, paper_ids=paper_ids)
             if not pages:
                 raise ValueError("参照できるページがありません。")
             context_parts = []
@@ -452,14 +463,25 @@ class PaperService:
                 references.append(f"[{title} p.{page['number']}]"
                                   f"(paperdesk://{page['paper_id']}/{page['number']})")
             selection_note = f"キーワード検索で選んだ{len(pages)}ページの抜粋を参照しています：{', '.join(references)}"
-        history = self.library.messages(paper_id, scope=scope_key)[-6:]
+        if reference_pages:
+            if any(not 1 <= page <= document["page_count"] for page in reference_pages):
+                raise ValueError("追加参照ページが範囲外です。")
+            allowed[paper_id] = document["page_count"]
+            context += "\n\n" + "\n\n".join(f"[{paper_id}:p{x['number']}]\n{x['text']}"
+                                                   for x in document["pages"] if x["number"] in reference_pages)
+            selection_note += " 追加参照：" + ", ".join(f"[p.{page}](paperdesk://{paper_id}/{page})" for page in sorted(reference_pages))
+        history = [{"role": item["role"], "content": item["content"] + "".join(
+                        f"\n\n[添付 p.{x['page']}] {x['text'][:1000]}" for x in item.get("attachments", []))}
+                   for item in self.library.messages(paper_id, scope=scope_key)[-6:]]
         self.progress("本文を参照して回答しています…")
-        answer = self.provider.generate(
-            prompts.load("chat_answer"),
-            json.dumps({"question": question, "previous_dialogue": history,
-                        "retrieval_scope": selection_note, "evidence": context}, ensure_ascii=False))
+        request = {"question": question, "previous_dialogue": history,
+                   "retrieval_scope": selection_note, "evidence": context}
+        if passages:
+            request["attached_passages"] = passages
+        answer = self.provider.generate(prompts.load("chat_answer"), json.dumps(request, ensure_ascii=False))
         answer = link_citations(answer, allowed) + "\n\n---\n*" + selection_note + "*"
-        self.library.add_exchange(paper_id, question, answer, self.usage(), scope=scope_key)
+        self.library.add_exchange(paper_id, question, answer, self.usage(), scope=scope_key,
+                                  attachments=attachments)
         return answer
 
     def export_bilingual(self, paper_id: str, destination: Path) -> None:

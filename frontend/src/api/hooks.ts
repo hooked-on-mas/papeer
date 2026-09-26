@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, apiRequest } from "./client";
 import type { Usage, UsageLimits } from "@/lib/usage";
+import type { PassageLocation } from "@/store";
 
 export type PaperData = {
   id: string;
@@ -71,7 +72,7 @@ export type SettingsData = {
   api_key?: string | null;
 };
 
-export type Message = { role: "user" | "assistant"; content: string; usage?: Usage | null };
+export type Message = { role: "user" | "assistant"; content: string; usage?: Usage | null; attachments?: PassageLocation[] };
 
 export function usePaper(id: string | null) {
   return useQuery({

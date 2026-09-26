@@ -17,12 +17,39 @@ export interface MoveRecord {
   to: string;
 }
 
-/** Text handed from the reader to the 質問 or メモ tab, used once by that paper's pane. */
+/** Text handed from the reader to the チャット or メモ tab, used once by that paper's pane. */
 export interface PaperHandoff {
   paperId: string;
   text: string;
-  /** Chat only: ask right away instead of leaving the text in the input. */
+  /** Chat only: send right away instead of leaving the text in the input. */
   send?: boolean;
+  /** Chat only: passages sent with this message, apart from those waiting in the input. */
+  attachments?: PassageAttachment[];
+}
+
+/** Where a passage selected in the PDF sits, as the ask API takes and returns it. */
+export interface PassageLocation {
+  page: number;
+  side: "original" | "translated";
+  /** The passage as the AI reads it. */
+  text: string;
+  anchor_y: number;
+  /** Offsets into the page's text layer and the text they covered, to select the passage again. */
+  start?: number | null;
+  end?: number | null;
+  raw?: string;
+}
+
+/** A passage waiting in the chat input to be sent. */
+export interface PassageAttachment extends PassageLocation {
+  id: string;
+  paperId: string;
+}
+
+/** A request for the reader to show, and select, a passage. */
+export interface ReaderJump extends PassageLocation {
+  paperId: string;
+  anchor_x?: number;
 }
 
 /** Reader zoom relative to the fitted page width, as in the old reader. */
@@ -57,6 +84,11 @@ interface UiState {
   uiStateLoaded: boolean;
   chatDraft: PaperHandoff | null;
   noteInsert: PaperHandoff | null;
+  /** Passages waiting in each paper's chat input; kept while the chat tab is closed. */
+  chatAttachments: PassageAttachment[];
+  /** Unsent chat text by paper, kept while the reader is used to attach passages. */
+  chatInputs: Record<string, string>;
+  readerJump: ReaderJump | null;
 
   setActivePaperId: (id: string | null, page?: number) => void;
   setActiveTab: (tab: string) => void;
@@ -78,6 +110,10 @@ interface UiState {
   setMoveHistory: (history: MoveRecord[]) => void;
   setChatDraft: (draft: PaperHandoff | null) => void;
   setNoteInsert: (insert: PaperHandoff | null) => void;
+  addChatAttachment: (attachment: PassageAttachment) => void;
+  removeChatAttachments: (ids: string[]) => void;
+  setChatInput: (paperId: string, text: string) => void;
+  setReaderJump: (jump: ReaderJump | null) => void;
 
   addJob: (job: Job) => void;
   removeJob: (job_id: string) => void;
@@ -109,6 +145,9 @@ export const useStore = create<UiState>()(
       uiStateLoaded: false,
       chatDraft: null,
       noteInsert: null,
+      chatAttachments: [],
+      chatInputs: {},
+      readerJump: null,
 
       setActivePaperId: (id, page) => set((state) => {
         const target = page ?? (id ? (state.paperPages[id] || 1) : 1);
@@ -145,6 +184,12 @@ export const useStore = create<UiState>()(
       setMoveHistory: (moveHistory) => set({ moveHistory }),
       setChatDraft: (chatDraft) => set({ chatDraft }),
       setNoteInsert: (noteInsert) => set({ noteInsert }),
+      addChatAttachment: (attachment) => set((state) => ({ chatAttachments: [...state.chatAttachments, attachment] })),
+      removeChatAttachments: (ids) => set((state) => ({
+        chatAttachments: state.chatAttachments.filter((item) => !ids.includes(item.id)),
+      })),
+      setChatInput: (paperId, text) => set((state) => ({ chatInputs: { ...state.chatInputs, [paperId]: text } })),
+      setReaderJump: (readerJump) => set({ readerJump }),
 
       addJob: (job) => set((state) => ({
         activeJobs: state.activeJobs.some((j) => j.job_id === job.job_id)
