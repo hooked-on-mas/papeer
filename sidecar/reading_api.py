@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 from pathlib import Path
+import sqlite3
+import zipfile
 
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -33,6 +35,10 @@ class GlossaryDraftRequest(BaseModel):
     terms: list[dict[str, str]] = Field(default_factory=list)
     model: str | None = None
     effort: str | None = None
+
+
+class BackupRequest(BaseModel):
+    path: str
 
 
 class TagRequest(BaseModel):
@@ -272,3 +278,27 @@ def register_reading_api(app, verify_token):
         with lib.connection() as db:
             row = db.execute("SELECT text FROM pages WHERE paper_id=? AND number=?", (paper_id, page)).fetchone()
         return {"text": row[0][:6000] if row else ""}
+
+    @app.post("/api/backup", dependencies=[Depends(verify_token)])
+    def backup(body: BackupRequest):
+        lib = runtime.get_library()
+        def action(cancel, progress, _page_ready):
+            check_cancel(cancel)
+            progress("ライブラリ全体をバックアップしています…")
+            tools.create_backup(lib, Path(body.path))
+            return {"path": body.path}
+        return submit("backup", action)
+
+    @app.post("/api/restore", dependencies=[Depends(verify_token)])
+    def restore(body: BackupRequest):
+        lib = runtime.get_library()
+        def action(cancel, progress, _page_ready):
+            check_cancel(cancel)
+            progress("バックアップを検証して復元しています…")
+            try:
+                previous = tools.restore_backup(lib, Path(body.path))
+            except (OSError, ValueError, sqlite3.DatabaseError, zipfile.BadZipFile) as exc:
+                raise ValueError(f"バックアップを復元できませんでした：{exc}") from exc
+            runtime.job_manager.broadcast({"type": "library.changed"})
+            return {"previous_path": str(previous)}
+        return submit("restore", action)

@@ -10,6 +10,12 @@ type UiStateFile = {
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let lastSaved = "";
+let suspended = false;
+
+export function suspendUiStateSync(value: boolean): void {
+  suspended = value;
+  if (value) clearTimeout(saveTimer);
+}
 
 function snapshot(): UiStateFile {
   const s = useStore.getState();
@@ -24,6 +30,7 @@ function snapshot(): UiStateFile {
 }
 
 export async function flushUiState(): Promise<void> {
+  if (suspended) return;
   clearTimeout(saveTimer);
   const body = snapshot();
   const serialized = JSON.stringify(body);

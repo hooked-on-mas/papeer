@@ -11,7 +11,7 @@ import pymupdf as fitz
 import pytest
 
 from paperdesk.core.config import Settings
-from paperdesk.core.reading_tools import library_search, translation_paragraphs
+from paperdesk.core.reading_tools import create_backup, restore_backup, library_search, translation_paragraphs
 from paperdesk.core.terminology import effective_glossary, validate_revision, global_glossary, save_global_glossary
 from paperdesk.core.service import PaperService
 from paperdesk.core.storage import Library
@@ -236,6 +236,43 @@ def test_revision_preserves_math_token_multiplicity():
     assert validate_revision(token, "訳文 " + token)
 
 
+def test_backup_restore_keeps_current_data_and_rejects_bad_archive(library, tmp_path):
+    lib, identity = library
+    lib.update(identity, tags=["日本語"], read_status="読了", note="バックアップ時のメモ")
+    with lib.connection() as db:
+        db.execute("INSERT INTO note_templates VALUES('自分用', '## 結果')")
+    backup = tmp_path / "snapshot.zip"
+    create_backup(lib, backup)
+    lib.update(identity, note="新しいメモ")
+    previous = restore_backup(lib, backup)
+    assert Library(lib.root).paper(identity)["note"] == "バックアップ時のメモ"
+    assert Library(previous).paper(identity)["note"] == "新しいメモ"
+    assert Library(lib.root).paper(identity)["tags"] == ["日本語"]
+    invalid = tmp_path / "bad.zip"
+    with zipfile.ZipFile(invalid, "w") as archive:
+        archive.writestr("../outside.txt", "invalid")
+    with pytest.raises(ValueError):
+        restore_backup(Library(lib.root), invalid)
+    assert not (tmp_path / "outside.txt").exists()
+    assert Library(lib.root).paper(identity)["note"] == "バックアップ時のメモ"
+    assert not list(tmp_path.glob("data-restore-*"))
+
+
+def test_maintenance_jobs_exclude_other_jobs():
+    manager = JobManager()
+    gate = threading.Event()
+    job = manager.submit_job("backup", lambda *_: gate.wait(2))
+    try:
+        with pytest.raises(ConcurrencyConflict):
+            manager.submit_job("translate", lambda *_: None, paper_id="a" * 32)
+    finally:
+        gate.set()
+    deadline = time.monotonic() + 3
+    while job.running and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert not job.running
+
+
 def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
     from sidecar import app as runtime
     lib, identity = library
@@ -270,6 +307,55 @@ def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
         assert client.get(f"/api/papers/{identity}/revisions").json()[0]["before"] == paragraph["text"]
         assert client.get(f"/api/papers/{identity}/citation-excerpts", params={"page": 1}).json()["text"]
         assert client.delete("/api/note-templates/実験").status_code == 200
+
+
+@pytest.mark.parametrize("name", ["/outside.txt", "papers/../outside.txt", "C:/outside.txt", "papers\\outside.txt", "CON.txt", "papers/test. /file"])
+def test_restore_rejects_windows_unsafe_paths(library, tmp_path, name):
+    lib, identity = library
+    invalid = tmp_path / "unsafe.zip"
+    with zipfile.ZipFile(invalid, "w") as archive:
+        archive.writestr(name.replace("\\", "/"), "invalid")
+    if "\\" in name:
+        invalid.write_bytes(invalid.read_bytes().replace(name.replace("\\", "/").encode(), name.encode()))
+    with pytest.raises(ValueError):
+        restore_backup(lib, invalid)
+    assert lib.paper(identity)["id"] == identity
+
+
+def test_snapshot_api_and_write_guard(library, tmp_path, monkeypatch):
+    from sidecar import app as runtime
+    lib, identity = library
+    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setattr(runtime, "job_manager", JobManager())
+    def wait(job_id):
+        job = runtime.job_manager.get_job(job_id)
+        deadline = time.monotonic() + 10
+        while job.running and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert job.status == "succeeded", job.error
+        return job
+    with TestClient(runtime.app) as client:
+        gate = threading.Event()
+        active = runtime.job_manager.submit_job("backup", lambda *_: gate.wait(3))
+        try:
+            assert client.put("/api/prompts", json={"chat_answer": "changed"}).status_code == 409
+            assert client.patch(f"/api/papers/{identity}", json={"note": "changed"}).status_code == 409
+            assert client.get("/api/jobs").status_code == 200
+        finally:
+            gate.set()
+        wait(active.job_id)
+        backup = tmp_path / "api.zip"
+        response = client.post("/api/backup", json={"path": str(backup)})
+        assert response.status_code == 200
+        wait(response.json()["job_id"])
+        assert backup.is_file()
+        lib.update(identity, note="復元前のメモ")
+        response = client.post("/api/restore", json={"path": str(backup)})
+        assert response.status_code == 200
+        job = wait(response.json()["job_id"])
+        assert Library(Path(job.result["previous_path"])).paper(identity)["note"] == "復元前のメモ"
+        assert client.get(f"/api/papers/{identity}").json()["note"] == ""
 
 
 def test_chat_explicit_reference_pages(library):
@@ -372,6 +458,17 @@ def test_global_glossary_applies_to_unrelated_papers_and_checks_stale_edits(libr
     with TestClient(runtime.app) as client:
         assert client.get("/api/glossary").status_code == 401
         assert client.put("/api/glossary", json={"terms": [], "expected_terms": []}).status_code == 401
+
+
+def test_global_glossary_survives_backup_restore(library, tmp_path):
+    lib, _ = library
+    terms = [{"source": "control", "target": "制御"}]
+    save_global_glossary(lib.root, terms)
+    backup = tmp_path / "global.zip"
+    create_backup(lib, backup)
+    save_global_glossary(lib.root, [])
+    restore_backup(lib, backup)
+    assert global_glossary(lib.root) == terms
 
 
 def test_glossary_draft_can_extend_large_global_dictionary(library):

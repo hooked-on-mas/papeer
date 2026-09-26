@@ -14,6 +14,7 @@ import { AppearanceSection } from "./AppearanceSection";
 import { PromptsSection, usePromptsForm } from "./PromptsSection";
 import { ShortcutsSection } from "./ShortcutsSection";
 import { TagManager } from "./TagsSection";
+import { BackupSection } from "./BackupSection";
 import { NoteTemplates, type TemplateLeaveGuard } from "../notes/NoteTemplates";
 import { useSettingsNavigation, type SettingsSection } from "./settingsNavigation";
 
@@ -31,6 +32,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon; descript
   { id: "note-templates", label: "メモテンプレート", icon: LayoutTemplate, description: "すべての論文で使うテンプレートの作成・編集・複製・削除" },
   { id: "prompts", label: "プロンプト", icon: FileText, description: "AI へ渡す指示文のカスタマイズ" },
   { id: "shortcuts", label: "ショートカット", icon: Keyboard, description: "キーボード操作の一覧" },
+  { id: "backup", label: "バックアップ", icon: FileText, description: "ライブラリ全体の保存と復元" },
 ];
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
@@ -138,6 +140,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   {section === "tags" && <TagManager key="paper" kind="paper" />}
                   {section === "sticky-labels" && <TagManager key="sticky" kind="sticky" />}
                   {open && section === "note-templates" && <NoteTemplates embedded leaveRef={templateGuard} note={templateNote ?? paper?.note ?? ""} onInsert={() => undefined} />}
+                  {section === "backup" && <BackupSection />}
                 </>
               )}
             </div>

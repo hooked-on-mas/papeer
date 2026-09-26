@@ -68,6 +68,10 @@ class JobManager:
     ) -> JobInfo:
         with self._lock:
             # Check concurrency constraints
+            if any(j.running and j.kind in {"backup", "restore"} for j in self._jobs.values()):
+                raise ConcurrencyConflict("バックアップ・復元が実行中です。")
+            if kind in {"backup", "restore"} and any(j.running for j in self._jobs.values()):
+                raise ConcurrencyConflict("すべての処理が終わってからバックアップ・復元してください。")
             if paper_id is not None:
                 if any(j.running and j.paper_id == paper_id for j in self._jobs.values()):
                     raise ConcurrencyConflict(f"この論文（{paper_id}）の処理がすでに実行中です。")

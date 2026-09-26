@@ -48,6 +48,10 @@ function useCloseHandling(): void {
     const handleClose = async () => {
       if (closing) return;
       const running = useStore.getState().activeJobs.filter(isRunning);
+      if (running.some(job => job.kind === "backup" || job.kind === "restore")) {
+        useStore.getState().setStatus("バックアップ・復元が完了してから終了してください。");
+        return;
+      }
       if (running.length) {
         const ok = await askConfirm("処理中",
           `実行中の処理が${running.length}件あります。中止して終了しますか？\n翻訳済みのページは保存されており、次回再開できます。`,

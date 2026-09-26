@@ -14,7 +14,7 @@ from typing import Any, AsyncGenerator
 
 from fastapi import Depends, FastAPI, HTTPException, Header, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 
 from paperdesk.core.code_version import application_version
 from paperdesk.core.config import Settings, data_directory
@@ -83,6 +83,14 @@ app = FastAPI(
 )
 
 # CORS setup
+
+@app.middleware("http")
+async def protect_library_snapshot(request: Request, call_next):
+    if (request.method != "OPTIONS" and request.url.path not in {"/health", "/api/jobs"}
+            and any(job.running and job.kind in {"backup", "restore"} for job in job_manager.get_jobs())):
+        return JSONResponse(status_code=409, content={"detail": "バックアップ・復元が終わるまでお待ちください。"})
+    return await call_next(request)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -116,6 +124,8 @@ def verify_token(authorization: str | None = Header(None), token: str | None = Q
 
 
 def get_library() -> Library:
+    if any(job.running and job.kind in {"backup", "restore"} for job in job_manager.get_jobs()):
+        raise HTTPException(status_code=409, detail="バックアップ・復元が終わるまでお待ちください。")
     return Library(get_data_dir())
 
 

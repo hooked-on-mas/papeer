@@ -1,11 +1,17 @@
-"""Reading metadata and shared terminology."""
+"""Reading metadata, shared terminology and portable library snapshots."""
 from __future__ import annotations
 
 from datetime import datetime
+from contextlib import closing
 import json
-from pathlib import Path
+import hashlib
+from pathlib import Path, PurePosixPath
 import re
+import shutil
+import sqlite3
+import tempfile
 import uuid
+import zipfile
 
 from paperdesk.core.storage import Library
 from paperdesk.core.terminology import effective_glossary, apply_glossary, validate_revision
@@ -120,6 +126,86 @@ def library_search(lib: Library, query: str, limit: int = 200) -> dict:
         if len(results) >= limit:
             return {"results": results[:limit], "limited": True}
     return {"results": results, "limited": False}
+
+
+def create_backup(lib: Library, destination: Path) -> None:
+    destination = destination.resolve()
+    if destination.is_relative_to(lib.root.resolve()):
+        raise ValueError("バックアップはデータ保存フォルダーの外に保存してください。")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(destination.name + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "library.sqlite3"
+            with lib.connection() as source, closing(sqlite3.connect(snapshot)) as target:
+                source.backup(target)
+            with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(snapshot, "library.sqlite3")
+                archive.writestr("paperdesk-backup.json", json.dumps({"version": 1}))
+                for path in lib.root.rglob("*"):
+                    if path.is_file() and path.name not in {"library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm"}:
+                        archive.write(path, path.relative_to(lib.root).as_posix())
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def restore_backup(lib: Library, source: Path) -> Path:
+    root = lib.root.resolve()
+    staging = root.with_name(root.name + "-restore-" + uuid.uuid4().hex)
+    previous = root.with_name(root.name + "-before-restore-" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    staging.mkdir()
+    try:
+        with zipfile.ZipFile(source) as archive:
+            total = 0
+            names = set()
+            for item in archive.infolist():
+                name = item.filename
+                path = PurePosixPath(name)
+                normalized = "/".join(path.parts).casefold()
+                total += item.file_size
+                if (path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name
+                        or not path.parts or (item.external_attr >> 16) & 0o170000 == 0o120000
+                        or total > 20 * 1024**3 or normalized in names
+                        or any(part.endswith((".", " ")) or part.split(".")[0].upper() in
+                               {"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)], *[f"LPT{i}" for i in range(1, 10)]}
+                               for part in path.parts)):
+                    raise ValueError("バックアップに不正なパスまたは大きすぎるデータが含まれます。")
+                names.add(normalized)
+                target = staging.joinpath(*path.parts)
+                if not target.resolve().is_relative_to(staging.resolve()):
+                    raise ValueError("バックアップのパスが不正です。")
+                if item.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.open(item) as stream, target.open("wb") as output:
+                        shutil.copyfileobj(stream, output)
+        if not (staging / "paperdesk-backup.json").is_file() or not (staging / "library.sqlite3").is_file():
+            raise ValueError("Papeerのバックアップを選択してください。")
+        manifest = json.loads((staging / "paperdesk-backup.json").read_text("utf-8"))
+        if manifest.get("version") != 1 or not (staging / "library.sqlite3").is_file():
+            raise ValueError("Papeerのバックアップを選択してください。")
+        with closing(sqlite3.connect(staging / "library.sqlite3")) as db:
+            if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or db.execute("PRAGMA foreign_key_check").fetchall():
+                raise ValueError("バックアップのデータベースが破損しています。")
+            for paper_id, digest in db.execute("SELECT id,sha256 FROM papers"):
+                if not re.fullmatch(r"[0-9a-f]{32}", paper_id) or not (staging / "papers" / paper_id / "original.pdf").is_file():
+                    raise ValueError("バックアップの論文ファイルが不足しています。")
+                with (staging / "papers" / paper_id / "original.pdf").open("rb") as stream:
+                    if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
+                        raise ValueError("バックアップの原文PDFが破損しています。")
+        (staging / "paperdesk-backup.json").unlink()
+        root.rename(previous)
+        try:
+            staging.rename(root)
+        except Exception:
+            previous.rename(root)
+            raise
+        return previous
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
 
 
 def save_revision_history(folder: Path, unit_id: str, before: str, after: str) -> None:
