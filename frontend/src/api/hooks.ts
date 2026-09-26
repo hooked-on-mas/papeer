@@ -36,6 +36,8 @@ export type TranslationReport = {
   scaled_blocks?: number;
   readability_warnings?: { page: number }[];
   skipped_blocks?: string[];
+  skipped_block_pages?: number[];
+  page_errors?: Record<string, string>;
 };
 
 export type TranslationPreview = {

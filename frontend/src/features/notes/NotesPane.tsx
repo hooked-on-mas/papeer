@@ -33,11 +33,6 @@ function metaLines(paper: PaperData, reading: ReadingData | null | undefined): {
   const lines: { text: string; title?: string }[] = [{ text: `${paper.pages ?? "?"} ページ / ${paper.status ?? ""}` }];
   if (reading?.empty_pages?.length) lines.push({ text: `文字のないページ: ${reading.empty_pages.join(", ")}` });
   const report = reading?.report;
-  if (report?.scaled_blocks) lines.push({ text: `${report.scaled_blocks}ブロックの長い訳文を縮小表示` });
-  if (report?.readability_warnings?.length) {
-    const pages = [...new Set(report.readability_warnings.map((w) => w.page))].sort((a, b) => a - b);
-    lines.push({ text: `小さい文字のあるページ: ${pages.length}ページ`, title: "拡大して確認してください: p." + pages.join(", ") });
-  }
   if (report?.skipped_pages?.length) lines.push({ text: "PDF生成スキップ: p." + report.skipped_pages.join(", ") });
   return lines;
 }

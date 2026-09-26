@@ -82,6 +82,7 @@ class Library:
                                [(name,) for name in ("未読", "読書中", "読了", "再読したい")])
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS note_templates (name TEXT PRIMARY KEY, content TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS collection_glossaries (name TEXT PRIMARY KEY, terms TEXT NOT NULL);
             """)
             if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tag_choices'").fetchone():
                 db.execute("CREATE TABLE tag_choices (kind TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(kind,name))")
@@ -255,6 +256,10 @@ class Library:
             return destination + name[len(path):] if name == path or name.startswith(path + " / ") else name
         with self.connection() as db:
             # Materialize implicit parents too, so renaming their last child keeps them.
+            glossary_rows = db.execute("SELECT name,terms FROM collection_glossaries").fetchall()
+            db.execute("DELETE FROM collection_glossaries")
+            db.executemany("INSERT INTO collection_glossaries(name,terms) VALUES(?,?)",
+                           [(mapped(row["name"]), row["terms"]) for row in glossary_rows])
             db.execute("DELETE FROM collections")
             db.executemany("INSERT INTO collections(name) VALUES(?)", [(mapped(name),) for name in names])
             for row in db.execute("SELECT id,collection_name FROM papers").fetchall():
@@ -283,6 +288,8 @@ class Library:
             identities = [row["id"] for row in papers if inside(row["collection_name"])]
             db.executemany("UPDATE papers SET collection_name='' WHERE id=?", [(identity,) for identity in identities])
             db.executemany("DELETE FROM collections WHERE name=?", [(name,) for name in names if inside(name)])
+            db.executemany("DELETE FROM collection_glossaries WHERE name=?",
+                           [(row[0],) for row in db.execute("SELECT name FROM collection_glossaries").fetchall() if inside(row[0])])
         return identities
 
     def rename_paper(self, paper_id: str, name: str) -> str:

@@ -31,6 +31,7 @@ from paperdesk.translation.translation_context import contextual_units
 from paperdesk.layout.reading_flow import unit_pages, expand_pages, materialize_flows
 from paperdesk.layout.figure_layout import figure_caption, raster_figures
 from paperdesk.core import prompts
+from paperdesk.core.terminology import effective_glossary, apply_glossary, validate_revision, glossary_for_folder
 
 
 def link_citations(answer: str, allowed: dict[str, int]) -> str:
@@ -70,13 +71,8 @@ def page_translation_text(folder: Path, document: dict, page: int) -> list[str]:
     The translated PDF draws inline math as images, so text copied from it lacks the formulas.
     """
     units = translation_units(document)
-    glossary_path = folder / "glossary.json"
-    glossary = json.loads(glossary_path.read_text("utf-8")) if glossary_path.exists() else []
-    if glossary:
-        for unit in units:
-            matches = [item for item in glossary if item["source"].casefold() in unit["text"].casefold()]
-            if matches:
-                unit["glossary"] = matches
+    glossary = glossary_for_folder(folder)
+    apply_glossary(units, glossary)
     cache_path = folder / "translation-cache.json"
     cache = json.loads(cache_path.read_text("utf-8")) if cache_path.exists() else {}
     # Cached pages count only while they match the current extraction: after a re-extraction
@@ -118,21 +114,17 @@ class PaperService:
         report = getattr(self.provider, "usage_report", None)
         return report() if report else None
 
-    def translate(self, paper_id: str, pages: set[int] | None = None) -> dict:
+    def translate(self, paper_id: str, pages: set[int] | None = None,
+                  replacements: dict[str, str] | None = None) -> dict:
         folder = self.library.folder(paper_id)
         document = self.library.document(paper_id)
         selected = set(range(1, document["page_count"] + 1)) if pages is None else set(pages)
         if not selected or any(type(p) is not int or not 1 <= p <= document["page_count"] for p in selected):
             raise ValueError(f"翻訳するページは1～{document['page_count']}の範囲で指定してください。")
         units = translation_units(document)
-        glossary_path = folder / "glossary.json"
-        glossary = json.loads(glossary_path.read_text("utf-8")) if glossary_path.exists() else []
+        glossary = effective_glossary(self.library, paper_id)
         glossary_key = json.dumps(glossary, ensure_ascii=False, sort_keys=True)
-        if glossary:
-            for unit in units:
-                matches = [item for item in glossary if item["source"].casefold() in unit["text"].casefold()]
-                if matches:
-                    unit["glossary"] = matches
+        apply_glossary(units, glossary)
         if not units:
             raise ValueError("翻訳対象の文字が見つかりませんでした。")
         requested = set(selected)
@@ -157,11 +149,16 @@ class PaperService:
         completed_pages = dict(cache.get("completed_pages", {}))
         for number, page_units in source_pages.items():
             entry = cache.get("completed_pages", {}).get(str(number), {})
-            if (entry.get("version") == version and entry.get("source") == page_keys[number]
-                    and entry.get("glossary", "[]") == glossary_key
+            if ((entry.get("version") == version or (replacements and number in selected)) and entry.get("source") == page_keys[number]
                     and all(u["id"] in entry.get("translations", {}) for u in page_units)):
                 done.update(entry["translations"])
                 completed_pages[str(number)] = entry
+        if replacements:
+            by_id = {unit["id"]: unit for unit in units}
+            for identity, text in replacements.items():
+                if identity not in by_id or identity not in done:
+                    raise ValueError("この段落の原文または辞書が変更されています。先に再翻訳してください。")
+                done[identity] = validate_revision(by_id[identity]["text"], text)
         already_done = {n for n in selected if source_pages[n]
                         and all(u["id"] in done for u in source_pages[n])}
         if already_done:
@@ -190,6 +187,8 @@ class PaperService:
                 single.insert_pdf(previous, from_page=index, to_page=index)
                 single.save(destination)
         previous_markdown = (folder / "translation.md").read_text("utf-8") if (folder / "translation.md").exists() else ""
+        previous_report_path = folder / "translation-report.json"
+        previous_report = json.loads(previous_report_path.read_text("utf-8")) if previous_report_path.exists() else {}
         preview["pages"] = sorted(retained)
         preview["preserved_pages"] = sorted(retained)
         # Archive the old cache before replacing it, including legacy records
@@ -310,6 +309,12 @@ class PaperService:
             self.progress("原文と日本語訳を交互に並べたPDFを作成しています…")
             interleaved_pdf(folder / "original.pdf", folder / "translated.pdf", folder / "interleaved.pdf")
             report["skipped_blocks"] = [u["id"] for u in units if unit_pages(u) & (set(preview["pages"]) - retained) and skipped(u)]
+            previous_skipped = set(previous_report.get("skipped_blocks", []))
+            report["skipped_blocks"] += [u["id"] for u in units if u["id"] in previous_skipped and unit_pages(u) <= retained]
+            skipped_ids = set(report["skipped_blocks"])
+            report["skipped_block_pages"] = sorted({page for unit in units if unit["id"] in skipped_ids for page in unit_pages(unit)})
+            report["readability_warnings"] = report.get("readability_warnings", []) + [
+                item for item in previous_report.get("readability_warnings", []) if item.get("page") in retained]
             report["requested_pages"] = sorted(requested)
             report["translation_version"] = version
             report["already_translated_pages"] = sorted(already_done)

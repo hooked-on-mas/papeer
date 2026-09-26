@@ -4,6 +4,7 @@ import { Bookmark, Search, X } from "lucide-react";
 import { apiRequest } from "@/api/client";
 import { useStore } from "@/store";
 import { showError } from "@/features/jobs/jobEvents";
+import { TranslationReview } from "./TranslationReview";
 
 export type BookmarkData = { id: number; page: number; side: "original" | "translated"; quote: string; label: string; note: string; anchor_y: number };
 export type PendingBookmark = { paperId: string; page: number; side: "original" | "translated"; quote: string; anchorY: number };
@@ -63,7 +64,8 @@ export function ReaderExtras({ paperId, search, setSearch, bookmarkQuote, setBoo
     } catch (error) { showError(error, "しおりを削除できませんでした"); }
   };
   return <div className="border-b bg-background text-[12px] shrink-0">
-    <div className="flex items-center gap-2 px-3 py-1">
+    <div className="flex flex-wrap items-center gap-2 px-3 py-1">
+      <TranslationReview paperId={paperId} />
       <button className="inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-muted" onClick={() => setPanel(panel === "search" ? null : "search")}><Search className="size-3.5" /> 論文内検索</button>
       <button className="inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-muted" onClick={() => setPanel(panel === "bookmarks" ? null : "bookmarks")}><Bookmark className="size-3.5" /> しおり {bookmarks.length || ""}</button>
     </div>

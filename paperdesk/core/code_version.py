@@ -13,7 +13,7 @@ TRANSLATION_SOURCES = (
     "translation/translation.py", "translation/translation_context.py", "core/providers.py", "core/service.py",
     "layout/reading_flow.py", "pdf/pdf_engine.py", "layout/math_layout.py", "layout/figure_layout.py",
     "layout/table_layout.py", "layout/algorithm_layout.py", "layout/reference_layout.py", "pdf/pdf_math_crops.py",
-    "pdf/pdf_typography.py", "pdf/pdf_fonts.py",
+    "pdf/pdf_typography.py", "pdf/pdf_fonts.py", "core/terminology.py",
 )
 
 

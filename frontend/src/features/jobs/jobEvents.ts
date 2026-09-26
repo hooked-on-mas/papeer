@@ -164,8 +164,10 @@ function handleFinished(event: JobFinished, queryClient: QueryClient): void {
     queryClient.invalidateQueries({ queryKey: ["article", event.paper_id] });
     queryClient.invalidateQueries({ queryKey: ["messages", event.paper_id] });
     queryClient.invalidateQueries({ queryKey: ["reading", event.paper_id] });
-    if (event.kind === "translate") {
+    if (["translate", "revision"].includes(event.kind)) {
       queryClient.invalidateQueries({ queryKey: ["paper-search", event.paper_id] });
+      queryClient.invalidateQueries({ queryKey: ["paragraphs", event.paper_id] });
+      queryClient.invalidateQueries({ queryKey: ["revisions", event.paper_id] });
       queryClient.invalidateQueries({ queryKey: ["library-search"] });
     }
   }

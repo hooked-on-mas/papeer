@@ -423,7 +423,7 @@ function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData
   const selectedFolder = useStore((s) => s.selectedFolder);
   const jobs = useStore((s) => s.activeJobs);
   const running = jobs.some((j) => isRunning(j) && j.paper_id === paper.id);
-  const translating = jobs.some(j => isRunning(j) && j.paper_id === paper.id && j.kind === "translate");
+  const translating = jobs.some(j => isRunning(j) && j.paper_id === paper.id && (j.kind === "translate" || j.kind === "revision"));
   const isActive = paper.id === activePaperId && selectedFolder === null;
   const collection = normalizeCollection(paper.collection_name || "");
 

@@ -11,7 +11,8 @@ import pymupdf as fitz
 import pytest
 
 from paperdesk.core.config import Settings
-from paperdesk.core.reading_tools import library_search
+from paperdesk.core.reading_tools import library_search, translation_paragraphs
+from paperdesk.core.terminology import effective_glossary, validate_revision, global_glossary, save_global_glossary
 from paperdesk.core.service import PaperService
 from paperdesk.core.storage import Library
 from paperdesk.layout.math_layout import MATH_TOKEN
@@ -57,6 +58,23 @@ def test_tags_read_status_and_old_database_migration(library):
     assert reopened.papers("研究/制御")[0]["id"] == identity
     with pytest.raises(ValueError):
         lib.update(identity, read_status="不明")
+
+
+def test_legacy_glossaries_migrate_once_and_survive_folder_deletion(library):
+    lib, identity = library
+    with lib.connection() as db:
+        db.executemany("INSERT INTO collection_glossaries VALUES(?,?)", [
+            ("制御", json.dumps([{"source": "control", "target": "制御"}, {"source": "delay", "target": "遅延"}])),
+            ("制御 / 読書会", json.dumps([{"source": "Control", "target": "制御方式"}]))])
+    (lib.folder(identity) / "glossary.json").write_text(json.dumps([{"source": "delay", "target": "むだ時間"}]))
+    assert {t["source"].lower(): t["target"] for t in effective_glossary(lib, identity)} == {"control": "制御方式", "delay": "むだ時間"}
+    lib.rename_collection("制御", "工学")
+    assert len(effective_glossary(lib, identity)) == 2
+    lib.delete_collection("工学")
+    assert len(effective_glossary(lib, identity)) == 2
+    save_global_glossary(lib.root, [])
+    assert effective_glossary(Library(lib.root), identity) == []
+    assert (lib.folder(identity) / "glossary.json").is_file()
 
 
 def test_delete_tag_preserves_papers_notes_and_other_tags(library, tmp_path, monkeypatch):
@@ -169,6 +187,91 @@ def test_search_translation_note_and_literal_query(library):
     assert library_search(lib, "%' OR 1=1 --")["results"] == []
 
 
+def test_revision_reuses_other_translations_and_updates_exports(library):
+    lib, identity = library
+    provider = FakeProvider()
+    service = PaperService(lib, provider, threading.Event())
+    service.translate(identity)
+    paragraphs = translation_paragraphs(lib, identity)
+    paragraph = paragraphs[0]
+    calls = len(provider.calls)
+    edited = "変更した日本語の段落。" + " ".join(MATH_TOKEN.findall(paragraph["source"]))
+    service.translate(identity, set(paragraph["pages"]), replacements={paragraph["id"]: edited})
+    assert len(provider.calls) == calls
+    assert next(p for p in translation_paragraphs(lib, identity) if p["id"] == paragraph["id"])["text"] == edited
+    assert "変更した日本語の段落" in (lib.folder(identity) / "translation.md").read_text("utf-8")
+    with fitz.open(lib.folder(identity) / "translated.pdf") as pdf:
+        assert "変更した日本語" in "".join(p.get_text() for p in pdf)
+    service.translate(identity, set(paragraph["pages"]), replacements={paragraph["id"]: paragraph["text"]})
+    assert len(provider.calls) == calls
+
+
+def test_glossary_changes_only_retranslate_affected_pages(tmp_path):
+    source = tmp_path / "two.pdf"
+    with fitz.open() as pdf:
+        for text in ["Unique terminology alpha paragraph.", "Another independent beta paragraph."]:
+            page = pdf.new_page()
+            page.insert_text((72, 72), text)
+        pdf.save(source)
+    lib = Library(tmp_path / "library")
+    identity, _ = lib.import_pdf(source)
+    provider = FakeProvider()
+    service = PaperService(lib, provider, threading.Event())
+    service.translate(identity)
+    provider.calls.clear()
+    save_global_glossary(lib.root, [{"source": "alpha", "target": "アルファ"}])
+    report = service.translate(identity)
+    assert report["already_translated_pages"] == [2]
+    sent = [unit["text"] for _, values in provider.calls for unit in (values["texts"] if isinstance(values, dict) else values)]
+    assert all("beta" not in text for text in sent)
+
+
+def test_revision_preserves_math_token_multiplicity():
+    token = "[[PD_MATH_b1_0]]"
+    assert MATH_TOKEN.findall(token)
+    with pytest.raises(ValueError):
+        validate_revision("Source " + token, "訳文")
+    with pytest.raises(ValueError):
+        validate_revision(token, token + token)
+    assert validate_revision(token, "訳文 " + token)
+
+
+def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
+    from sidecar import app as runtime
+    lib, identity = library
+    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setattr(runtime, "job_manager", JobManager())
+    monkeypatch.setattr("sidecar.reading_api.Provider", FakeProvider)
+    PaperService(lib, FakeProvider(), threading.Event()).translate(identity)
+    with TestClient(runtime.app) as client:
+        assert client.patch(f"/api/papers/{identity}", json={"tags": ["自由なタグ"], "read_status": "読了"}).status_code == 200
+        assert client.get("/api/tags").json() == ["自由なタグ"]
+        assert client.put("/api/note-templates", json={"name": "実験", "content": "## 条件"}).status_code == 200
+        assert len(client.get("/api/note-templates").json()) == 2
+        assert client.get("/api/library-search", params={"q": "日本語訳"}).json()["results"]
+        paragraph = client.get(f"/api/papers/{identity}/paragraphs").json()[0]
+        assert client.post(f"/api/papers/{identity}/revision", json={"unit_id": paragraph["id"], "text": "修正", "expected_text": "stale"}).status_code == 409
+        response = client.post(f"/api/papers/{identity}/revision-draft", json={"unit_id": paragraph["id"]})
+        assert response.status_code == 200
+        job = runtime.job_manager.get_job(response.json()["job_id"])
+        deadline = time.monotonic() + 10
+        while job.running and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert job.status == "succeeded", job.error
+        assert "修正した" in job.result["text"]
+        response = client.post(f"/api/papers/{identity}/revision", json={"unit_id": paragraph["id"], "text": job.result["text"], "expected_text": paragraph["text"]})
+        assert response.status_code == 200
+        job = runtime.job_manager.get_job(response.json()["job_id"])
+        deadline = time.monotonic() + 10
+        while job.running and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert job.status == "succeeded", job.error
+        assert client.get(f"/api/papers/{identity}/revisions").json()[0]["before"] == paragraph["text"]
+        assert client.get(f"/api/papers/{identity}/citation-excerpts", params={"page": 1}).json()["text"]
+        assert client.delete("/api/note-templates/実験").status_code == 200
+
+
 def test_chat_explicit_reference_pages(library):
     lib, identity = library
     provider = FakeProvider()
@@ -178,3 +281,114 @@ def test_chat_explicit_reference_pages(library):
     assert f"paperdesk://{identity}/1" in result
     with pytest.raises(ValueError):
         PaperService(lib, provider, threading.Event()).ask(identity, "条件は？", reference_pages={999})
+
+
+def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
+    from sidecar import app as runtime
+    from sidecar import reading_api
+    lib, identity = library
+    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setattr(runtime, "job_manager", JobManager())
+    with lib.connection() as db:
+        db.execute("UPDATE pages SET text=? WHERE paper_id=?",
+                   ("Adaptive control improves tracking error.", identity))
+    existing = [{"source": "Adaptive control", "target": "修正済みの訳"}]
+    calls = []
+
+    class GlossaryProvider:
+        def __init__(self, settings, cancel):
+            assert settings.model == "draft-model"
+            assert settings.reasoning_effort == "low"
+
+        def generate(self, instruction, data, schema):
+            calls.append(json.loads(data))
+            return json.dumps({"terms": [
+                {"source": "adaptive control", "target": "上書きしない"},
+                {"source": "tracking error", "target": "追従誤差"},
+                {"source": "invented term", "target": "原文にない用語"}]})
+
+    monkeypatch.setattr(reading_api, "Provider", GlossaryProvider)
+    with TestClient(runtime.app) as client:
+        base = f"/api/papers/{identity}"
+        assert client.put(base + "/glossary", json={"terms": existing}).status_code == 200
+        response = client.post(base + "/glossary-draft", json={
+            "terms": existing, "model": "draft-model", "effort": "low"})
+        assert response.status_code == 200
+        job = runtime.job_manager.get_job(response.json()["job_id"])
+        deadline = time.monotonic() + 10
+        while job.running and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert job.status == "succeeded"
+        assert job.result["terms"] == [{"source": "tracking error", "target": "追従誤差"}]
+        assert calls[0]["existing_terms"] == existing
+        assert client.get(base + "/glossary").json() == existing
+        assert client.put(base + "/glossary", json={"terms": existing + job.result["terms"]}).status_code == 200
+        assert len(client.get(base + "/glossary").json()) == 2
+        assert client.post(base + "/glossary-draft", json={"terms": existing * 2}).status_code == 400
+
+
+def test_ai_glossary_failure_and_cancel_leave_dictionary_untouched(library):
+    from paperdesk.core.reading_tools import draft_glossary
+    from paperdesk.core.providers import Cancelled
+    lib, identity = library
+    path = lib.folder(identity) / "glossary.json"
+    path.write_text("[]", encoding="utf-8")
+
+    class InvalidProvider:
+        def generate(self, *args):
+            return '{"terms": [{"source": 123, "target": "invalid"}]}'
+
+    with pytest.raises(ValueError, match="有効な翻訳対応表"):
+        draft_glossary(lib, identity, InvalidProvider(), threading.Event(), lambda _: None, [])
+    cancel = threading.Event()
+    cancel.set()
+    with pytest.raises(Cancelled):
+        draft_glossary(lib, identity, InvalidProvider(), cancel, lambda _: None, [])
+    assert path.read_text("utf-8") == "[]"
+
+
+def test_global_glossary_applies_to_unrelated_papers_and_checks_stale_edits(library, tmp_path, monkeypatch):
+    from sidecar import app as runtime
+    lib, identity = library
+    other = tmp_path / "other.pdf"
+    other.write_bytes(FIXTURE.read_bytes() + b"\n% other paper\n")
+    other_id, _ = lib.import_pdf(other, "unrelated")
+    monkeypatch.setenv("PAPERDESK_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPERDESK_TOKEN", "")
+    monkeypatch.setattr(runtime, "job_manager", JobManager())
+    terms = [{"source": f"term {i}", "target": f"訳語 {i}"} for i in range(250)]
+    with TestClient(runtime.app) as client:
+        assert client.get("/api/glossary").json() == []
+        assert client.put("/api/glossary", json={"terms": terms, "expected_terms": []}).status_code == 200
+        assert effective_glossary(lib, identity) == terms
+        assert effective_glossary(lib, other_id) == terms
+        assert client.put("/api/glossary", json={"terms": [], "expected_terms": []}).status_code == 409
+        assert client.get("/api/glossary").json() == terms
+        assert client.put("/api/glossary", json={"terms": terms * 2, "expected_terms": terms}).status_code == 400
+        assert client.put("/api/glossary", json={"terms": [], "expected_terms": terms}).status_code == 200
+        assert effective_glossary(lib, other_id) == []
+    monkeypatch.setenv("PAPERDESK_TOKEN", "secret")
+    with TestClient(runtime.app) as client:
+        assert client.get("/api/glossary").status_code == 401
+        assert client.put("/api/glossary", json={"terms": [], "expected_terms": []}).status_code == 401
+
+
+def test_glossary_draft_can_extend_large_global_dictionary(library):
+    from paperdesk.core.reading_tools import draft_glossary
+    lib, identity = library
+    terms = [{"source": f"unrelated {i}", "target": f"訳語 {i}"} for i in range(250)]
+    terms.append({"source": "control", "target": "制御"})
+    save_global_glossary(lib.root, terms)
+    with lib.connection() as db:
+        db.execute("UPDATE pages SET text=? WHERE paper_id=?", ("control and tracking error", identity))
+
+    class DraftProvider:
+        def generate(self, instruction, data, schema):
+            assert json.loads(data)["existing_terms"] == [{"source": "control", "target": "制御"}]
+            return json.dumps({"terms": [{"source": "CONTROL", "target": "変更しない"},
+                                        {"source": "tracking error", "target": "追従誤差"}]})
+
+    result = draft_glossary(lib, identity, DraftProvider(), threading.Event(), lambda _: None, terms)
+    assert result == {"terms": [{"source": "tracking error", "target": "追従誤差"}]}
+    assert global_glossary(lib.root) == terms

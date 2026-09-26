@@ -55,7 +55,7 @@ export function Header() {
     );
   }
 
-  const translateJob = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && j.kind === "translate");
+  const translateJob = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && (j.kind === "translate" || j.kind === "revision"));
   const busy = paperBusy(activeJobs, activePaperId);
   const translation = paperTranslationStatus(paper, !!translateJob, reading);
   const { status } = translation;
