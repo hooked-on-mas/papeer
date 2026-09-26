@@ -58,7 +58,8 @@ def link_citations(answer: str, allowed: dict[str, int]) -> str:
                 else:
                     links.append(f"[参照未確認: {current_id[:8]} p.{page}]")
         if links:
-            return f"[{', '.join(links)}]"
+            # The frontend renders each link as a label, so no surrounding brackets.
+            return " ".join(links)
         return f"[{content}]"
     return re.sub(r"\[([0-9a-f]{32}:[^\[\]]+)\]", replace, answer)
 

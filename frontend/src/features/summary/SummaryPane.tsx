@@ -71,7 +71,7 @@ export function SummaryPane() {
           {!isLoading && !error && summaryText ? (
             <article aria-label="論文のサマリー">
               <UsageLine usage={article?.usage} className="justify-end mb-4" />
-              <MarkdownRenderer className="summary-prose" content={summaryText} paperId={activePaperId} />
+              <MarkdownRenderer className="summary-prose" content={summaryText} paperId={activePaperId} dropRules />
             </article>
           ) : (
             !isLoading && !error && (

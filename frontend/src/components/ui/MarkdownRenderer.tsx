@@ -17,6 +17,8 @@ interface Props {
   paperId?: string | null;
   /** Defaults to opening the cited page in the reader. */
   onCitationClick?: (page: number, paperId?: string) => void;
+  /** Drop horizontal rules, which generated summaries overuse between sections. */
+  dropRules?: boolean;
 }
 
 function MermaidDiagram({ chart }: { chart: string }) {
@@ -49,12 +51,12 @@ function MermaidDiagram({ chart }: { chart: string }) {
   return <div ref={containerRef} dangerouslySetInnerHTML={{ __html: svgContent }} className="flex justify-center my-4" />;
 }
 
-export function MarkdownRenderer({ content, className, paperId, onCitationClick }: Props) {
+export function MarkdownRenderer({ content, className, paperId, onCitationClick, dropRules }: Props) {
   const cite = onCitationClick ?? ((page: number, id?: string) => {
     const target = id || paperId || useStore.getState().activePaperId;
     if (target) followCitation(target, page);
   });
-  const normalizedContent = normalizeMarkdown(content);
+  const normalizedContent = normalizeMarkdown(content, { dropRules });
 
   return (
     <div className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
