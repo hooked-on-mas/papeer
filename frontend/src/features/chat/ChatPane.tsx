@@ -7,6 +7,7 @@ import { apiRequest } from "@/api/client";
 import { useCollections, useMessages, usePaperList } from "@/api/hooks";
 import { showError, startJob } from "@/features/jobs/jobEvents";
 import { showPassage } from "@/features/reader/navigation";
+import { CitationEvidence } from "./CitationEvidence";
 
 const EXAMPLE_QUESTIONS = [
   "従来手法と比べた改善点は？",
@@ -214,6 +215,7 @@ export function ChatPane() {
             <div key={idx}>
               <div className="text-[12px] font-medium text-muted-foreground mb-1">回答</div>
               <MarkdownRenderer content={msg.content} paperId={activePaperId} className="max-w-none" />
+              <CitationEvidence content={msg.content} />
               <UsageLine usage={msg.usage} className="mt-2" />
             </div>
           ))}

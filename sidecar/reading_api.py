@@ -107,3 +107,13 @@ def register_reading_api(app, verify_token):
             return tools.library_search(runtime.get_library(), q)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/papers/{paper_id}/citation-excerpts", dependencies=[Depends(verify_token)])
+    def citation_excerpts(paper_id: str, page: int):
+        lib = runtime.get_library()
+        runtime.paper_folder(lib, paper_id)
+        if not 1 <= page <= lib.paper(paper_id)["pages"]:
+            raise HTTPException(status_code=400, detail="ページが範囲外です。")
+        with lib.connection() as db:
+            row = db.execute("SELECT text FROM pages WHERE paper_id=? AND number=?", (paper_id, page)).fetchone()
+        return {"text": row[0][:6000] if row else ""}
