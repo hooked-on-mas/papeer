@@ -15,6 +15,9 @@ import { ReaderExtras } from "./ReaderExtras";
 import type { StickyNote } from "./stickyNotes";
 import type { JumpTarget } from "./PdfPane";
 
+// Stable while the notes are loading or failed: a new array would redraw the text layer on every render.
+const NO_NOTES: StickyNote[] = [];
+
 /** Caption for the translation pane, following the old reader's rules. */
 function translatedCaption(reading: ReadingData | null | undefined, page: number): string {
   const preview = reading?.preview;
@@ -39,7 +42,7 @@ export function Reader() {
   const activeJobs = useStore((s) => s.activeJobs);
   const [search, setSearch] = useState<{ query: string; side: "original" | "translated" }>({ query: "", side: "original" });
   const [bookmarkTarget, setBookmarkTarget] = useState<JumpTarget | null>(null);
-  const { data: bookmarks = [] } = useQuery({
+  const { data: bookmarks = NO_NOTES } = useQuery({
     queryKey: ["sticky-notes", activePaperId],
     queryFn: () => apiRequest<StickyNote[]>("GET", `/api/papers/${activePaperId}/sticky-notes`),
     enabled: !!activePaperId,

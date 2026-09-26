@@ -9,7 +9,7 @@ import { apiRequest } from "@/api/client";
 import { usePaper } from "@/api/hooks";
 import { AppDialogs, askConfirm } from "@/components/AppDialogs";
 import { isRunning, useStore } from "../store";
-import { Header } from "./Header";
+import { Header, TranslationDialogHost } from "./Header";
 import { StatusBar } from "./StatusBar";
 import { LibrarySidebar } from "../features/library/LibrarySidebar";
 import { Reader } from "../features/reader/Reader";
@@ -68,7 +68,12 @@ function useCloseHandling(): void {
         // Let CLI subprocesses stop before the sidecar exits.
         await waitForJobs(15_000);
       }
-      await Promise.all([...pendingNoteSaves].map((save) => save().catch(() => undefined)));
+      const noteSaves = await Promise.allSettled([...pendingNoteSaves].map((save) => save()));
+      if (noteSaves.some((result) => result.status === "rejected")) {
+        closing = false;
+        useStore.getState().setStatus("メモを保存できませんでした。内容を確認してから終了してください。");
+        return;
+      }
       try {
         await flushInkSaves();
       } catch {
@@ -130,7 +135,7 @@ function Lightbox() {
   useHotkeys("esc", () => setImage(null), { enabled: !!image });
   if (!image) return null;
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-8 cursor-zoom-out" onClick={() => setImage(null)}>
+    <div data-lightbox className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-8 cursor-zoom-out" onClick={() => setImage(null)}>
       <img src={image.src} alt={image.alt} className="max-w-full max-h-full bg-white rounded shadow-2xl" />
     </div>
   );
@@ -219,7 +224,10 @@ export function AppShell() {
 
   const hotkeyOptions = { preventDefault: true, enableOnFormTags: false } as const;
   useHotkeys("f11", () => useStore.getState().setFocusMode(!useStore.getState().focusMode), { preventDefault: true });
-  useHotkeys("esc", () => useStore.getState().setFocusMode(false), { enabled: focusMode });
+  useHotkeys("esc", () => {
+    // Esc on an enlarged image only closes the image.
+    if (!document.querySelector("[data-lightbox]")) useStore.getState().setFocusMode(false);
+  }, { enabled: focusMode });
   useHotkeys("ctrl+o, meta+o", () => importPdfs(), { preventDefault: true, enableOnFormTags: true });
   useHotkeys("ctrl+f, meta+f", () => {
     if (useStore.getState().activeTab === "reader" && useStore.getState().activePaperId)
@@ -388,6 +396,7 @@ export function AppShell() {
       <StickyNoteDialog />
       <AppDialogs />
       <Lightbox />
+      <TranslationDialogHost />
       <DropOverlay />
     </div>
   );

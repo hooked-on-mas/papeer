@@ -24,6 +24,7 @@ export function InkToolbar({ editor, disabled, onStickyNote }: Props) {
   const drawing = ["pen", "highlighter", "line", "arrow", "rectangle", "ellipse"].includes(tool);
   const selecting = tool === "region" || tool === "lasso";
   const displayWidth = selected[0]?.width ?? width;
+  const displayColor = selected[0]?.color ?? color;
   const widths = (selected.length ? selected.every(s => s.kind === "highlighter") : tool === "highlighter")
     ? [0.015, 0.025, 0.04] : [0.0015, 0.003, 0.006];
   const button = "h-7 px-1.5 rounded inline-flex items-center justify-center gap-1 text-xs hover:bg-muted disabled:opacity-40 disabled:pointer-events-none";
@@ -97,9 +98,9 @@ export function InkToolbar({ editor, disabled, onStickyNote }: Props) {
       {drawing && <select aria-label="描画の種類" className="h-7 border rounded bg-background text-xs" value={tool} onChange={e => setTool(e.target.value as InkTool)}>
         <option value="pen">ペン</option><option value="highlighter">蛍光ペン</option><option value="line">直線</option><option value="arrow">矢印</option><option value="rectangle">四角</option><option value="ellipse">丸</option>
       </select>}
-      {colors.map(([value, label]) => <button key={value} title={label} aria-label={`${label}のペン`} aria-pressed={color === value}
-        onClick={() => editor.style({ color: value })} className={`w-5 h-5 rounded-full border-2 ${color === value ? "border-foreground" : "border-transparent"} p-0.5`}><span className="block w-full h-full rounded-full" style={{ backgroundColor: value }} /></button>)}
-      <input type="color" aria-label="任意の色" value={color} onChange={e => editor.style({ color: e.target.value })} className="w-6 h-6 bg-transparent" />
+      {colors.map(([value, label]) => <button key={value} title={label} aria-label={`${label}のペン`} aria-pressed={displayColor === value}
+        onClick={() => editor.style({ color: value })} className={`w-5 h-5 rounded-full border-2 ${displayColor === value ? "border-foreground" : "border-transparent"} p-0.5`}><span className="block w-full h-full rounded-full" style={{ backgroundColor: value }} /></button>)}
+      <input type="color" aria-label="任意の色" value={displayColor} onChange={e => editor.style({ color: e.target.value })} className="w-6 h-6 bg-transparent" />
       {tool !== "text" && <select aria-label="線の太さ" value={displayWidth} onChange={e => editor.style({ width: Number(e.target.value) })} className="h-6 border rounded bg-background text-xs">
         {widths.map((value, i) => <option key={value} value={value}>{["細", "中", "太"][i]}</option>)}
         {!widths.includes(displayWidth) && <option value={displayWidth}>カスタム</option>}

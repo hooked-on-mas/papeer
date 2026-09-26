@@ -69,11 +69,14 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
 
   useEffect(() => {
     if (paper && note === null) {
-      setNote(paper.note ?? "");
-      savedNote.current = paper.note ?? "";
-      latestNote.current = paper.note ?? "";
+      // From the cache rather than this render: a pane closing in the same commit (entering or
+      // leaving focus mode) has just put its unsaved text there.
+      const text = queryClient.getQueryData<PaperData | null>(["papers", paperId])?.note ?? paper.note ?? "";
+      setNote(text);
+      savedNote.current = text;
+      latestNote.current = text;
     }
-  }, [paper, note]);
+  }, [paper, note, paperId, queryClient]);
 
   // A quote from the reader's context menu goes at the end, once the memo has loaded.
   useEffect(() => {
@@ -129,9 +132,14 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
     pendingNoteSaves.add(saveNote);
     return () => {
       pendingNoteSaves.delete(saveNote);
+      // Synchronously, so that a pane opening in the same commit starts from this text.
+      const text = latestNote.current;
+      if (text !== null && text !== savedNote.current) {
+        queryClient.setQueryData<PaperData | null>(["papers", paperId], (old) => old ? { ...old, note: text } : old);
+      }
       void saveNote().catch(() => undefined);
     };
-  }, [saveNote]);
+  }, [saveNote, paperId, queryClient]);
 
   const saveMetadata = async () => {
     if (!title.trim()) {

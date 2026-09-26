@@ -42,7 +42,7 @@ export function ReaderExtras({ paperId, search, setSearch, onSearchJump }: {
         <button aria-label="閉じる" onClick={() => setPanel(null)}><X className="size-4" /></button>
       </div>
       {search.query && <div className="mt-1 text-muted-foreground">{found ? `${found.total}件${found.limited ? "以上（先頭200件）" : ""}` : "検索中…"}</div>}
-      <div className="max-h-40 overflow-auto mt-1">{found?.results.map((item, i) => <button key={i} className="block w-full text-left px-2 py-1 hover:bg-muted truncate" onClick={() => { useStore.getState().setCurrentPage(item.page); onSearchJump(item, i); }}>p.{item.page}　{item.snippet}</button>)}</div>
+      <div className="max-h-40 overflow-auto mt-1">{found?.results.map((item, i) => <button key={i} className="block w-full text-left px-2 py-1 hover:bg-muted truncate" onClick={() => { const store = useStore.getState(); store.setTranslatedOnly(false); store.setCurrentPage(item.page); onSearchJump(item, i); }}>p.{item.page}　{item.snippet}</button>)}</div>
     </div>}
   </div>;
 }

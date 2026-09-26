@@ -77,7 +77,8 @@ export function useInkEditor(paperId: string | undefined, side: InkSide, page: n
     change([...strokes, ...pasted]); setTool("region"); setSelectedIds(pasted.map(s => s.id)); setVisible(true);
   };
   const style = (values: { color?: string; width?: number }) => {
-    if (selected.length) replaceSelected(selected.map(s => ({ ...s, ...values })));
+    // Restyling a selection leaves the pen's own settings alone.
+    if (selected.length) { replaceSelected(selected.map(s => ({ ...s, ...values }))); return; }
     if (tool === "highlighter") preferences.change({ ...(values.color ? { highColor: values.color } : {}), ...(values.width ? { highWidth: values.width } : {}) });
     else preferences.change(values);
   };

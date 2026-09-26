@@ -19,18 +19,10 @@ import {
 export function Header() {
   const activePaperId = useStore((s) => s.activePaperId);
   const activeJobs = useStore((s) => s.activeJobs);
-  const currentPage = useStore((s) => s.currentPage);
   const sidebarCollapsed = useStore((s) => s.sidebarCollapsed);
 
   const { data: paper } = usePaper(activePaperId);
   const { data: reading } = useReading(activePaperId);
-  const [transOpen, setTransOpen] = useState(false);
-
-  useEffect(() => {
-    const open = () => { if (useStore.getState().activePaperId) setTransOpen(true); };
-    window.addEventListener("open-translate-dialog", open);
-    return () => window.removeEventListener("open-translate-dialog", open);
-  }, []);
 
   const toggleSidebar = (
     <button
@@ -100,7 +92,7 @@ export function Header() {
           </button>
         ) : (
           <button
-            onClick={() => setTransOpen(true)}
+            onClick={() => window.dispatchEvent(new Event("open-translate-dialog"))}
             disabled={busy}
             title="翻訳するページとモデルを選んで開始します（Ctrl+T）。保存済みの訳文は再利用します。"
             className="flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
@@ -158,8 +150,20 @@ export function Header() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-
-      <TranslationDialog open={transOpen} onOpenChange={setTransOpen} paperId={activePaperId} currentPage={currentPage} />
     </header>
   );
+}
+
+/** Mounted outside the header, so that Ctrl+T and the reader's buttons also work in focus mode. */
+export function TranslationDialogHost() {
+  const activePaperId = useStore((s) => s.activePaperId);
+  const currentPage = useStore((s) => s.currentPage);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const show = () => { if (useStore.getState().activePaperId) setOpen(true); };
+    window.addEventListener("open-translate-dialog", show);
+    return () => window.removeEventListener("open-translate-dialog", show);
+  }, []);
+  if (!activePaperId) return null;
+  return <TranslationDialog open={open} onOpenChange={setOpen} paperId={activePaperId} currentPage={currentPage} />;
 }

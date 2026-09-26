@@ -150,9 +150,13 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
 
   // Whether the text layer shows this page yet, rather than the one before it.
   const textLayerReady = useRef(false);
-  useEffect(() => { setCovering(false); setMatches([]); textLayerReady.current = false; }, [url, pageNumber]);
+  // Whether the canvas shows this page yet, so that a jump made now lands in the right place.
+  const pageRendered = useRef(false);
+  useEffect(() => { setCovering(false); setMatches([]); textLayerReady.current = false; pageRendered.current = false; }, [url, pageNumber]);
+  // Each target is scrolled to once, so that zooming or resizing later doesn't pull the view back.
+  const jumpedTo = useRef<JumpTarget | null>(null);
   const jumpToBookmark = useCallback(() => {
-    if (!jumpTarget || jumpTarget.side !== (translated ? "translated" : "original")) return;
+    if (!jumpTarget || jumpedTo.current === jumpTarget || jumpTarget.side !== (translated ? "translated" : "original")) return;
     const page = pageRef.current;
     const scroller = containerRef.current;
     if (!page || !scroller) return;
@@ -162,6 +166,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
       const left = page.getBoundingClientRect().left - scroller.getBoundingClientRect().left + scroller.scrollLeft;
       scroller.scrollLeft = Math.max(0, left + jumpTarget.anchor_x * page.clientWidth - scroller.clientWidth * 0.5);
     }
+    if (pageRendered.current) jumpedTo.current = jumpTarget;
   }, [jumpTarget, translated]);
   useEffect(() => { jumpToBookmark(); }, [jumpToBookmark, pageNumber, url]);
 
@@ -261,7 +266,9 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
       >
         {placeholder ? message(placeholder) : !url ? message("PDFがありません。") : (
           <div className="w-fit min-w-full" style={{ padding: PADDING }}>
+            {/* Suspense mode would throw load errors past `error=` to the root, blanking the app. */}
             <Document
+              suspense={false}
               file={url}
               options={options}
               onLoadSuccess={(doc) => setNumPages(doc.numPages)}
@@ -278,7 +285,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                     onLoadSuccess={(page) => { loadedPage.current = page; }}
                     onGetTextSuccess={(content) => { textContent.current = content; }}
                     onRenderSuccess={(page) => {
-                      setCovering(false); jumpToBookmark();
+                      setCovering(false); pageRendered.current = true; jumpToBookmark();
                       const viewport = page.getViewport({ scale: 1 });
                       setInkViewport({ key: inkKey, ratio: viewport.height / viewport.width });
                     }}

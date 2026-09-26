@@ -33,6 +33,18 @@ export function watchJob(jobId: string, watcher: Watcher): void {
   watchers.set(jobId, [...(watchers.get(jobId) ?? []), watcher]);
 }
 
+/** Show a just-started job as running, unless its finished event already arrived. */
+export function showStartedJob(jobId: string, meta: { kind: string; paperId: string | null }): void {
+  if (recentlyFinished.has(jobId)) return;
+  useStore.getState().addJob({
+    job_id: jobId,
+    paper_id: meta.paperId,
+    kind: meta.kind,
+    message: "準備中...",
+    status: "running",
+  });
+}
+
 /** Start a sidecar job and show it as running before the first progress event. */
 export async function startJob(
   path: string,
@@ -41,13 +53,7 @@ export async function startJob(
   watcher?: Watcher,
 ): Promise<string> {
   const response = await apiRequest<{ job_id: string }>("POST", path, body ?? {});
-  useStore.getState().addJob({
-    job_id: response.job_id,
-    paper_id: meta.paperId,
-    kind: meta.kind,
-    message: "準備中...",
-    status: "running",
-  });
+  showStartedJob(response.job_id, meta);
   if (watcher) watchJob(response.job_id, watcher);
   return response.job_id;
 }

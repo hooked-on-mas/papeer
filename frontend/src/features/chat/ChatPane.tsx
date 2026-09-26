@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { FileText, Loader2, MessageSquare, Send, Square, X } from "lucide-react";
+import { create } from "zustand";
 import { isRunning, paperBusy, useStore, type PassageAttachment, type PassageLocation } from "@/store";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { UsageLine } from "@/components/UsageLine";
@@ -14,6 +15,23 @@ const EXAMPLE_QUESTIONS = [
   "手法の前提条件と、実験の条件は？",
   "限界と今後の課題は？",
 ];
+
+type ChatOptions = {
+  /** The paper the page options were set for; they are cleared for another paper. */
+  paperId: string | null;
+  scope: "paper" | "selected" | "collection";
+  selectedIds: string[];
+  collection: string;
+  referencePages: string;
+  retrievalQuery: string;
+  maxPages: number;
+};
+
+// Outside the pane, which unmounts when its tab is left: attaching a passage from the reader
+// must not quietly put the next question back on this paper alone.
+const useChatOptions = create<ChatOptions>(() => ({
+  paperId: null, scope: "paper", selectedIds: [], collection: "", referencePages: "", retrievalQuery: "", maxPages: 10,
+}));
 
 /** Sent when passages are attached but nothing is typed. */
 const EXPLAIN_ATTACHED = "添付した箇所をわかりやすく説明してください。";
@@ -75,12 +93,13 @@ export function ChatPane() {
   const setInput = (text: string) => { if (activePaperId) useStore.getState().setChatInput(activePaperId, text); };
   const allAttachments = useStore((state) => state.chatAttachments);
   const attachments = allAttachments.filter((item) => item.paperId === activePaperId);
-  const [scope, setScope] = useState<"paper" | "selected" | "collection">("paper");
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [collection, setCollection] = useState("");
-  const [referencePages, setReferencePages] = useState("");
-  const [retrievalQuery, setRetrievalQuery] = useState("");
-  const [maxPages, setMaxPages] = useState(10);
+  const { scope, selectedIds, collection, referencePages, retrievalQuery, maxPages } = useChatOptions();
+  const setScope = (value: ChatOptions["scope"]) => useChatOptions.setState({ scope: value });
+  const setSelectedIds = (change: (ids: string[]) => string[]) => useChatOptions.setState((s) => ({ selectedIds: change(s.selectedIds) }));
+  const setCollection = (value: string) => useChatOptions.setState({ collection: value });
+  const setReferencePages = (value: string) => useChatOptions.setState({ referencePages: value });
+  const setRetrievalQuery = (value: string) => useChatOptions.setState({ retrievalQuery: value });
+  const setMaxPages = (value: number) => useChatOptions.setState({ maxPages: value });
   const { data: papers = [] } = usePaperList("", 0);
   const { data: collections = [] } = useCollections();
   const [pending, setPending] = useState<{ question: string; attachments: PassageLocation[] } | null>(null);
@@ -93,10 +112,14 @@ export function ChatPane() {
   // Only on a real paper switch: a StrictMode rerun on mount would drop a message from the reader.
   const shownPaperId = useRef(activePaperId);
   useEffect(() => {
-    if (shownPaperId.current === activePaperId) return;
-    shownPaperId.current = activePaperId;
-    setPending(null);
-    setReferencePages(""); setRetrievalQuery("");
+    if (shownPaperId.current !== activePaperId) {
+      shownPaperId.current = activePaperId;
+      setPending(null);
+    }
+    // Also after the pane was closed during the switch.
+    if (useChatOptions.getState().paperId !== activePaperId) {
+      useChatOptions.setState({ paperId: activePaperId, referencePages: "", retrievalQuery: "" });
+    }
   }, [activePaperId]);
 
   useEffect(() => {
@@ -112,9 +135,10 @@ export function ChatPane() {
     el.style.overflowY = el.scrollHeight > 150 ? "auto" : "hidden";
   }, [input]);
 
+  const scopeReady = scope !== "selected" || selectedIds.length > 0;
   const send = async (text: string, attached: PassageAttachment[] = attachments) => {
     const question = text.trim() || (attached.length ? EXPLAIN_ATTACHED : "");
-    if (!question || !activePaperId || busy || (scope === "selected" && !selectedIds.length)) return;
+    if (!question || !activePaperId || busy || !scopeReady) return;
     const paperId = activePaperId;
     const passages = attached.map(toLocation);
     setPending({ question, attachments: passages });
@@ -124,9 +148,9 @@ export function ChatPane() {
           reference_pages: referencePages, retrieval_query: retrievalQuery, max_pages: maxPages },
         { kind: "ask", paperId },
         (event) => {
-          if (useStore.getState().activePaperId !== paperId) return;
-          setPending(null);
+          if (useStore.getState().activePaperId === paperId) setPending(null);
           // Keep the message and its passages for another try unless it was answered.
+          // The input is kept per paper, so it is cleared even after switching to another.
           if (event.status !== "succeeded") return;
           const store = useStore.getState();
           if ((store.chatInputs[paperId] ?? "").trim() === text.trim()) store.setChatInput(paperId, "");
@@ -147,11 +171,11 @@ export function ChatPane() {
     if (!draft) return;
     store.setChatDraft(null);
     if (draft.paperId !== activePaperId) return;
-    if (draft.send && !busy && !askJob && pending === null) {
+    if (draft.send && !busy && !askJob && pending === null && scopeReady) {
       send(draft.text, draft.attachments ?? []);
       return;
     }
-    // Busy with another answer: leave it in the input to send later.
+    // Busy with another answer, or no paper chosen yet: leave it in the input to send later.
     draft.attachments?.forEach(store.addChatAttachment);
     setInput(draft.text);
     requestAnimationFrame(() => {

@@ -2,7 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/api/client";
 import type { PaperData, ReadingData } from "@/api/hooks";
 import { askConfirm, askText, showMessage } from "@/components/AppDialogs";
-import { showError, startJob } from "@/features/jobs/jobEvents";
+import { showError, showStartedJob, startJob } from "@/features/jobs/jobEvents";
 import { joinPath, shell } from "@/shell";
 import { useStore } from "@/store";
 import { paperExportFilename } from "@/lib/exportFilename";
@@ -98,7 +98,20 @@ export async function movePaper(paperId: string, collection: string, record = tr
   return true;
 }
 
+// A double click must not undo one move but drop two records.
+let undoingMove = false;
+
 export async function undoMove(): Promise<void> {
+  if (undoingMove) return;
+  undoingMove = true;
+  try {
+    await undoLastMove();
+  } finally {
+    undoingMove = false;
+  }
+}
+
+async function undoLastMove(): Promise<void> {
   const history = useStore.getState().moveHistory;
   const last = history[history.length - 1];
   if (!last) return;
@@ -306,7 +319,7 @@ export async function exportPdf(paperId: string, kind: PdfExportKind): Promise<v
     if (!destination) return;
     const result = await apiRequest<{ job_id?: string }>("POST", `/api/papers/${paperId}/export`, { kind, destination });
     if (result.job_id) {
-      useStore.getState().addJob({ job_id: result.job_id, paper_id: paperId, kind: "export", message: "準備中...", status: "running" });
+      showStartedJob(result.job_id, { kind: "export", paperId });
     } else {
       useStore.getState().setStatus("日本語訳PDFを保存しました。");
     }
