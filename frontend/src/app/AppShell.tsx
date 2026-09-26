@@ -154,10 +154,12 @@ export function AppShell() {
   const activeTab = useStore((s) => s.activeTab);
   const setActiveTab = useStore((s) => s.setActiveTab);
   const sidebarCollapsed = useStore((s) => s.sidebarCollapsed);
-  const sidebarWidth = useStore((s) => s.sidebarWidth);
+  // Changing defaultSize during a drag re-registers the panel and interrupts resizing.
+  // The group retains layouts when panels are hidden; only read saved defaults at mount.
+  const [sidebarWidth] = useState(() => useStore.getState().sidebarWidth);
   const focusMode = useStore((s) => s.focusMode);
   const focusPanel = useStore((s) => s.focusPanel);
-  const focusPanelWidth = useStore((s) => s.focusPanelWidth);
+  const [focusPanelWidth] = useState(() => useStore.getState().focusPanelWidth);
   const activePaperId = useStore((s) => s.activePaperId);
   const activeJobs = useStore((s) => s.activeJobs);
   // Passages attached from the reader, waiting to be sent.
@@ -268,50 +270,16 @@ export function AppShell() {
 
   const anyRunning = activeJobs.some(isRunning);
 
-  if (focusMode) {
-    return (
-      <div className="flex h-screen w-full flex-col bg-background text-foreground overflow-hidden">
-        <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
-          <ResizablePanel id="focus-reader" minSize="480px" className="flex flex-col min-w-0 relative">
-            <Reader />
-          </ResizablePanel>
-          {focusPanel && (
-            <>
-              <ResizableHandle className="w-1 bg-border hover:bg-primary/60 transition-colors cursor-col-resize" />
-              <ResizablePanel
-                id="focus-panel"
-                defaultSize={`${focusPanelWidth}px`}
-                minSize="320px"
-                maxSize="70%"
-                onResize={(size) => useStore.getState().setFocusPanelWidth(Math.round(size.inPixels))}
-                className="flex flex-col min-w-0 bg-background"
-              >
-                {focusPanel === "summary" && <SummaryPane />}
-                {focusPanel === "chat" && <ChatPane />}
-                {focusPanel === "notes" && <NotesPane compact />}
-              </ResizablePanel>
-            </>
-          )}
-        </ResizablePanelGroup>
-        {anyRunning && <StatusBar />}
-        <StickyNoteDialog />
-        <AppDialogs />
-        <Lightbox />
-        <DropOverlay />
-      </div>
-    );
-  }
-
   return (
     <div className="flex h-screen w-full flex-col bg-background text-foreground overflow-hidden">
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
-        {!sidebarCollapsed && (
+        {!focusMode && !sidebarCollapsed && (
           <>
             <ResizablePanel
               id="sidebar"
               defaultSize={`${sidebarWidth}px`}
               minSize="200px"
-              maxSize="480px"
+              maxSize="80%"
               onResize={(size) => useStore.getState().setSidebarWidth(Math.round(size.inPixels))}
               className="bg-sidebar flex flex-col border-r"
             >
@@ -336,7 +304,7 @@ export function AppShell() {
           </>
         )}
 
-        {sidebarCollapsed && (
+        {!focusMode && sidebarCollapsed && (
           <div className="w-12 bg-sidebar border-r flex flex-col items-center py-2 gap-1 shrink-0">
             <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title="ライブラリを表示（Ctrl+B）"
               onClick={() => useStore.getState().setSidebarCollapsed(false)}>
@@ -352,11 +320,11 @@ export function AppShell() {
           </div>
         )}
 
-        <ResizablePanel id="main" minSize="600px" className="flex flex-col min-w-0 bg-background">
-          <Header />
+        <ResizablePanel id="main" minSize={focusMode ? "320px" : "480px"} className="flex flex-col min-w-0 bg-background">
+          {!focusMode && <Header />}
 
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(String(value))} className="flex-1 flex flex-col min-h-0 gap-0">
-            <div className="border-b px-4 shrink-0 bg-background/50">
+            <div hidden={focusMode} className="border-b px-4 shrink-0 bg-background/50">
               <TabsList variant="line" className="h-[40px] bg-transparent border-b-0 space-x-2">
                 <TabsTrigger value="reader" title="Ctrl+1">PDFを読む</TabsTrigger>
                 <TabsTrigger value="summary" title="Ctrl+2">サマリー</TabsTrigger>
@@ -373,6 +341,7 @@ export function AppShell() {
               </TabsList>
             </div>
 
+            {/* Keep the reader at the same tree position so focus mode reuses loaded PDFs. */}
             <TabsContent value="reader" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
               <Reader />
             </TabsContent>
@@ -390,9 +359,26 @@ export function AppShell() {
             </TabsContent>
           </Tabs>
         </ResizablePanel>
+        {focusMode && focusPanel && (
+          <>
+            <ResizableHandle className="w-1 bg-border hover:bg-primary/60 transition-colors cursor-col-resize" />
+            <ResizablePanel
+              id="focus-panel"
+              defaultSize={`${focusPanelWidth}px`}
+              minSize="320px"
+              maxSize="80%"
+              onResize={(size) => useStore.getState().setFocusPanelWidth(Math.round(size.inPixels))}
+              className="flex flex-col min-w-0 bg-background"
+            >
+              {focusPanel === "summary" && <SummaryPane />}
+              {focusPanel === "chat" && <ChatPane />}
+              {focusPanel === "notes" && <NotesPane compact />}
+            </ResizablePanel>
+          </>
+        )}
       </ResizablePanelGroup>
 
-      <StatusBar />
+      {(!focusMode || anyRunning) && <StatusBar />}
       <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
       <StickyNoteDialog />
       <AppDialogs />
