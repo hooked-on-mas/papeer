@@ -1,4 +1,4 @@
-# PaperDesk Task Runner
+# Papeer Task Runner
 
 # Windows では Git Bash の sh が PATH にないことが多いため PowerShell を使う
 set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]

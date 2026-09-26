@@ -2,7 +2,7 @@ import { useSettingsNavigation } from "../features/settings/settingsNavigation";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useHotkeys } from "react-hotkeys-hook";
-import { FileText, FilePlus2, Settings2 } from "lucide-react";
+import { FilePlus2, Settings2 } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest } from "@/api/client";
@@ -288,7 +288,10 @@ export function AppShell() {
                 onClick={() => useStore.getState().setSidebarCollapsed(true)}
                 title="左パネルを閉じる（Ctrl+B）"
               >
-                <FileText className="w-5 h-5 text-primary" /> PaperDesk
+                <span className="flex size-8 shrink-0 items-center justify-center">
+                  <img src="/paperdesk.png" alt="" className="size-8 object-contain" />
+                </span>
+                Papeer
               </div>
               <div className="flex-1 min-h-0">
                 <LibrarySidebar />
@@ -308,7 +311,9 @@ export function AppShell() {
           <div className="w-12 bg-sidebar border-r flex flex-col items-center py-2 gap-1 shrink-0">
             <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title="ライブラリを表示（Ctrl+B）"
               onClick={() => useStore.getState().setSidebarCollapsed(false)}>
-              <FileText className="w-5 h-5 text-primary" />
+              <span className="flex size-8 shrink-0 items-center justify-center">
+                <img src="/paperdesk.png" alt="Papeer" className="size-8 object-contain" />
+              </span>
             </button>
             <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title="PDFを追加（Ctrl+O）" onClick={importPdfs}>
               <FilePlus2 className="w-4 h-4 text-muted-foreground" />

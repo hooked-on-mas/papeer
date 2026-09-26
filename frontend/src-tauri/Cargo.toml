@@ -1,7 +1,7 @@
 [package]
 name = "paperdesk"
 version = "0.2.0"
-description = "PaperDesk: desktop reader for translating and reading academic papers in Japanese"
+description = "Papeer: desktop reader for translating and reading academic papers in Japanese"
 authors = ["hooked-on-mas"]
 license-file = "../../LICENSE"
 edition = "2021"

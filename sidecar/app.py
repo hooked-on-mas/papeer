@@ -78,7 +78,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="PaperDesk Sidecar",
+    title="Papeer Sidecar",
     version=application_version(),
     lifespan=lifespan,
 )

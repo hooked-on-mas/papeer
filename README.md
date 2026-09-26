@@ -1,4 +1,4 @@
-# PaperDesk
+# Papeer
 
 英語の学術論文 PDF を日本語に翻訳し、原文と並べて読むための Windows 向けデスクトップアプリです。翻訳・解説・チャットには、ChatGPT（Codex CLI）、Claude Code CLI、Gemini（Antigravity CLI）、または OpenAI 互換 API を使います。
 
@@ -109,7 +109,7 @@ CLI は PATH と既定のインストール先から自動検出します。見�
 
 ## データの保存場所
 
-既定では `%LOCALAPPDATA%\PaperDesk` に保存します。「設定 → バックアップ」からライブラリ全体を保存・復元できます。手動でコピーする場合は、アプリを閉じてからフォルダー全体をコピーしてください。
+既定では `%LOCALAPPDATA%\PaperDesk` に保存します（旧名称の保存先を引き継ぎます）。「設定 → バックアップ」からライブラリ全体を保存・復元できます。手動でコピーする場合は、アプリを閉じてからフォルダー全体をコピーしてください。
 
 ```text
 PaperDesk/
@@ -157,6 +157,6 @@ PaperDesk/
 
 ## ライセンス
 
-PaperDesk のコードは AGPL-3.0-or-later で提供します。ライセンス本文は [LICENSE](LICENSE) です。
+Papeer のコードは AGPL-3.0-or-later で提供します。ライセンス本文は [LICENSE](LICENSE) です。
 
 同梱の源ノ明朝・源ノ角ゴシックは SIL Open Font License 1.1 です。出典は [paperdesk/core/assets/fonts/README.md](paperdesk/core/assets/fonts/README.md) を参照してください。PyMuPDF は AGPL または商用ライセンスで提供されています。その他の依存ライブラリはそれぞれのライセンスに従います。

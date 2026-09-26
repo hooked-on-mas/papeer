@@ -1,7 +1,7 @@
 [project]
 name = "paperdesk"
 version = "0.2.0"
-description = "PaperDesk: Research Paper Translation and Reading Workspace"
+description = "Papeer: Research Paper Translation and Reading Workspace"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

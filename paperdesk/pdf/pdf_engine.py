@@ -356,7 +356,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
             page.set_rotation(rotation)
         if page_numbers is not None:
             pdf.select([number - 1 for number in sorted(selected)])
-        pdf.set_metadata({"title": document["title"] + " - 日本語訳", "creator": "PaperDesk"})
+        pdf.set_metadata({"title": document["title"] + " - 日本語訳", "creator": "Papeer"})
         temporary = output.with_suffix(".tmp.pdf")
         try:
             pdf.save(temporary, garbage=4, deflate=True)
@@ -388,7 +388,7 @@ def interleaved_pdf(source: Path, translated: Path, output: Path) -> None:
             result.insert_pdf(original, from_page=index, to_page=index)
             result.insert_pdf(japanese, from_page=index, to_page=index)
         result.set_metadata({"title": (original.metadata.get("title") or source.stem) + " - 原文・日本語訳（交互）",
-                             "creator": "PaperDesk"})
+                             "creator": "Papeer"})
         temporary = output.with_suffix(".tmp.pdf")
         try:
             result.save(temporary, garbage=4, deflate=True)

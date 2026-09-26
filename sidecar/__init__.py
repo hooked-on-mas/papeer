@@ -1,2 +1,2 @@
-"""PaperDesk FastAPI sidecar backend."""
+"""Papeer FastAPI sidecar backend."""
 

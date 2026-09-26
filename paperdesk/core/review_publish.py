@@ -122,7 +122,7 @@ def _publish(folder, review, manifest, entries):
                 if index >= len(source):
                     raise ValueError('既存の訳文PDFのページ数が原文と一致しません。')
                 output.insert_pdf(source, from_page=index, to_page=index)
-        output.set_metadata(dict(original.metadata, title=document['title']+' - 日本語訳', creator='PaperDesk'))
+        output.set_metadata(dict(original.metadata, title=document['title']+' - 日本語訳', creator='Papeer'))
         output.set_toc(original.get_toc())
         output.save(stage/'translated.pdf', garbage=4, deflate=True)
     interleaved_pdf(folder/'original.pdf', stage/'translated.pdf', stage/'interleaved.pdf')

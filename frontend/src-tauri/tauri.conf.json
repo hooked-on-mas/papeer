@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "PaperDesk",
+  "productName": "Papeer",
   "version": "0.2.0",
   "identifier": "local.paperdesk",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "PaperDesk — 日本語で論文を読む",
+        "title": "Papeer — 日本語で論文を読む",
         "width": 1380,
         "height": 880,
         "minWidth": 1000,
