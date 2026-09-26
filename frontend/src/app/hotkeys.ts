@@ -29,6 +29,7 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
       { keys: ["Ctrl", "L"], label: "開いている論文をライブラリで表示" },
       { keys: ["Ctrl", "Shift", "N"], label: "新しいフォルダー" },
       { keys: ["F2"], label: "名前を変更" },
+      { keys: ["Delete"], label: "選んだフォルダー・論文を削除（確認あり）" },
     ],
   },
   {
@@ -42,6 +43,7 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
       { keys: ["Ctrl", "0"], label: "幅に合わせる" },
       { keys: ["Ctrl", "ホイール"], label: "拡大・縮小" },
       { keys: ["Ctrl", "T"], label: "翻訳ダイアログを開く" },
+      { keys: ["Delete"], label: "選択した付箋を削除（付箋タブのカードでも可）" },
     ],
   },
 ];

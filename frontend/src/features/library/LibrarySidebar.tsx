@@ -1,5 +1,5 @@
 import { useTagChoices } from "@/api/tagChoices";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/api/client";
 import {
@@ -258,7 +258,7 @@ export function LibrarySidebar() {
         <div
           className="flex-1 overflow-auto py-1 outline-none"
           tabIndex={-1}
-          title="右クリックで名前変更・子フォルダー作成。論文をドラッグしてフォルダーへ移動（F2：名前変更）"
+          title="右クリックで名前変更・子フォルダー作成。論文をドラッグしてフォルダーへ移動（F2：名前変更、Delete：削除）"
         >
           {librarySearch.trim() && <div className="px-2 text-xs">
             {searching && <p className="p-2 text-muted-foreground">検索中…</p>}
@@ -309,6 +309,9 @@ export function LibrarySidebar() {
   );
 }
 
+/** Delete on the focused row itself, not on a nested button such as the tag toggle. */
+const isDeleteKey = (e: KeyboardEvent<HTMLElement>) => (e.key === "Delete" || e.key === "Backspace") && e.target === e.currentTarget;
+
 type RowProps = {
   onTagSelect: (name: string) => void;
   papers: PaperData[];
@@ -339,12 +342,14 @@ function FolderRow({ node, depth, ...rest }: { node: FolderNode; depth: number }
           <div
             ref={setNodeRef}
             data-drop-collection={node.path}
-            className={`flex items-center h-[30px] cursor-pointer group border-l-2 ${
+            className={`flex items-center h-[30px] cursor-pointer group border-l-2 outline-none ${
               selected ? "bg-accent border-primary" : "border-transparent hover:bg-muted/60"
             } ${highlighted ? "outline-2 outline-primary -outline-offset-2 rounded-sm" : ""}`}
             style={{ paddingLeft: `${depth * 16 + 6}px`, paddingRight: "8px" }}
+            tabIndex={0}
             onClick={select}
             onDoubleClick={() => setExpanded(node.path, !expanded)}
+            onKeyDown={(e) => { if (node.path && isDeleteKey(e)) { e.preventDefault(); void deleteFolder(node.path, papers); } }}
             title={node.path || "フォルダー未指定のPDF"}
           >
             <button
@@ -447,6 +452,7 @@ function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData
           {...attributes}
           data-drop-collection={collection}
           onClick={select}
+          onKeyDown={(e) => { if (isDeleteKey(e)) { e.preventDefault(); void deletePaper(paper.id); } }}
           className={`flex items-start py-2 cursor-pointer border-l-2 outline-none ${
             isActive ? "bg-accent border-primary" : "hover:bg-muted/60 border-transparent"
           } ${isDragging ? "opacity-40" : ""}`}

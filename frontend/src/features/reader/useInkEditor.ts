@@ -97,7 +97,8 @@ export function useInkEditor(paperId: string | undefined, side: InkSide, page: n
     if (command && key === "a" && ["region", "lasso"].includes(tool)) action = () => setSelectedIds(strokes.map(s => s.id));
     if (command && key === "z" && tool !== "select") action = event.shiftKey ? ink.entry?.redo : ink.entry?.undo;
     if (command && key === "y" && tool !== "select") action = ink.entry?.redo;
-    if ((key === "delete" || key === "backspace") && selected.length) action = remove;
+    // A focused sticky note marker deletes itself rather than the ink selection.
+    if ((key === "delete" || key === "backspace") && selected.length && !(event.target as HTMLElement).closest("[data-sticky-note]")) action = remove;
     if (key === "escape" && tool !== "select") action = () => { if (selectedIds.length) setSelectedIds([]); else setTool("select"); };
     if (selected.length && key.startsWith("arrow")) {
       const d = event.shiftKey ? 0.01 : 0.001;

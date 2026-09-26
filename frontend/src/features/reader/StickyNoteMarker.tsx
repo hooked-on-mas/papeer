@@ -4,7 +4,8 @@ import { StickyNote as StickyIcon } from "lucide-react";
 import { apiRequest } from "@/api/client";
 import { showError } from "@/components/errorDialog";
 import { noteDraft, stickyColors, stickyQuote, type StickyNote } from "./stickyNotes";
-import { openStickyNote, useStickyNotes } from "./stickyNotesStore";
+import { deleteStickyNote, openStickyNote, useStickyNotes } from "./stickyNotesStore";
+import { useStore } from "@/store";
 import { QK } from "@/lib/queryKeys";
 
 type Position = { anchor_x: number; anchor_y: number };
@@ -49,8 +50,8 @@ export function StickyNoteMarker({ item, movable }: { item: StickyNote; movable:
   const current = position ?? item;
   const excerpt = item.note.trim() || stickyQuote(item.quote).trim();
   const markerHeight = excerpt ? 72 : 32;
-  return <button aria-label={`付箋：${item.label} ${item.note || stickyQuote(item.quote)}`} aria-pressed={selected}
-    aria-busy={saving} title={`${item.label}${excerpt ? `：${excerpt}` : ""}\nドラッグで移動・ダブルクリックで編集`}
+  return <button data-sticky-note aria-label={`付箋：${item.label} ${item.note || stickyQuote(item.quote)}`} aria-pressed={selected}
+    aria-busy={saving} title={`${item.label}${excerpt ? `：${excerpt}` : ""}\nドラッグで移動・ダブルクリックで編集・Deleteで削除`}
     className={`absolute z-20 overflow-hidden rounded border px-2 py-1.5 text-left shadow-sm select-none ${stickyColors[item.label] ?? stickyColors["重要"]} ${selected ? "ring-2 ring-primary ring-offset-1" : ""}`}
     style={{ width: "min(160px, 100%)", height: markerHeight,
       top: `max(0px, min(calc(100% - ${markerHeight}px), ${current.anchor_y * 100}%))`, left: `max(0px, min(calc(100% - 160px), ${(current.anchor_x ?? 0) * 100}%))`,
@@ -75,6 +76,11 @@ export function StickyNoteMarker({ item, movable }: { item: StickyNote; movable:
       event.stopPropagation();
       if (event.key === "Enter") { event.preventDefault(); if (!busy.current) void openStickyNote(noteDraft(item)); }
       if (event.key === "Escape") { drag.current = null; setPosition(null); useStickyNotes.setState({ selectedId: null }); }
+      if ((event.key === "Delete" || event.key === "Backspace") && !drag.current && !busy.current) {
+        event.preventDefault();
+        deleteStickyNote(item, client).then(ok => { if (ok) useStore.getState().setStatus("付箋を削除しました。付箋タブの「削除を取り消す」で戻せます。"); },
+          error => showError(error, "付箋を削除できませんでした"));
+      }
     }}>
     <span className="flex items-center gap-1 text-[11px] font-semibold leading-4">
       <StickyIcon aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{item.label}</span>

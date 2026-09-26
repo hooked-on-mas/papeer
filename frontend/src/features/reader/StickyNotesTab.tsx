@@ -5,7 +5,7 @@ import { apiRequest } from "@/api/client";
 import { useTagChoices } from "@/api/tagChoices";
 import { useStore } from "@/store";
 import { filterStickyNotes, noteDraft, stickyColors, stickyQuote, type StickyNote } from "./stickyNotes";
-import { openStickyNote, useStickyNotes } from "./stickyNotesStore";
+import { deleteStickyNote, openStickyNote, refreshStickyNotes, useStickyNotes } from "./stickyNotesStore";
 import { QK } from "@/lib/queryKeys";
 
 const field = "w-full rounded-md border bg-background px-2 py-1.5 text-xs";
@@ -30,9 +30,6 @@ export function StickyNotesTab() {
     if (listRef.current) listRef.current.scrollTop = 0;
   };
   useEffect(() => { if (listRef.current) listRef.current.scrollTop = useStickyNotes.getState().scrollTop; }, [isPending]);
-  const refresh = () => Promise.all([
-    client.invalidateQueries({ queryKey: [QK.stickyNotes] }), client.invalidateQueries({ queryKey: [QK.librarySearch] }),
-  ]);
   const jump = (item: StickyNote) => {
     const store = useStore.getState();
     store.setTranslatedOnly(false);
@@ -42,15 +39,9 @@ export function StickyNotesTab() {
     store.setActiveTab("reader");
   };
   const remove = async (item: StickyNote) => {
-    const state = useStickyNotes.getState();
-    if (state.busy) return;
-    useStickyNotes.setState({ busy: true }); setError("");
-    try {
-      await apiRequest("DELETE", `/api/papers/${item.paper_id}/sticky-notes/${item.id}`);
-      useStickyNotes.setState(s => ({ deleted: [...s.deleted, item], ...(s.draft?.id === item.id ? { draft: null, dirty: false } : {}) }));
-      await refresh(); setMessage("付箋を削除しました。");
-    } catch (e) { setError(e instanceof Error ? e.message : "付箋を削除できませんでした。"); }
-    finally { useStickyNotes.setState({ busy: false }); }
+    setError("");
+    try { if (await deleteStickyNote(item, client)) setMessage("付箋を削除しました。"); }
+    catch (e) { setError(e instanceof Error ? e.message : "付箋を削除できませんでした。"); }
   };
   const undo = async () => {
     const item = deleted[deleted.length - 1];
@@ -59,7 +50,7 @@ export function StickyNotesTab() {
     try {
       await apiRequest("POST", `/api/papers/${item.paper_id}/sticky-notes`, item);
       useStickyNotes.setState(s => ({ deleted: s.deleted.slice(0, -1) }));
-      await refresh(); setMessage("付箋を戻しました。");
+      await refreshStickyNotes(client); setMessage("付箋を戻しました。");
     } catch (e) { setError(e instanceof Error ? e.message : "付箋を戻せませんでした。"); }
     finally { useStickyNotes.setState({ busy: false }); }
   };
@@ -88,6 +79,7 @@ export function StickyNotesTab() {
     {(message || deleted.length > 0) && <div className="flex items-center gap-2 border-b px-3 py-2 text-xs"><span role="status" className="flex-1">{message}</span>{deleted.length > 0 && <button className="underline" disabled={busy} onClick={() => void undo()}>削除を取り消す</button>}</div>}
     <div ref={listRef} className="min-h-0 flex-1 overflow-auto p-5" onScroll={e => useStickyNotes.setState({ scrollTop: e.currentTarget.scrollTop })}>
       {isPending ? <p className="text-xs text-muted-foreground">付箋を読み込み中…</p> : isError ? <p role="alert" className="text-xs text-destructive">付箋を読み込めませんでした。<button className="ml-2 underline" onClick={() => void refetch()}>再試行</button></p> : <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] items-start gap-3">{visible.map(item => <article key={item.id}
+        onKeyDown={e => { if ((e.key === "Delete" || e.key === "Backspace") && e.target instanceof HTMLButtonElement) { e.preventDefault(); void remove(item); } }}
         className={`rounded-md border p-3 ${stickyColors[item.label] ?? stickyColors["重要"]} ${selectedId === item.id ? "ring-2 ring-primary ring-offset-1" : ""}`}>
         <button className="block w-full space-y-2 text-left" aria-label={`付箋を開く：p.${item.page} ${item.label} ${item.note || stickyQuote(item.quote) || "位置の付箋"}`} disabled={busy} onClick={() => void openStickyNote(noteDraft(item))}>
           {effectiveScope === "all" && <p className="truncate text-xs opacity-70">{item.paper_title || item.paper_name}</p>}
