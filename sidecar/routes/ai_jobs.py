@@ -5,9 +5,10 @@ from pathlib import Path
 import threading
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 
 from papeer.core import exports
+from papeer.core.errors import Invalid
 from papeer.core.paths import PaperFiles
 from papeer.core.service import PaperService
 from papeer.core.translation_plan import translation_plan as plan_translation
@@ -26,15 +27,9 @@ def translate_paper(paper_id: str, body: TranslateRequest) -> dict[str, str]:
     deps.paper_folder(lib, paper_id)
     selected_pages = None
     if body.pages:
-        try:
-            selected_pages = parse_page_selection(body.pages, lib.document(paper_id)["page_count"])
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    try:
-        # The translation dialog may pick another model or effort for this run only.
-        settings = deps.settings_for_run(body.model, body.effort)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        selected_pages = parse_page_selection(body.pages, lib.document(paper_id)["page_count"])
+    # The translation dialog may pick another model or effort for this run only.
+    settings = deps.settings_for_run(body.model, body.effort)
 
     def action(cancel: threading.Event, progress: Any, page_ready: Any) -> dict:
         service = PaperService(lib, deps.provider_for(settings, cancel), cancel, progress=progress, page_ready=page_ready)
@@ -50,11 +45,8 @@ def translation_plan(paper_id: str, pages: str = "", model: str | None = None) -
     """What POST .../translate with the same pages and model would send to the model; nothing runs."""
     lib = deps.get_library()
     deps.paper_folder(lib, paper_id)
-    try:
-        selected_pages = parse_page_selection(pages, lib.document(paper_id)["page_count"]) if pages else None
-        return plan_translation(lib, paper_id, deps.settings_for_run(model, None), selected_pages)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    selected_pages = parse_page_selection(pages, lib.document(paper_id)["page_count"]) if pages else None
+    return plan_translation(lib, paper_id, deps.settings_for_run(model, None), selected_pages)
 
 
 @router.post("/api/papers/{paper_id}/article")
@@ -106,10 +98,7 @@ def ask_paper(paper_id: str, body: AskRequest) -> dict[str, str]:
 def export_paper(paper_id: str, body: ExportRequest) -> dict[str, str]:
     lib = deps.get_library()
     files = PaperFiles(deps.paper_folder(lib, paper_id))
-    try:
-        dest = exports.check_export(files, body.kind, Path(body.destination), lib.root)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    dest = exports.check_export(files, body.kind, Path(body.destination), lib.root)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     if body.kind in exports.PAIRED_KINDS:
@@ -120,10 +109,7 @@ def export_paper(paper_id: str, body: ExportRequest) -> dict[str, str]:
 
         return {"status": "started", **deps.submit_job("export", action, paper_id), "destination": str(dest)}
 
-    try:
-        exports.copy_export(files, body.kind, dest)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    exports.copy_export(files, body.kind, dest)
     return {"status": "exported", "destination": str(dest)}
 
 
@@ -133,7 +119,7 @@ def prepare_interleaved(paper_id: str) -> dict[str, str]:
     lib = deps.get_library()
     files = PaperFiles(deps.paper_folder(lib, paper_id))
     if not files.translated_pdf.is_file():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="先に日本語訳を作成してください。")
+        raise Invalid("先に日本語訳を作成してください。")
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, str]:
         return {"kind": "interleaved", "path": str(exports.interleaved_cache(files, progress).resolve())}

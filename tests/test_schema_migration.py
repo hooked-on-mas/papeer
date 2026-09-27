@@ -8,13 +8,13 @@ import threading
 import time
 import zipfile
 
-from fastapi import HTTPException
 import pytest
 
 from _legacy_library import LATER_COLUMNS, STAGES, legacy_backup, legacy_library, mark_unversioned
 from papeer import __version__
 from papeer.core import storage
 from papeer.core.drive_sync import fingerprint
+from papeer.core.errors import Conflict
 from papeer.core.reading_tools import create_backup, restore_backup
 from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, database_version
 
@@ -235,9 +235,9 @@ def test_a_library_from_a_newer_papeer_is_refused(tmp_path, monkeypatch):
     assert database_version(lib.root / "library.sqlite3") == SCHEMA_VERSION + 1
     from sidecar import deps
     monkeypatch.setattr(deps, "get_data_dir", lambda: lib.root)
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(Conflict) as error:
         deps.get_library()
-    assert error.value.status_code == 409 and "Papeerを最新版に更新" in error.value.detail
+    assert error.value.status_code == 409 and "Papeerを最新版に更新" in error.value.message
 
 
 def test_backup_records_the_schema_and_app_versions(tmp_path):

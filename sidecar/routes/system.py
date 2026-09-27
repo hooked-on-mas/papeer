@@ -6,10 +6,11 @@ import threading
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 
 from papeer import __version__
 from papeer.core.code_version import application_version
+from papeer.core.errors import NotFound
 from sidecar import deps
 from sidecar.schemas import HealthResponse, UIStateModel
 from sidecar.ui_state import load_ui_state, save_ui_state
@@ -86,5 +87,5 @@ def cancel_all_jobs() -> dict[str, int]:
 @router.post("/api/jobs/{job_id}/cancel")
 def cancel_job(job_id: str) -> dict[str, str]:
     if not deps.job_manager.cancel_job(job_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="実行中のジョブが見つかりません。")
+        raise NotFound("実行中のジョブが見つかりません。")
     return {"status": "cancelling"}

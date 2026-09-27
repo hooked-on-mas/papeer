@@ -10,6 +10,7 @@ import sqlite3
 import threading
 import uuid
 
+from papeer.core.errors import NotFound
 from papeer.core.fileio import atomic_write_json, atomic_write_text
 from papeer.pdf.pdf_engine import PDF_LOCK, extract_pdf
 from papeer.core.translation_review import cached_review_pages
@@ -351,7 +352,7 @@ class Library:
         return [{**{k: row[k] for k in row.keys() if k != "insert_order"}, "tags": json.loads(row["tags"])} for row in rows]
 
     def papers_by_id(self, paper_ids: list[str]) -> list[dict]:
-        """The papers `paper_ids`, oldest first (_oldest_first); raises KeyError for a missing one."""
+        """The papers `paper_ids`, oldest first (_oldest_first); raises NotFound (a KeyError) for a missing one."""
         wanted = list(dict.fromkeys(paper_ids))
         for paper_id in wanted:
             self.folder(paper_id)  # Checks the ID's form.
@@ -362,7 +363,7 @@ class Library:
                 rows += db.execute(f"SELECT rowid AS insert_order,* FROM papers WHERE id IN ({','.join('?' * len(chunk))})",
                                    chunk).fetchall()
         if len(rows) != len(wanted):
-            raise KeyError("論文が見つかりません。")
+            raise NotFound("論文が見つかりません。")
         return self._oldest_first(rows)
 
     def collection_papers(self, path: str) -> list[dict]:
@@ -379,7 +380,7 @@ class Library:
         with self.connection() as db:
             row = db.execute("SELECT * FROM papers WHERE id=?", (paper_id,)).fetchone()
         if not row:
-            raise KeyError("論文が見つかりません。")
+            raise NotFound("論文が見つかりません。")
         return dict(row, tags=json.loads(row["tags"]))
 
     def collections(self) -> list[str]:
@@ -552,7 +553,7 @@ class Library:
             raise ValueError("Windowsで使用できるファイル名を入力してください。")
         with self.connection() as db:
             if not db.execute("SELECT id FROM papers WHERE id=?", (paper_id,)).fetchone():
-                raise KeyError("論文が見つかりません。")
+                raise NotFound("論文が見つかりません。")
             db.execute("UPDATE papers SET original_name=?,title=? WHERE id=?", (name, stem, paper_id))
         return name
 
@@ -561,7 +562,7 @@ class Library:
         with self.connection() as db:
             paper = db.execute("SELECT pages FROM papers WHERE id=?", (paper_id,)).fetchone()
             if paper is None:
-                raise KeyError("論文が見つかりません。")
+                raise NotFound("論文が見つかりません。")
             empty = [row[0] for row in db.execute(
                 "SELECT number FROM pages WHERE paper_id=? AND trim(text)='' ORDER BY number",
                 (paper_id,))]
@@ -682,7 +683,7 @@ class Library:
                                  (label, label, (label or "重要") if label is not None else None,
                                   None if note is None else note[:1000], anchor_x, anchor_y, color, paper_id, bookmark_id))
             if not updated.rowcount:
-                raise ValueError("付箋が見つかりません。")
+                raise NotFound("付箋が見つかりません。")
             return self._bookmark(db.execute("SELECT * FROM bookmarks WHERE id=?", (bookmark_id,)).fetchone())
 
     def highlights_by_page(self, paper_id: str, side: str) -> dict[int, list[dict]]:

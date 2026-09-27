@@ -1,11 +1,13 @@
 """Device-local folder selection and exclusive library synchronization jobs."""
 from contextlib import nullcontext
+import json
 from pathlib import Path
 import zipfile
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from papeer.core import drive_sync
+from papeer.core.errors import Invalid
 from papeer.core.storage import Library
 from papeer.providers import Cancelled
 from sidecar import deps
@@ -35,51 +37,52 @@ def drive_status():
     return drive_sync.status(deps.get_data_dir())
 
 
+def idle():
+    """No job may run while the sync settings change (JobManager.idle)."""
+    return deps.job_manager.idle("実行中の処理が終わってから変更してください。")
+
+
 @router.post("/api/drive/folder")
 def select_folder(body: FolderRequest):
-    require_idle()
-    try:
-        return drive_sync.connect(deps.get_data_dir(), body.path)
-    except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-
-def require_idle():
-    if any(job.running for job in deps.job_manager.get_jobs()):
-        raise HTTPException(409, "実行中の処理が終わってから変更してください。")
+    with idle():
+        try:
+            return drive_sync.connect(deps.get_data_dir(), body.path)
+        except OSError as exc:  # A folder that cannot be read or written: the user picks another.
+            raise Invalid(str(exc)) from exc
+        except (KeyError, json.JSONDecodeError, UnicodeError, zipfile.BadZipFile) as exc:
+            # A broken file in the sync folder: say so, rather than show a bare key such as 'heads'.
+            raise Invalid(f"同期フォルダーのデータが壊れているため読み取れませんでした（{type(exc).__name__}: {exc}）。"
+                          "別のフォルダーを選択してください。") from exc
 
 
 @router.delete("/api/drive")
 def disconnect():
-    require_idle()
-    drive_sync.disconnect(deps.get_data_dir())
+    with idle():
+        drive_sync.disconnect(deps.get_data_dir())
     return {"status": "disconnected"}
 
 
 @router.delete("/api/drive/review")
 def dismiss_review():
     """「同期しない」 on a sync that stopped for review: automatic sync stops until turned on again."""
-    require_idle()
-    return drive_sync.dismiss_review(deps.get_data_dir())
+    with idle():
+        return drive_sync.dismiss_review(deps.get_data_dir())
 
 
 @router.post("/api/drive/new-library")
 def start_new_library():
     """The data folder of a synced library is gone and the user chose to start a new, empty one."""
-    require_idle()
-    try:
+    with idle():
         return drive_sync.start_new_library(deps.get_data_dir())
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
 
 
 @router.put("/api/drive")
 def options(body: OptionsRequest):
-    require_idle()
-    root = deps.get_data_dir()
-    state = drive_sync.read_state(root)
-    state["auto_sync"] = body.auto_sync
-    drive_sync.save_state(root, state)
+    with idle():
+        root = deps.get_data_dir()
+        state = drive_sync.read_state(root)
+        state["auto_sync"] = body.auto_sync
+        drive_sync.save_state(root, state)
     return drive_sync.status(root)
 
 

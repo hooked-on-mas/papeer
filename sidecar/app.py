@@ -14,9 +14,11 @@ from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from papeer import __version__
+from papeer.core.errors import AppError
 from papeer.core.paths import app_env
 from papeer.translation import translation_preview
 from sidecar import deps
+from sidecar.errors import AnswerUnexpectedErrors, error_response, log_to_file, where
 from sidecar.routes import ai_jobs, drive, ink, papers, reading, settings, system
 
 
@@ -72,13 +74,14 @@ def allowed_during_snapshot(method: str, path: str) -> bool:
     return method == "POST" and SNAPSHOT_CONTROLS.fullmatch(path) is not None
 
 
-def library_busy_response(exc: deps.LibraryBusy) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "code": deps.LIBRARY_BUSY})
-
-
-@app.exception_handler(deps.LibraryBusy)
-async def refused_for_snapshot(_request: Request, exc: deps.LibraryBusy) -> JSONResponse:
-    return library_busy_response(exc)
+# The one conversion of failures into answers (sidecar/errors.py): Invalid, NotFound and Conflict (a refused
+# snapshot's LibraryBusy and a job's ConcurrencyConflict included) with their status, the core's ValueErrors
+# with 400; a ValueError from elsewhere (json, pydantic) as a bug. Other bugs are answered by
+# AnswerUnexpectedErrors below, inside the CORS middleware.
+@app.exception_handler(AppError)
+@app.exception_handler(ValueError)
+async def refused(request: Request, exc: Exception) -> JSONResponse:
+    return error_response(exc, where(request.scope))
 
 
 class ProtectLibrarySnapshot:
@@ -108,7 +111,7 @@ class ProtectLibrarySnapshot:
         admitted = deps.begin_library_request(read_beside_background_sync(request.method, request.url.path))
         if not admitted:
             # The request did not run at all, so the frontend may send it again once the job is over.
-            await library_busy_response(deps.LibraryBusy())(scope, receive, send)
+            await error_response(deps.LibraryBusy())(scope, receive, send)
             return
         try:
             await self.app(scope, receive, send)
@@ -116,7 +119,8 @@ class ProtectLibrarySnapshot:
             deps.end_library_request(admitted)
 
 
-# Before CORS: the last middleware added runs first, so refusals get the CORS headers too.
+# Before CORS: the last middleware added runs first, so refusals and answers to bugs get the CORS headers too.
+app.add_middleware(AnswerUnexpectedErrors)
 app.add_middleware(ProtectLibrarySnapshot)
 
 
@@ -194,6 +198,8 @@ def main() -> None:
         sys.exit(error)
     if deps.auth_disabled():
         print("警告: PAPEER_DEV_NO_AUTH=1 のため認証なしで起動します（開発専用）。", file=sys.stderr)
+    # Tracebacks of bugs, kept on this PC: Tauri does not read the packaged sidecar's stderr.
+    log_to_file()
     port = int(app_env("PORT") or "8000")
     # Media URLs carry the token in the query string, so the access log would write it out.
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info", access_log=False)

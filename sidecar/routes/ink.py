@@ -4,10 +4,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, Field, model_validator
 
 from papeer.core.destinations import inside_library
+from papeer.core.errors import Invalid
 from papeer.core.fileio import atomic_write_bytes
 from papeer.core.paths import PaperFiles
 from papeer.pdf.pdf_capture import capture_png
@@ -80,10 +81,10 @@ router = APIRouter(dependencies=[Depends(deps.verify_token)])
 def check_page(lib, paper_id, side, page):
     folder = deps.paper_folder(lib, paper_id)
     if page < 1:
-        raise HTTPException(400, "ページが範囲外です。")
+        raise Invalid("ページが範囲外です。")
     source, index = (PaperFiles(folder).original_pdf, page - 1) if side == "original" else translated_page(folder, page - 1)
     if source is None or not source.is_file() or index >= (pdf_page_count(source) or 0):
-        raise HTTPException(400, "書き込めるPDFページがありません。")
+        raise Invalid("書き込めるPDFページがありません。")
     return source, index
 
 @router.get("/api/papers/{paper_id}/ink-pages")
@@ -98,10 +99,7 @@ def capture(paper_id: str, body: InkCaptureRequest):
     lib = deps.get_library()
     source, index = check_page(lib, paper_id, body.side, body.page)
     strokes = lib.ink(paper_id, body.side, body.page) if body.include_ink else None
-    try:
-        data = capture_png(source, index, (body.x, body.y, body.width, body.height), strokes)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    data = capture_png(source, index, (body.x, body.y, body.width, body.height), strokes)
     files = PaperFiles(deps.paper_folder(lib, paper_id))
     target = files.new_capture()
     target.parent.mkdir(exist_ok=True)
@@ -131,14 +129,14 @@ def export_ink(paper_id: str, body: InkExportRequest):
     if body.side == "translated":
         preview = read_preview(folder)
         if preview and not preview["complete"]:
-            raise HTTPException(400, "翻訳が完了してから書き込み付きPDFを保存してください。")
+            raise Invalid("翻訳が完了してから書き込み付きPDFを保存してください。")
     files = PaperFiles(folder)
     source = files.original_pdf if body.side == "original" else files.translated_pdf
     if not source.is_file():
-        raise HTTPException(400, "保存するPDFがありません。")
+        raise Invalid("保存するPDFがありません。")
     destination = Path(body.destination).resolve() if body.destination else None
     if destination and (inside_library(destination, lib.root) or destination.suffix.lower() != ".pdf"):
-        raise HTTPException(400, "ライブラリの外に、拡張子 .pdf の保存先を選んでください。")
+        raise Invalid("ライブラリの外に、拡張子 .pdf の保存先を選んでください。")
     try:
         # Highlights of selected text travel with the ink: both are marks the reader made on the page.
         data = annotated_pdf(source, lib.ink_by_page(paper_id, body.side), lib.highlights_by_page(paper_id, body.side))
@@ -149,4 +147,4 @@ def export_ink(paper_id: str, body: InkExportRequest):
         return Response(data, media_type="application/pdf", headers={
             "Content-Disposition": f'attachment; filename="{body.side}-annotated.pdf"'})
     except (OSError, ValueError, RuntimeError) as exc:
-        raise HTTPException(400, f"書き込み付きPDFを保存できませんでした：{exc}") from exc
+        raise Invalid(f"書き込み付きPDFを保存できませんでした：{exc}") from exc

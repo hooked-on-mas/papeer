@@ -11,6 +11,7 @@ import sqlite3
 from typing import NamedTuple
 import unicodedata
 
+from papeer.core.errors import Conflict
 from papeer.layout.math_layout import MATH_TOKEN
 
 
@@ -36,8 +37,8 @@ def global_glossary(root: Path) -> list[dict[str, str]]:
         return terms
 
 
-class GlossaryConflict(ValueError):
-    pass
+class GlossaryConflict(Conflict):
+    """The dictionary was changed elsewhere since the caller read it (409)."""
 
 
 def save_global_glossary(root: Path, terms: list[dict[str, str]], expected=None) -> None:

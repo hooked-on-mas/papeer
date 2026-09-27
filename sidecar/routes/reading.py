@@ -6,13 +6,14 @@ import sqlite3
 import sys
 import zipfile
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from papeer.core import drive_sync, reading_tools as tools
+from papeer.core.errors import Conflict, Invalid
 from papeer.providers import Cancelled, check_cancel
 from papeer.core.service import PaperService
-from papeer.core.terminology import global_glossary, save_global_glossary, GlossaryConflict
+from papeer.core.terminology import global_glossary, save_global_glossary
 from sidecar import deps
 
 
@@ -75,7 +76,7 @@ def add_tag(body: TagRequest):
 def save_choice(kind, value):
     name = value.strip()
     if not name or (kind == "sticky" and len(name) > 40):
-        raise HTTPException(status_code=400, detail="名前を入力してください（付箋の分類は40文字まで）。")
+        raise Invalid("名前を入力してください（付箋の分類は40文字まで）。")
     lib = deps.get_library()
     if kind == "status":
         lib.add_reading_status(name)
@@ -111,10 +112,7 @@ def delete_sticky_label(name: str = Query(min_length=1, max_length=40)):
 
 @router.delete("/api/tags")
 def delete_tag(name: str = Query(min_length=1, max_length=80)):
-    try:
-        affected = deps.get_library().remove_tag(name)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    affected = deps.get_library().remove_tag(name)
     deps.library_changed()
     return {"affected": affected}
 
@@ -127,7 +125,7 @@ def templates():
 def save_template(body: TemplateRequest):
     name = body.name.strip()
     if not name or name == "読書メモ" or not body.content.strip():
-        raise HTTPException(status_code=400, detail="テンプレート名と本文を入力してください。標準名は変更できません。")
+        raise Invalid("テンプレート名と本文を入力してください。標準名は変更できません。")
     deps.get_library().save_note_template(name, body.content)
     return {"status": "saved"}
 
@@ -138,10 +136,7 @@ def delete_template(name: str):
 
 @router.get("/api/library-search")
 def search(q: str = ""):
-    try:
-        return tools.library_search(deps.get_library(), q)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    return tools.library_search(deps.get_library(), q)
 
 @router.get("/api/glossary")
 def get_global_glossary():
@@ -152,8 +147,8 @@ def export_glossary(body: GlossaryFileRequest):
     from papeer.core.glossary_io import export_glossary
     try:
         count = export_glossary(Path(body.path), body.terms, deps.get_data_dir())
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:  # The file the user chose cannot be written: theirs to fix, not a bug.
+        raise Invalid(str(exc)) from exc
     return {"count": count}
 
 @router.post("/api/glossary/import")
@@ -161,20 +156,15 @@ def import_glossary(body: GlossaryFileRequest):
     from papeer.core.glossary_io import import_glossary
     try:
         return import_glossary(Path(body.path), body.terms)
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise Invalid(str(exc)) from exc
 
 @router.put("/api/glossary")
 def put_global_glossary(body: GlobalGlossaryRequest):
-    if any(j.running for j in deps.job_manager.get_jobs()):
-        raise HTTPException(status_code=409, detail="実行中の処理が終わってから共通辞書を保存してください。")
-    try:
+    # A dictionary changed in another window since this one read it is a GlossaryConflict (409).
+    with deps.job_manager.idle("実行中の処理が終わってから共通辞書を保存してください。"):
         terms = tools.validate_terms(body.terms)
         save_global_glossary(deps.get_library().root, terms, body.expected_terms)
-    except GlossaryConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
     return {"count": len(terms)}
 
 @router.get("/api/papers/{paper_id}/effective-glossary")
@@ -187,14 +177,8 @@ def effective_glossary(paper_id: str):
 def glossary_draft(paper_id: str, body: GlossaryDraftRequest):
     lib = deps.get_library()
     deps.paper_folder(lib, paper_id)
-    try:
-        existing = tools.validate_terms(body.terms)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    try:
-        settings = deps.settings_for_run(body.model, body.effort)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    existing = tools.validate_terms(body.terms)
+    settings = deps.settings_for_run(body.model, body.effort)
     def action(cancel, progress, _page_ready):
         return tools.draft_glossary(lib, paper_id, deps.provider_for(settings, cancel), cancel, progress, existing)
     return deps.submit_job("glossary-draft", action, paper_id)
@@ -213,9 +197,9 @@ def find_paragraph(lib, paper_id, body):
     deps.paper_folder(lib, paper_id)
     paragraph = next((item for item in tools.translation_paragraphs(lib, paper_id) if item["id"] == body.unit_id), None)
     if not paragraph:
-        raise HTTPException(status_code=400, detail="段落が見つかりません。辞書変更後は再翻訳してください。")
+        raise Invalid("段落が見つかりません。辞書変更後は再翻訳してください。")
     if body.expected_text is not None and paragraph["text"] != body.expected_text:
-        raise HTTPException(status_code=409, detail="訳文が変更されました。読み込み直してください。")
+        raise Conflict("訳文が変更されました。読み込み直してください。")
     return paragraph
 
 @router.post("/api/papers/{paper_id}/revision-draft")
@@ -234,10 +218,7 @@ def draft_revision(paper_id: str, body: RevisionRequest):
 def adopt_revision(paper_id: str, body: RevisionRequest):
     lib = deps.get_library()
     paragraph = find_paragraph(lib, paper_id, body)
-    try:
-        text = tools.validate_revision(paragraph["source"], body.text)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    text = tools.validate_revision(paragraph["source"], body.text)
     settings = deps.get_settings()
     def action(cancel, progress, page_ready):
         current = find_paragraph(lib, paper_id, body)
@@ -256,7 +237,7 @@ def citation_excerpts(paper_id: str, page: int):
     lib = deps.get_library()
     deps.paper_folder(lib, paper_id)
     if not 1 <= page <= lib.paper(paper_id)["pages"]:
-        raise HTTPException(status_code=400, detail="ページが範囲外です。")
+        raise Invalid("ページが範囲外です。")
     return {"text": lib.page_text(paper_id, page)[:6000]}
 
 @router.post("/api/backup")

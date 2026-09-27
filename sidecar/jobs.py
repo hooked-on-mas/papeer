@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 import re
 import threading
 import time
 import uuid
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
+from papeer.core.errors import Conflict
+from sidecar.errors import job_error_message
 from sidecar.schemas import JobInfo
 
 COUNTER = re.compile(r"(\d+)\s*/\s*(\d+)")
+# The jobs that copy or replace the whole library (deps.SNAPSHOT_JOBS names the same ones).
+SNAPSHOT_KINDS = frozenset({"backup", "restore", "drive-sync"})
 
 
 class JobManager:
@@ -21,6 +26,8 @@ class JobManager:
         self._listeners: set[asyncio.Queue] = set()
         self._loop = event_loop
         self._closed = False
+        # The changes running under idle(): the paper each one waits on, None for the whole library.
+        self._holds: dict[object, str | None] = {}
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -79,6 +86,26 @@ class JobManager:
             thread.join(max(0.0, deadline - time.monotonic()))
         return not any(thread.is_alive() for thread in threads)
 
+    @contextmanager
+    def idle(self, message: str, paper_id: str | None = None) -> Iterator[None]:
+        """Run a change that must not overlap a job: ConcurrencyConflict(message) if one is running.
+
+        With `paper_id`, only that paper's jobs count. Checked under the lock, and until the change is
+        over no job it waits on may start (submit_job refuses it), so none starts between the check and
+        the change, as it could when a route looked at get_jobs() first. A sync, backup or restore still
+        starts, and waits for the request making the change to finish before it touches the library.
+        """
+        hold = object()
+        with self._lock:
+            if any(job.running and (paper_id is None or job.paper_id == paper_id) for job in self._jobs.values()):
+                raise ConcurrencyConflict(message)
+            self._holds[hold] = paper_id
+        try:
+            yield
+        finally:
+            with self._lock:
+                del self._holds[hold]
+
     def submit_job(
         self,
         kind: str,
@@ -88,10 +115,15 @@ class JobManager:
         with self._lock:
             if self._closed:
                 raise ConcurrencyConflict("アプリを終了しています。")
+            # A sync, backup or restore need not be refused: it waits for the admitted requests anyway
+            # (deps.wait_for_library_requests), the one running the change included. Refusing it would
+            # report an automatic sync that happened to start then as failed.
+            if kind not in SNAPSHOT_KINDS and any(held is None or held == paper_id for held in self._holds.values()):
+                raise ConcurrencyConflict("別の変更を処理しています。終わってからやり直してください。")
             # Check concurrency constraints
-            if any(j.running and j.kind in {"backup", "restore", "drive-sync"} for j in self._jobs.values()):
+            if any(j.running and j.kind in SNAPSHOT_KINDS for j in self._jobs.values()):
                 raise ConcurrencyConflict("バックアップ・復元が実行中です。")
-            if kind in {"backup", "restore", "drive-sync"} and any(j.running for j in self._jobs.values()):
+            if kind in SNAPSHOT_KINDS and any(j.running for j in self._jobs.values()):
                 raise ConcurrencyConflict("すべての処理が終わってからバックアップ・復元してください。")
             if paper_id is not None:
                 if any(j.running and j.paper_id == paper_id for j in self._jobs.values()):
@@ -174,18 +206,19 @@ class JobManager:
                 })
             except Exception as exc:
                 is_cancelled = cancel_event.is_set()
+                error = job_error_message(exc, kind)
                 with self._lock:
                     job.running = False
                     job.cancelled = is_cancelled
                     job.status = "cancelled" if is_cancelled else "failed"
-                    job.error = str(exc)
+                    job.error = error
                 self.broadcast({
                     "type": "job.finished",
                     "job_id": job_id,
                     "paper_id": paper_id,
                     "kind": kind,
                     "status": "cancelled" if is_cancelled else "failed",
-                    "error": str(exc),
+                    "error": error,
                     "cancelled": is_cancelled,
                 })
             finally:
@@ -211,8 +244,8 @@ class JobManager:
         return job
 
 
-class ConcurrencyConflict(Exception):
-    pass
+class ConcurrencyConflict(Conflict):
+    """A job, or a change under JobManager.idle, that would overlap one it must not run beside (409)."""
 
 
 class TurnQueue:
