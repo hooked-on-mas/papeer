@@ -3,12 +3,15 @@ from __future__ import annotations
 import io
 import json
 import math
+import threading
 
 from fastapi.testclient import TestClient
 from PIL import Image
 import pymupdf as fitz
 import pytest
 
+from papeer.core.paths import PaperFiles
+from papeer.core.service import PaperService
 from papeer.core.storage import Library
 from papeer.pdf.pdf_ink import annotated_pdf
 from papeer.pdf.pdf_viewer import page_png
@@ -242,3 +245,72 @@ def test_capture_can_include_ink_on_rotated_and_preview_pages(ink_env, side, rot
             assert any(r > 130 and g < 100 and b < 100 for r, g, b in pixels) == include
             assert any(b > 130 and r < 100 and g < 100 for r, g, b in pixels) == include
     assert source.read_bytes() == before
+
+
+class SummaryProvider:
+    def __init__(self, fail=False):
+        self.fail = fail
+
+    def generate(self, instruction, data, schema=None):
+        if self.fail:
+            raise RuntimeError("summary failed")
+        return "# サマリー\n\n" + data
+
+
+def test_summary_regeneration_replaces_only_its_figures_and_keeps_note_captures(ink_env):
+    client, lib, identity = ink_env
+    body = {"side": "original", "page": 1, "x": 0.1, "y": 0.1, "width": 0.5, "height": 0.2}
+    file = client.post(f"/api/papers/{identity}/ink-capture", json=body).json()["file"]
+    files = PaperFiles(lib.folder(identity))
+    capture = files.folder / file
+    assert capture.parent == files.media and capture.name.startswith("ink-capture-")
+    lib.update(identity, note=f"![切り抜き]({file})")
+    stale = files.media / "p9i1.png"  # a figure of a previous summary that this PDF no longer yields
+    stale.write_bytes(capture.read_bytes())
+    assert files.summary_images() == [stale]
+    with fitz.open(files.original_pdf) as pdf:  # one embedded raster figure on page 1
+        pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 50, 40), False)
+        pixmap.clear_with(128)
+        pdf[0].insert_image(fitz.Rect(50, 100, 250, 260), pixmap=pixmap)
+        pdf[0].insert_text((50, 278), "Figure 1: Controller architecture.", fontsize=9)
+        pdf.saveIncr()
+    figure = files.media / "p1i1.png"
+
+    with pytest.raises(RuntimeError):
+        PaperService(lib, SummaryProvider(fail=True), threading.Event()).article(identity)
+    assert stale.is_file(), "the current summary keeps its images until a new one replaces it"
+    for _ in range(2):
+        article = PaperService(lib, SummaryProvider(), threading.Event()).article(identity)
+        assert "(media/p1i1.png)" in article
+    assert not stale.exists()
+    assert files.summary_images() == [figure]
+    assert capture.is_file() and client.get(f"/api/papers/{identity}/{file}").status_code == 200
+    assert lib.paper(identity)["note"] == f"![切り抜き]({file})"
+
+
+def test_locked_old_summary_figure_does_not_fail_the_summary(ink_env, monkeypatch):
+    from pathlib import Path
+
+    _, lib, identity = ink_env
+    files = PaperFiles(lib.folder(identity))
+    files.media.mkdir()
+    stale = files.media / "p9i1.png"
+    stale.write_bytes(b"old figure")
+    unlink = Path.unlink
+
+    def locked(path, *args, **kwargs):
+        if path == stale:
+            raise PermissionError("in use by another process")
+        return unlink(path, *args, **kwargs)
+
+    class MeteredProvider(SummaryProvider):
+        def usage_report(self):
+            return {"input_tokens": 10}
+
+    monkeypatch.setattr(Path, "unlink", locked)
+    PaperService(lib, MeteredProvider(), threading.Event()).article(identity)
+    assert files.article_md.is_file() and stale.is_file()
+    assert json.loads(files.article_usage.read_text("utf-8")) == {"input_tokens": 10}
+    monkeypatch.setattr(Path, "unlink", unlink)
+    PaperService(lib, SummaryProvider(), threading.Event()).article(identity)
+    assert not stale.exists(), "the leftover goes with the next successful summary"

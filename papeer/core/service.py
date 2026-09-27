@@ -8,7 +8,7 @@ import uuid
 import shutil
 from typing import Callable
 
-from papeer.core.fileio import atomic_write_json, atomic_write_text, replace_file
+from papeer.core.fileio import atomic_write_bytes, atomic_write_json, atomic_write_text, replace_file
 from papeer.pdf.pdf_engine import PDF_LOCK, batches, interleaved_pdf, build_translated_pdf, translation_units
 import pymupdf as fitz
 from papeer.providers import ProviderBackend, check_cancel
@@ -377,20 +377,21 @@ class PaperService:
         files = PaperFiles(folder)
         document = self.library.document(paper_id)
 
-        media_dir = files.media
-        if media_dir.exists():
-            for f in media_dir.glob("*.png"):
-                f.unlink(missing_ok=True)
-        media_dir.mkdir(exist_ok=True)
         # Text-only generation receives only crops bound to source captions.
         figures_by_page = {}
+        figure_images = {}
         with PDF_LOCK, fitz.open(files.original_pdf) as pdf:
             for number in range(1, len(pdf) + 1):
                 page = pdf[number - 1]
                 page.set_rotation(0)
                 for figure in summary_figures(page, document.get("blocks", []), number):
-                    page.get_pixmap(clip=figure["rect"], dpi=150).save(str(media_dir / f"{figure['id']}.png"))
+                    figure_images[f"{figure['id']}.png"] = page.get_pixmap(clip=figure["rect"], dpi=150).tobytes("png")
                     figures_by_page.setdefault(number, []).append(figure)
+        # Same-named figures are overwritten in place, so the current article.md keeps its images
+        # even if this run fails; captures pasted into notes share media/ and are never touched.
+        files.media.mkdir(exist_ok=True)
+        for name, data in figure_images.items():
+            atomic_write_bytes(files.media / name, data)
 
         page_units = []
         images = []
@@ -424,6 +425,12 @@ class PaperService:
             "\n\n".join(notes) + catalog)
         article = link_citations(article, {paper_id: document["page_count"]})
         atomic_write_text(files.article_md, article)
+        for image in files.summary_images():
+            if image.name not in figure_images:
+                try:
+                    image.unlink(missing_ok=True)
+                except OSError:  # Locked on Windows (viewer, scan): the next successful run removes it.
+                    pass
         usage_path = files.article_usage
         if usage := self.usage():
             atomic_write_json(usage_path, usage)

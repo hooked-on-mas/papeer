@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 from typing import Any
+import uuid
 
 
 def app_env(name: str, default: str | None = None) -> str | None:
@@ -42,6 +43,9 @@ def parse_translation_sections(markdown: str) -> list[tuple[int, str, str]]:
     """(page, block id, text) for every section of a translation.md, text stripped."""
     parts = TRANSLATION_SECTION.split(markdown)
     return [(int(page), block, body.strip()) for page, block, body in zip(parts[1::3], parts[2::3], parts[3::3])]
+
+
+CAPTURE_PREFIX = "ink-capture-"
 
 
 class PaperFiles:
@@ -85,6 +89,19 @@ class PaperFiles:
     def article_usage(self) -> Path: return self.folder / "article-usage.json"
     @property
     def media(self) -> Path: return self.folder / "media"
+
+    # media/ holds two kinds of image, told apart by name. Region captures that the reader pastes into
+    # notes ("media/ink-capture-<hex>.png") belong to the user; every other PNG is a figure cut out for
+    # article.md and is replaced whenever the summary is regenerated.
+    def new_capture(self) -> Path:
+        """An unused file name in media/ for a region capture."""
+        return self.media / f"{CAPTURE_PREFIX}{uuid.uuid4().hex}.png"
+
+    def summary_images(self) -> list[Path]:
+        """The figure images of the summary, never the captures that notes refer to."""
+        if not self.media.is_dir():
+            return []
+        return [path for path in self.media.glob("*.png") if not path.name.startswith(CAPTURE_PREFIX)]
 
     def translation_sections(self) -> list[tuple[int, str, str]]:
         """Sections of the last completed translation; empty when there is none."""

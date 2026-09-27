@@ -1,19 +1,17 @@
 """Freehand ink on PDF pages: strokes per page, region capture, and PDFs with the ink painted in."""
 from __future__ import annotations
 
-import io
 from pathlib import Path
-import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, model_validator
-from PIL import Image
 
 from papeer.core.fileio import atomic_write_bytes
 from papeer.core.paths import PaperFiles
-from papeer.pdf.pdf_ink import annotated_page, annotated_pdf
-from papeer.pdf.pdf_viewer import page_png, pdf_page_count
+from papeer.pdf.pdf_capture import capture_png
+from papeer.pdf.pdf_ink import annotated_pdf
+from papeer.pdf.pdf_viewer import pdf_page_count
 from papeer.translation.translation_preview import read_preview, translated_page
 from sidecar import deps
 
@@ -98,23 +96,17 @@ def ink_pages(paper_id: str):
 def capture(paper_id: str, body: InkCaptureRequest):
     lib = deps.get_library()
     source, index = check_page(lib, paper_id, body.side, body.page)
-    if body.include_ink:
-        data = annotated_page(source, index, lib.ink(paper_id, body.side, body.page))
-        rendered = page_png(data, 0, 1800)
-    else:
-        rendered = page_png(source, index, 1800)
-    if rendered is None:
-        raise HTTPException(400, "ページを画像にできませんでした。")
-    with Image.open(io.BytesIO(rendered)) as image:
-        box = (round(body.x * image.width), round(body.y * image.height),
-               round((body.x + body.width) * image.width), round((body.y + body.height) * image.height))
-        if box[2] <= box[0] or box[3] <= box[1]:
-            raise HTTPException(400, "もう少し広い範囲を選択してください。")
-        name = f"ink-capture-{uuid.uuid4().hex}.png"
-        folder = PaperFiles(deps.paper_folder(lib, paper_id)).media
-        folder.mkdir(exist_ok=True)
-        image.crop(box).save(folder / name, format="PNG")
-    return {"file": f"media/{name}", "page": body.page, "side": body.side}
+    strokes = lib.ink(paper_id, body.side, body.page) if body.include_ink else None
+    try:
+        data = capture_png(source, index, (body.x, body.y, body.width, body.height), strokes)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    files = PaperFiles(deps.paper_folder(lib, paper_id))
+    target = files.new_capture()
+    target.parent.mkdir(exist_ok=True)
+    atomic_write_bytes(target, data)
+    # Notes refer to the capture by this path relative to the paper folder.
+    return {"file": target.relative_to(files.folder).as_posix(), "page": body.page, "side": body.side}
 
 @router.get("/api/papers/{paper_id}/ink/{side}/{page}")
 @router.get("/api/papers/{paper_id}/ink-v2/{side}/{page}")
