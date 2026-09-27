@@ -5,10 +5,11 @@ The caller must hold exclusive library access throughout sync().
 """
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import ExitStack, closing, contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ import platform
 import sqlite3
 import tempfile
 import re
+import struct
 import threading
 import time
 import uuid
@@ -27,7 +29,7 @@ from papeer.core.paths import fingerprint_cache_path, sync_state_path
 from papeer.core.reading_tools import create_backup, restore_backup
 from papeer.core.storage import (SCHEMA_VERSION, Library, NewerSchemaError, database_version, library_missing,
                                   newer_papeer)
-from papeer.providers import check_cancel
+from papeer.providers import Cancelled, check_cancel
 
 FORMAT = "papeer-folder-sync-v1"
 
@@ -52,6 +54,8 @@ def status(root: Path) -> dict:
     result = {key: state.get(key, default) for key, default in {
         "connected": False, "auto_sync": True, "last_sync": None, "error": None,
         "conflicts": [], "previous_path": None, "folder": "", "restored": False,
+        # Revisions the last choice left out but could not keep as backups (see _set_aside).
+        "not_set_aside": [],
     }.items()}
     # OAuth state from the earlier prototype is not a folder connection.
     result["connected"] = bool(result["connected"] and result["folder"])
@@ -148,12 +152,16 @@ SHRINK_MIN_ITEMS = 5
 def library_counts(root: Path) -> dict[str, int]:
     """Papers, papers with a memo, sticky notes and pages with ink: a few COUNTs, without migrating the database."""
     with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db:
-        tables = {name for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        return _database_counts(db)
 
-        def count(table: str, where: str = "") -> int:
-            return db.execute(f"SELECT COUNT(*) FROM {table} {where}").fetchone()[0] if table in tables else 0
-        return {"papers": count("papers"), "notes": count("papers", "WHERE trim(note)<>''"),
-                "stickies": count("bookmarks"), "ink": count("pdf_ink", "WHERE strokes NOT IN ('','[]')")}
+
+def _database_counts(db: sqlite3.Connection, schema: str = "main") -> dict[str, int]:
+    tables = {name for (name,) in db.execute(f"SELECT name FROM {schema}.sqlite_master WHERE type='table'")}
+
+    def count(table: str, where: str = "") -> int:
+        return db.execute(f"SELECT COUNT(*) FROM {schema}.{table} {where}").fetchone()[0] if table in tables else 0
+    return {"papers": count("papers"), "notes": count("papers", "WHERE trim(note)<>''"),
+            "stickies": count("bookmarks"), "ink": count("pdf_ink", "WHERE strokes NOT IN ('','[]')")}
 
 
 def shrunk_kinds(before: dict | None, after: dict) -> list[str]:
@@ -179,6 +187,246 @@ def _review(reason: str, message: str, before: dict | None, after: dict, labels:
 
 def _kinds_text(kinds: list[str]) -> str:
     return "・".join(COUNT_LABELS[kind] for kind in kinds)
+
+
+# --- Choosing between two libraries: what differs, and keeping the side not chosen ---
+#
+# A conflict is resolved by taking one whole library, so the choice shows what differs between this PC's
+# and each newest revision, read from their databases. The side a choice leaves out is then written as an
+# ordinary backup ZIP beside the library, restorable from the settings like any backup.
+DIFF_TITLES = 5  # Titles listed per side for the papers only one side has.
+
+
+def conflict_differences(root: Path, remote, heads: list[dict], cancel) -> dict[str, dict | None]:
+    """For each head, what differs from this library (library_difference); None where it could not be read.
+
+    Only the head's database is read, in place in the sync folder (FolderDrive.open_library), so a conflict
+    costs a few megabytes of reading rather than a copy of the whole library. That database is not verified
+    against the revision's hash: it serves only to show the choice, and the revision chosen is verified
+    as a whole before it is taken in, as always.
+    """
+    result: dict[str, dict | None] = {}
+    with tempfile.TemporaryDirectory() as directory:
+        for head in heads:
+            check_cancel(cancel)
+            try:
+                database = _revision_database(remote, head["id"], Path(directory), cancel)
+                result[head["id"]] = library_difference(root / "library.sqlite3", database)
+            except Cancelled:
+                raise
+            except Exception:
+                result[head["id"]] = None  # Still arriving, damaged...: the choice is offered without it.
+    return result
+
+
+def _revision_database(remote, revision: str, directory: Path, cancel) -> Path:
+    target = directory / (revision + ".sqlite3")
+    with remote.open_library(revision) as stream, zipfile.ZipFile(stream) as archive:
+        info = archive.getinfo("library.sqlite3")
+        ensure_free_space({directory: info.file_size})
+        with archive.open(info) as source, target.open("wb") as output:
+            FolderDrive._copy(source, output, cancel)
+    return target
+
+
+def library_difference(local: Path, other: Path) -> dict:
+    """What differs between this PC's database and another library's, shown before choosing one of them.
+
+    The papers only one side has (how many, and a few titles), and among the papers both have, how many
+    memos, sticky notes and pages of ink differ. Without the common ancestor the direction of a change is
+    unknown (added on one side, or deleted on the other), so each side's own papers are told apart instead.
+    Sticky notes are matched by their ID, which each PC numbers on its own: two notes added separately on
+    two PCs may share one and count as a single difference, so that count is a guide.
+    A library from an older Papeer may lack a table or column; what it lacks is left out of the comparison.
+    The other database is attached to this PC's and compared in SQL, without loading the rows here.
+    """
+    with closing(sqlite3.connect(local, timeout=30)) as db:
+        db.execute("ATTACH DATABASE ? AS theirs", (str(other),))
+
+        def titles(mine: str, theirs: str) -> list[str]:
+            return [str(title) for (title,) in db.execute(
+                f"SELECT title FROM {mine}.papers WHERE id NOT IN (SELECT id FROM {theirs}.papers) ORDER BY title")]
+        local_only, remote_only = titles("main", "theirs"), titles("theirs", "main")
+        notes = db.execute("SELECT COUNT(*) FROM main.papers AS a JOIN theirs.papers AS b ON a.id = b.id"
+                           " WHERE a.note IS NOT b.note").fetchone()[0]
+        stickies = _differing_rows(db, "bookmarks", ("id",))
+        ink = _differing_rows(db, "pdf_ink", ("paper_id", "side", "page"), "strokes NOT IN ('', '[]')")
+        counts = [_database_counts(db, "main"), _database_counts(db, "theirs")]
+    return {"local_only": len(local_only), "remote_only": len(remote_only),
+            "local_titles": local_only[:DIFF_TITLES], "remote_titles": remote_only[:DIFF_TITLES],
+            "notes": notes, "stickies": stickies, "ink": ink, "local_counts": counts[0], "remote_counts": counts[1]}
+
+
+def _quoted(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _differing_rows(db: sqlite3.Connection, table: str, key: tuple[str, ...], where: str = "") -> int:
+    """How many keys of `table`, among the papers both libraries have, have a row on one side only or rows
+    that differ, comparing the columns both sides have (all of one side's when the other lacks the table)."""
+    columns = {schema: [row[1] for row in db.execute(f"PRAGMA {schema}.table_info({table})")]
+               for schema in ("main", "theirs")}
+    if not columns["main"] and not columns["theirs"]:
+        return 0
+    both = all(columns.values())
+    names = [name for name in columns["main"] if name in columns["theirs"]] if both \
+        else columns["main"] or columns["theirs"]
+    selected = ",".join(_quoted(name) for name in names)
+    condition = "paper_id IN common" + (f" AND {where}" if where else "")
+
+    def rows(schema: str) -> str:
+        if columns[schema]:
+            return f"SELECT {selected} FROM {schema}.{table} WHERE {condition}"
+        # This side lacks the table: no rows, with the other side's columns.
+        return "SELECT " + ",".join(f"NULL AS {_quoted(name)}" for name in names) + " WHERE 0"
+    keys = ",".join(_quoted(name) for name in key)
+    # EXCEPT compares whole rows (NULL equal to NULL); a key is counted once however its rows differ.
+    return db.execute(
+        f"WITH common(id) AS (SELECT id FROM main.papers INTERSECT SELECT id FROM theirs.papers),"
+        f" a AS ({rows('main')}), b AS ({rows('theirs')})"
+        f" SELECT COUNT(*) FROM (SELECT {keys} FROM (SELECT * FROM a EXCEPT SELECT * FROM b)"
+        f" UNION SELECT {keys} FROM (SELECT * FROM b EXCEPT SELECT * FROM a))").fetchone()[0]
+
+
+# The newest few are kept: each holds a whole library.
+SIDE_BACKUP_LIMIT = 3
+
+
+def side_backup_folder(root: Path) -> Path:
+    """Where the libraries a choice left out are kept: beside the library, like the copy a restore keeps.
+
+    On this PC only (neither synced nor in a backup), and on the drive the library itself was put on.
+    """
+    root = root.resolve()
+    return root.with_name(root.name + "-sync-backups")
+
+
+def side_backups(root: Path) -> list[dict]:
+    """The kept libraries, newest first, with what their descriptions say (unknown fields are None)."""
+    folder = side_backup_folder(root)
+    result = []
+    for path in sorted(folder.glob("*.zip"), reverse=True) if folder.is_dir() else []:
+        try:
+            size = path.stat().st_size
+        except OSError:  # Removed meanwhile.
+            continue
+        try:
+            meta = json.loads(path.with_suffix(".json").read_text("utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+        meta = meta if isinstance(meta, dict) else {}
+        text = {key: meta[key] if isinstance(meta.get(key), str) else None for key in ("device", "created", "saved")}
+        result.append({"path": str(path), "name": path.name, "size": size, **text,
+                       "side": meta.get("side") if meta.get("side") in ("local", "remote") else None,
+                       "counts": meta.get("counts") if _valid_counts(meta.get("counts")) else None})
+    return result
+
+
+def _new_side_backup(root: Path, side: str) -> Path:
+    folder = side_backup_folder(root)
+    folder.mkdir(exist_ok=True)
+    # Named by the time in UTC, so the names sort as the backups were made (also across a clock change).
+    return folder / f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}-{side}.zip"
+
+
+def _describe_side_backup(path: Path, **values) -> None:
+    atomic_write_json(path.with_suffix(".json"), {**values, "saved": datetime.now(timezone.utc).isoformat()}, indent=None)
+
+
+def _remove_side_backup(path: Path) -> None:
+    path.unlink(missing_ok=True)
+    path.with_suffix(".json").unlink(missing_ok=True)
+
+
+def prune_side_backups(root: Path, keep: int = SIDE_BACKUP_LIMIT, new: list[Path] = ()) -> None:
+    """Remove all but the newest `keep`. The ones just set aside (`new`) always stay and count toward them."""
+    folder = side_backup_folder(root)
+    if not folder.is_dir():
+        return
+    spared = {path.resolve() for path in new}
+    older = [path for path in sorted(folder.glob("*.zip"), reverse=True) if path.resolve() not in spared]
+    for path in older[max(0, keep - len(spared)):]:
+        _remove_side_backup(path)
+    for path in folder.glob("*.json"):
+        if not path.with_suffix(".zip").exists():
+            path.unlink(missing_ok=True)
+
+
+class _Unreadable(Exception):
+    """A revision in the sync folder could not be read, or did not match its hash."""
+
+
+# What reading a revision that is damaged, cut short or still arriving may raise.
+_READ_ERRORS = (OSError, EOFError, ValueError, KeyError, zipfile.BadZipFile)
+
+
+def _copy_revision(remote, head: dict, target: Path, cancel) -> Path:
+    """Copy a revision's library.zip to `target`, checked against its archive_hash.
+
+    Reading the sync folder raises _Unreadable; writing `target` on this PC raises as it is, so the
+    two are never mistaken for each other.
+    """
+    with atomic_output(target) as temporary, temporary.open("wb") as output, ExitStack() as stack:
+        try:
+            source = stack.enter_context(remote.open_library(head["id"]))
+            size = source.seek(0, io.SEEK_END)
+            source.seek(0)
+        except _READ_ERRORS as exc:
+            raise _Unreadable() from exc
+        ensure_free_space({target.parent: size})
+        digest = hashlib.sha256()
+        while True:
+            check_cancel(cancel)
+            try:
+                chunk = source.read(8 * 1024**2)
+            except _READ_ERRORS as exc:
+                raise _Unreadable() from exc
+            if not chunk:
+                break
+            digest.update(chunk)
+            output.write(chunk)
+        if digest.hexdigest() != head["archive_hash"]:
+            raise _Unreadable()
+    return target
+
+
+def _set_aside(lib: Library, remote, heads: list[dict], choice: str, library_hash: str, chosen_hash: str,
+               counts: dict, cancel, progress, written: list[Path]) -> list[dict]:
+    """Keep the libraries a choice leaves out as backups: each other head, and this PC's library when a
+    head was chosen. One identical to the chosen contents, or without papers, holds nothing to go back to.
+
+    A head's archive already is a backup (create_backup made it), so it is copied as it is and checked
+    against the hash its revision records. Each file kept is added to `written` at once, for the caller
+    to remove should the choice fail. Returns the heads that could not be read or did not match their
+    hash ({id, device, created}): they are skipped rather than stopping the choice, since a damaged
+    revision in the sync folder must not keep this PC's library from being chosen over it (it stays in
+    the sync folder's history either way). Only reading the sync folder counts as that: stopping,
+    writing a backup on this PC (a full drive, no permission...) or backing up this PC's library stops
+    the choice.
+    """
+    skipped = []
+    for head in heads:
+        if head["id"] == choice or head["hash"] == chosen_hash or head.get("counts", {}).get("papers") == 0:
+            continue
+        check_cancel(cancel)
+        progress("選ばなかったデータを退避しています…")
+        try:
+            target = _copy_revision(remote, head, _new_side_backup(lib.root, "remote"), cancel)
+        except _Unreadable:
+            skipped.append({k: head[k] for k in ("id", "device", "created")})
+            continue
+        written.append(target)
+        _describe_side_backup(target, side="remote", device=head["device"], created=head["created"],
+                              counts=head.get("counts"))
+    if choice != "local" and library_hash != chosen_hash and counts.get("papers"):
+        check_cancel(cancel)
+        progress("選ばなかったデータを退避しています…")
+        target = _new_side_backup(lib.root, "local")
+        create_backup(lib, target, cancel)
+        written.append(target)
+        _describe_side_backup(target, side="local", device=platform.node(),
+                              created=datetime.now(timezone.utc).isoformat(), counts=counts)
+    return skipped
 
 
 # What revisions() read from each archive, by (path, size, modification time); shared by every FolderDrive,
@@ -263,11 +511,64 @@ class FolderDrive:
             with archive.open("library.zip") as source, path.open("wb") as output:
                 self._copy(source, output, cancel)
 
+    @contextmanager
+    def open_library(self, revision: str):
+        """A revision's library.zip as a seekable file, read in place, unverified.
+
+        It is stored uncompressed, so a ZIP reader seeks straight to the one member it wants (the database,
+        for conflict_differences) instead of the whole archive being read or copied first.
+        """
+        if not re.fullmatch(r"[0-9a-f]{32}", revision):
+            raise ValueError("同期データのIDが不正です。")
+        path = self.folder / (revision + ".papeer-sync")
+        with zipfile.ZipFile(path) as archive:
+            info = archive.getinfo("library.zip")
+        with path.open("rb") as stream:
+            stream.seek(info.header_offset)
+            header = stream.read(30)
+            if info.compress_type != zipfile.ZIP_STORED or len(header) < 30 or header[:4] != b"PK\x03\x04":
+                raise ValueError("同期履歴の形式が不正です。")
+            # The data follows the local header, whose name and extra field may differ in length from the directory's.
+            name_length, extra_length = struct.unpack("<HH", header[26:30])
+            yield _Window(stream, info.header_offset + 30 + name_length + extra_length, info.compress_size)
+
     @staticmethod
     def _copy(source, output, cancel):
         while chunk := source.read(8 * 1024**2):
             check_cancel(cancel)
             output.write(chunk)
+
+
+class _Window(io.RawIOBase):
+    """`length` bytes of an open file from `start`, as a read-only file of their own."""
+    def __init__(self, stream, start: int, length: int):
+        super().__init__()
+        self._stream, self._start, self._length, self._position = stream, start, length, 0
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._position
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        origin = {io.SEEK_SET: 0, io.SEEK_CUR: self._position, io.SEEK_END: self._length}[whence]
+        self._position = max(0, origin + offset)
+        return self._position
+
+    def readinto(self, buffer) -> int:
+        view = memoryview(buffer).cast("B")
+        size = max(0, min(len(view), self._length - self._position))
+        if not size:
+            return 0
+        self._stream.seek(self._start + self._position)
+        data = self._stream.read(size)
+        view[:len(data)] = data
+        self._position += len(data)
+        return len(data)
 
 
 def _valid_counts(value: object) -> bool:
@@ -482,6 +783,8 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
 
     Resolving a conflict creates a revision with all observed heads as its parents.
     A simultaneous upload remains a separate head and will be offered next time.
+    A conflict records what differs from each head (conflict_differences) for the choice, and a choice
+    keeps the libraries it leaves out as backups (_set_aside), returned as "set_aside".
     Publishing a library that shrank a lot or was just restored from a backup, or taking in one that
     shrank a lot, returns {"status": "review"} instead (see shrunk_kinds); confirm=True then goes
     ahead, as long as neither the sync folder nor this library changed since. To back out without
@@ -512,6 +815,7 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
                      and review.get("hash") == local_hash)
 
     def finish(**values) -> None:
+        values.setdefault("not_set_aside", [])
         state.update(**values, counts=library_counts(lib.root), conflicts=[], error=None, review=None,
                      last_sync=datetime.now(timezone.utc).isoformat())
         state.pop("restored", None)
@@ -531,7 +835,10 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
         return {"status": "synced", "reloaded": False, "previous_path": None}
     conflict = len(heads) > 1 or (bool(heads) and base != heads[0]["id"] and dirty)
     if conflict and choice is None:
-        state.update(conflicts=[{k: item[k] for k in ("id", "device", "created")} for item in heads],
+        # What differs from each newest revision, so the choice need not be made blind.
+        differences = conflict_differences(lib.root, remote, heads, cancel)
+        state.update(conflicts=[{**{k: item[k] for k in ("id", "device", "created")}, "diff": differences.get(item["id"])}
+                                for item in heads],
                      error="両方のPCに変更があります。保存先・同期で使用するデータを選択してください。", review=None)
         save_state(lib.root, state)
         return {"status": "conflict", "conflicts": state["conflicts"]}
@@ -549,65 +856,90 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
                                "意図した削除でなければ「同期しない」を選び、データを確認してください。",
                                reference, counts, ("前回の同期", "このPC"), ids, local_hash))
     previous = None
-    with tempfile.TemporaryDirectory() as directory:
-        archive = Path(directory) / "library.zip"
-        selected = next((item for item in heads if item["id"] == choice), None)
-        if choice is not None and choice != "local" and selected is None:
-            raise ValueError("選んだ同期データが見つかりません。")
-        pull = selected or (heads[0] if choice is None and heads and base != heads[0]["id"] and not dirty else None)
-        # What `archive` holds if it is published: this library, or the revision taken below.
-        content_hash, content_schema, content_counts = local_hash, SCHEMA_VERSION, counts
-        if pull:
-            if pull.get("schema_version", 0) > SCHEMA_VERSION:
-                raise NewerSchemaError(f"この同期データは{newer_papeer(pull.get('app_version'))}で作成されたため取り込めません。"
-                                       "このPCのPapeerを最新版に更新してから同期してください。")
-            if background and choice is None:
-                return {"status": "deferred", "reloaded": False, "previous_path": None}
-            remote.download(pull["id"], archive, cancel, progress)
-            check_cancel(cancel)
-            with archive.open("rb") as stream:
-                if hashlib.file_digest(stream, "sha256").hexdigest() != pull["archive_hash"]:
-                    raise ValueError("同期データの検証に失敗しました。再試行してください。")
-            # Validate using the backup restore path before touching the active library.
-            staging = Path(directory) / "validation"
-            staging.mkdir()
-            restore_backup(Library(staging), archive, cancel)
-            # Hash the database as the publishing PC did, before this version migrates it.
-            content_hash = fingerprint(staging, cancel)
-            content_schema = database_version(staging / "library.sqlite3")
-            if content_hash != pull["hash"]:
-                raise ValueError("同期データの内容が一致しません。")
-            content_counts = library_counts(staging)
-            if choice is None and not confirmed and (kinds := shrunk_kinds(counts, content_counts)):
-                # Counted from the verified contents, not from what the revision says about itself.
-                return ask(_review("remote_shrunk", f"{pull['device']} で保存された同期データでは{_kinds_text(kinds)}が大きく減っています。"
-                                   "取り込むと、このPCのデータもこの内容に置き換わります（元のデータは別フォルダーに残します）。",
-                                   counts, content_counts, ("このPC", "同期フォルダー"), ids, local_hash))
-            local_hash = content_hash
-            if content_schema < SCHEMA_VERSION:
-                # The library as it is once opened here, so taking an older revision is not published again.
-                local_hash = fingerprint(Library(staging), cancel)
-            check_cancel(cancel)
-            base = pull["id"]
-        # Explicit resolutions publish the chosen contents as a merge revision.
-        if choice is not None or (not pull and (dirty or not heads)):
-            check_cancel(cancel)
-            progress("ライブラリ全体の同期データを作成しています…")
-            if not pull:
-                create_backup(lib, archive, cancel)
-            with archive.open("rb") as stream:
-                archive_hash = hashlib.file_digest(stream, "sha256").hexdigest()
-            # app_version is the Papeer that published this revision; a taken revision published again
-            # keeps its own schema_version, since the archive holds its database unmigrated.
-            base = remote.upload(archive, {"parents": ids, "hash": content_hash, "archive_hash": archive_hash,
-                                          "device": platform.node(), "schema_version": content_schema,
-                                          "app_version": __version__, "counts": content_counts}, cancel, progress)
-        if pull:
-            # All network operations succeeded; only now replace the local copy. Cancellable until the
-            # folders are swapped: the state is then left as it was, so the next sync pulls the same
-            # revision again (or, when this PC has changes, offers the choice again), and nothing is lost.
-            previous = str(restore_backup(lib, archive, cancel))
-        if previous:
-            state["previous_path"] = previous
-        finish(base=base, hash=local_hash)
-    return {"status": "synced", "reloaded": bool(previous), "previous_path": previous}
+    # This library's contents; local_hash becomes the taken revision's below.
+    library_hash = local_hash
+    set_aside: list[Path] = []
+    not_set_aside: list[dict] = []
+    uploaded = False
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "library.zip"
+            selected = next((item for item in heads if item["id"] == choice), None)
+            if choice is not None and choice != "local" and selected is None:
+                raise ValueError("選んだ同期データが見つかりません。")
+            pull = selected or (heads[0] if choice is None and heads and base != heads[0]["id"] and not dirty else None)
+            # What `archive` holds if it is published: this library, or the revision taken below.
+            content_hash, content_schema, content_counts = local_hash, SCHEMA_VERSION, counts
+            if pull:
+                if pull.get("schema_version", 0) > SCHEMA_VERSION:
+                    raise NewerSchemaError(f"この同期データは{newer_papeer(pull.get('app_version'))}で作成されたため取り込めません。"
+                                           "このPCのPapeerを最新版に更新してから同期してください。")
+                if background and choice is None:
+                    return {"status": "deferred", "reloaded": False, "previous_path": None}
+                remote.download(pull["id"], archive, cancel, progress)
+                check_cancel(cancel)
+                with archive.open("rb") as stream:
+                    if hashlib.file_digest(stream, "sha256").hexdigest() != pull["archive_hash"]:
+                        raise ValueError("同期データの検証に失敗しました。再試行してください。")
+                # Validate using the backup restore path before touching the active library.
+                staging = Path(directory) / "validation"
+                staging.mkdir()
+                restore_backup(Library(staging), archive, cancel)
+                # Hash the database as the publishing PC did, before this version migrates it.
+                content_hash = fingerprint(staging, cancel)
+                content_schema = database_version(staging / "library.sqlite3")
+                if content_hash != pull["hash"]:
+                    raise ValueError("同期データの内容が一致しません。")
+                content_counts = library_counts(staging)
+                if choice is None and not confirmed and (kinds := shrunk_kinds(counts, content_counts)):
+                    # Counted from the verified contents, not from what the revision says about itself.
+                    return ask(_review("remote_shrunk", f"{pull['device']} で保存された同期データでは{_kinds_text(kinds)}が大きく減っています。"
+                                       "取り込むと、このPCのデータもこの内容に置き換わります（元のデータは別フォルダーに残します）。",
+                                       counts, content_counts, ("このPC", "同期フォルダー"), ids, local_hash))
+                local_hash = content_hash
+                if content_schema < SCHEMA_VERSION:
+                    # The library as it is once opened here, so taking an older revision is not published again.
+                    local_hash = fingerprint(Library(staging), cancel)
+                check_cancel(cancel)
+                base = pull["id"]
+            if choice is not None:
+                # Before anything is published or replaced: a choice that fails keeps nothing (see below).
+                not_set_aside = _set_aside(lib, remote, heads, choice, library_hash, content_hash, counts, cancel,
+                                           progress, set_aside)
+            # Explicit resolutions publish the chosen contents as a merge revision.
+            if choice is not None or (not pull and (dirty or not heads)):
+                check_cancel(cancel)
+                progress("ライブラリ全体の同期データを作成しています…")
+                if not pull:
+                    create_backup(lib, archive, cancel)
+                with archive.open("rb") as stream:
+                    archive_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+                # app_version is the Papeer that published this revision; a taken revision published again
+                # keeps its own schema_version, since the archive holds its database unmigrated.
+                base = remote.upload(archive, {"parents": ids, "hash": content_hash, "archive_hash": archive_hash,
+                                              "device": platform.node(), "schema_version": content_schema,
+                                              "app_version": __version__, "counts": content_counts}, cancel, progress)
+                uploaded = True
+            if pull:
+                # All network operations succeeded; only now replace the local copy. Cancellable until the
+                # folders are swapped: the state is then left as it was, so the next sync pulls the same
+                # revision again (or, when this PC has changes, offers the choice again), and nothing is lost.
+                previous = str(restore_backup(lib, archive, cancel))
+            if previous:
+                state["previous_path"] = previous
+            finish(base=base, hash=local_hash, not_set_aside=not_set_aside)
+    except BaseException:
+        if previous is None and not uploaded:
+            # Nothing was published or replaced, so the state is as it was and the next sync offers the same
+            # choice, which sets its libraries aside anew. Once the choice is published it is kept: that
+            # revision now stands for the choice, and the library it left out may be needed.
+            for path in set_aside:
+                _remove_side_backup(path)
+        raise
+    if set_aside:
+        try:
+            prune_side_backups(lib.root, new=set_aside)
+        except OSError:
+            pass  # Only more than the usual number are kept until the next choice.
+    return {"status": "synced", "reloaded": bool(previous), "previous_path": previous,
+            "set_aside": [str(path) for path in set_aside], "not_set_aside": not_set_aside}

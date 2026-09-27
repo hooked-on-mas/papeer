@@ -1,5 +1,7 @@
+from contextlib import contextmanager
 from copy import deepcopy
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -32,6 +34,10 @@ class MemoryDrive:
 
     def download(self, identity, path, cancel, progress):
         path.write_bytes(self.data[identity])
+
+    @contextmanager
+    def open_library(self, identity):
+        yield io.BytesIO(self.data[identity])
 
 
 @pytest.fixture
@@ -265,6 +271,8 @@ def test_cancel_after_publishing_a_choice_offers_the_choice_again(pair, monkeypa
     with pytest.raises(Cancelled):
         sync.sync(b, remote, cancel, lambda _: None, choice=head, expected_heads=[head])
     assert b.paper(identity)["note"] == "B"
+    # The choice is already published, so the library it left out stays kept.
+    assert [item["side"] for item in sync.side_backups(b.root)] == ["local"]
     monkeypatch.setattr(remote, "upload", upload)
     result = run(b, remote)
     assert result["status"] == "conflict"
@@ -291,7 +299,10 @@ def publish_old_revision(remote, tmp_path):
 def test_revision_from_before_schema_versioning_is_taken_and_migrated(pair, tmp_path):
     a, b, _, remote = pair
     identity, revision = publish_old_revision(remote, tmp_path)
-    assert run(b, remote)["status"] == "conflict"
+    result = run(b, remote)
+    assert result["status"] == "conflict"
+    # Its older database (fewer tables and columns) is compared all the same.
+    assert result["conflicts"][0]["diff"]["remote_only"] == 1
     # Validated against the database as the old PC hashed it, not as this version migrates it.
     assert run(b, remote, choice=revision, expected_heads=[revision])["reloaded"] is True
     lib = Library(b.root)
@@ -821,3 +832,279 @@ def test_a_newer_revision_at_launch_is_taken_in_by_the_first_sync(pair, settled)
     assert run(b, remote, background=True)["status"] == "deferred"
     assert run(b, remote)["reloaded"] is True
     assert Library(b.root).paper(identity)["note"] == "A"
+
+
+# --- Choosing between two libraries: what differs, and the side left out ---
+
+def another_pdf(tmp_path):
+    """The sample PDF with a trailing comment: a different file, so a second paper."""
+    path = tmp_path / "another.pdf"
+    path.write_bytes((Path(__file__).parent / "fixtures/sample.pdf").read_bytes() + b"\n% another paper\n")
+    return path
+
+
+def test_conflict_shows_what_differs_from_each_head(pair, tmp_path):
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    other, _ = a.import_pdf(another_pdf(tmp_path))
+    a.update(identity, note="A")
+    add_stickies(a, identity, 2)
+    a.save_ink(identity, "original", 1, [{"id": "stroke"}])
+    b.update(identity, note="B")
+    b.save_ink(identity, "original", 2, [])  # An emptied page holds no ink.
+    run(a, remote)
+    result = run(b, remote)
+    assert result["status"] == "conflict"
+    diff = result["conflicts"][0]["diff"]
+    assert (diff["local_only"], diff["remote_only"]) == (0, 1)
+    assert (diff["local_titles"], diff["remote_titles"]) == ([], [a.paper(other)["title"]])
+    # Counted among the papers both sides have; the other paper's contents are not counted again.
+    assert (diff["notes"], diff["stickies"], diff["ink"]) == (1, 2, 1)
+    assert (diff["local_counts"]["papers"], diff["remote_counts"]["papers"]) == (1, 2)
+    assert sync.status(b.root)["conflicts"][0]["diff"] == diff
+
+
+def test_what_differs_leaves_out_what_an_older_database_lacks(pair, tmp_path):
+    import sqlite3
+    a, _, identity, _ = pair
+    a.update(identity, note="A")
+    a.save_ink(identity, "original", 1, [{"id": "stroke"}])
+    older = tmp_path / "older.sqlite3"
+    with sqlite3.connect(older) as db:
+        db.execute("CREATE TABLE papers (id TEXT PRIMARY KEY, title TEXT, note TEXT)")
+        db.execute("CREATE TABLE bookmarks (id INTEGER PRIMARY KEY, paper_id TEXT, quote TEXT)")
+        db.execute("INSERT INTO papers VALUES (?, 'T', 'A')", (identity,))
+        db.execute("INSERT INTO bookmarks VALUES (1, ?, 'quote 0')", (identity,))
+    a.add_bookmark(identity, 1, "original", "quote 0")
+    diff = sync.library_difference(a.root / "library.sqlite3", older)
+    # The sticky note matches on the columns both have; the ink has no table to match on the other side.
+    assert (diff["notes"], diff["stickies"], diff["ink"]) == (0, 0, 1)
+    assert diff["remote_counts"] == {"papers": 1, "notes": 1, "stickies": 1, "ink": 0}
+
+
+def test_conflict_is_offered_even_when_what_differs_cannot_be_read(pair, monkeypatch):
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    a.update(identity, note="A")
+    b.update(identity, note="B")
+    run(a, remote)
+
+    @contextmanager
+    def unreadable(_identity):
+        raise OSError("still arriving")
+        yield
+
+    monkeypatch.setattr(remote, "open_library", unreadable)
+    result = run(b, remote)
+    assert result["status"] == "conflict" and result["conflicts"][0]["diff"] is None
+
+
+def test_choice_keeps_the_side_left_out_as_a_restorable_backup(pair):
+    from papeer.core.reading_tools import restore_backup
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    a.update(identity, note="A")
+    run(a, remote)
+    b.update(identity, note="B")
+    assert run(b, remote)["status"] == "conflict"
+    head = sync.revision_heads(remote.items)[0]
+    result = run(b, remote, choice="local", expected_heads=[head["id"]])
+    kept = sync.side_backups(b.root)
+    assert [item["path"] for item in kept] == result["set_aside"]
+    assert (kept[0]["side"], kept[0]["device"], kept[0]["created"]) == ("remote", head["device"], head["created"])
+    assert kept[0]["counts"] == head["counts"]
+    assert Path(kept[0]["path"]).parent == sync.side_backup_folder(b.root)
+    assert not Path(kept[0]["path"]).is_relative_to(b.root.resolve())  # Neither synced nor backed up.
+    # An ordinary backup: the usual restore takes it back.
+    restore_backup(Library(b.root), Path(kept[0]["path"]))
+    assert Library(b.root).paper(identity)["note"] == "A"
+
+    # Taking the sync folder's library keeps this PC's.
+    b = Library(b.root)
+    b.update(identity, note="B2")
+    run(b, remote)
+    a.update(identity, note="A2")
+    assert run(a, remote)["status"] == "conflict"
+    head = sync.revision_heads(remote.items)[0]
+    run(a, remote, choice=head["id"], expected_heads=[head["id"]])
+    assert Library(a.root).paper(identity)["note"] == "B2"
+    local = sync.side_backups(a.root)[0]
+    assert (local["side"], local["counts"]["papers"]) == ("local", 1)
+    restore_backup(Library(a.root), Path(local["path"]))
+    assert Library(a.root).paper(identity)["note"] == "A2"
+
+
+def test_nothing_is_set_aside_that_holds_nothing_to_go_back_to(pair):
+    a, b, _, remote = pair
+    run(a, remote)
+    # b holds no paper: taking the sync folder's library leaves nothing of b's behind.
+    assert run(b, remote)["status"] == "conflict"
+    assert run(b, remote, choice="1", expected_heads=["1"])["set_aside"] == []
+    assert sync.side_backups(b.root) == []
+
+
+def test_only_the_newest_side_backups_are_kept(tmp_path):
+    root = tmp_path / "library"
+    folder = sync.side_backup_folder(root)
+    folder.mkdir()
+    names = [f"2026010{n}-000000-abcdef-local" for n in range(sync.SIDE_BACKUP_LIMIT + 2)]
+    for name in names:
+        (folder / (name + ".zip")).write_bytes(b"zip")
+        (folder / (name + ".json")).write_text(json.dumps({"side": "local", "device": "PC"}))
+    (folder / "20250101-000000-abcdef-local.json").write_text("{}")  # Its archive is gone.
+    sync.prune_side_backups(root)
+    kept = sync.side_backups(root)
+    assert [item["name"] for item in kept] == [name + ".zip" for name in reversed(names[2:])]
+    assert (kept[0]["side"], kept[0]["device"]) == ("local", "PC")
+    assert not (folder / "20250101-000000-abcdef-local.json").exists()
+    # A missing or unreadable description leaves only what the file itself tells.
+    (folder / (names[-1] + ".json")).write_text("not json")
+    assert sync.side_backups(root)[0] == {
+        "path": str(folder / (names[-1] + ".zip")), "name": names[-1] + ".zip", "size": 3,
+        "device": None, "created": None, "saved": None, "side": None, "counts": None}
+
+
+def test_side_backups_api_and_restore(pair, monkeypatch):
+    import time
+    from fastapi.testclient import TestClient
+    from sidecar.app import app
+    from sidecar import deps
+    from sidecar.jobs import JobManager
+
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    a.update(identity, note="A")
+    run(a, remote)
+    b.update(identity, note="B")
+    run(b, remote)
+    head = sync.revision_heads(remote.items)[0]["id"]
+    run(b, remote, choice="local", expected_heads=[head])
+    monkeypatch.setattr(deps, "get_data_dir", lambda: b.root)
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
+    monkeypatch.setattr(deps, "job_manager", JobManager())
+    with TestClient(app) as client:
+        response = client.get("/api/drive/side-backups").json()
+        assert response["limit"] == sync.SIDE_BACKUP_LIMIT
+        kept = response["items"]
+        assert [item["side"] for item in kept] == ["remote"]
+        # The usual restore: settings kept unless asked, the schema checked, and the next sync asks first.
+        job_id = client.post("/api/restore", json={"path": kept[0]["path"], "import_settings": False}).json()["job_id"]
+        deadline = time.monotonic() + 10
+        while deps.job_manager.get_job(job_id).running and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert deps.job_manager.get_job(job_id).status == "succeeded"
+    assert Library(b.root).paper(identity)["note"] == "A"
+    assert sync.status(b.root)["restored"] is True
+
+
+def test_a_choice_stopped_before_publishing_keeps_nothing_set_aside(pair, monkeypatch):
+    from papeer.providers import Cancelled
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    a.update(identity, note="A")
+    run(a, remote)
+    b.update(identity, note="B")
+    assert run(b, remote)["status"] == "conflict"
+    head = sync.revision_heads(remote.items)[0]["id"]
+
+    def cancelled(*_args):
+        raise Cancelled("stopped")
+
+    monkeypatch.setattr(remote, "upload", cancelled)
+    with pytest.raises(Cancelled):
+        run(b, remote, choice=head, expected_heads=[head])
+    # Offered again, and set aside anew then.
+    assert sync.side_backups(b.root) == []
+    assert b.paper(identity)["note"] == "B"
+
+
+def test_this_pcs_library_can_be_chosen_over_a_damaged_revision(pair):
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    a.update(identity, note="A")
+    run(a, remote)
+    b.update(identity, note="B")
+    assert run(b, remote)["status"] == "conflict"
+    head = sync.revision_heads(remote.items)[0]
+    remote.data[head["id"]] = b"damaged"
+    result = run(b, remote, choice="local", expected_heads=[head["id"]])
+    assert result["status"] == "synced" and result["set_aside"] == []
+    expected = [{k: head[k] for k in ("id", "device", "created")}]
+    assert result["not_set_aside"] == expected
+    assert sync.status(b.root)["not_set_aside"] == expected
+    assert sync.side_backups(b.root) == []
+    assert Library(b.root).paper(identity)["note"] == "B"
+    assert sync.revision_heads(remote.items)[0]["parents"] == [head["id"]]
+    # Cleared by the next sync.
+    run(b, remote)
+    assert sync.status(b.root)["not_set_aside"] == []
+
+
+def test_a_full_drive_stops_setting_aside(pair, monkeypatch):
+    from papeer.core.fileio import InsufficientSpaceError
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    a.update(identity, note="A")
+    run(a, remote)
+    b.update(identity, note="B")
+    run(b, remote)
+    head = sync.revision_heads(remote.items)[0]["id"]
+
+    def full(*_args):
+        raise InsufficientSpaceError("空き容量が不足しています。")
+
+    monkeypatch.setattr(sync, "ensure_free_space", full)
+    count = len(remote.items)
+    with pytest.raises(InsufficientSpaceError):
+        run(b, remote, choice="local", expected_heads=[head])
+    assert len(remote.items) == count
+
+
+def test_pruning_spares_what_was_just_set_aside(tmp_path):
+    root = tmp_path / "library"
+    folder = sync.side_backup_folder(root)
+    folder.mkdir()
+    names = [f"2026010{n}-000000-abcdef-local.zip" for n in range(4)]
+    for name in names:
+        (folder / name).write_bytes(b"zip")
+    # Named earlier than the others (a clock set back, say), yet just made.
+    sync.prune_side_backups(root, keep=3, new=[folder / names[0]])
+    assert sorted(path.name for path in folder.glob("*.zip")) == [names[0], names[2], names[3]]
+
+
+def conflicted_pair(pair):
+    """b chose nothing yet between its note B and a's revision with note A."""
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    a.update(identity, note="A")
+    run(a, remote)
+    b.update(identity, note="B")
+    assert run(b, remote)["status"] == "conflict"
+    return b, identity, remote, sync.revision_heads(remote.items)[0]
+
+
+def test_failing_to_write_a_backup_on_this_pc_stops_the_choice(pair, monkeypatch, tmp_path):
+    b, identity, remote, head = conflicted_pair(pair)
+    # Not a damaged revision: the backup cannot be written here (a missing or locked folder, say).
+    monkeypatch.setattr(sync, "_new_side_backup", lambda _root, _side: tmp_path / "missing" / "kept.zip")
+    count = len(remote.items)
+    with pytest.raises(OSError):
+        run(b, remote, choice="local", expected_heads=[head["id"]])
+    assert len(remote.items) == count
+    assert sync.status(b.root)["conflicts"]
+
+
+def test_a_revision_cut_short_while_read_is_skipped(pair, monkeypatch):
+    b, identity, remote, head = conflicted_pair(pair)
+
+    class Truncated(io.BytesIO):
+        def read(self, *_args):
+            raise EOFError("compressed file ended before the end-of-stream marker was reached")
+
+    @contextmanager
+    def truncated(identity_):
+        yield Truncated(remote.data[identity_])
+
+    monkeypatch.setattr(remote, "open_library", truncated)
+    result = run(b, remote, choice="local", expected_heads=[head["id"]])
+    assert result["status"] == "synced" and [item["id"] for item in result["not_set_aside"]] == [head["id"]]
