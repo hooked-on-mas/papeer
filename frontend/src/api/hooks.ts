@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, apiRequest } from "./client";
 import type { Usage, UsageLimits } from "@/lib/usage";
 import type { PassageLocation } from "@/store";
+import type { StoredStatus } from "@/lib/paperStatus";
 import { QK } from "@/lib/queryKeys";
 
 export type PaperData = {
@@ -14,7 +15,8 @@ export type PaperData = {
   note?: string;
   tags?: string[];
   read_status?: string;
-  status?: string;
+  /** The stored translation state: a code, which storedStatusLabel (lib/paperStatus.ts) shows. */
+  status?: StoredStatus;
   has_article?: boolean;
   has_translated?: boolean;
   translated_count?: number;

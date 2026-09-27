@@ -243,7 +243,7 @@ class ParallelPaperTranslationTests(unittest.TestCase):
             report = PaperService(library, provider, threading.Event(), progress=messages.append).translate(identity)
             self.assertEqual(provider.calls, 3)
             self.assertEqual(report["translated_pages"], [1, 2, 3])
-            self.assertEqual(library.paper(identity)["status"], "翻訳済み")
+            self.assertEqual(library.paper(identity)["status"], "translated")
             self.assertEqual(translated_page_numbers(library.folder(identity), 3), [1, 2, 3])
             self.assertIn("翻訳 3/3（同時3件） — 指定ページの完了 3/3 ブロック", messages)
 

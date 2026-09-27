@@ -17,6 +17,7 @@ from papeer.core.bibliography import extract_bibliography
 import pymupdf as fitz
 from papeer.layout.math_layout import LAYOUT_VERSION
 from papeer.core.paths import PaperFiles, sync_state_path
+from papeer.core.translation_status import TranslationStatus, stored_status
 
 
 def normalize_collection_name(value: str) -> str:
@@ -195,6 +196,21 @@ def _highlights(db: sqlite3.Connection, _root: Path) -> None:
     db.execute("ALTER TABLE bookmarks ADD COLUMN rects TEXT NOT NULL DEFAULT '[]'")
 
 
+def _status_codes(db: sqlite3.Connection, _root: Path) -> None:
+    """Version 3: papers.status holds a TranslationStatus code instead of the Japanese label shown then.
+
+    Converted as translation_status.stored_status reads them, so a value that is neither (hand-edited)
+    becomes NOT_TRANSLATED. Rows are read through stored_status afterwards too: Papeer up to 0.2.0 opens
+    this database without checking its version and may still write a label. The column's default stays
+    the old label, as a column default cannot change in place; import_pdf states the code instead. The
+    same database always converts the same way, so PCs that synced it before updating publish the same
+    contents afterwards (drive_sync.sync: no conflict).
+    """
+    for (value,) in db.execute("SELECT DISTINCT status FROM papers").fetchall():
+        if (code := stored_status(value).value) != value:
+            db.execute("UPDATE papers SET status=? WHERE status=?", (code, value))
+
+
 # Schema migrations. PRAGMA user_version counts the steps a library database has been through.
 # To change the schema or convert stored values (a column, a table, an FTS index, status codes, ...),
 # append a function taking (db, library root) to MIGRATIONS. It runs once, on a database at exactly
@@ -208,7 +224,7 @@ def _highlights(db: sqlite3.Connection, _root: Path) -> None:
 # step that touches them must check whether they exist first (sqlite_master), unlike other tables.
 # Add a test in tests/test_schema_migration.py, and list any new columns in LATER_COLUMNS in
 # tests/_legacy_library.py (tests that make a current database look unversioned drop them).
-MIGRATIONS = [_baseline, _highlights]
+MIGRATIONS = [_baseline, _highlights, _status_codes]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 # The sidecar opens a Library per request; concurrent first requests after an upgrade wait here
@@ -297,10 +313,11 @@ class Library:
             shutil.copyfile(source, PaperFiles(folder).original_pdf)
             atomic_write_json(PaperFiles(folder).document_json, info)
             with self.connection() as db:
-                db.execute("""INSERT INTO papers(id,sha256,title,original_name,pages,collection_name,first_author,publication_year,bibliography_version)
-                           VALUES(?,?,?,?,?,?,?,?,1)""",
+                db.execute("""INSERT INTO papers(id,sha256,title,original_name,pages,status,collection_name,first_author,publication_year,bibliography_version)
+                           VALUES(?,?,?,?,?,?,?,?,?,1)""",
                            (paper_id, digest, info["title"], original_name or source.name, info["page_count"],
-                            normalize_collection_name(collection_name), info["first_author"], info["publication_year"]))
+                            TranslationStatus.NOT_TRANSLATED.value, normalize_collection_name(collection_name),
+                            info["first_author"], info["publication_year"]))
                 if not db.execute("SELECT 1 FROM reading_status_choices WHERE name='未読'").fetchone():
                     db.execute("UPDATE papers SET read_status='' WHERE id=?", (paper_id,))
                 db.executemany("INSERT INTO pages(paper_id,number,text) VALUES(?,?,?)",
@@ -322,14 +339,19 @@ class Library:
             arguments += [query.strip()] * 8
         sql += " ORDER BY created_at DESC, id"
         with self.connection() as db:
-            return [dict(row, tags=json.loads(row["tags"])) for row in db.execute(sql, arguments)]
+            return [self._paper(row) for row in db.execute(sql, arguments)]
 
     def paper(self, paper_id: str) -> dict:
         with self.connection() as db:
             row = db.execute("SELECT * FROM papers WHERE id=?", (paper_id,)).fetchone()
         if not row:
             raise KeyError("論文が見つかりません。")
-        return dict(row, tags=json.loads(row["tags"]))
+        return self._paper(row)
+
+    @staticmethod
+    def _paper(row: sqlite3.Row) -> dict:
+        """A papers row as the API returns it, its translation state always a code (see _status_codes)."""
+        return dict(row, tags=json.loads(row["tags"]), status=stored_status(row["status"]).value)
 
     def collections(self) -> list[str]:
         with self.connection() as db:
@@ -380,6 +402,9 @@ class Library:
             raise ValueError("出版年は半角数字4桁で入力してください。")
         if "collection_name" in values:
             values["collection_name"] = normalize_collection_name(values["collection_name"])
+        if "status" in values:
+            # Raises ValueError for anything but a code (translation_status.translation_status decides it).
+            values["status"] = TranslationStatus(values["status"]).value
         with self.connection() as db:
             if values.get("read_status") and not db.execute(
                 "SELECT 1 FROM reading_status_choices WHERE name=?", (values["read_status"],)

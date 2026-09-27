@@ -3,6 +3,19 @@ import { wholeOcrPages } from "./translationIssues.ts";
 
 export type PaperStatus = "untranslated" | "translating" | "partial" | "paused" | "translated" | "review" | "failed" | "ocr";
 
+/** The translation state a paper's row keeps (PaperData.status, papeer/core/translation_status.py). */
+export type StoredStatus = "not_translated" | "translating" | "partial" | "resumable" | "incomplete" | "translated";
+
+const storedLabels: Record<StoredStatus, string> = {
+  not_translated: "未翻訳", translating: "翻訳中", partial: "一部翻訳済み",
+  resumable: "翻訳途中・再開可", incomplete: "翻訳未完了", translated: "翻訳済み",
+};
+
+/** The label of a stored state; "" for none, and an unknown code (a newer Papeer's) as it is. */
+export function storedStatusLabel(status: string | undefined): string {
+  return status ? storedLabels[status as StoredStatus] ?? status : "";
+}
+
 /** Counts are translated pages, never a job's paragraph-level progress counters. */
 export function paperTranslationStatus(paper: PaperData | null | undefined, translating: boolean, reading?: ReadingData | null) {
   const totalPages = reading?.page_count ?? paper?.pages ?? 0;
@@ -16,13 +29,13 @@ export function paperTranslationStatus(paper: PaperData | null | undefined, tran
   const ocrPages = reading?.ocr_pages ? wholeOcrPages(reading).length : paper?.translation_ocr_count ?? 0;
   const needsReview = reading?.report
     ? !!(reading.report.skipped_blocks?.length || reading.report.skipped_pages?.length)
-    : paper?.translation_has_issues ?? (pages === totalPages && paper?.status === "一部翻訳済み");
+    : paper?.translation_has_issues ?? (pages === totalPages && paper?.status === "partial");
   let status: PaperStatus;
   if (translating) status = "translating";
   else if (paused) status = "paused";
   else if (pages > 0 && completed >= pages) status = needsReview ? "review" : "translated";
   else if (completed > 0) status = "partial";
-  else if (paper?.status === "翻訳未完了") status = "failed";
+  else if (paper?.status === "incomplete") status = "failed";
   else if (pages === 0 && ocrPages > 0) status = "ocr";
   else status = "untranslated";
   const text = { untranslated: "未翻訳", translating: "翻訳中", partial: "一部翻訳", paused: "中断・再開可", translated: "翻訳完了", review: "訳文に未翻訳あり", failed: "翻訳未完了", ocr: "要OCR" }[status];

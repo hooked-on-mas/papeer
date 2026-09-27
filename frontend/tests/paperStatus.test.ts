@@ -1,24 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { paperTranslationStatus } from "../src/lib/paperStatus.ts";
+import { paperTranslationStatus, storedStatusLabel } from "../src/lib/paperStatus.ts";
 import type { OcrPage, PaperData, ReadingData } from "../src/api/hooks.ts";
 
 const paper: PaperData = { id: "paper", title: "Paper", pages: 12, translated_count: 0 };
 
 test("distinguishes untranslated, partial, completed, and incomplete text", () => {
   assert.equal(paperTranslationStatus(paper, false).status, "untranslated");
-  const partial = paperTranslationStatus({ ...paper, translated_count: 4, status: "一部翻訳済み" }, false);
+  const partial = paperTranslationStatus({ ...paper, translated_count: 4, status: "partial" }, false);
   assert.equal(partial.status, "partial");
   assert.equal(partial.count, "4/12ページ");
   assert.equal(paperTranslationStatus({ ...paper, translated_count: 12 }, false).status, "translated");
-  assert.equal(paperTranslationStatus({ ...paper, translated_count: 12, status: "一部翻訳済み" }, false).status, "review");
+  assert.equal(paperTranslationStatus({ ...paper, translated_count: 12, status: "partial" }, false).status, "review");
 });
 
 test("unfinished previews do not imply a running job, even if all pages are saved", () => {
   const interrupted = { ...paper, translation_in_progress: true, translated_count: 12 };
   assert.equal(paperTranslationStatus(interrupted, false).status, "paused");
   assert.equal(paperTranslationStatus(interrupted, true).status, "translating");
-  assert.equal(paperTranslationStatus({ ...paper, status: "翻訳未完了" }, false).status, "failed");
+  assert.equal(paperTranslationStatus({ ...paper, status: "incomplete" }, false).status, "failed");
 });
 
 test("reader uses the current page data instead of stale library counts", () => {
@@ -36,7 +36,7 @@ test("unknown page counts never imply completion or NaN progress", () => {
 });
 
 test("library and reader count translation targets rather than preserved reference pages", () => {
-  const complete = { ...paper, pages: 13, translated_count: 11, status: "一部翻訳済み",
+  const complete = { ...paper, pages: 13, translated_count: 11, status: "partial" as const,
     translation_required_count: 11, translation_completed_required_count: 11, translation_has_issues: false };
   const reading = { page_count: 13, completed_pages: Array.from({ length: 11 }, (_, i) => i + 1),
     translation_required_pages: Array.from({ length: 11 }, (_, i) => i + 1), in_progress: false, report: null } as ReadingData;
@@ -76,3 +76,17 @@ function complete(): PaperData {
   return { ...paper, pages: 13, translated_count: 11, translation_required_count: 11,
     translation_completed_required_count: 11, translation_has_issues: false };
 }
+
+test("the stored translation state is a code, shown by its label", () => {
+  assert.equal(storedStatusLabel("not_translated"), "未翻訳");
+  assert.equal(storedStatusLabel("partial"), "一部翻訳済み");
+  assert.equal(storedStatusLabel("resumable"), "翻訳途中・再開可");
+  assert.equal(storedStatusLabel("incomplete"), "翻訳未完了");
+  assert.equal(storedStatusLabel("translated"), "翻訳済み");
+  assert.equal(storedStatusLabel(undefined), "");
+  // A code this version does not know (a newer Papeer's) is shown as it is rather than hidden.
+  assert.equal(storedStatusLabel("archived"), "archived");
+  // The stored state alone never makes a paper look finished: the saved pages decide.
+  assert.equal(paperTranslationStatus({ ...paper, status: "translated" }, false).status, "untranslated");
+  assert.equal(paperTranslationStatus({ ...paper, status: "resumable", translated_count: 3 }, false).status, "partial");
+});

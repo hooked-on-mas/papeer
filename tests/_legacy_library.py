@@ -87,7 +87,7 @@ def legacy_library(root: Path, stage: str = "oldest") -> str:
                    (identity,))
         db.execute("INSERT INTO collections VALUES('研究')")
         if stage == "middle":
-            db.execute("UPDATE papers SET tags=?, read_status='積読' WHERE id=?",
+            db.execute("UPDATE papers SET tags=?, read_status='積読', status='一部翻訳済み' WHERE id=?",
                        (json.dumps(["古いタグ"], ensure_ascii=False), identity))
     return identity
 

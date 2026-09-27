@@ -49,7 +49,7 @@ class ReviewPublishTests(unittest.TestCase):
         folder.mkdir(parents=True)
         with closing(sqlite3.connect(root/'library.sqlite3')) as db:
             db.execute('CREATE TABLE papers (id TEXT PRIMARY KEY, status TEXT)')
-            db.execute('INSERT INTO papers VALUES (?, ?)', (folder.name, '一部翻訳済み'))
+            db.execute('INSERT INTO papers VALUES (?, ?)', (folder.name, 'partial'))
             db.commit()
         for name, prefix in [('original.pdf', 'Original'), ('translated.pdf', 'Previous')]:
             with fitz.open() as pdf:
@@ -82,7 +82,7 @@ class ReviewPublishTests(unittest.TestCase):
             self.assertFalse((Path(receipts[0]['backup'])/'staged').exists())
             self.assertEqual(translated_page_numbers(folder,3),[1,2,3])
             with closing(sqlite3.connect(root/'library.sqlite3')) as db:
-                self.assertEqual(db.execute('SELECT status FROM papers').fetchone()[0], '翻訳済み')
+                self.assertEqual(db.execute('SELECT status FROM papers').fetchone()[0], 'translated')
             self.assertEqual(translated_page(folder,1),(folder/'translated.pdf',1))
             md=(folder/'translation.md').read_text('utf8')
             self.assertIn('Keep first',md); self.assertIn('Keep last',md); self.assertNotIn('Remove old',md)

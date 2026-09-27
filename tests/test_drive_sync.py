@@ -308,6 +308,8 @@ def test_revision_from_before_schema_versioning_is_taken_and_migrated(pair, tmp_
     lib = Library(b.root)
     assert database_version(b.root / "library.sqlite3") == SCHEMA_VERSION
     assert (lib.paper(identity)["tags"], lib.paper(identity)["bibliography_version"]) == (["古いタグ"], 1)
+    # The old PC stored the label of the translation state; opened here, it is a code.
+    assert lib.paper(identity)["status"] == "partial"
     # The choice republishes the old archive as it is, under its own version and hash.
     merged = remote.items[-1]
     assert (merged["schema_version"], merged["hash"]) == (0, remote.items[0]["hash"])
@@ -618,6 +620,39 @@ def test_pcs_updated_to_the_same_migration_do_not_conflict(pair, monkeypatch):
     b.update(identity, note="after the update")
     run(b, remote)
     assert run(a, remote)["reloaded"] is True
+
+
+def test_pcs_updated_to_status_codes_do_not_conflict(tmp_path, monkeypatch):
+    """The real conversion of stored labels (storage._status_codes): both PCs convert the synced library
+    the same way, so the second one to sync after updating finds it already published."""
+    from papeer.core import reading_tools, storage
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "device-state"))
+    migrations = storage.MIGRATIONS
+
+    def schema(steps):
+        monkeypatch.setattr(storage, "MIGRATIONS", steps)
+        for module in (storage, sync, reading_tools):
+            monkeypatch.setattr(module, "SCHEMA_VERSION", len(steps))
+
+    schema(migrations[:migrations.index(storage._status_codes)])
+    a, b = Library(tmp_path / "a"), Library(tmp_path / "b")
+    for lib in (a, b):
+        sync.save_state(lib.root, {"connected": True})
+    identity, _ = a.import_pdf(Path(__file__).parent / "fixtures/sample.pdf")
+    with a.connection() as db:
+        db.execute("UPDATE papers SET status='翻訳途中・再開可' WHERE id=?", (identity,))
+    remote = MemoryDrive()
+    connect_pair(a, b, remote)
+    schema(migrations)
+    a, b = Library(a.root), Library(b.root)
+    assert a.paper(identity)["status"] == b.paper(identity)["status"] == "resumable"
+    assert sync.fingerprint(a) == sync.fingerprint(b) != sync.read_state(a.root)["hash"]
+    count = len(remote.items)
+    assert run(a, remote)["status"] == "synced"
+    assert len(remote.items) == count + 1
+    result = run(b, remote)
+    assert (result["status"], result["reloaded"]) == ("synced", False)
+    assert len(remote.items) == count + 1
 
 
 # Backing out of a review without losing anything: the usual choice of a whole library, with the review's heads.

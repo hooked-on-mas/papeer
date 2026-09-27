@@ -17,6 +17,7 @@ from papeer.core import storage
 from papeer.core.drive_sync import fingerprint
 from papeer.core.reading_tools import create_backup, restore_backup
 from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, database_version
+from papeer.core.translation_status import LEGACY_LABELS, TranslationStatus
 
 SAMPLE_PDF = Path(__file__).parent / "fixtures" / "sample.pdf"
 
@@ -58,6 +59,8 @@ def test_libraries_from_before_versioning_reach_the_current_schema(tmp_path, sta
     assert lib.bookmarks(identity)[0]["quote"] == "quote"
     assert (lib.bookmarks(identity)[0]["anchor_x"], lib.bookmarks(identity)[0]["anchor_y"]) == (0, 0)
     assert "引用" in lib.tag_choices("sticky")
+    # The label stored then is a code now.
+    assert paper["status"] == {"oldest": "not_translated", "middle": "partial"}[stage]
     if stage == "middle":
         # The user's own choices and values are kept, not replaced by the defaults.
         assert lib.reading_statuses() == ["未読", "積読"]
@@ -183,23 +186,49 @@ def test_concurrent_first_opens_migrate_once(tmp_path, monkeypatch):
 
 
 def test_a_later_step_runs_once_on_top_of_the_current_version(tmp_path, monkeypatch):
-    # How a later change (status codes, a new column, a search index) is added.
+    # How a later change (a new column, a search index, converted values) is added.
     lib = Library(tmp_path / "library")
     identity, _ = lib.import_pdf(SAMPLE_PDF)
-    lib.update(identity, status="翻訳済み")
     calls = []
 
-    def status_codes(db, root):
+    def opened_at(db, root):
         calls.append(root)
-        db.execute("UPDATE papers SET status='translated' WHERE status='翻訳済み'")
+        db.execute("ALTER TABLE papers ADD COLUMN opened_at TEXT NOT NULL DEFAULT ''")
+        db.execute("UPDATE papers SET opened_at='never'")
 
-    monkeypatch.setattr(storage, "MIGRATIONS", [*storage.MIGRATIONS, status_codes])
+    monkeypatch.setattr(storage, "MIGRATIONS", [*storage.MIGRATIONS, opened_at])
     monkeypatch.setattr(storage, "SCHEMA_VERSION", len(storage.MIGRATIONS))
     Library(lib.root)
     Library(lib.root)
     assert calls == [lib.root]
     assert database_version(lib.root / "library.sqlite3") == SCHEMA_VERSION + 1
-    assert Library(lib.root).paper(identity)["status"] == "translated"
+    assert Library(lib.root).paper(identity)["opened_at"] == "never"
+
+
+def before_status_codes(monkeypatch) -> None:
+    """Libraries opened from here on stop before storage._status_codes, keeping the labels as stored."""
+    step = storage.MIGRATIONS.index(storage._status_codes)
+    monkeypatch.setattr(storage, "MIGRATIONS", storage.MIGRATIONS[:step])
+    monkeypatch.setattr(storage, "SCHEMA_VERSION", step)
+
+
+def test_translation_states_stored_as_labels_become_codes(tmp_path, monkeypatch):
+    before_status_codes(monkeypatch)
+    lib = Library(tmp_path / "library")
+    # Each label Papeer stored, a code already written (tools/review_publish writes the database directly),
+    # and a hand-edited value.
+    values = [*LEGACY_LABELS, "translated", "謎の状態"]
+    with lib.connection() as db:
+        for number, value in enumerate(values):
+            db.execute("INSERT INTO papers(id,sha256,title,original_name,pages,status) VALUES(?,?,'T','t.pdf',1,?)",
+                       (f"{number:032x}", f"sha-{number}", value))
+    monkeypatch.undo()
+    lib = Library(lib.root)
+    assert database_version(lib.root / "library.sqlite3") == SCHEMA_VERSION
+    assert [lib.paper(f"{number:032x}")["status"] for number in range(len(values))] == [
+        "not_translated", "translating", "partial", "resumable", "incomplete", "translated",
+        "translated", "not_translated"]
+    assert {paper["status"] for paper in lib.papers()} <= set(TranslationStatus)
 
 
 def test_a_library_from_a_newer_papeer_is_refused(tmp_path, monkeypatch):

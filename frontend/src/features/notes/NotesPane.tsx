@@ -11,6 +11,7 @@ import { showError } from "@/components/errorDialog";
 import { ReadingOrganization } from "./ReadingOrganization";
 import { NoteTemplates } from "./NoteTemplates";
 import { registerPendingSaves } from "@/lib/pendingSaves";
+import { storedStatusLabel } from "@/lib/paperStatus";
 import { QK } from "@/lib/queryKeys";
 
 /** Memo saves of the open panes, flushed before closing or backing up. */
@@ -37,7 +38,7 @@ export function NotesPane({ compact = false }: { compact?: boolean }) {
 }
 
 function metaLines(paper: PaperData, reading: ReadingData | null | undefined): { text: string; title?: string }[] {
-  const lines: { text: string; title?: string }[] = [{ text: `${paper.pages ?? "?"} ページ / ${paper.status ?? ""}` }];
+  const lines: { text: string; title?: string }[] = [{ text: `${paper.pages ?? "?"} ページ / ${storedStatusLabel(paper.status)}` }];
   if (reading?.empty_pages?.length) lines.push({ text: `文字のないページ: ${reading.empty_pages.join(", ")}` });
   const ocr = reading?.ocr_pages ?? [];
   const whole = ocr.filter(entry => entry.reason !== "partial").map(entry => entry.page);
