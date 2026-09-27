@@ -58,6 +58,10 @@ before(async () => {
     useInkPanes: (await load("/src/features/reader/useInkEditor.ts")).useInkPanes,
     SelectionToolbarView: (await load("/src/features/reader/SelectionToolbar.tsx")).SelectionToolbarView,
     StickyNotesTab: (await load("/src/features/reader/StickyNotesTab.tsx")).StickyNotesTab,
+    LibrarySidebar: (await load("/src/features/library/LibrarySidebar.tsx")).LibrarySidebar,
+    useTreeFocus: (await load("/src/features/library/treeFocus.ts")).useTreeFocus,
+    usePaperSelection: (await load("/src/features/library/selectionStore.ts")).usePaperSelection,
+    useBulkProgress: (await load("/src/app/bulkState.ts")).useBulkProgress,
   };
 });
 
@@ -72,9 +76,9 @@ const reading = {
 };
 
 /**
- * Renders `element` with the store's state, and the writing panes' (`inkPanes`), set as given. Server
- * rendering reads a store's initial state, which is put back afterwards so that no test sees another's.
- * `queries` are [key, data] pairs put in the query cache besides the paper's reading data.
+ * Renders `element` with the store's state, and the writing panes' (`inkPanes`), set as given, and
+ * `queries` ([key, data] pairs) in the query cache besides the paper's reading. Server rendering reads
+ * a store's initial state, which is put back afterwards so that no test sees another's.
  */
 function render(element, state, inkPanes = {}, queries = []) {
   const { React, server: { renderToString }, query: { QueryClient, QueryClientProvider }, useStore, useInkPanes } = modules;
@@ -202,4 +206,151 @@ test("the sticky-notes tab lists a highlight by its colour and offers to write t
   assert.match(html, /<mark[^>]*>the energy term<\/mark>/);
   assert.match(html, /メモに書き出す/);
   assert.match(html, /aria-label="付箋・ハイライトで絞り込み"/);
+});
+
+const libraryPapers = [
+  { id: "p1", title: "Attention Is All You Need", collection_name: "ML / NLP", pages: 10, translated_count: 4, tags: ["重要"], read_status: "読書中" },
+  { id: "p2", title: "Deep Residual Learning", collection_name: "ML", pages: 12, translated_count: 0 },
+  { id: "p3", title: "Unfiled Paper", collection_name: "", pages: 3, translated_count: 3 },
+];
+const libraryQueries = [
+  [["papers", "list", "", 0], libraryPapers],
+  [["collections"], ["ML", "ML / NLP", "Empty"]],
+];
+const libraryState = { selectedFolder: null, expandedCollections: null, librarySearch: "", sortOrder: 0 };
+
+test("the library renders its folder tree, with the open paper and its translation's progress", () => {
+  const html = render(modules.React.createElement(modules.LibrarySidebar), {
+    ...libraryState,
+    activeJobs: [
+      { job_id: "t1", paper_id: "p1", kind: "translate", status: "running" },
+      { job_id: "a1", paper_id: "p2", kind: "article", status: "running" },
+    ],
+  }, {}, libraryQueries);
+  // Folders, each with its count including subfolders, and 未分類 last.
+  const folders = [...html.matchAll(/data-tree-key="folder:([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(folders, ["Empty", "ML", "ML / NLP", ""]);
+  assert.match(html, /<span class="flex-1 truncate">ML<\/span><span[^>]*>2<\/span>/);
+  assert.match(html, /id="paper-row-p1"[^>]*class="[^"]*bg-accent /);
+  assert.doesNotMatch(html, /id="paper-row-p2"[^>]*class="[^"]*bg-accent /);
+  // The paper being translated shows its progress; the one with another job, 「AI処理中」.
+  assert.match(html, /role="progressbar" aria-label="訳文を保存済みのページ"[^>]*aria-valuenow="4"/);
+  assert.match(html, /· AI処理中/);
+  assert.match(html, />3(<!-- -->)? 件の論文</);
+});
+
+/** The opening tag of the element whose attributes match `pattern`. */
+function openingTag(html, pattern) {
+  const tag = html.match(new RegExp(`<[a-z]+\\s[^>]*${pattern}[^>]*>`))?.[0];
+  assert.ok(tag, `no tag with ${pattern}`);
+  return tag;
+}
+
+test("the library tree is a tree of treeitems for assistive technology, and one row takes the Tab key", () => {
+  const { React, LibrarySidebar, useTreeFocus } = modules;
+  // Set by an effect in the app, which the server doesn't run; it reads the store's initial state.
+  const initial = useTreeFocus.getInitialState();
+  const saved = initial.tabStop;
+  initial.tabStop = "paper:p2";
+  let html;
+  try {
+    html = render(React.createElement(LibrarySidebar), libraryState, {}, libraryQueries);
+  } finally {
+    initial.tabStop = saved;
+  }
+  assert.match(html, /<div role="tree" aria-label="ライブラリ" aria-multiselectable="true">/);
+  const ml = openingTag(html, 'data-tree-key="folder:ML"');
+  assert.match(ml, /role="treeitem"/);
+  assert.match(ml, /aria-level="1"/);
+  assert.match(ml, /aria-expanded="true"/);
+  assert.match(ml, /aria-selected="false"/);
+  assert.match(ml, /aria-label="ML（2件）"/);
+  assert.match(openingTag(html, 'data-tree-key="folder:ML / NLP"'), /aria-level="2"/);
+  // A folder's contents are its group, which the row owns since it is the row's sibling in the page.
+  const group = ml.match(/aria-owns="([^"]+)"/)?.[1];
+  assert.ok(group);
+  assert.ok(html.includes(`<div role="group" id="${group}">`));
+  // A folder with nothing in it is neither open nor closed.
+  const empty = openingTag(html, 'data-tree-key="folder:Empty"');
+  assert.doesNotMatch(empty, /aria-expanded|aria-owns/);
+  // Titles give a subfolder's full path, but not a top folder's name again.
+  assert.doesNotMatch(ml, /title=/);
+  assert.match(openingTag(html, 'data-tree-key="folder:ML / NLP"'), /title="ML \/ NLP"/);
+  assert.match(openingTag(html, 'data-tree-key="folder:"'), /title="フォルダー未指定のPDF"/);
+
+  const open = openingTag(html, 'id="paper-row-p1"');
+  assert.match(open, /role="treeitem"/);
+  assert.match(open, /aria-level="3"/);
+  assert.match(open, /aria-selected="true"/);
+  assert.doesNotMatch(open, /aria-roledescription|aria-pressed/);
+  // Roving tabindex: only the row that takes the Tab key is in the Tab order, and no button in a row is.
+  assert.match(openingTag(html, 'id="paper-row-p2"'), /tabindex="0"/);
+  assert.match(open, /tabindex="-1"/);
+  assert.match(ml, /tabindex="-1"/);
+  const tree = html.slice(html.indexOf('<div role="tree"'));
+  assert.equal(tree.match(/tabindex="0"/g)?.length, 1);
+  // Buttons are in the Tab order unless taken out: the folders' ▸, the tags.
+  const buttons = tree.match(/<button[^>]*>/g) ?? [];
+  assert.ok(buttons.length >= 5);
+  for (const button of buttons) assert.match(button, /tabindex="-1"/);
+  assert.match(openingTag(tree, 'title="重要で絞り込み"'), /tabindex="-1"/);
+  // The rows show a ring when focused from the keyboard.
+  assert.match(open, /focus-visible:outline-2/);
+  assert.match(ml, /focus-visible:outline-ring/);
+});
+
+test("the library shows the papers selected together apart from the open one, and how many", () => {
+  const { React, LibrarySidebar, usePaperSelection } = modules;
+  // Selected with Ctrl or Shift in the app; the server reads the store's initial state.
+  const initial = usePaperSelection.getInitialState();
+  const saved = { ...initial };
+  Object.assign(initial, { ids: new Set(["p2", "p3"]), anchor: "paper:p2" });
+  let html;
+  try {
+    html = render(React.createElement(LibrarySidebar), { ...libraryState, selectedFolder: null }, {}, libraryQueries);
+  } finally {
+    Object.assign(initial, saved);
+  }
+  assert.match(html, /<div role="tree" aria-label="ライブラリ" aria-multiselectable="true">/);
+  for (const id of ["p2", "p3"]) {
+    const row = openingTag(html, `id="paper-row-${id}"`);
+    assert.match(row, /aria-selected="true"/);
+    assert.match(row, /class="[^"]*\bbg-accent\b/);
+  }
+  // The open paper, not among them, is not selected but keeps its mark.
+  const open = openingTag(html, 'id="paper-row-p1"');
+  assert.match(open, /aria-selected="false"/);
+  assert.doesNotMatch(open, /\bbg-accent\b/);
+  assert.match(open, /\bborder-primary\b/);
+  assert.match(open, /aria-current="true"/);
+  assert.doesNotMatch(openingTag(html, 'id="paper-row-p2"'), /aria-current/);
+  // Folders are not selected with papers.
+  for (const tag of html.match(/<div[^>]*data-tree-key="folder:[^"]*"[^>]*>/g) ?? []) assert.match(tag, /aria-selected="false"/);
+  assert.match(html, /· (<!-- -->)?2(<!-- -->)? 件を選択中/);
+  assert.match(html, /title="複数選択を解除します（一覧で Esc）"/);
+  // Put back for the next render.
+  assert.equal(usePaperSelection.getInitialState().ids, null);
+});
+
+test("without papers selected together, the open paper is the selected row and nothing is counted", () => {
+  const html = render(modules.React.createElement(modules.LibrarySidebar), libraryState, {}, libraryQueries);
+  assert.match(openingTag(html, 'id="paper-row-p1"'), /aria-selected="true"/);
+  assert.match(openingTag(html, 'id="paper-row-p2"'), /aria-selected="false"/);
+  assert.doesNotMatch(html, /件を選択中/);
+});
+
+test("while an action on several papers runs, the library shows its progress with a button that stops it", () => {
+  const { React, LibrarySidebar, useBulkProgress } = modules;
+  const initial = useBulkProgress.getInitialState();
+  const saved = initial.progress;
+  initial.progress = { label: "「ML」へ移動中", ran: 2, total: 5, stopping: false };
+  let html;
+  try {
+    html = render(React.createElement(LibrarySidebar), libraryState, {}, libraryQueries);
+  } finally {
+    initial.progress = saved;
+  }
+  // React separates the text's parts with comments.
+  assert.ok(html.replaceAll("<!-- -->", "").includes("「ML」へ移動中…（3/5）"));
+  assert.match(html, /<button[^>]*title="送信中の 1 件が終わったところで止めます。残りは処理しません。"[^>]*>中止<\/button>/);
 });

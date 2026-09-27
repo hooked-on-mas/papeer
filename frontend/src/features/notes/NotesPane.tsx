@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Eye, FolderOpen, NotebookPen, Pencil, Save } from "lucide-react";
+import { Copy, Eye, FolderOpen, NotebookPen, Pencil, Save } from "lucide-react";
 import { useStore } from "@/store";
 import { apiRequest } from "@/api/client";
 import { useCollections, usePaper, useReading, type PaperData, type ReadingData } from "@/api/hooks";
 import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
-import { normalizeCollection, openPaperFolder } from "@/app/actions";
+import { copyBibtex, normalizeCollection, openPaperFolder } from "@/app/actions";
 import { showError } from "@/components/errorDialog";
 import { ReadingOrganization } from "./ReadingOrganization";
 import { NoteTemplates } from "./NoteTemplates";
@@ -58,6 +58,9 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [year, setYear] = useState("");
+  const [venue, setVenue] = useState("");
+  const [doi, setDoi] = useState("");
+  const [arxivId, setArxivId] = useState("");
   const [collection, setCollection] = useState("");
   const [formDirty, setFormDirty] = useState(false);
   const [savingMeta, setSavingMeta] = useState(false);
@@ -76,6 +79,9 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
     setTitle(paper.title ?? "");
     setAuthor(paper.first_author ?? "");
     setYear(paper.publication_year ?? "");
+    setVenue(paper.venue ?? "");
+    setDoi(paper.doi ?? "");
+    setArxivId(paper.arxiv_id ?? "");
     setCollection(paper.collection_name ?? "");
   }, [paper, formDirty]);
 
@@ -162,7 +168,8 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
     try {
       const previous = await apiRequest<PaperData>("GET", `/api/papers/${paperId}`);
       await apiRequest("PATCH", `/api/papers/${paperId}`, {
-        title: title.trim(), author, year: year.trim(), collection: collection.trim(),
+        title: title.trim(), author, year: year.trim(), venue: venue.trim(), doi: doi.trim(), arxiv_id: arxivId.trim(),
+        collection: collection.trim(),
       });
       setFormDirty(false);
       const store = useStore.getState();
@@ -211,6 +218,15 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
             <Input id="meta-author" value={author} onChange={edit(setAuthor)} placeholder="例：Smith / 山田太郎" />
             <label htmlFor="meta-year">出版年</label>
             <Input id="meta-year" value={year} onChange={edit(setYear)} maxLength={4} placeholder="例：2024（不明なら空欄）" />
+            <label htmlFor="meta-venue">掲載誌</label>
+            <Input id="meta-venue" value={venue} onChange={edit(setVenue)} maxLength={300} placeholder="例：IEEE Transactions on …（会議名も可）" />
+            <label htmlFor="meta-doi">DOI</label>
+            <Input id="meta-doi" value={doi} onChange={edit(setDoi)} maxLength={500} placeholder="例：10.1000/xyz123" spellCheck={false} />
+            <label htmlFor="meta-arxiv">arXiv ID</label>
+            <Input id="meta-arxiv" value={arxivId} onChange={edit(setArxivId)} maxLength={200} placeholder="例：2101.00001" spellCheck={false} />
+            <p className="col-span-2 text-[0.75rem] text-muted-foreground">
+              掲載誌・DOI・arXiv ID は、追加時に PDF から読み取った値が初期値です（インターネットでは調べません）。BibTeX に使います。
+            </p>
             <label htmlFor="meta-folder">フォルダー</label>
             <Input id="meta-folder" value={collection} onChange={edit(setCollection)} list="collection-options" placeholder="例：制御工学 / 読書会" />
             <datalist id="collection-options">
@@ -225,6 +241,15 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
               className="col-span-2 flex items-center justify-center gap-1.5 h-8 rounded-md bg-primary text-primary-foreground font-medium hover:opacity-90 disabled:opacity-50"
             >
               <Save className="w-4 h-4" /> 論文情報・フォルダーを保存
+            </button>
+            <button
+              type="button"
+              onClick={() => void copyBibtex([paperId])}
+              disabled={formDirty}
+              title={formDirty ? "論文情報を保存するとコピーできます" : undefined}
+              className="col-span-2 flex items-center justify-center gap-1.5 h-8 rounded-md border hover:bg-muted disabled:opacity-50"
+            >
+              <Copy className="w-4 h-4" /> BibTeX をコピー
             </button>
           </form>
         </section>

@@ -6,6 +6,7 @@ import { EMPTY_HISTORY, type ReaderHistory } from "@/features/reader/readerHisto
 import { pageFilterOf, type PageFilter } from "@/features/reader/pageAppearance";
 import { openBesideReader, tabChange, type SidePanel } from "@/features/reader/sidePanel";
 import { mergePersisted, migratePersisted, PERSIST_VERSION } from "./persisted";
+import { upsertJob } from "@/features/jobs/jobSelectors";
 
 export { ZOOM_FIT_PAGE, ZOOM_LEVELS, ZOOM_PRESETS } from "@/features/reader/zoomLevels";
 
@@ -25,7 +26,13 @@ export interface MoveRecord {
   to: string;
 }
 
-export type LibraryUndoRecord = MoveRecord | { kind: "delete-folder"; path: string; token: string };
+/** Several papers moved at once (selected, or dragged together), undone together. */
+export interface MovePapersRecord {
+  kind: "move-papers";
+  moves: MoveRecord[];
+}
+
+export type LibraryUndoRecord = MoveRecord | MovePapersRecord | { kind: "delete-folder"; path: string; token: string };
 
 /** Text handed from the reader to the チャット or メモ tab, used once by that paper's pane. */
 export interface PaperHandoff {
@@ -231,11 +238,7 @@ export const useStore = create<UiState>()(
       setReaderJump: (readerJump) => set({ readerJump }),
       setReaderHistory: (readerHistory) => set({ readerHistory }),
 
-      addJob: (job) => set((state) => ({
-        activeJobs: state.activeJobs.some((j) => j.job_id === job.job_id)
-          ? state.activeJobs.map((j) => j.job_id === job.job_id ? { ...j, ...job } : j)
-          : [...state.activeJobs, job],
-      })),
+      addJob: (job) => set((state) => ({ activeJobs: upsertJob(state.activeJobs, job) })),
       removeJob: (job_id) => set((state) => ({
         activeJobs: state.activeJobs.filter(j => j.job_id !== job_id)
       })),
@@ -269,10 +272,5 @@ function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T
   return rest;
 }
 
-export function isRunning(job: Job): boolean {
-  return (job.status ?? "running") === "running";
-}
-
-export function paperBusy(jobs: Job[], paperId: string | null): boolean {
-  return !!paperId && jobs.some((j) => isRunning(j) && j.paper_id === paperId);
-}
+// Components select a boolean, a count or one job through these rather than activeJobs itself.
+export { isRunning, paperBusy } from "@/features/jobs/jobSelectors";
