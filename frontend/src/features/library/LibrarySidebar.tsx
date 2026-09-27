@@ -405,7 +405,7 @@ function PendingRow({ item, depth }: { item: PendingImport; depth: number }) {
   return (
     <div
       ref={ref}
-      className="flex items-start py-1.5 border-l-2 border-transparent cursor-default text-muted-foreground"
+      className="flex items-start py-1 border-l-2 border-transparent cursor-default text-muted-foreground"
       style={{ paddingLeft: `${depth * 16 + 8}px`, paddingRight: "8px" }}
       title={`${item.name}
 追加中…`}
@@ -413,7 +413,7 @@ function PendingRow({ item, depth }: { item: PendingImport; depth: number }) {
       <Loader2 className="h-4 w-4 mr-2 mt-0.5 animate-spin text-primary shrink-0" />
       <div className="flex-1 min-w-0">
         <div className="truncate leading-5">{item.name}</div>
-        <div className="text-[11px] truncate tabular-nums">
+        <div className="mt-0.5 text-[10px] leading-4 truncate tabular-nums">
           {item.pages ? `${item.pages}ページ · ` : ""}追加中…
         </div>
       </div>
@@ -453,7 +453,7 @@ function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData
           data-drop-collection={collection}
           onClick={select}
           onKeyDown={(e) => { if (isDeleteKey(e)) { e.preventDefault(); void deletePaper(paper.id); } }}
-          className={`flex items-start py-2 cursor-pointer border-l-2 outline-none ${
+          className={`flex items-start py-1 cursor-pointer border-l-2 outline-none ${
             isActive ? "bg-accent border-primary" : "hover:bg-muted/60 border-transparent"
           } ${isDragging ? "opacity-40" : ""}`}
           style={{ paddingLeft: `${depth * 16 + 8}px`, paddingRight: "8px" }}
@@ -462,18 +462,20 @@ function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData
           <FileText className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="truncate leading-5">{paperDisplayName(paper)}</div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground tabular-nums">
-              <PaperStatusBadge status={translation.status} text={translation.text} description={translation.description} />
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] leading-4 text-muted-foreground tabular-nums">
+              <PaperStatusBadge status={translation.status} text={translation.text} description={translation.description}
+                hasSummary={!!paper.has_article} className="gap-1 [&>span:first-child]:py-0" />
               <span title={translation.description}>{translation.count}</span>
+              {showProgress && <div role="progressbar" aria-label="訳文を保存済みのページ" aria-valuemin={0} aria-valuemax={translation.pages}
+                aria-valuenow={translation.completed} aria-valuetext={translation.description} title={translation.description}
+                className="h-1 w-10 overflow-hidden rounded-full bg-muted-foreground/10">
+                <div className={`h-full rounded-full transition-[width] ${translating ? "bg-primary" : "bg-amber-500/60"}`} style={{ width: `${translation.progress}%` }} />
+              </div>}
+              <span aria-hidden="true">·</span>
+              <span>{paper.read_status || "未設定"}</span>
+              {running && !translating && <span className="text-primary">· AI処理中</span>}
             </div>
-            {showProgress && <div role="progressbar" aria-label="訳文を保存済みのページ" aria-valuemin={0} aria-valuemax={translation.pages}
-              aria-valuenow={translation.completed} aria-valuetext={translation.description} title={translation.description}
-              className="mt-1.5 h-1 max-w-40 overflow-hidden rounded-full bg-muted-foreground/10">
-              <div className={`h-full rounded-full transition-[width] ${translating ? "bg-primary" : "bg-amber-500/60"}`} style={{ width: `${translation.progress}%` }} />
-            </div>}
-            <div className="mt-1 text-[10px] text-muted-foreground">{paper.read_status || "未設定"}{paper.has_article && " · サマリーあり"}
-              {running && !translating && <span className="text-primary"> · AI処理中</span>}</div>
-            {!!paper.tags?.length && <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            {!!paper.tags?.length && <div className="mt-1 flex flex-wrap items-center gap-1 [&>span]:leading-4">
               {(allTags ? paper.tags : paper.tags.slice(0, 2)).map(name => <TagChip key={name} name={name} onClick={() => onTagSelect(name)} />)}
               {paper.tags.length > 2 && <button className="rounded px-1 text-[10px] text-muted-foreground hover:bg-muted" title={paper.tags.join("、")}
                 onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setAllTags(!allTags); }}>
