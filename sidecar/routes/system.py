@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from papeer import __version__
 from papeer.core.code_version import application_version
 from sidecar import deps
 from sidecar.schemas import HealthResponse, UIStateModel
@@ -19,8 +20,9 @@ router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
 @public.get("/health", response_model=HealthResponse)
 def health() -> dict[str, str]:
-    version = application_version()
-    return {"status": "ok", "version": version, "code_version": version}
+    # version: the app release (MAJOR.MINOR.PATCH, `just bump`); code_version: the translation code identity
+    # that keys the translation cache (code-version.txt in a build), which changes without a release.
+    return {"status": "ok", "version": __version__, "code_version": application_version()}
 
 
 # How long /shutdown lets cancelled jobs wind down (CLI subprocesses stopped, files closed) and

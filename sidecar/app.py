@@ -13,8 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from papeer import __version__
 from papeer.core.paths import app_env
-from papeer.core.code_version import application_version
 from papeer.translation import translation_preview
 from sidecar import deps
 from sidecar.routes import ai_jobs, drive, ink, papers, reading, settings, system
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="Papeer Sidecar",
-    version=application_version(),
+    version=__version__,
     lifespan=lifespan,
     # The API schema and its pages would be the only routes open without the token.
     docs_url=None,
@@ -118,17 +118,22 @@ class ProtectLibrarySnapshot:
 
 # Before CORS: the last middleware added runs first, so refusals get the CORS headers too.
 app.add_middleware(ProtectLibrarySnapshot)
+
+
+# The Tauri window's origins (macOS/Linux, then Windows). Only a development sidecar (`just dev-sidecar`,
+# which `tauri dev` talks to) also answers the Vite dev server the window, or a browser, loads the
+# frontend from; the packaged sidecar, a PyInstaller exe, serves the release build alone.
+APP_ORIGINS = ("tauri://localhost", "http://tauri.localhost", "https://tauri.localhost")
+DEV_ORIGINS = ("http://localhost:1420", "http://localhost:5173", "http://127.0.0.1:1420", "http://127.0.0.1:5173")
+
+
+def allowed_origins(packaged: bool) -> list[str]:
+    return list(APP_ORIGINS if packaged else APP_ORIGINS + DEV_ORIGINS)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "tauri://localhost",
-        "http://tauri.localhost",
-        "https://tauri.localhost",
-        "http://localhost:1420",
-        "http://localhost:5173",
-        "http://127.0.0.1:1420",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=allowed_origins(getattr(sys, "frozen", False)),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

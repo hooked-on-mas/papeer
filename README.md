@@ -44,8 +44,9 @@ frontend/         デスクトップ UI (Tauri 2 + React 19 + Tailwind v4)
   tests/          node:test によるフロントエンドのテスト
   src-tauri/      Tauri (Rust)。本番では sidecar を子プロセスとして起動
 tests/            pytest によるバックエンドのテスト
-tools/            翻訳レイアウトの検証用スクリプト (開発用)
+tools/            開発用スクリプト (翻訳レイアウトの検証・比較、掃除、版の更新など)
 docs/             仕様ドキュメント
+.github/          GitHub Actions (タグでインストーラーを作るリリース)
 ```
 
 フロントエンドは sidecar の REST API と WebSocket でバックエンドと通信します。本番ビルドでは Tauri が空きポートと起動ごとの認証トークンを決め、PyInstaller で単一 exe 化した sidecar を起動します。設計の背景は [DESIGN-REWRITE.md](DESIGN-REWRITE.md) と [DESIGN-UI.md](DESIGN-UI.md) にあります。
@@ -99,10 +100,86 @@ just build
 
 1. `code-version.txt`（翻訳キャッシュの識別値）を生成する
 2. PyInstaller で `sidecar.spec` から `dist/sidecar-x86_64-pc-windows-msvc.exe` を作る
-3. その exe を `frontend/src-tauri/` へコピーする
-4. `pnpm tauri build` でインストーラーを作る
+3. その exe を `just smoke-sidecar` と同じ手順で試す（次節）。失敗したらここで止まる
+4. 試した exe を `frontend/src-tauri/` へコピーする
+5. `pnpm tauri build` でインストーラーを作る
 
 インストーラーは `frontend/src-tauri/target/release/bundle/` に出力されます。
+
+PyInstaller は依存グループ `build` にあり、`just build-sidecar` が `uv run --group build` で使います。
+
+### sidecar のスモークテスト
+
+`just smoke-sidecar`（`tools/smoke_sidecar.py`）は、`just build-sidecar` で作った exe を Tauri と同じように乱数のトークンと空きポートで起動し、次を確かめます。PyInstaller の `hiddenimports`・`datas` の漏れ（同梱し忘れたモジュール・プロンプト・フォント）は、ここで起動や翻訳の失敗として見つかります。
+
+1. `/health` が応答し、`version` がソースの版（`MAJOR.MINOR.PATCH`）、`code_version` がソースの翻訳コードの識別値と一致する（版か翻訳処理のコードが変わった後に exe を作り直していなければ失敗する。それ以外のコードの変更はどちらの値にも表れないため、ここでは見つからない）
+2. トークンなし・誤ったトークンは 401、正しいトークン（`Authorization` ヘッダーと `token` クエリ）は 200 になる
+3. 同梱のプロンプトが `papeer/core/prompts` と一致し、設定を保存できる
+4. `tests/fixtures/sample.pdf` を取り込み、テキストを抽出・検索できる
+5. その論文を翻訳し、同梱の日本語フォント（源ノ明朝）を埋め込んだ `translated.pdf` ができる。翻訳の依頼先は、スクリプトが `127.0.0.1` で動かす OpenAI 互換の代役サーバーで、実際の AI は呼ばず、PC の外にも通信しない
+6. `/shutdown` でプロセスが終了コード 0 で終わり、`_MEI*`（onefile の展開フォルダー）が残らない
+
+データフォルダー・`LOCALAPPDATA`・`TEMP` は毎回新しい一時フォルダーに向けるため、実際のライブラリや PC ごとの設定には触れません（`_MEI*` もその中に作られ、終了後に残っていないかを正確に確かめられます）。失敗すると、失敗した確認と sidecar のログの末尾を表示して終了コード 1 で終わります。どの場合も sidecar は止め（応答しなければ強制終了）、一時フォルダーは消します。`--keep` で一時フォルダー（データとログ）を残し、`--source` で exe の代わりに `python -m sidecar` を同じ手順で試せます（`tests/test_smoke_sidecar.py` はこちらを使い、exe なしでスクリプト自体を検査します）。`just build-sidecar`（`just build` とリリースのワークフローも使う）は exe を作った直後にこのテストを実行し、通った exe だけを `frontend/src-tauri/` へコピーします。
+
+`just clean` はリポジトリ直下の `build/`・`dist/`・`output/`・`tmp/` とその容量を一覧表示するだけで、`just clean yes` で削除します。それ以外のフォルダーは消しません。
+
+## リリース
+
+アプリの版は `MAJOR.MINOR.PATCH`（数字のみ）で、`pyproject.toml`・`papeer/__init__.py`・`frontend/package.json`・`frontend/src-tauri/tauri.conf.json`・`frontend/src-tauri/Cargo.toml` と、ロックファイル（`uv.lock`・`Cargo.lock`）の自パッケージの項目、`frontend/openapi.json` に同じ値を書きます。手で書き換えず `just bump` を使ってください（一致は `tests/test_version.py` で検査します）。`-beta` などの接尾辞は MSI が受け付けないため使えません。sidecar の `/health` は `version` にこの版を、`code_version` に翻訳キャッシュの識別値（翻訳処理のコードのハッシュ）を返し、ステータスバーには前者を表示します。
+
+1. 変更点を `CHANGELOG.md` の `[Unreleased]` に書く（日々の変更のたびに追記しておく。ブランチごとの追記は `.gitattributes` の `merge=union` で両方残るので、マージ後に重複と順序を確かめる）
+2. `just bump 0.3.0` で全ファイルの版を書き換え、`[Unreleased]` の内容を `[0.3.0] - 日付` の節に移す（版を下げる・`[Unreleased]` が空のときは何も変更せずに止まる）
+3. 差分を確認してコミットし、`git tag v0.3.0` を付けて、コミットとタグを push する
+
+タグ `v*` の push で `.github/workflows/release.yml` が動き、windows-latest 上で `just build`（sidecar の exe を含む）を実行して、NSIS のセットアップ（`.exe`）と MSI を下書きの GitHub Release に添付します。リリースノートは `CHANGELOG.md` の該当する節です。タグと全ファイルの版が一致しないときはビルドしません。内容を確かめてから GitHub 上で下書きを公開してください。ビルドするジョブはリポジトリの読み取り権限だけで動き、Release を作る後続のジョブだけが書き込み権限を持ちます。依存のキャッシュは使わず、毎回まっさらな状態からビルドします。
+
+MSI は Tauri が WiX Toolset v3 で作り、WiX v3 は Windows の VBScript（オプション機能）に依存します。GitHub のランナーや手元の PC で VBScript が無効・削除されていると MSI の作成に失敗するため、最初のリリースでは実機（または Actions の実行結果）で MSI と NSIS の両方ができ、インストールと起動ができることを確認してください。
+
+このワークフローは自動で発行される `GITHUB_TOKEN` だけを使い、追加のシークレットは不要です。インストーラーはコード署名をしていないため、初回の実行時に Windows SmartScreen の警告が出ます（署名する場合は証明書をシークレットに登録し、`tauri.conf.json` の `bundle.windows` に署名の設定を加えます）。自動更新は未対応です。
+
+## 依存ライブラリ
+
+### ライセンス台帳
+
+[docs/dependency-license-inventory.json](docs/dependency-license-inventory.json) に、ロックファイル（`uv.lock`・`frontend/pnpm-lock.yaml`・`frontend/src-tauri/Cargo.lock`）にあるすべての依存の版・宣言されたライセンス・本番/開発の区別と、同梱のフォント・PDFium などを記録しています。依存を追加・更新したら `just licenses`（`tools/license_inventory.py`）で作り直し、台帳もコミットしてください。
+
+- ネットワークは使いません。依存関係はロックファイルから、ライセンスは手元にインストール済みの情報（`.venv` の METADATA、`frontend/node_modules` の `package.json`、`cargo metadata --offline` で読む Cargo のキャッシュ）から読みます。先に `just setup` を実行し、Rust の crate は一度ビルドするか `frontend/src-tauri` で `cargo fetch` を実行して取得しておいてください。対象が Windows x64 なので Windows で実行します。
+- 台帳には元にしたロックファイルの sha256（`sourceFiles`）を記録します。直接依存もロックファイルに記録されるので、依存を変えればロックファイルが変わり、台帳を作り直すまで `tests/test_license_inventory.py` が失敗します（ツールの設定や scripts だけの変更では失敗しません）。`just licenses check` はこの一致だけを確かめます。
+- 並列のブランチで台帳がマージ時に衝突したら、どちらか片方を採ってから `just licenses` で作り直してください。
+- `just bump` は自パッケージの版しか変えないため、台帳が最新なら同時にハッシュを書き換えます（最新でなければ `just licenses` を促します）。
+- 他の OS/CPU 向けの optional バイナリなど、手元にインストールされないパッケージのライセンスは `unknown` になります。Windows で使うパッケージに `unknown` がないことはテストで確かめます。
+
+### 更新の通知（Dependabot）
+
+`.github/dependabot.yml` で、uv・npm（pnpm）・Cargo・GitHub Actions（SHA で固定したアクション）の更新を毎週月曜にまとめて Pull Request にします。まとめ方は次のとおりで、どのグループにも入らない major の更新は 1 つずつ出ます。
+
+| エコシステム | グループ |
+| --- | --- |
+| uv | `python`: すべての minor・patch |
+| npm（pnpm） | `tauri`: `@tauri-apps/*`（major も含む）、`frontend-production`: 本番依存の minor・patch、`frontend-development`: 開発依存の minor・patch |
+| Cargo | `tauri`: `tauri`・`tauri-*`（major も含む）、`rust`: すべての minor・patch |
+| GitHub Actions | `actions`: すべて（major も含む） |
+
+公開から 7 日たった版だけを提案します（脆弱性を直すセキュリティ更新はこの設定とは別で、GitHub のリポジトリ設定で有効にすると待たずに届きます）。Dependabot は台帳を作り直せないため、Pull Request のブランチで `just setup` と `just licenses` を実行して台帳をコミットしてください。tauri の crate と `@tauri-apps/*` は同じ minor にそろえる必要があるので、両方の「tauri」の Pull Request を一緒にマージします。
+
+### 脆弱性の確認
+
+```bash
+just audit              # Python・JavaScript・Rust をすべて確認
+just audit python rust  # 一部だけ確認
+```
+
+`tools/audit_dependencies.py` が次の 3 つを順に実行し、最後に結果をまとめます。すべて実行できて脆弱性がなければ終了コード 0、脆弱性が見つかった・実行に失敗した（ネットワークがないなど）・ツールがないときは 1 です。
+
+| 対象 | ツール | 外部との通信 |
+| --- | --- | --- |
+| Python（`uv.lock` の全グループ） | `uv export` の結果を `uvx pip-audit@2.10.1` で確認（版は `tools/audit_dependencies.py` の `PIP_AUDIT` で固定し、初回に uv が自動で取得） | 各依存の名前と版を PyPI の JSON API に問い合わせる |
+| JavaScript（`pnpm-lock.yaml`） | `pnpm audit` | 依存の名前と版の一覧を npm レジストリの監査 API に送る |
+| Rust（`Cargo.lock`） | `cargo audit`（`cargo install cargo-audit --locked` で導入。無ければ導入方法を表示して、ほかの確認は続ける） | RustSec のアドバイザリ DB を取得して手元で照合する（取り下げ済みの版を調べるため、crates.io のインデックスから各 crate の情報も取得する） |
+
+外部のアドバイザリ DB に送るのは依存の名前と版だけで、ライブラリ・論文・メモ・設定・API キーなどのユーザーデータは読みも送りもしません。Rust は他の OS 向けの crate も含めて `Cargo.lock` 全体を確認するため、Windows では使わない crate の指摘が出ることがあります。
+
+mermaid が使う chevrotain は脆弱性のある `lodash-es` 4.17.23 に固定しているため、`frontend/pnpm-workspace.yaml` の `overrides` で 4.18.1 以上に上げています（pnpm 12 は `package.json` の `pnpm` フィールドを読みません）。chevrotain が `lodash-es` の固定を 4.18.1 以上に上げたら、この上書きを外してください。
 
 ## AI 接続
 
@@ -194,7 +271,7 @@ PapeerSync/                   このPCだけの設定（同期・バックアッ
 
 Papeer のコードは AGPL-3.0-or-later で提供します。ライセンス本文は [LICENSE](LICENSE) です。
 
-同梱の源ノ明朝・源ノ角ゴシックは SIL Open Font License 1.1 です。出典は [papeer/core/assets/fonts/README.md](papeer/core/assets/fonts/README.md) を参照してください。PyMuPDF は AGPL または商用ライセンスで提供されています。その他の依存ライブラリはそれぞれのライセンスに従います。
+同梱の源ノ明朝・源ノ角ゴシックは SIL Open Font License 1.1 です。出典は [papeer/core/assets/fonts/README.md](papeer/core/assets/fonts/README.md) を参照してください。PyMuPDF は AGPL または商用ライセンスで提供されています。その他の依存ライブラリはそれぞれのライセンスに従います。依存ごとのライセンスは[ライセンス台帳](docs/dependency-license-inventory.json)（「依存ライブラリ」を参照）にまとめています。
 
 ### 旧名称との互換性
 

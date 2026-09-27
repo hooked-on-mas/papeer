@@ -1,4 +1,4 @@
-import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -10,6 +10,7 @@ import { authorizedUrl } from "@/api/client";
 import { followCitation } from "@/app/actions";
 import { normalizeMarkdown } from "@/lib/normalizeMarkdown";
 import { emitAppEvent } from "@/lib/appEvents";
+import { CITATION_URL, markdownUrlTransform, mediaRequestPath } from "@/lib/markdownUrl";
 
 interface Props {
   content: string;
@@ -64,14 +65,11 @@ export function MarkdownRenderer({ content, className, paperId, onCitationClick,
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
-        urlTransform={(value) => {
-          if ((value.startsWith("papeer:") || value.startsWith("paperdesk:")) || value.startsWith("file:")) return value;
-          return defaultUrlTransform(value);
-        }}
+        urlTransform={markdownUrlTransform}
         components={{
           a: ({ node, ...props }) => {
             const href = props.href || "";
-            const papeerMatch = href.match(/^(?:papeer|paperdesk):\/\/([^/]+)\/(\d+)$/);
+            const papeerMatch = href.match(CITATION_URL);
             if (papeerMatch) {
               const paperId = papeerMatch[1];
               const page = Number(papeerMatch[2]);
@@ -101,6 +99,8 @@ export function MarkdownRenderer({ content, className, paperId, onCitationClick,
                 </button>
               );
             }
+            // A link whose URL markdownUrlTransform refused (file:, javascript: ...) stays as its text.
+            if (!href) return <span>{props.children}</span>;
             return <a {...props} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer" />;
           },
           pre: ({ node, ...props }) => (
@@ -114,15 +114,11 @@ export function MarkdownRenderer({ content, className, paperId, onCitationClick,
             return <code className={cn("bg-muted px-1 py-0.5 rounded text-[13px]", className)} {...props}>{children}</code>;
           },
           img: ({ node, ...props }) => {
+            // markdownUrlTransform has already turned a media image's file:// URI into its sidecar path
+            // and dropped every other file: URL; only media paths get the token.
             let src = props.src || "";
-            // Older article.md files embed absolute file:// URIs of papers/<id>/media/<name>.
-            const fileMatch = src.match(/papers\/([0-9a-f]{32})\/media\/([^/?#]+)$/);
-            const owner = paperId || useStore.getState().activePaperId;
-            if (fileMatch) {
-              src = authorizedUrl(`/api/papers/${fileMatch[1]}/media/${fileMatch[2]}`);
-            } else if (src.startsWith("media/") && owner) {
-              src = authorizedUrl(`/api/papers/${owner}/${src}`);
-            }
+            const media = mediaRequestPath(src, paperId || useStore.getState().activePaperId);
+            if (media) src = authorizedUrl(media);
             return <img {...props} src={src} className="max-w-full h-auto rounded-md shadow-sm my-4 cursor-zoom-in" loading="lazy"
               onClick={() => emitAppEvent("open-lightbox", { src, alt: props.alt })} />;
           }

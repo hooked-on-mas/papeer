@@ -60,7 +60,7 @@ class PdfViewerTests(unittest.TestCase):
                         with self.subTest(engine=engine, box=box):
                             glyph = image.crop((int(box.x0 * 3), int(box.y0 * 3), int(box.x1 * 3), int(box.y1 * 3)))
                             gray = glyph.convert("L")
-                            pixels = list(gray.getdata())
+                            pixels = gray.get_flattened_data()
                             self.assertGreater(
                                 sum(v < 160 for v in pixels),
                                 gray.width * gray.height * 0.025,

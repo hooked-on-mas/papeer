@@ -168,3 +168,23 @@ def test_sidecar_starts_without_auth_only_when_asked(monkeypatch, capsys):
     for value in ("0", "true", ""):
         monkeypatch.setenv("PAPEER_DEV_NO_AUTH", value)
         assert app_module.startup_error()
+
+
+def preflight(client: TestClient, origin: str):
+    return client.options("/api/settings", headers={"Origin": origin, "Access-Control-Request-Method": "GET",
+                                                    "Access-Control-Request-Headers": "authorization"})
+
+
+def test_only_a_development_sidecar_answers_the_vite_dev_server(client):
+    """A page served from localhost:1420 or 5173 in a browser must not reach the packaged app's sidecar."""
+    packaged = app_module.allowed_origins(packaged=True)
+    assert "http://tauri.localhost" in packaged and "tauri://localhost" in packaged
+    assert not any("localhost:" in origin or "127.0.0.1" in origin for origin in packaged)
+    assert set(app_module.allowed_origins(packaged=False)) == set(packaged) | {
+        "http://localhost:1420", "http://localhost:5173", "http://127.0.0.1:1420", "http://127.0.0.1:5173"}
+    # The tests run from source, like `just dev-sidecar`.
+    for origin in ("http://tauri.localhost", "http://localhost:1420"):
+        answer = preflight(client, origin)
+        assert answer.status_code == 200 and answer.headers["access-control-allow-origin"] == origin
+    refused = preflight(client, "http://localhost:3000")
+    assert "access-control-allow-origin" not in refused.headers

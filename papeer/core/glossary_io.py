@@ -4,14 +4,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from papeer.core.destinations import inside_library
 from papeer.core.fileio import atomic_write_text
 from papeer.core.reading_tools import validate_terms
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
 
 
-def export_glossary(path: Path, terms: list[dict]) -> int:
+def export_glossary(path: Path, terms: list[dict], library_root: Path) -> int:
     terms = validate_terms(terms)
+    if inside_library(path, library_root):
+        raise ValueError("辞書はライブラリの外に保存してください。")
     if path.suffix.lower() != ".json":
         raise ValueError("保存先には .json ファイルを指定してください。")
     content = json.dumps({"format": "papeer-glossary", "version": 1, "terms": terms},

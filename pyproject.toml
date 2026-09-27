@@ -8,7 +8,7 @@ dependencies = [
     "pymupdf>=1.26.0",
     "pypdfium2>=5.13.0",
     "fonttools>=4.64.0",
-    "pillow>=10.0.0",
+    "pillow>=12.1.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "pydantic>=2.8.0",
@@ -18,7 +18,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
-    "httpx>=0.27.0",
+    "httpx2>=2.13.1",
     "ruff>=0.6.0",
     "pyright>=1.1.380",
 ]

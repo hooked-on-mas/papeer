@@ -35,7 +35,7 @@ README は本体を `AGPL-3.0-or-later` と記載し、ルートの `LICENSE` �
 
 JavaScript の直接依存を固定版でさらに示すと、MIT は `@base-ui/react 1.8.0`、`@dnd-kit/core 6.3.1`、`@tanstack/react-query 5.103.2`、`cn 0.4.0`、`katex 0.18.7`、`mermaid 12.0.0`、`openapi-fetch 0.17.0`、`react 19.3.0`、`react-dom 19.3.0`、`react-hotkeys-hook 5.3.3`、`react-markdown 10.1.0`、`react-pdf 11.0.0`、`react-resizable-panels 4.13.2`、`rehype-katex 7.0.1`、`remark-gfm 4.0.1`、`remark-math 6.0.0`、`zustand 5.0.15` の 17 件。Apache-2.0 は `class-variance-authority 0.7.1` と `pdfjs-dist 6.3.289`、ISC は `lucide-react 1.47.0`、OFL-1.1 は `@fontsource-variable/geist 5.3.0`。`@tauri-apps/api 2.11.1`、`plugin-dialog 2.7.3`、`plugin-notification 2.4.0`、`plugin-opener 2.5.5`、`plugin-process 2.3.1` は Apache-2.0/MIT の選択である。開発専用依存と間接依存は別紙に分けている。
 
-ロックファイル上の Python 外部依存は開発・ビルド込み **43 件**（Windows 実行時 **23 件**）、JavaScript 本番依存閉包は **295 個の name@version**（うち **285 個**が Windows x64 に該当して手元にインストール、残り 10 個は他 OS/CPU 向け optional バイナリ）、Windows 対象の Rust 外部 crate は **266 件**である。Windows x64 に該当する一覧行にはライセンス不明がない。全件の固定版・ライセンスは[依存ライセンス一覧](dependency-license-inventory.json)を参照する。これは**利用者がインストールする依存と、将来ビルドを再配布する場合の調査資料**であり、一覧の全パッケージを作者がソースリポジトリに同梱するという意味ではない。対象 OS やロックを変えた場合、再生成する。
+ロックファイル上の Python 外部依存は開発・ビルド込み **44 件**（Windows 実行時 **23 件**）、JavaScript 本番依存閉包は **294 個の name@version**（うち **284 個**が Windows x64 に該当して手元にインストール、残り 10 個は他 OS/CPU 向け optional バイナリ）、Windows 対象の Rust 外部 crate は **266 件**である。Windows x64 に該当する一覧行にはライセンス不明がない。全件の固定版・ライセンスは[依存ライセンス一覧](dependency-license-inventory.json)を参照する。これは**利用者がインストールする依存と、将来ビルドを再配布する場合の調査資料**であり、一覧の全パッケージを作者がソースリポジトリに同梱するという意味ではない。対象 OS やロックを変えた場合、`just licenses` で再生成する（台帳に記録したロックファイルの sha256 との一致をテストで検査する）。
 
 ### 特に検討が必要な依存
 
@@ -103,6 +103,6 @@ Papeer 固有の新技術を出願する意向があるなら、**GitHub でソ�
 3. **実際に同梱する素材を確認**する。Source Han/CMap/Foxit の既存ライセンス文を維持し、Liberation 1.07.4 の GPLv2 対応ソースを確認する。アイコンの原画と合成テスト PDF の作成来歴・再配布権を記録する。
 4. **README の AI 接続案内を正す。** ソース公開自体と利用者の実行を分け、Antigravity 個人規約との衝突可能性を明示する。Codex・Claude の利用可否を一律保証せず、本人の契約プラン確認を促す。翻訳・解説・質問で送る本文、関連ページ、会話履歴、ローカル保存先を具体的に記す。[個人情報保護委員会の注意喚起](https://www.ppc.go.jp/files/pdf/230602_alert_generative_AI_service.pdf)。
 5. **特許出願の意向を公開前に決める。** OSS の公開は発明の新規性に影響する。第三者特許については、候補の登録・請求項と配布国を確認し、具体的懸念が残る場合に専門家へ FTO を依頼する。Papeer 名の商標検索も行う。
-6. **利用者が実行するコードの安全性を別途点検**する。ローカル API トークンは起動ごとに OS の乱数生成器で作る 256 bit の値に改め、トークンなしでは sidecar が起動せず、URL クエリに載る分もアクセスログに出さないようにした（2026-09）。現実装の Tauri 設定は `csp: null`、Mermaid SVG は HTML として挿入される。ソース公開のライセンス義務ではないが、利用者の PDF を扱うツールとして修正または明確な既知課題化が妥当。[Tauri の CSP 説明](https://tauri.app/security/csp/)、[OWASP のトークン指針](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
+6. **利用者が実行するコードの安全性を別途点検**する。ローカル API トークンは起動ごとに OS の乱数生成器で作る 256 bit の値に改め、トークンなしでは sidecar が起動せず、URL クエリに載る分もアクセスログに出さないようにした（2026-09）。Tauri には CSP を設定済みで、スクリプトはアプリ自身のもののみ、通信先は IPC と起動時に決めた sidecar のポート（`127.0.0.1` の 1 ポート）に限る。Mermaid は `securityLevel: "strict"` で描画し、解説・メモの Markdown は `file:` などのリンクを表示しない。sidecar の CORS は本番では Tauri のオリジンだけを許可し、書き出し・バックアップ・辞書の保存先にライブラリ内は選べない（2026-09）。ソース公開のライセンス義務ではないが、利用者の PDF を扱うツールとして今後も点検を続ける。[Tauri の CSP 説明](https://tauri.app/security/csp/)、[OWASP のトークン指針](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
 
 この文書の現状確認は Git 追跡ファイル、コード、ロックファイル、手元のビルド成果物と公開資料による。GitHub Release 等で後にバイナリを追加した場合、この結論はそのまま適用できない。

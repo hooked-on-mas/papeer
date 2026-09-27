@@ -149,7 +149,7 @@ def get_global_glossary():
 def export_glossary(body: GlossaryFileRequest):
     from papeer.core.glossary_io import export_glossary
     try:
-        count = export_glossary(Path(body.path), body.terms)
+        count = export_glossary(Path(body.path), body.terms, deps.get_data_dir())
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"count": count}

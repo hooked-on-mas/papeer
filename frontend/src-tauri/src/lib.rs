@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use tauri::ipc::CapabilityBuilder;
+use tauri::utils::config::{Csp, CspDirectiveSources};
 use tauri::Manager;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, MouseButton, TrayIconEvent};
@@ -56,8 +58,43 @@ fn data_directory(app: &tauri::App) -> Option<PathBuf> {
     Some(if (!current.exists() && legacy.is_dir()) || (has_papers(&legacy) && !has_papers(&current)) { legacy } else { current })
 }
 
+/// tauri.conf.json names the sidecar as `http://127.0.0.1:*` (and `ws://`), since a release build learns
+/// its port only at launch. Narrow those sources to the port the sidecar was given, so a page in the
+/// webview cannot reach other servers on this PC. Tauri reads the CSP from the config for each page.
+fn pin_sidecar_port(csp: Csp, port: u16) -> Csp {
+    let directives: HashMap<String, CspDirectiveSources> = csp.into();
+    Csp::DirectiveMap(
+        directives
+            .into_iter()
+            .map(|(directive, sources)| {
+                let sources = Vec::<String>::from(sources)
+                    .into_iter()
+                    .map(|source| match source.strip_suffix("//127.0.0.1:*") {
+                        Some(scheme) => format!("{scheme}//127.0.0.1:{port}"),
+                        None => source,
+                    })
+                    .collect();
+                (directive, CspDirectiveSources::List(sources))
+            })
+            .collect(),
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Chosen before the app is built, so the CSP can name it (pin_sidecar_port). A debug build talks to
+    // `just dev-sidecar` on 8000; `tauri dev` loads the page from Vite, which Tauri serves without the CSP.
+    #[cfg(debug_assertions)]
+    let port: u16 = 8000;
+    #[cfg(not(debug_assertions))]
+    let port: u16 = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let mut context = tauri::generate_context!();
+    let security = &mut context.config_mut().app.security;
+    security.csp = security.csp.take().map(|csp| pin_sidecar_port(csp, port));
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -66,7 +103,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![get_backend_config])
-        .setup(|app| {
+        .setup(move |app| {
             let show_i = MenuItem::with_id(app, "show", "開く", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
@@ -103,14 +140,6 @@ pub fn run() {
             }
 
             #[cfg(debug_assertions)]
-            let port = 8000;
-            #[cfg(not(debug_assertions))]
-            let port = {
-                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-                listener.local_addr().unwrap().port()
-            };
-
-            #[cfg(debug_assertions)]
             let token = DEV_TOKEN.to_string();
             #[cfg(not(debug_assertions))]
             let token = new_token().map_err(|e| format!("sidecar の認証トークンを作れませんでした: {e}"))?;
@@ -133,7 +162,7 @@ pub fn run() {
             Ok(())
         })
         
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application");
 
     app.run(move |app_handle, event| {
@@ -147,4 +176,25 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csp_names_only_the_sidecar_port() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json");
+        let csp: Csp = serde_json::from_value(config["app"]["security"]["csp"].clone()).expect("csp");
+        let pinned = pin_sidecar_port(csp, 51234).to_string();
+        assert!(!pinned.contains("127.0.0.1:*"), "{pinned}");
+        let directives: HashMap<&str, &str> =
+            pinned.split(';').filter_map(|d| d.trim().split_once(' ')).collect();
+        assert!(directives["connect-src"].contains("http://127.0.0.1:51234"));
+        assert!(directives["connect-src"].contains("ws://127.0.0.1:51234"));
+        assert!(directives["connect-src"].contains("ipc:"));
+        assert!(directives["img-src"].contains("http://127.0.0.1:51234"));
+        assert_eq!(directives["script-src"], "'self'");
+    }
 }

@@ -70,8 +70,8 @@ export function StatusBar() {
         {providerLabel(providers, settings?.provider)}
       </span>
       {health?.version && (
-        <span className="shrink-0 tabular-nums" title={health.version}>
-          {health.version.startsWith("code-sha256-") ? `code ${health.version.slice(12, 19)}` : `v${health.version}`}
+        <span className="shrink-0 tabular-nums" title={`Papeer ${health.version}\n翻訳コード ${health.code_version.slice(12, 24)}`}>
+          v{health.version}
         </span>
       )}
     </footer>

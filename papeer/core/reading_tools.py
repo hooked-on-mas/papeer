@@ -20,6 +20,7 @@ from papeer.core.paths import PaperFiles
 from papeer import __version__
 from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, newer_papeer
 from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision
+from papeer.core.destinations import inside_library
 from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
 from papeer.pdf.pdf_engine import translation_units
 
@@ -143,7 +144,7 @@ DATABASE_FILES = ("library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm
 def create_backup(lib: Library, destination: Path, cancel: threading.Event | None = None) -> None:
     """Write the whole library to a ZIP; a cancelled backup leaves no file behind (Cancelled is raised)."""
     destination = destination.resolve()
-    if destination.is_relative_to(lib.root.resolve()):
+    if inside_library(destination, lib.root):
         raise ValueError("バックアップはデータ保存フォルダーの外に保存してください。")
     destination.parent.mkdir(parents=True, exist_ok=True)
     files = []
