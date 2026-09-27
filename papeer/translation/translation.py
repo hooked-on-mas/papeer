@@ -24,7 +24,6 @@ TRANSLATION_SCHEMA = {
 }
 from papeer.core import prompts
 
-TRANSLATION_INSTRUCTION = prompts.load("translation")
 _RESERVED = re.compile(r"PD[\s_]*MATH", re.I)
 _LOOSE_TOKEN = re.compile(r"[\[［]\s*[\[［]([^\[\]［］]+)[\]］]\s*[\]］]")
 
@@ -271,6 +270,8 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
     once a batch is done; with concurrency, batches may finish out of order.
     """
     state = state if state is not None else RetryState()
+    # Read at the start of each run, so a prompt edited in the settings applies to the next translation.
+    instruction = prompts.load("translation")
 
     def recover(unit):
         check_cancel(cancel)
@@ -296,7 +297,7 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
         return fresh
 
     def request(fresh):
-        return provider.generate(TRANSLATION_INSTRUCTION, json.dumps(fresh, ensure_ascii=False), TRANSLATION_SCHEMA)
+        return provider.generate(instruction, json.dumps(fresh, ensure_ascii=False), TRANSLATION_SCHEMA)
 
     def finish(fresh, answer):
         accepted = _valid_items(answer, fresh)

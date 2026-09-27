@@ -4,6 +4,7 @@ import json
 import threading
 import unittest
 
+from papeer.core import prompts
 from papeer.providers import Cancelled
 from papeer.translation.translation import (MAX_BLOCK_RETRIES, RetryState,
                                    _assemble_parts, translate_batch, validate_translations)
@@ -207,6 +208,20 @@ class TranslationRecoveryTests(unittest.TestCase):
     def test_valid_markers_plus_malformed_extra_marker_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "数式"):
             validate_translations(json.dumps(translations(bad=A + B + "[PD_MATH_p1b1_0]")), UNITS[1:])
+
+
+def test_edited_translation_prompt_applies_without_restart():
+    # The settings dialog saves overrides into the data folder while the app keeps running.
+    # conftest.py gives this test its own empty data folder, so the override stays here.
+    builtin = prompts.defaults()["translation"]
+    first = ScriptedProvider(translations(good="訳文。"))
+    translate_batch(first, UNITS[:1], threading.Event(), lambda _: None, lambda _: None)
+    assert first.calls[0][0] == builtin
+
+    prompts.save_overrides({"translation": "編集した翻訳指示"})
+    edited = ScriptedProvider(translations(good="訳文。"))
+    translate_batch(edited, UNITS[:1], threading.Event(), lambda _: None, lambda _: None)
+    assert edited.calls[0][0] == "編集した翻訳指示"
 
 
 if __name__ == "__main__":

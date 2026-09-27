@@ -78,6 +78,8 @@ just test   # pytest と TypeScript の型チェック
 just lint   # ruff, pyright, tsc
 ```
 
+pytest は `tests/conftest.py` で `LOCALAPPDATA` と `PAPEER_DATA_DIR` をテストごとの一時フォルダーに向けます。実際のデータフォルダー（`%LOCALAPPDATA%\Papeer`、`PaperDesk`、`PapeerSync`）でファイルを開いたり書き込んだりすると、そのテストは失敗します。
+
 ## ビルド
 
 ```bash
