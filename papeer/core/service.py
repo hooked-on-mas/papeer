@@ -30,7 +30,7 @@ from papeer.translation.translation import translation_version, page_fingerprint
 from papeer.translation.translation_preview import preview_page, translated_page, translated_page_numbers
 from papeer.translation.translation_context import contextual_units
 from papeer.layout.reading_flow import unit_pages, expand_pages, materialize_flows
-from papeer.layout.figure_layout import figure_caption, raster_figures
+from papeer.core.summary_figures import summary_figures
 from papeer.core import prompts
 from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision, glossary_for_folder
 
@@ -392,37 +392,31 @@ class PaperService:
             for f in media_dir.glob("*.png"):
                 f.unlink(missing_ok=True)
         media_dir.mkdir(exist_ok=True)
-        # Extraction finds vector plots and ruled tables only, so embedded raster figures are added here.
+        # Text-only generation receives only crops bound to source captions.
         figures_by_page = {}
         with PDF_LOCK, fitz.open(files.original_pdf) as pdf:
             for number in range(1, len(pdf) + 1):
                 page = pdf[number - 1]
                 page.set_rotation(0)
-                found = [(b["id"], b["kind"], fitz.Rect(b["bbox"])) for b in document.get("blocks", [])
-                         if b["page"] == number and b.get("kind") in {"figure", "table"}]
-                found += [(f"p{number}i{index + 1}", "figure", rect) for index, rect
-                          in enumerate(raster_figures(page, [rect for *_, rect in found]))]
-                for block_id, kind, rect in found:
-                    page.get_pixmap(clip=rect, dpi=150).save(str(media_dir / f"{block_id}.png"))
-                    figures_by_page.setdefault(number, []).append(
-                        {"id": block_id, "kind": kind, "caption": figure_caption(page, rect)})
+                for figure in summary_figures(page, document.get("blocks", []), number):
+                    page.get_pixmap(clip=figure["rect"], dpi=150).save(str(media_dir / f"{figure['id']}.png"))
+                    figures_by_page.setdefault(number, []).append(figure)
 
         page_units = []
         images = []
         for page in document["pages"]:
             page_text = page["text"]
+            for offset in range(0, max(1, len(page_text)), 10000):
+                page_units.append({"id": f"p{page['number']}-{offset}", "page": page["number"],
+                                   "text": page_text[offset:offset + 10000]})
             if page["number"] in figures_by_page:
-                markers = []
                 for figure in figures_by_page[page["number"]]:
                     image = f"![{figure['kind']} p.{page['number']}](media/{figure['id']}.png)"
                     caption = f" — {figure['caption']}" if figure["caption"] else ""
                     images.append(f"- {image} [{paper_id}:p{page['number']}]{caption}")
-                    markers.append(f"\n[このページの図表画像です。サマリーではこの構文をそのまま使って積極的に載せてください: {image}{caption}]")
-                page_text += "\n" + "\n".join(markers)
-
-            for offset in range(0, max(1, len(page_text)), 10000):
-                page_units.append({"id": f"p{page['number']}-{offset}", "page": page["number"],
-                                   "text": page_text[offset:offset + 10000]})
+                    # Keep each image and its evidence together across chunk boundaries.
+                    page_units.append({"id": figure["id"], "page": page["number"],
+                                       "text": f"{image}{caption}"})
         chunks = list(batches(page_units, limit=18000))
         notes = []
         for index, chunk in enumerate(chunks):

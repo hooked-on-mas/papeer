@@ -78,6 +78,15 @@ def raster_figures(page: fitz.Page, exclude: list[fitz.Rect]) -> list[fitz.Rect]
 
 def figure_caption(page: fitz.Page, rect: fitz.Rect, limit: int = 200) -> str:
     """The "Fig. N ..." or "Table N ..." caption just below or above a region (expects rotation 0)."""
+    match = figure_caption_match(page, rect)
+    if match is None:
+        return ""
+    text = match[1]
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
+def figure_caption_match(page: fitz.Page, rect: fitz.Rect) -> tuple[fitz.Rect, str] | None:
+    """Return the caption's location and full text, so panels can share one identity."""
     best = None
     for block in page.get_text("dict")["blocks"]:
         lines = block.get("lines", [])
@@ -88,9 +97,9 @@ def figure_caption(page: fitz.Page, rect: fitz.Rect, limit: int = 200) -> str:
                 continue
             gap = box.y0 - rect.y1 if box.y0 >= rect.y1 - 2 else rect.y0 - box.y1
             if -2 <= gap <= 40 and (best is None or gap < best[0]):
-                best = gap, lines[index:]
+                best = gap, lines[index:], box
     if best is None:
-        return ""
+        return None
     text = " ".join("".join(span["text"] for span in line["spans"]) for line in best[1])
     text = " ".join(text.split())
-    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+    return best[2], text
