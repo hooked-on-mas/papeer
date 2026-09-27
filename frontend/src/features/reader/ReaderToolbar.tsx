@@ -19,9 +19,10 @@ import { ReaderSearch } from "./ReaderSearch";
 import { TranslationReview } from "./TranslationReview";
 import { translationIssues } from "./translationIssues";
 import { useInkTools } from "./useInkEditor";
+import type { SidePanel } from "./sidePanel";
 
-/** Tabs that focus mode can open beside the reader. */
-const FOCUS_PANELS = [
+/** Tabs that open beside the reader; their keys do so in focus mode, and open the tab otherwise. */
+const SIDE_PANEL_BUTTONS: { tab: SidePanel; label: string; icon: typeof ScrollText; key: string }[] = [
   { tab: "summary", label: "サマリー", icon: ScrollText, key: "Ctrl+2" },
   { tab: "chat", label: "チャット", icon: MessageSquare, key: "Ctrl+3" },
   { tab: "notes", label: "メモ", icon: NotebookPen, key: "Ctrl+4" },
@@ -49,16 +50,16 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   const setTranslatedOnly = useStore((s) => s.setTranslatedOnly);
   const focusMode = useStore((s) => s.focusMode);
   const setFocusMode = useStore((s) => s.setFocusMode);
-  const focusPanel = useStore((s) => s.focusPanel);
-  const setFocusPanel = useStore((s) => s.setFocusPanel);
+  const sidePanel = useStore((s) => s.sidePanel);
+  const setSidePanel = useStore((s) => s.setSidePanel);
   const canGoBack = useStore((s) => s.readerHistory.back.length > 0);
   const inkBarOpen = useStore((s) => s.inkBarOpen);
   const inkTool = useInkTools((s) => s.tool);
   const inkListOpen = useInkTools((s) => s.listOpen);
   const { data: reading } = useReading(paperId);
   // Load what the side panels show, so opening one doesn't flash a loading state first.
-  useArticle(focusMode ? paperId : null);
-  useMessages(focusMode ? paperId : null);
+  useArticle(paperId);
+  useMessages(paperId);
   const [searchOpen, setSearchOpen] = useState(false);
 
   const count = reading?.page_count ?? 0;
@@ -105,7 +106,8 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   const full = (id: string) => (fit[id] ?? -1) >= 1;
   // Whether the menu holds anything besides the page information.
   const folded = ["back", "ink", "review", "filter", "zoom"].some((id) => !shown(id)) || !full("zoom")
-    || (!!outline?.length && !shown("outline")) || (focusMode && (!shown("panels") || !shown("sticky")));
+    || (!!outline?.length && !shown("outline")) || !shown("panels") || (focusMode && !shown("sticky"));
+  const panelTitle = (label: string, key: string) => `${label}を右に表示${focusMode ? `（${key}）` : ""}`;
 
   const toggleInk = () => {
     if (inkPressed) {
@@ -247,16 +249,16 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             <StickyNote className="w-4 h-4" />
           </button>
         )}
-        {focusMode && shown("panels") && (
+        {shown("panels") && (
           <div className="ml-1.5 flex items-center gap-1 shrink-0">
-            {FOCUS_PANELS.map(({ tab, label, icon: Icon, key }) => (
+            {SIDE_PANEL_BUTTONS.map(({ tab, label, icon: Icon, key }) => (
               <button
                 key={tab}
-                onClick={() => setFocusPanel(focusPanel === tab ? null : tab)}
-                className={chip(focusPanel === tab)}
-                aria-label={label}
-                aria-pressed={focusPanel === tab}
-                title={`${label}を右に表示（${key}）`}
+                onClick={() => setSidePanel(sidePanel === tab ? null : tab)}
+                className={chip(sidePanel === tab)}
+                aria-label={`${label}を右に表示`}
+                aria-pressed={sidePanel === tab}
+                title={panelTitle(label, key)}
               >
                 <Icon className="w-3.5 h-3.5" />
                 {full("panels") && label}
@@ -264,9 +266,12 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             ))}
           </div>
         )}
+        </div>
+
+        {/* Outside the clipped area like the 「…」 button, so that a wrong width estimate never cuts it off. */}
         <button
           onClick={() => setFocusMode(!focusMode)}
-          className={`${chip(focusMode)} ml-1.5`}
+          className={chip(focusMode)}
           aria-label={focusMode ? "集中表示を終了" : "集中表示"}
           aria-pressed={focusMode}
           title="PDFとページ操作を大きく表示（F11で切り替え）"
@@ -274,7 +279,6 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
           {focusMode ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           {full("focus") && (focusMode ? "集中表示を終了" : "集中表示")}
         </button>
-        </div>
 
         <DropdownMenu>
           <DropdownMenuTrigger className={button} aria-label="その他の表示・操作" title="その他の表示・操作">
@@ -307,9 +311,9 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
                 <ClipboardCheck /> 翻訳の確認・修正{reviewCount ? `（${reviewCount}）` : ""}
               </DropdownMenuItem>
             )}
-            {focusMode && !shown("panels") && FOCUS_PANELS.map(({ tab, label, icon: Icon, key }) => (
-              <DropdownMenuCheckboxItem key={tab} checked={focusPanel === tab} onCheckedChange={() => setFocusPanel(focusPanel === tab ? null : tab)}>
-                <Icon /> {label}を右に表示（{key}）
+            {!shown("panels") && SIDE_PANEL_BUTTONS.map(({ tab, label, icon: Icon, key }) => (
+              <DropdownMenuCheckboxItem key={tab} checked={sidePanel === tab} onCheckedChange={() => setSidePanel(sidePanel === tab ? null : tab)}>
+                <Icon /> {panelTitle(label, key)}
               </DropdownMenuCheckboxItem>
             ))}
             {focusMode && !shown("sticky") && (

@@ -112,6 +112,7 @@ def test_ui_state_crud(test_env):
     state["last_paper"] = "test-paper-1"
     state["reading_pages"]["test-paper-1"] = 3
     state["sort"] = 2
+    state["reading_anchors"] = {"test-paper-1": 0.375}
     put_resp = client.put("/api/ui-state", json=state)
     assert put_resp.status_code == 200
 
@@ -121,6 +122,31 @@ def test_ui_state_crud(test_env):
     assert resp2.json()["last_paper"] == "test-paper-1"
     assert resp2.json()["reading_pages"]["test-paper-1"] == 3
     assert resp2.json()["sort"] == 2
+    assert resp2.json()["reading_anchors"] == {"test-paper-1": 0.375}
+
+
+def test_ui_state_drops_anchors_that_are_not_fractions_of_a_page(test_env):
+    """A hand-edited ui-state.json must not fail the response, which the frontend would retry for ever."""
+    client, data_dir = test_env
+    (data_dir / "ui-state.json").write_text(json.dumps({
+        "reading_pages": {"a": 1},
+        "reading_anchors": {"a": 0.5, "b": "x", "c": 0, "d": 1.5, "e": True, "f": None, "g": 1, "h": [0.3]},
+    }), "utf-8")
+    resp = client.get("/api/ui-state")
+    assert resp.status_code == 200
+    assert resp.json()["reading_anchors"] == {"a": 0.5, "g": 1.0}
+    # Not a mapping at all.
+    (data_dir / "ui-state.json").write_text(json.dumps({"reading_anchors": [0.5]}), "utf-8")
+    assert client.get("/api/ui-state").json()["reading_anchors"] == {}
+
+
+def test_ui_state_without_anchors_reads_as_empty(test_env):
+    """A ui-state.json written before reading_anchors existed, and a client that doesn't send them."""
+    client, _ = test_env
+    assert client.put("/api/ui-state", json={"reading_pages": {"p": 2}, "last_paper": "p"}).status_code == 200
+    state = client.get("/api/ui-state").json()
+    assert state["reading_pages"] == {"p": 2}
+    assert state["reading_anchors"] == {}
 
 
 def test_collections_crud(test_env):

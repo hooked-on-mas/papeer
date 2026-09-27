@@ -135,6 +135,8 @@ class RenameCollectionRequest(BaseModel):
 
 class UIStateModel(BaseModel):
     reading_pages: dict[str, int] = Field(default_factory=dict)
+    # Where the view was within each paper's page in reading_pages, as a fraction of the page's height.
+    reading_anchors: dict[str, float] = Field(default_factory=dict)
     last_paper: str = ""
     sort: int = 0
     expanded_collections: list[str] = Field(default_factory=list)

@@ -4,6 +4,7 @@ import { useStore, type PassageLocation } from "@/store";
 import { QK } from "@/lib/queryKeys";
 import { edgePage, steppedPage } from "./pageTurn";
 import { goBack, goForward, rememberPlace, type HistoryEntry } from "./readerHistory";
+import { summaryPlacement } from "./sidePanel";
 import { stepZoom } from "./zoomLevels";
 
 let queryClient: QueryClient | null = null;
@@ -118,6 +119,14 @@ export function showPassage(paperId: string, passage: PassageLocation): void {
   store.setCurrentPage(passage.page);
   store.setReaderJump({ ...passage, paperId });
   store.setActiveTab("reader");
+}
+
+/** Shows the open paper's 解説, beside the PDF when the side panel is open there (see summaryPlacement). */
+export function showSummary(): void {
+  const store = useStore.getState();
+  const place = summaryPlacement(store);
+  if (place === "panel") store.openSidePanel("summary");
+  else if (place === "tab") store.setActiveTab("summary");
 }
 
 /** Steps through the zoom levels, 「ページ全体」 below 「幅に合わせる」. */

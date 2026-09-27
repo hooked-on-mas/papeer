@@ -10,13 +10,14 @@ import { usePaper } from "@/api/hooks";
 import { AppDialogs, askConfirm } from "@/components/AppDialogs";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { lazyComponent, paneStates } from "@/components/LazyPanel";
+import { lazyComponent } from "@/components/LazyPanel";
 import { whenIdle } from "@/lib/lazyLoader";
 import { isRunning, useStore } from "../store";
 import { Header, TranslationDialogHost } from "./Header";
 import { StatusBar } from "./StatusBar";
 import { LibrarySidebar } from "../features/library/LibrarySidebar";
-import { Reader } from "../features/reader/Reader";
+import { ReaderTab, useSidePanelOpen } from "./ReaderArea";
+import { ChatPane, NotesPane, SummaryPane } from "./lazyPanes";
 import { StickyNotesTab } from "../features/reader/StickyNotesTab";
 import { StickyNoteDialog } from "../features/reader/StickyNoteDialog";
 import { DriveSyncHost } from "../features/settings/DriveSection";
@@ -34,11 +35,7 @@ import { registerAllJobHandlers } from "./jobHandlers";
 
 const TABS = ["reader", "summary", "chat", "notes", "sticky-notes"];
 
-// Split from the initial bundle, which then holds only what the reader needs: these bring in the
-// Markdown renderer with KaTeX, and the settings. They load when first shown, or once the app is idle.
-const SummaryPane = lazyComponent(() => import("../features/summary/SummaryPane").then((m) => m.SummaryPane), paneStates);
-const ChatPane = lazyComponent(() => import("../features/chat/ChatPane").then((m) => m.ChatPane), paneStates);
-const NotesPane = lazyComponent(() => import("../features/notes/NotesPane").then((m) => m.NotesPane), paneStates);
+// Split from the initial bundle like the panes in ./lazyPanes; loaded when first opened, or once the app is idle.
 const SettingsDialog = lazyComponent(() => import("../features/settings/SettingsDialog").then((m) => m.SettingsDialog), {
   loading: () => null,
   failed: ({ open, onOpenChange }, retry) => (
@@ -213,8 +210,7 @@ export function AppShell() {
   // The group retains layouts when panels are hidden; only read saved defaults at mount.
   const [sidebarWidth] = useState(() => useStore.getState().sidebarWidth);
   const focusMode = useStore((s) => s.focusMode);
-  const focusPanel = useStore((s) => s.focusPanel);
-  const [focusPanelWidth] = useState(() => useStore.getState().focusPanelWidth);
+  const sidePanelOpen = useSidePanelOpen();
   const activePaperId = useStore((s) => s.activePaperId);
   const activeJobs = useStore((s) => s.activeJobs);
   // Passages attached from the reader, waiting to be sent.
@@ -325,7 +321,7 @@ export function AppShell() {
     if (!tab) return;
     const store = useStore.getState();
     // In focus mode Ctrl+1, or the open panel's own key, closes the side panel.
-    if (store.focusMode && (tab === "reader" || store.focusPanel === tab)) store.setFocusPanel(null);
+    if (store.focusMode && (tab === "reader" || store.sidePanel === tab)) store.setSidePanel(null);
     else setActiveTab(tab);
   }, hotkeyOptions);
 
@@ -386,7 +382,8 @@ export function AppShell() {
           </div>
         )}
 
-        <ResizablePanel id="main" minSize={focusMode ? "320px" : "480px"} className="flex flex-col min-w-0 bg-background">
+        {/* Room for the reader and the side panel within it (320px each) when the panel is open. */}
+        <ResizablePanel id="main" minSize={focusMode ? "320px" : sidePanelOpen ? "644px" : "480px"} className="flex flex-col min-w-0 bg-background">
           {!focusMode && <Header />}
 
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(String(value))} className="flex-1 flex flex-col min-h-0 gap-0">
@@ -407,41 +404,26 @@ export function AppShell() {
               </TabsList>
             </div>
 
-            {/* Keep the reader at the same tree position so focus mode reuses loaded PDFs. */}
-            <TabsContent value="reader" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
-              <Reader />
-            </TabsContent>
-            <TabsContent value="summary" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
-              <SummaryPane />
-            </TabsContent>
-            <TabsContent value="chat" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
-              <ChatPane />
-            </TabsContent>
-            <TabsContent value="notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
-              <NotesPane />
-            </TabsContent>
-            <TabsContent value="sticky-notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
-              <StickyNotesTab />
-            </TabsContent>
+            <div className="relative flex-1 flex flex-col min-h-0">
+              {/* Kept at the same tree position so that focus mode reuses the loaded PDFs. */}
+              <ReaderTab />
+              {/* The others unmount with their tab in the same update, never lingering beside the same
+                  pane opened in the side panel (see features/reader/sidePanel.ts). */}
+              <TabsContent value="summary" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                {activeTab === "summary" && <SummaryPane />}
+              </TabsContent>
+              <TabsContent value="chat" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                {activeTab === "chat" && <ChatPane />}
+              </TabsContent>
+              <TabsContent value="notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                {activeTab === "notes" && <NotesPane />}
+              </TabsContent>
+              <TabsContent value="sticky-notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                {activeTab === "sticky-notes" && <StickyNotesTab />}
+              </TabsContent>
+            </div>
           </Tabs>
         </ResizablePanel>
-        {focusMode && focusPanel && (
-          <>
-            <ResizableHandle className="w-1 bg-border hover:bg-primary/60 transition-colors cursor-col-resize" />
-            <ResizablePanel
-              id="focus-panel"
-              defaultSize={`${focusPanelWidth}px`}
-              minSize="320px"
-              maxSize="80%"
-              onResize={(size) => useStore.getState().setFocusPanelWidth(Math.round(size.inPixels))}
-              className="flex flex-col min-w-0 bg-background"
-            >
-              {focusPanel === "summary" && <SummaryPane />}
-              {focusPanel === "chat" && <ChatPane />}
-              {focusPanel === "notes" && <NotesPane compact />}
-            </ResizablePanel>
-          </>
-        )}
       </ResizablePanelGroup>
 
       {(!focusMode || anyRunning) && <StatusBar />}

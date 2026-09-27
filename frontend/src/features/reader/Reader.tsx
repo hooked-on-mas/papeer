@@ -9,7 +9,8 @@ import { ReaderToolbar } from "./ReaderToolbar";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { importPdfs } from "@/app/actions";
 import { bindReaderViewport, changeZoom, historyBack, historyForward, movePage, moveToEdgePage, navigateTo } from "./navigation";
-import { createWheelPager, keyTarget, paneEdges, readerKeyAction, readerOwnsKey, type KeyPlace } from "./pageTurn";
+import { createWheelPager, keyTarget, onScreen, paneEdges, readerKeyAction, readerOwnsKey, type KeyPlace } from "./pageTurn";
+import { savedAnchor } from "./sidePanel";
 import { loadOutline, originalPageFor, type OutlineEntry, type PdfPlace } from "./pdfLinks";
 import { pinchLevel, pinchStart } from "./zoomLevels";
 import { inkToolActive } from "./useInkEditor";
@@ -98,7 +99,16 @@ export function Reader() {
 
   const pageCount = reading?.page_count ?? 0;
   const completed = reading?.completed_pages ?? [];
-  useEffect(() => { setBookmarkTarget(null); setSearch({ query: "", side: "original" }); }, [activePaperId]);
+  // A paper opens where its page was last left (paperAnchors, saved in ui-state.json), from the top otherwise.
+  // Until the view has moved there, the scrolls to the top of the page on the way are not kept (recordAnchor).
+  const restoringAnchor = useRef(false);
+  useEffect(() => {
+    setSearch({ query: "", side: "original" });
+    const { paperAnchors, currentPage: page } = useStore.getState();
+    const anchor = activePaperId ? paperAnchors[activePaperId] : undefined;
+    restoringAnchor.current = anchor !== undefined;
+    setBookmarkTarget(anchor === undefined ? null : { id: Date.now(), page, side: "original", anchor_y: anchor });
+  }, [activePaperId]);
   // A passage opened from the chat. Taken from the store so that it is shown once, not on every remount.
   const readerJump = useStore((s) => s.readerJump);
   useEffect(() => {
@@ -126,6 +136,31 @@ export function Reader() {
   useEffect(() => {
     for (const pane of [leftScrollRef.current, rightScrollRef.current]) if (pane) pane.scrollTop = 0;
   }, [currentPage, activePaperId]);
+
+  // Keeps where the view is within the page for the paper, a moment after scrolling stops. Measured as
+  // it scrolls, so that switching to another paper before then keeps the place in this one.
+  const pendingAnchor = useRef<{ paperId: string; anchor: number | null } | null>(null);
+  const anchorTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const commitAnchor = useCallback(() => {
+    clearTimeout(anchorTimer.current);
+    const pending = pendingAnchor.current;
+    pendingAnchor.current = null;
+    if (pending) useStore.getState().setPaperAnchor(pending.paperId, pending.anchor);
+  }, []);
+  const recordAnchor = useCallback((pane: HTMLElement) => {
+    const paperId = useStore.getState().activePaperId;
+    if (!paperId || !onScreen(pane)) return;
+    // The saved place is only ever below the top, so the first scroll away from it is the move there
+    // (or the reader's own scrolling, once it has given up on it).
+    if (restoringAnchor.current) {
+      if (pane.scrollTop <= 0) return;
+      restoringAnchor.current = false;
+    }
+    pendingAnchor.current = { paperId, anchor: savedAnchor(pane.scrollTop, viewAnchor(pane)) };
+    clearTimeout(anchorTimer.current);
+    anchorTimer.current = setTimeout(commitAnchor, 500);
+  }, [commitAnchor]);
+  useEffect(() => commitAnchor, [activePaperId, commitAnchor]);
 
   useEffect(() => {
     const element = readerRef.current;
@@ -204,8 +239,7 @@ export function Reader() {
     if (!root || document.querySelector("[data-lightbox]")) return false;
     const target = e.target instanceof Element ? e.target : null;
     const place: KeyPlace = target && root.contains(target) ? "inside" : !target || target.contains(root) ? "around" : "elsewhere";
-    const readerVisible = useStore.getState().activeTab === "reader"
-      && (typeof root.checkVisibility !== "function" || root.checkVisibility());
+    const readerVisible = useStore.getState().activeTab === "reader" && onScreen(root);
     return readerOwnsKey({ place, pointerInReader: pointerInReader.current, readerVisible });
   }, []);
 
@@ -276,6 +310,7 @@ export function Reader() {
   return (
     <div ref={readerRef} className="flex flex-col h-full w-full bg-reader-bg">
       <ReaderToolbar paperId={activePaperId} search={search} setSearch={setSearch} outline={outline} ownsKey={ownsKey} />
+      <span role="status" className="sr-only">{translating ? "翻訳中" : ""}</span>
       {/* data-ink-toolbar-slot: INK_TOOLBAR_SLOT, which lets the toolbar's keys through to its pane. */}
       <div ref={setInkToolbarSlot} data-ink-toolbar-slot="" className="flex flex-col shrink-0 max-h-[40%]" />
       {noTranslatedPages ? (
@@ -299,7 +334,7 @@ export function Reader() {
                 inkPage={reading ? { paperId: activePaperId, page: currentPage } : undefined}
                 pageNumber={currentPage}
                 zoom={zoom}
-                onScroll={(e) => syncScroll(e.currentTarget, rightScrollRef.current)}
+                onScroll={(e) => { syncScroll(e.currentTarget, rightScrollRef.current); recordAnchor(e.currentTarget); }}
                 scrollRef={leftScrollRef}
                 missingPageMessage="対応する原文ページがありません。"
                 searchTerm={search.side === "original" ? search.query : ""}
@@ -337,8 +372,9 @@ export function Reader() {
                 }}
                 caption={caption}
                 badge={translating && (
-                  <span role="status" aria-label="翻訳中">
-                    <Loader2 aria-hidden="true" className="w-3.5 h-3.5 animate-spin text-primary" />
+                  // Announced by the status line under the toolbar, which is there before the translation starts.
+                  <span aria-hidden="true" className="flex items-center gap-1 pr-1 text-[11px] leading-none text-primary">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />翻訳中
                   </span>
                 )}
                 inkToolbarSlot={inkToolbarSlot}

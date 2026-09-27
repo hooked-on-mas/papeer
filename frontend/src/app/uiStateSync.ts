@@ -1,9 +1,12 @@
 import { apiRequest } from "@/api/client";
 import { useStore } from "@/store";
 import { retryUntil } from "@/lib/retry";
+import { mergeSavedAnchors } from "@/features/reader/sidePanel";
 
 type UiStateFile = {
   reading_pages: Record<string, number>; // zero-based, as the old window.ini stored them
+  /** Where the view was within each paper's page (store paperAnchors); absent from older files. */
+  reading_anchors?: Record<string, number>;
   last_paper: string;
   sort: number;
   expanded_collections: string[];
@@ -24,6 +27,7 @@ function snapshot(): UiStateFile {
   for (const [id, page] of Object.entries(s.paperPages)) reading_pages[id] = Math.max(0, page - 1);
   return {
     reading_pages,
+    reading_anchors: s.paperAnchors,
     last_paper: s.activePaperId || "",
     sort: s.sortOrder,
     expanded_collections: s.expandedCollections ?? [],
@@ -57,6 +61,8 @@ function applyUiState(state: UiStateFile): void {
   useStore.setState({
     // Pages turned while waiting for the sidecar win over the saved ones.
     paperPages: { ...paperPages, ...s.paperPages },
+    // Likewise for the places within those pages.
+    paperAnchors: mergeSavedAnchors({ saved: state.reading_anchors, savedPages: paperPages, pages: s.paperPages, anchors: s.paperAnchors }),
     sortOrder: Number(state.sort) || 0,
     // An empty list from a fresh install means nothing was ever collapsed.
     expandedCollections: expanded.length ? expanded : null,
@@ -106,7 +112,7 @@ export function initUiStateSync(): () => void {
     if (disposed || !state) return;
     applyUiState(state);
     unsubscribe = useStore.subscribe((s, prev) => {
-      if (s.paperPages === prev.paperPages && s.activePaperId === prev.activePaperId
+      if (s.paperPages === prev.paperPages && s.paperAnchors === prev.paperAnchors && s.activePaperId === prev.activePaperId
           && s.sortOrder === prev.sortOrder && s.expandedCollections === prev.expandedCollections) return;
       clearTimeout(saveTimer);
       saveTimer = setTimeout(flushUiState, 800);

@@ -72,14 +72,15 @@ export function readerToolbarItems({ focusMode, hasOutline, reviewCount }: {
     // Always there, as it pushes the groups after it to the row's end; the page count shows in it.
     { id: "spacer", widths: [6], required: true },
     { id: "search", widths: [26, 26 + 4 + 24], required: true },
-    // 集中表示 / 集中表示を終了, bordered.
+    // 集中表示 / 集中表示を終了, bordered; it stands outside the clipped area, by the 「…」 button.
     { id: "focus", widths: [6 + 32, 6 + 32 + 4 + (focusMode ? 84 : 48)], required: true },
     // The zoom select alone (its widest option is ページ全体), then with the − and + buttons; in the
     // narrowest focus mode it goes into the menu as a list of zoom levels.
     { id: "zoom", widths: [6 + 90, 6 + 24 + 90 + 24 + 2 * TOOLBAR_GAP] },
   ];
-  // In focus mode these open and close the side panel, so they go before the rest.
-  if (focusMode) items.push({ id: "panels", widths: [6 + 3 * 32 + 2 * TOOLBAR_GAP, 6 + 84 + 84 + 60 + 2 * TOOLBAR_GAP] });
+  // サマリー・チャット・メモ open and close the side panel, in focus mode and the normal view alike,
+  // so they go before the rest.
+  items.push({ id: "panels", widths: [6 + 3 * 32 + 2 * TOOLBAR_GAP, 6 + 84 + 84 + 60 + 2 * TOOLBAR_GAP] });
   // The page count beside the page number; it takes whatever room is left, and this much at least.
   items.push({ id: "label", widths: [56] });
   if (hasOutline) items.push({ id: "outline", widths: [26, 26 + 4 + 24] });

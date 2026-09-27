@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { useInkPage, type InkSide } from "./inkStore";
 import { boundsOf, fitInk, transformInk, type InkStroke, type InkTool, type Point } from "./inkGeometry";
+import { onScreen } from "./pageTurn";
 import { useStore } from "@/store";
 
 type Preset = { color: string; width: number };
@@ -138,6 +139,8 @@ export function useInkEditor(paperId: string | undefined, side: InkSide, page: n
       // A clicked Cut/Delete button becomes disabled and loses focus to body.
       // Remember the active pane so Undo still works, without hijacking other panels.
       if (activeEditor !== owner.current || !scopeRef.current) return;
+      // Not while another tab is shown, where the reader stays mounted but hidden.
+      if (!onScreen(scopeRef.current)) return;
       // The writing toolbar sits outside the pane, and serves the active one.
       const inToolbar = event.target instanceof Element && !!event.target.closest(`[${INK_TOOLBAR_SLOT}]`);
       if (event.target !== document.body && !scopeRef.current.contains(event.target as Node) && !inToolbar) return;

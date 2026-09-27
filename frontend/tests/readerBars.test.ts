@@ -61,13 +61,24 @@ test("the reading toolbar fits a narrow focus-mode window with the side panel op
   assert.equal(fit.filter, -1);
 });
 
-test("the reading toolbar shows everything, with labels, beside the library on a 1366px screen", () => {
+test("the reading toolbar shows every item beside the library on a 1366px screen, and every label on a 1920px one", () => {
+  const options = { focusMode: false, hasOutline: true, reviewCount: 3 };
   // 1366px minus the 280px library, its 4px handle and the row's padding.
   const width = 1366 - 280 - 4 - 24;
-  const options = { focusMode: false, hasOutline: true, reviewCount: 3 };
   const fit = fitReaderToolbar(width, options);
-  for (const item of readerToolbarItems(options)) assert.equal(fit[item.id], item.widths.length - 1, item.id);
+  for (const item of readerToolbarItems(options)) assert.ok(fit[item.id] >= 0, item.id);
+  for (const id of ["search", "focus", "zoom", "outline", "ink"]) assert.equal(fit[id], 1, id);
   assert.ok(usedWidth(readerToolbarItems(options), fit) <= itemRoom(width));
+
+  const wide = fitReaderToolbar(1920 - 280 - 4 - 24, options);
+  for (const item of readerToolbarItems(options)) assert.equal(wide[item.id], item.widths.length - 1, item.id);
+});
+
+test("the side panel's buttons stay on the row beside the library and the open side panel on a 1366px screen", () => {
+  // The panel at its default 420px, and its 4px handle.
+  const width = 1366 - 280 - 4 - 420 - 4 - 24;
+  const fit = fitReaderToolbar(width, { focusMode: false, hasOutline: true, reviewCount: 3 });
+  assert.ok(fit.panels >= 0);
 });
 
 test("the reading toolbar fits focus mode's narrowest main area, 320px, with the zoom in the menu", () => {
@@ -81,10 +92,12 @@ test("the reading toolbar fits focus mode's narrowest main area, 320px, with the
   }
 });
 
-test("the reading toolbar lists focus-mode items only in focus mode, and 目次 only with an outline", () => {
+test("the reading toolbar lists 付箋 only in focus mode, the side panel's buttons in both, and 目次 only with an outline", () => {
   const ids = (options: Parameters<typeof readerToolbarItems>[0]) => readerToolbarItems(options).map((item) => item.id);
-  assert.ok(!ids({ focusMode: false, hasOutline: false, reviewCount: 0 }).some((id) => ["panels", "sticky", "outline"].includes(id)));
+  assert.ok(!ids({ focusMode: false, hasOutline: false, reviewCount: 0 }).some((id) => ["sticky", "outline"].includes(id)));
+  assert.ok(ids({ focusMode: false, hasOutline: false, reviewCount: 0 }).includes("panels"));
   assert.ok(ids({ focusMode: true, hasOutline: true, reviewCount: 0 }).includes("panels"));
+  assert.ok(ids({ focusMode: true, hasOutline: true, reviewCount: 0 }).includes("sticky"));
   assert.ok(ids({ focusMode: true, hasOutline: true, reviewCount: 0 }).includes("outline"));
 });
 

@@ -40,7 +40,7 @@ export function InkCapture({ paperId, page, side, box, onClose }: { paperId: str
         <button className="bg-primary text-primary-foreground rounded px-2 py-1" onClick={() => {
           const store = useStore.getState();
           store.setNoteInsert({ paperId, text: `\n\n![p.${page} ${side === "original" ? "原文" : "日本語訳"}の図・数式](${file})\n\n[出典 p.${page}](papeer://${paperId}/${page})\n` });
-          store.setActiveTab("notes"); onClose();
+          store.openSidePanel("notes"); onClose();
         }}>メモに追加</button></div></>}
     {error && <p role="alert" className="mt-2 text-destructive">{error}</p>}
   </div>;

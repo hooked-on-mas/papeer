@@ -115,6 +115,16 @@ export function keyTarget(target: { closest?: (selector: string) => unknown } | 
 }
 
 /**
+ * Whether `element` is on screen and usable: not within a part of the page that is hidden, by
+ * display or visibility, or inert, as the reader tab is while another tab is shown (AppShell keeps it
+ * mounted). Listeners on the window use it to leave keys to the tab that is shown.
+ */
+export function onScreen(element: Pick<Element, "closest"> & { checkVisibility?: Element["checkVisibility"] }): boolean {
+  if (element.closest("[inert]")) return false;
+  return typeof element.checkVisibility !== "function" || element.checkVisibility({ visibilityProperty: true });
+}
+
+/**
  * Where a key press lands relative to the reader: inside it, on the page body or an element that
  * holds the reader (the tab panel, focused by clicking the page), or elsewhere.
  */
