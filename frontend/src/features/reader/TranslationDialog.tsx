@@ -230,7 +230,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
               {selection.error ?? (selection.pages ? `翻訳対象: ${selection.pages.length}ページ` : "")}
             </p>
           </div>
-          <details open className="border rounded p-2 text-[12px]">
+          <details className="border rounded p-2 text-[12px]">
             <summary className="cursor-pointer font-medium">全論文共通の専門用語辞書（{glossary.length}件）</summary>
             <p className="text-muted-foreground my-2">翻訳前に、AIがこの論文から共通辞書にない専門用語のうち、訳語が定まっていない語や訳し方に迷う語だけを日本語訳の案と一緒に抽出します。「モデル予測制御」のように訳語が一つに決まる語は候補に含めません。候補を確認・修正して追加すると、今後のすべての論文で使えます。過去の登録語もここで確認・修正できます。辞書の変更は各論文を次に翻訳するときに反映されます。</p>
             <fieldset disabled={busy} className="min-w-0">
