@@ -31,3 +31,6 @@ code-version.txt
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Parallel work trees
+/.worktrees/
