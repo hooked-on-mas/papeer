@@ -83,7 +83,7 @@ just test   # pytest、TypeScript の型チェック、フロントエンドの�
 just lint   # ruff, pyright, tsc
 ```
 
-pytest は `tests/conftest.py` で `LOCALAPPDATA` と `PAPEER_DATA_DIR` をテストごとの一時フォルダーに向けます。実際のデータフォルダー（`%LOCALAPPDATA%\Papeer`、`PaperDesk`、`PapeerSync`）でファイルを開いたり書き込んだりすると、そのテストは失敗します。
+pytest は `tests/conftest.py` で `LOCALAPPDATA` と `PAPEER_DATA_DIR` をテストごとの一時フォルダーに向けます。実際のデータフォルダー（`%LOCALAPPDATA%\Papeer`、`PaperDesk`、`PapeerSync`）でファイルを開いたり書き込んだりすると、そのテストは失敗します。同梱フォントの変換結果（約30秒かけて作る）だけは `PAPEER_FONT_CACHE_DIR` で `.pytest_cache` 内に置き、次回以降の実行でも使い回します。
 
 ### データベースの変更
 
@@ -159,6 +159,7 @@ Papeer/
 PapeerSync/                   このPCだけの設定（同期・バックアップの対象外）
   device-settings.json        CLI のパスと API URL
   <ハッシュ>.json             同期フォルダーの保存先と最終同期の基準
+  font-cache/                 同梱フォントを TrueType に変換したもの（最初の翻訳で約30秒かけて作り、以後はページごとに必要な字だけ切り出す。消しても作り直す）
 ```
 
 ## 環境変数
@@ -168,6 +169,7 @@ PapeerSync/                   このPCだけの設定（同期・バックアッ
 | `PAPEER_DATA_DIR` | データの保存先を変更する |
 | `PAPEER_PORT` | sidecar の待ち受けポート（既定 8000） |
 | `PAPEER_TOKEN` | sidecar の認証トークン。必須で、未設定なら sidecar は起動しない（本番は Tauri が起動ごとに生成、開発は `just dev-sidecar` が `dev_token` を設定） |
+| `PAPEER_FONT_CACHE_DIR` | 同梱フォントの変換結果の置き場所（既定 `%LOCALAPPDATA%\PapeerSync\font-cache`。pytest は `.pytest_cache` 内を使う） |
 | `PAPEER_DEV_NO_AUTH` | `1` のとき、`PAPEER_TOKEN` なしで認証なしの sidecar を起動する（開発専用。PyInstaller で作った sidecar では無視） |
 | `PAPEER_API_KEY` | API 接続で使う API キーの初期値（未設定なら `OPENAI_API_KEY`、次に `GEMINI_API_KEY`） |
 

@@ -4,17 +4,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 import html
+import io
 from pathlib import Path
 import re
 from statistics import median
+import threading
+import unicodedata
 
 import pymupdf as fitz
-from fontTools import subset
 from fontTools.ttLib import TTFont
 
 from papeer.layout.math_layout import MATH_TOKEN
 from papeer.layout.reading_flow import resolve_unit_joins
-from papeer.pdf.pdf_fonts import truetype_subset
+from papeer.pdf.pdf_fonts import cache_ready, cached_truetype, subset_truetype
 
 
 FONT_DIRECTORY = Path(__file__).resolve().parent.parent / "core" / "assets" / "fonts"
@@ -38,29 +40,89 @@ _CAPTION_LABEL = re.compile(r"^(?:(?:Fig(?:ure)?|FIG(?:URE)?)\.?|Table|TABLE|Alg
 TIGHT_LEADING = 1.25
 
 
+# The bundled faces: the source file and the family/style that the markup (FONT_CSS) names.
+# The serif comes first; it also carries the invisible text over formula images (searchable_text).
+FONT_FACES = (("SourceHanSerifJP-Regular.otf", "PapeerSerif", "Regular"),
+              ("SourceHanSansJP-Bold.otf", "PapeerHeading", "Bold"))
+
+
+def font_subsets(text: str) -> tuple[tuple[bytes, str], ...]:
+    """(TrueType data, archive file name) of each face in FONT_FACES, cut down to the characters of text.
+
+    Only fontTools work, no MuPDF: build_translated_pdf calls it before taking PDF_LOCK.
+    The first call on a PC converts the bundled faces (pdf_fonts.cached_truetype).
+    """
+    return _font_subsets("".join(sorted(set(text + "　 "))))
+
+
 @lru_cache(maxsize=4)
 def _font_subsets(characters: str) -> tuple[tuple[bytes, str], ...]:
-    fonts = []
-    for name in ("SourceHanSerifJP-Regular.otf", "SourceHanSansJP-Bold.otf"):
-        with TTFont(FONT_DIRECTORY / name, recalcTimestamp=False) as font:
-            options = subset.Options()
-            options.layout_features = ["*"]
-            options.desubroutinize = True
-            subsetter = subset.Subsetter(options=options)
-            subsetter.populate(text=characters)
-            subsetter.subset(font)
-            family, style = ("PapeerSerif", "Regular") if "Serif" in name else ("PapeerHeading", "Bold")
-            fonts.append((truetype_subset(font, family, style), f"{family}-{style}.ttf"))
-    return tuple(fonts)
+    # Subset only our own font assets. Original PDF math fonts remain untouched.
+    return tuple((subset_truetype(cached_truetype(FONT_DIRECTORY / name, family, style), characters),
+                  f"{family}-{style}.ttf") for name, family, style in FONT_FACES)
 
 
 def font_archive(text: str) -> fitz.Archive:
-    # Subset only our own font assets. Original PDF math fonts remain untouched.
-    characters = "".join(sorted(set(text + "　 ")))
     archive = fitz.Archive()
-    for font in _font_subsets(characters):
+    for font in font_subsets(text):
         archive.add(font)
     return archive
+
+
+def fonts_need_conversion() -> bool:
+    """Whether the next font_subsets call converts a bundled face first (the first translation on a PC)."""
+    return not all(cache_ready(FONT_DIRECTORY / name, family, style) for name, family, style in FONT_FACES)
+
+
+def prepare_fonts_in_background() -> None:
+    """Have the bundled faces converted (pdf_fonts.cached_truetype) before the first page needs them.
+
+    The conversion takes half a minute, once per PC; started with a translation, it runs while
+    the first requests are out. Pages that need the faces sooner wait for it rather than convert twice.
+    """
+    threading.Thread(target=_prepare_fonts, name="papeer-fonts", daemon=True).start()
+
+
+def _prepare_fonts() -> None:
+    try:
+        for name, family, style in FONT_FACES:
+            cached_truetype(FONT_DIRECTORY / name, family, style)
+    except Exception:
+        pass  # The page that needs the faces tries again and reports the error.
+
+
+@lru_cache(maxsize=1)
+def _serif_characters() -> frozenset[int]:
+    name, family, style = FONT_FACES[0]
+    with TTFont(io.BytesIO(cached_truetype(FONT_DIRECTORY / name, family, style)), lazy=True) as font:
+        return frozenset(font.getBestCmap())
+
+
+# Math symbols the serif lacks and their nearest character in it, for searchable_text. The ceiling
+# and floor brackets become box-drawing corners of the same shape, so that the two stay apart.
+_MATH_STAND_INS = {
+    "⟨": "〈", "⟩": "〉", "∼": "〜", "∗": "*", "∘": "○", "⋆": "☆", "⋮": "︙",
+    "⋅": "·", "∙": "·", "∖": "\\", "⌈": "┌", "⌉": "┐", "⌊": "└", "⌋": "┘",
+}
+
+
+def searchable_text(text: str) -> str:
+    """A formula's text as the invisible layer over its image writes it, in the bundled serif.
+
+    A character the serif lacks becomes its stand-in (_MATH_STAND_INS: ⟨ → 〈, ∗ → *) or its
+    compatibility form where the serif has that (mathematical italic 𝑥 → x, ℝ → R, subscript ᵢ → i);
+    otherwise it is left out, since a missing glyph would be copied and found as nothing at all.
+    Whitespace runs become one space.
+    """
+    available = _serif_characters()
+    kept = []
+    for character in " ".join(text.split()):
+        if ord(character) in available:
+            kept.append(character)
+        else:
+            replacement = _MATH_STAND_INS.get(character) or unicodedata.normalize("NFKC", character)
+            kept.extend(c for c in replacement if ord(c) in available)
+    return "".join(kept).strip()
 
 
 @dataclass(frozen=True)
