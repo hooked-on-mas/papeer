@@ -56,6 +56,7 @@ before(async () => {
     PdfPane: (await load("/src/features/reader/PdfPane.tsx")).PdfPane,
     useStore: (await load("/src/store/index.ts")).useStore,
     useInkPanes: (await load("/src/features/reader/useInkEditor.ts")).useInkPanes,
+    LibrarySidebar: (await load("/src/features/library/LibrarySidebar.tsx")).LibrarySidebar,
   };
 });
 
@@ -70,16 +71,18 @@ const reading = {
 };
 
 /**
- * Renders `element` with the store's state, and the writing panes' (`inkPanes`), set as given. Server
- * rendering reads a store's initial state, which is put back afterwards so that no test sees another's.
+ * Renders `element` with the store's state, and the writing panes' (`inkPanes`), set as given, and
+ * `queries` ([key, data] pairs) in the query cache besides the paper's reading. Server rendering reads
+ * a store's initial state, which is put back afterwards so that no test sees another's.
  */
-function render(element, state, inkPanes = {}) {
+function render(element, state, inkPanes = {}, queries = []) {
   const { React, server: { renderToString }, query: { QueryClient, QueryClientProvider }, useStore, useInkPanes } = modules;
   const saved = [[useStore.getInitialState(), { ...useStore.getInitialState() }], [useInkPanes.getInitialState(), { ...useInkPanes.getInitialState() }]];
   Object.assign(useStore.getInitialState(), { activePaperId: "p1", currentPage: 1, focusMode: false, inkBarOpen: false, ...state });
   Object.assign(useInkPanes.getInitialState(), inkPanes);
   const client = new QueryClient();
   client.setQueryData(["reading", "p1"], reading);
+  for (const [key, data] of queries) client.setQueryData(key, data);
   try {
     return renderToString(React.createElement(QueryClientProvider, { client }, element));
   } finally {
@@ -168,4 +171,32 @@ test("the reader tab stays laid out, invisible and inert, while another tab is s
   const shown = inTabs("reader");
   assert.doesNotMatch(shown, /<div[^>]*role="tabpanel"[^>]*\s(inert|hidden)=""/);
   assert.doesNotMatch(shown, /\binvisible\b/);
+});
+
+test("the library renders its folder tree, with the open paper and its translation's progress", () => {
+  const papers = [
+    { id: "p1", title: "Attention Is All You Need", collection_name: "ML / NLP", pages: 10, translated_count: 4, tags: ["重要"], read_status: "読書中" },
+    { id: "p2", title: "Deep Residual Learning", collection_name: "ML", pages: 12, translated_count: 0 },
+    { id: "p3", title: "Unfiled Paper", collection_name: "", pages: 3, translated_count: 3 },
+  ];
+  const html = render(modules.React.createElement(modules.LibrarySidebar), {
+    selectedFolder: null, expandedCollections: null, librarySearch: "", sortOrder: 0,
+    activeJobs: [
+      { job_id: "t1", paper_id: "p1", kind: "translate", status: "running" },
+      { job_id: "a1", paper_id: "p2", kind: "article", status: "running" },
+    ],
+  }, {}, [
+    [["papers", "list", "", 0], papers],
+    [["collections"], ["ML", "ML / NLP", "Empty"]],
+  ]);
+  // Folders, each with its count including subfolders, and 未分類 last.
+  const folders = [...html.matchAll(/data-drop-collection="([^"]*)"[^>]*title="([^"]*)"/g)].map((m) => m[2]);
+  assert.deepEqual(folders.filter((title) => !title.includes("ファイル名")), ["Empty", "ML", "ML / NLP", "フォルダー未指定のPDF"]);
+  assert.match(html, /<span class="flex-1 truncate">ML<\/span><span[^>]*>2<\/span>/);
+  assert.match(html, /id="paper-row-p1"[^>]*class="[^"]*bg-accent /);
+  assert.doesNotMatch(html, /id="paper-row-p2"[^>]*class="[^"]*bg-accent /);
+  // The paper being translated shows its progress; the one with another job, 「AI処理中」.
+  assert.match(html, /role="progressbar" aria-label="訳文を保存済みのページ"[^>]*aria-valuenow="4"/);
+  assert.match(html, /· AI処理中/);
+  assert.match(html, />3(<!-- -->)? 件の論文</);
 });

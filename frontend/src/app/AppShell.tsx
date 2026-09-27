@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { lazyComponent } from "@/components/LazyPanel";
 import { whenIdle } from "@/lib/lazyLoader";
 import { isRunning, useStore } from "../store";
+import { anyJobRunning } from "@/features/jobs/jobSelectors";
 import { Header, TranslationDialogHost } from "./Header";
 import { StatusBar } from "./StatusBar";
 import { LibrarySidebar } from "../features/library/LibrarySidebar";
@@ -212,7 +213,7 @@ export function AppShell() {
   const focusMode = useStore((s) => s.focusMode);
   const sidePanelOpen = useSidePanelOpen();
   const activePaperId = useStore((s) => s.activePaperId);
-  const activeJobs = useStore((s) => s.activeJobs);
+  const anyRunning = useStore((s) => anyJobRunning(s.activeJobs));
   // Passages attached from the reader, waiting to be sent.
   const attachmentCount = useStore((s) => s.chatAttachments.filter((item) => item.paperId === s.activePaperId).length);
   const isSettingsOpen = useSettingsNavigation(s => s.open);
@@ -324,8 +325,6 @@ export function AppShell() {
     if (store.focusMode && (tab === "reader" || store.sidePanel === tab)) store.setSidePanel(null);
     else setActiveTab(tab);
   }, hotkeyOptions);
-
-  const anyRunning = activeJobs.some(isRunning);
 
   return (
     <div className="flex h-screen w-full flex-col bg-background text-foreground overflow-hidden">

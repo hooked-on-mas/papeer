@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import {
   Download, ExternalLink, FileText, FolderOpen, Languages, MoreVertical, PanelLeft, Pencil, ScrollText, Square, Trash2,
 } from "lucide-react";
-import { useStore, isRunning, paperBusy } from "../store";
+import { useStore, paperBusy } from "../store";
+import { runningPaperJob } from "@/features/jobs/jobSelectors";
 import { paperDisplayName, usePaper, useReading } from "../api/hooks";
 import { PaperStatusBadge } from "../components/ui/PaperStatusBadge";
 import { paperTranslationStatus } from "@/lib/paperStatus";
@@ -15,12 +16,13 @@ import { apiRequest } from "@/api/client";
 import {
   deletePaper, exportMarkdown, exportPdf, generateArticle, openPaperFile, openPaperFolder, renamePaperFile, saveOriginal,
 } from "./actions";
-import { isJobKind, TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
+import { TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
 import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
 
 export function Header() {
   const activePaperId = useStore((s) => s.activePaperId);
-  const activeJobs = useStore((s) => s.activeJobs);
+  const translateJobId = useStore((s) => runningPaperJob(s.activeJobs, s.activePaperId, TRANSLATION_JOBS)?.job_id);
+  const busy = useStore((s) => paperBusy(s.activeJobs, s.activePaperId));
   const sidebarCollapsed = useStore((s) => s.sidebarCollapsed);
 
   const { data: paper } = usePaper(activePaperId);
@@ -49,14 +51,12 @@ export function Header() {
     );
   }
 
-  const translateJob = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && isJobKind(j.kind, TRANSLATION_JOBS));
-  const busy = paperBusy(activeJobs, activePaperId);
-  const translation = paperTranslationStatus(paper, !!translateJob, reading);
+  const translation = paperTranslationStatus(paper, !!translateJobId, reading);
   const { status } = translation;
 
   const handleCancel = async () => {
-    if (translateJob) {
-      await apiRequest("POST", `/api/jobs/${translateJob.job_id}/cancel`).catch(() => undefined);
+    if (translateJobId) {
+      await apiRequest("POST", `/api/jobs/${translateJobId}/cancel`).catch(() => undefined);
       useStore.getState().setStatus("中止しています… API通信中の場合は応答またはタイムアウトまで待ちます。");
     }
   };
@@ -88,7 +88,7 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
-        {translateJob ? (
+        {translateJobId ? (
           <button onClick={handleCancel} className="flex items-center gap-1.5 bg-destructive text-white px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90 transition-opacity">
             <Square className="w-3.5 h-3.5" /> 中止
           </button>

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { FileText, Loader2, MessageSquare, Send, Square, X } from "lucide-react";
 import { create } from "zustand";
-import { isRunning, paperBusy, useStore, type PassageAttachment, type PassageLocation } from "@/store";
+import { paperBusy, useStore, type PassageAttachment, type PassageLocation } from "@/store";
+import { runningPaperJob } from "@/features/jobs/jobSelectors";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { UsageLine } from "@/components/UsageLine";
 import { apiRequest } from "@/api/client";
@@ -87,7 +88,9 @@ function toLocation({ id: _id, paperId: _paperId, ...passage }: PassageAttachmen
 
 export function ChatPane() {
   const activePaperId = useStore((state) => state.activePaperId);
-  const activeJobs = useStore((state) => state.activeJobs);
+  // The same object until its own progress event, so that other jobs' events don't render the chat.
+  const askJob = useStore((state) => runningPaperJob(state.activeJobs, state.activePaperId, ["ask"]));
+  const busy = useStore((state) => paperBusy(state.activeJobs, state.activePaperId));
   const { data: messages = [] } = useMessages(activePaperId);
   // Kept in the store: attaching passages means leaving this tab for the reader and coming back.
   const input = useStore((state) => (activePaperId && state.chatInputs[activePaperId]) || "");
@@ -106,9 +109,6 @@ export function ChatPane() {
   const [pending, setPending] = useState<{ question: string; attachments: PassageLocation[] } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  const askJob = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && j.kind === "ask");
-  const busy = paperBusy(activeJobs, activePaperId);
 
   // Only on a real paper switch: a StrictMode rerun on mount would drop a message from the reader.
   const shownPaperId = useRef(activePaperId);

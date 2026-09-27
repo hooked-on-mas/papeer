@@ -1,5 +1,6 @@
 import { FileDown, Loader2, RefreshCw, ScrollText, Square } from "lucide-react";
-import { isRunning, paperBusy, useStore } from "../../store";
+import { paperBusy, useStore } from "../../store";
+import { runningPaperJob } from "@/features/jobs/jobSelectors";
 import { useArticle } from "../../api/hooks";
 import { apiRequest } from "../../api/client";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
@@ -8,7 +9,8 @@ import { exportMarkdown, generateArticle } from "@/app/actions";
 
 export function SummaryPane() {
   const activePaperId = useStore((state) => state.activePaperId);
-  const activeJobs = useStore((state) => state.activeJobs);
+  const job = useStore((state) => runningPaperJob(state.activeJobs, state.activePaperId, ["article"]));
+  const busy = useStore((state) => paperBusy(state.activeJobs, state.activePaperId));
   const { data: article, isLoading, error } = useArticle(activePaperId);
 
   if (!activePaperId) {
@@ -20,8 +22,6 @@ export function SummaryPane() {
     );
   }
 
-  const job = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && j.kind === "article");
-  const busy = paperBusy(activeJobs, activePaperId);
   const summaryText = article?.content || "";
 
   return (

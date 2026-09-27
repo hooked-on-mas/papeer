@@ -1,5 +1,6 @@
 import { useTagChoices } from "@/api/tagChoices";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { create } from "zustand";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/api/client";
 import {
@@ -11,7 +12,7 @@ import {
   FolderPlus, Loader2, Save, Search, Trash2, Undo2, X,
 } from "lucide-react";
 import { paperDisplayName, useCollections, usePaperList, type PaperData } from "@/api/hooks";
-import { isRunning, useStore } from "@/store";
+import { useStore } from "@/store";
 import {
   ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub,
   ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger,
@@ -20,78 +21,30 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  chooseNewCollection, createFolder, deleteFolder, deletePaper, importPdfs, movePaper, normalizeCollection,
+  chooseNewCollection, createFolder, deleteFolder, deletePaper, importPdfs, movePaper,
   openPaperFile, openPaperFolder, renameFolder, renamePaperFile, saveOriginal, undoMove,
 } from "@/app/actions";
 import { useDropTarget } from "@/app/fileDrop";
 import { usePendingImports, type PendingImport } from "@/app/pendingImports";
+import { allFolderPaths, buildTree, filterPapers, normalizeCollection, type FolderNode } from "./libraryTree";
 import { LibraryTags } from "./LibraryTags";
 import { TagChip } from "@/components/ui/TagChip";
 import { PaperStatusBadge } from "@/components/ui/PaperStatusBadge";
 import { paperTranslationStatus } from "@/lib/paperStatus";
-import { isJobKind, TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
+import { TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
+import { paperJobState } from "@/features/jobs/jobSelectors";
 import { onAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 
 export const SORT_LABELS = ["追加が新しい順", "追加が古い順", "名前順（昇順）", "名前順（降順）"];
 type LibraryHit = { paper_id: string; title: string; side: "metadata" | "note" | "original" | "translated"; page: number | null; snippet: string };
 
-type FolderNode = {
-  path: string;
-  name: string;
-  children: FolderNode[];
-  papers: PaperData[];
-  pending: PendingImport[];
-  count: number;
-};
+// Defaults that keep their identity from one render to the next, so that the memoized list and tree hold while loading.
+const NO_PAPERS: PaperData[] = [];
+const NO_COLLECTIONS: string[] = [];
 
-function buildTree(collections: string[], papers: PaperData[], pending: PendingImport[], filtered: boolean): FolderNode[] {
-  const grouped = new Map<string, PaperData[]>();
-  for (const paper of papers) {
-    const path = normalizeCollection(paper.collection_name || "");
-    grouped.set(path, [...(grouped.get(path) ?? []), paper]);
-  }
-  const pendingGroups = new Map<string, PendingImport[]>();
-  for (const item of pending) pendingGroups.set(item.collection, [...(pendingGroups.get(item.collection) ?? []), item]);
-  // While searching only folders with matches are listed, as in the old tree.
-  // PDFs being added are always shown, so a drop never seems to have been ignored.
-  const paths = new Set<string>([...grouped.keys(), ...pendingGroups.keys()].filter(Boolean));
-  if (!filtered) collections.forEach((c) => paths.add(c));
-  for (const path of [...paths]) {
-    const parts = path.split(" / ");
-    for (let depth = 1; depth < parts.length; depth++) paths.add(parts.slice(0, depth).join(" / "));
-  }
-  const nodes = new Map<string, FolderNode>();
-  const roots: FolderNode[] = [];
-  const ordered = [...paths].sort((a, b) =>
-    a.split(" / ").length - b.split(" / ").length || a.localeCompare(b, "ja", { sensitivity: "base" }));
-  for (const path of ordered) {
-    const parts = path.split(" / ");
-    const node: FolderNode = {
-      path, name: parts[parts.length - 1], children: [], papers: grouped.get(path) ?? [],
-      pending: pendingGroups.get(path) ?? [], count: 0,
-    };
-    nodes.set(path, node);
-    const parent = nodes.get(parts.slice(0, -1).join(" / "));
-    if (parent) parent.children.push(node);
-    else roots.push(node);
-  }
-  const count = (node: FolderNode): number =>
-    (node.count = node.papers.length + node.pending.length + node.children.reduce((sum, child) => sum + count(child), 0));
-  roots.forEach(count);
-  if (!filtered || grouped.has("") || pendingGroups.has("")) {
-    const unfiled: FolderNode = {
-      path: "", name: "未分類", children: [], papers: grouped.get("") ?? [], pending: pendingGroups.get("") ?? [], count: 0,
-    };
-    unfiled.count = unfiled.papers.length + unfiled.pending.length;
-    roots.push(unfiled);
-  }
-  return roots;
-}
-
-function allFolderPaths(nodes: FolderNode[]): string[] {
-  return nodes.flatMap((n) => [n.path, ...allFolderPaths(n.children)]);
-}
+/** Folder under a paper dragged in the tree; kept here so that only the rows it enters and leaves render again. */
+const useDragOver = create<{ path: string | null }>(() => ({ path: null }));
 
 export function LibrarySidebar() {
   const undoHistory = useStore((s) => s.moveHistory);
@@ -103,7 +56,6 @@ export function LibrarySidebar() {
   const sortOrder = useStore((s) => s.sortOrder);
   const setSortOrder = useStore((s) => s.setSortOrder);
   const currentCollection = useStore((s) => s.currentCollection);
-  const expandedCollections = useStore((s) => s.expandedCollections);
   const setExpandedCollections = useStore((s) => s.setExpandedCollections);
 
   const [searchText, setSearchText] = useState(librarySearch);
@@ -116,7 +68,7 @@ export function LibrarySidebar() {
   const [tagFilter, setTagFilter] = useState("");
   const [readFilter, setReadFilter] = useState("");
   const filtered = !!librarySearch.trim() || !!tagFilter || !!readFilter;
-  const { data: allPapers = [], isSuccess: papersLoaded } = usePaperList("", sortOrder);
+  const { data: allPapers = NO_PAPERS, isSuccess: papersLoaded } = usePaperList("", sortOrder);
   useEffect(() => {
     if (papersLoaded && tagFilter && !allPapers.some(paper => paper.tags?.includes(tagFilter))) setTagFilter("");
   }, [allPapers, papersLoaded, tagFilter]);
@@ -125,31 +77,37 @@ export function LibrarySidebar() {
     queryFn: () => apiRequest<{ results: LibraryHit[]; limited: boolean }>("GET", `/api/library-search?q=${encodeURIComponent(librarySearch)}`),
     enabled: !!librarySearch.trim(),
   });
-  const papers = allPapers.filter(p => (!tagFilter || p.tags?.includes(tagFilter)) && (!readFilter || p.read_status === readFilter)
-    && (!librarySearch.trim() || searchResults?.results.some(hit => hit.paper_id === p.id)));
-  const hits = searchResults?.results.filter(hit => papers.some(p => p.id === hit.paper_id)) ?? [];
-  const { data: collections = [] } = useCollections();
+  // Memoized, as is the tree built from it: a new list each render would render every row again.
+  const matches = useMemo(() => librarySearch.trim() ? new Set(searchResults?.results.map(hit => hit.paper_id)) : null,
+    [librarySearch, searchResults]);
+  const papers = useMemo(() => filterPapers(allPapers, { tag: tagFilter, readStatus: readFilter, matches }),
+    [allPapers, tagFilter, readFilter, matches]);
+  const hits = useMemo(() => {
+    const shown = new Set(papers.map(p => p.id));
+    return searchResults?.results.filter(hit => shown.has(hit.paper_id)) ?? [];
+  }, [papers, searchResults]);
+  const { data: collections = NO_COLLECTIONS } = useCollections();
   const pending = usePendingImports((s) => s.items);
   const tree = useMemo(() => buildTree(collections, papers, pending, filtered), [collections, papers, pending, filtered]);
 
-  const isExpanded = (path: string) => filtered || expandedCollections === null || expandedCollections.includes(path);
-  const setExpanded = (path: string, expanded: boolean) => {
-    const current = new Set(expandedCollections ?? allFolderPaths(tree));
+  // The same function until the tree changes, so that the memoized rows keep their props; each row
+  // selects whether it is open itself.
+  const setExpanded = useCallback((path: string, expanded: boolean) => {
+    const current = new Set(useStore.getState().expandedCollections ?? allFolderPaths(tree));
     if (expanded) current.add(path);
     else current.delete(path);
     setExpandedCollections([...current]);
-  };
+  }, [tree, setExpandedCollections]);
 
   const [dragging, setDragging] = useState<PaperData | null>(null);
-  const [dragOver, setDragOver] = useState<string | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   const onDragStart = (event: DragStartEvent) => setDragging(papers.find((p) => p.id === event.active.id) ?? null);
   const onDragOver = (event: DragOverEvent) => {
     const target = event.over ? String(event.over.id).replace(/^folder:/, "") : null;
-    if (target === dragOver) return;
-    setDragOver(target);
+    if (target === useDragOver.getState().path) return;
+    useDragOver.setState({ path: target });
     clearTimeout(hoverTimer.current);
     // Hovering a closed folder opens it, so papers can be dropped into subfolders.
     if (target !== null) hoverTimer.current = setTimeout(() => setExpanded(target, true), 700);
@@ -157,7 +115,7 @@ export function LibrarySidebar() {
   const onDragEnd = (event: DragEndEvent) => {
     clearTimeout(hoverTimer.current);
     setDragging(null);
-    setDragOver(null);
+    useDragOver.setState({ path: null });
     if (!event.over) return;
     movePaper(String(event.active.id), String(event.over.id).replace(/^folder:/, ""));
   };
@@ -166,6 +124,7 @@ export function LibrarySidebar() {
     // Ctrl+L and citations reveal the paper: open its ancestors and scroll to it.
     return onAppEvent("reveal-paper", ({ paperId, focus }) => {
       const paper = papers.find((p) => p.id === paperId);
+      const expandedCollections = useStore.getState().expandedCollections;
       if (paper && expandedCollections !== null) {
         const parts = normalizeCollection(paper.collection_name || "").split(" / ").filter(Boolean);
         const next = new Set(expandedCollections);
@@ -179,7 +138,7 @@ export function LibrarySidebar() {
         if (focus) row?.focus();
       }, 50);
     });
-  }, [papers, expandedCollections, setExpandedCollections]);
+  }, [papers, setExpandedCollections]);
 
   const clearFilters = () => {
     setSearchText("");
@@ -268,7 +227,7 @@ export function LibrarySidebar() {
 
       <DndContext sensors={sensors} collisionDetection={pointerWithin}
         onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}
-        onDragCancel={() => { setDragging(null); setDragOver(null); }}>
+        onDragCancel={() => { setDragging(null); useDragOver.setState({ path: null }); }}>
         <div
           className="flex-1 overflow-auto py-1 outline-none"
           tabIndex={-1}
@@ -289,8 +248,8 @@ export function LibrarySidebar() {
             {searchResults?.limited && <p className="p-2 text-muted-foreground">先頭200件を表示しています。検索語を追加して絞り込めます。</p>}
           </div>}
           {!librarySearch.trim() && tree.map((node) => (
-            <FolderRow key={node.path || "(unfiled)"} node={node} depth={0} papers={papers} collections={collections}
-              isExpanded={isExpanded} setExpanded={setExpanded} dragOver={dragOver} onTagSelect={setTagFilter} />
+            <FolderRow key={node.path || "(unfiled)"} node={node} depth={0} papers={allPapers} collections={collections}
+              filtered={filtered} setExpanded={setExpanded} onTagSelect={setTagFilter} />
           ))}
           {papers.length === 0 && pending.length === 0 && (
             <div className="px-4 py-6 text-center text-muted-foreground text-[12px] leading-relaxed">
@@ -326,23 +285,29 @@ export function LibrarySidebar() {
 /** Delete on the focused row itself, not on a nested button such as the tag toggle. */
 const isDeleteKey = (e: KeyboardEvent<HTMLElement>) => (e.key === "Delete" || e.key === "Backspace") && e.target === e.currentTarget;
 
+/**
+ * Props the rows pass down unchanged. They keep their identity from one render to the next (stable
+ * callbacks, query data), so that the memoized rows render again only for their own changes.
+ */
 type RowProps = {
   onTagSelect: (name: string) => void;
+  /** The whole library, unfiltered: deleting a folder counts every paper in it. */
   papers: PaperData[];
   collections: string[];
-  isExpanded: (path: string) => boolean;
+  /** Searching or filtering, which shows every folder open. */
+  filtered: boolean;
   setExpanded: (path: string, expanded: boolean) => void;
-  dragOver: string | null;
 };
 
-function FolderRow({ node, depth, ...rest }: { node: FolderNode; depth: number } & RowProps) {
-  const { papers, isExpanded, setExpanded, dragOver } = rest;
+function FolderRowView({ node, depth, ...rest }: { node: FolderNode; depth: number } & RowProps) {
+  const { papers, filtered, setExpanded } = rest;
   const { setNodeRef } = useDroppable({ id: `folder:${node.path}` });
-  const selectedFolder = useStore((s) => s.selectedFolder);
-  const osDropTarget = useDropTarget((s) => s.target);
-  const expanded = isExpanded(node.path);
-  const selected = selectedFolder === node.path;
-  const highlighted = dragOver === node.path || osDropTarget === node.path;
+  // Booleans, so that selecting, opening or dragging over another row leaves this one as it is.
+  const selected = useStore((s) => s.selectedFolder === node.path);
+  const expanded = useStore((s) => filtered || s.expandedCollections === null || s.expandedCollections.includes(node.path));
+  const draggedOver = useDragOver((s) => s.path === node.path);
+  const osDraggedOver = useDropTarget((s) => s.target === node.path);
+  const highlighted = draggedOver || osDraggedOver;
 
   const select = () => {
     useStore.getState().setSelectedFolder(node.path);
@@ -412,6 +377,9 @@ function FolderRow({ node, depth, ...rest }: { node: FolderNode; depth: number }
   );
 }
 
+/** Renders again only when its folder or the shared props change, or one of the values it selects. */
+const FolderRow = memo(FolderRowView);
+
 /** A PDF whose import job has not finished yet: its file name, then its page count once known. */
 function PendingRow({ item, depth }: { item: PendingImport; depth: number }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -435,15 +403,17 @@ function PendingRow({ item, depth }: { item: PendingImport; depth: number }) {
   );
 }
 
-function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData; depth: number; collections: string[]; onTagSelect: (name: string) => void }) {
+/**
+ * Memoized, with values selected for this paper only: opening a paper renders its row and the one
+ * left, and a job's progress events render its paper's row only when what the row shows changes.
+ */
+const PaperRow = memo(function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData; depth: number; collections: string[]; onTagSelect: (name: string) => void }) {
   const [allTags, setAllTags] = useState(false);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: paper.id });
-  const activePaperId = useStore((s) => s.activePaperId);
-  const selectedFolder = useStore((s) => s.selectedFolder);
-  const jobs = useStore((s) => s.activeJobs);
-  const running = jobs.some((j) => isRunning(j) && j.paper_id === paper.id);
-  const translating = jobs.some(j => isRunning(j) && j.paper_id === paper.id && isJobKind(j.kind, TRANSLATION_JOBS));
-  const isActive = paper.id === activePaperId && selectedFolder === null;
+  const isActive = useStore((s) => s.activePaperId === paper.id && s.selectedFolder === null);
+  const jobState = useStore((s) => paperJobState(s.activeJobs, paper.id, TRANSLATION_JOBS));
+  const running = jobState !== "idle";
+  const translating = jobState === "translating";
   const collection = normalizeCollection(paper.collection_name || "");
 
   const select = () => {
@@ -534,4 +504,4 @@ function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData
       </ContextMenuContent>
     </ContextMenu>
   );
-}
+});

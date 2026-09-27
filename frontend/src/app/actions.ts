@@ -10,6 +10,7 @@ import { paperExportFilename } from "@/lib/exportFilename";
 import { addPendingImports, removePendingImports, usePendingImports } from "./pendingImports";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
+import { normalizeCollection } from "@/features/library/libraryTree";
 
 let queryClient: QueryClient | null = null;
 
@@ -26,9 +27,7 @@ async function paper(id: string): Promise<PaperData> {
   return apiRequest<PaperData>("GET", `/api/papers/${id}`);
 }
 
-export function normalizeCollection(value: string): string {
-  return value.split(/[\\/]/).map((part) => part.trim()).filter(Boolean).join(" / ");
-}
+export { normalizeCollection };
 
 function isInside(value: string, path: string): boolean {
   const name = normalizeCollection(value);

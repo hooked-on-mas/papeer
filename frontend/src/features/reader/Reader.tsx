@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FilePlus2, Languages, Loader2 } from "lucide-react";
-import { isRunning, useStore } from "@/store";
+import { useStore } from "@/store";
+import { runningPaperJob } from "@/features/jobs/jobSelectors";
 import { useReading, type ReadingData } from "@/api/hooks";
 import { backendUrl } from "@/api/client";
 import { PdfPane } from "./PdfPane";
@@ -57,7 +58,6 @@ export function Reader() {
   const readerSplit = useStore((s) => s.readerSplit);
   const setReaderSplit = useStore((s) => s.setReaderSplit);
   const translatedOnly = useStore((s) => s.translatedOnly);
-  const activeJobs = useStore((s) => s.activeJobs);
   const [search, setSearch] = useState<{ query: string; side: "original" | "translated" }>({ query: "", side: "original" });
   const [bookmarkTarget, setBookmarkTarget] = useState<JumpTarget | null>(null);
   const { data: bookmarks = NO_NOTES } = useQuery({
@@ -68,7 +68,7 @@ export function Reader() {
   const sourceHighlights = useMemo(() => bookmarks.filter(item => item.page === currentPage && item.side === "original"), [bookmarks, currentPage]);
   const translatedHighlights = useMemo(() => bookmarks.filter(item => item.page === currentPage && item.side === "translated"), [bookmarks, currentPage]);
   const { data: reading } = useReading(activePaperId);
-  const translating = activeJobs.some((j) => j.paper_id === activePaperId && isRunning(j) && j.kind === "translate");
+  const translating = useStore((s) => !!runningPaperJob(s.activeJobs, s.activePaperId, ["translate"]));
 
   const readerRef = useRef<HTMLDivElement>(null);
   const leftScrollRef = useRef<HTMLDivElement>(null);
