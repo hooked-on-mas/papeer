@@ -30,6 +30,16 @@ def data_directory() -> Path:
     return current
 
 
+def device_directory() -> Path:
+    """Files that belong to this PC rather than to the library: never backed up or synced.
+
+    Holds the folder-sync state and the connection options that name a program or server on
+    this PC (config.DEVICE_OPTION_KEYS). It stays under LOCALAPPDATA even when PAPEER_DATA_DIR
+    moves the library elsewhere.
+    """
+    return Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "PapeerSync"
+
+
 def _has_papers(root: Path) -> bool:
     papers = root / "papers"
     return papers.is_dir() and any(papers.iterdir())

@@ -40,6 +40,11 @@ class BackupRequest(BaseModel):
     path: str
 
 
+class RestoreRequest(BackupRequest):
+    # Take the backup's settings.json and prompts too; otherwise the current ones are kept.
+    import_settings: bool = False
+
+
 class TagRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
 
@@ -266,14 +271,14 @@ def backup(body: BackupRequest):
     return deps.submit_job("backup", action)
 
 @router.post("/api/restore")
-def restore(body: BackupRequest):
+def restore(body: RestoreRequest):
     lib = deps.get_library()
     def action(cancel, progress, _page_ready):
         deps.wait_for_library_requests()
         check_cancel(cancel)
         progress("バックアップを検証して復元しています…")
         try:
-            previous = tools.restore_backup(lib, Path(body.path), cancel)
+            previous = tools.restore_backup(lib, Path(body.path), cancel, import_settings=body.import_settings)
         except Cancelled:
             raise Cancelled("復元を中止しました。ライブラリは変更していません。") from None
         except (OSError, ValueError, sqlite3.DatabaseError, zipfile.BadZipFile) as exc:

@@ -1,6 +1,7 @@
 """Keep every test away from the user's real library and device settings.
 
-papeer reads %LOCALAPPDATA%\\Papeer (prompts, settings, papers) and %LOCALAPPDATA%\\PapeerSync,
+papeer reads %LOCALAPPDATA%\\Papeer (prompts, settings, papers) and %LOCALAPPDATA%\\PapeerSync
+(folder-sync state, this PC's CLI paths and API URL: paths.device_directory()),
 so the environment is pointed at a temporary folder before any papeer module is imported,
 and again for each test. An audit hook (tests/_isolation.py) refuses file access under the
 real folders and fails the test even when the code under test swallows the error.

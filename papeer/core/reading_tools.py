@@ -153,9 +153,17 @@ def create_backup(lib: Library, destination: Path, cancel: threading.Event | Non
                     archive.write(path, path.relative_to(lib.root).as_posix())
 
 
-def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = None) -> Path:
+# The library's settings (settings.json: connection, model, effort, ...) and the user's prompt texts.
+# A restore may keep the current ones instead of taking those in the backup.
+SETTINGS_ENTRIES = ("settings.json", "prompts")
+
+
+def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = None, *,
+                   import_settings: bool = True) -> Path:
     """Replace the library with a validated backup and return where the old one was moved.
 
+    With import_settings=False the current settings.json and prompts are kept instead of the backup's.
+    Options tied to this PC (cli_path, base_url) are never taken from a backup either way; see config.Settings.load.
     `cancel` is honoured only until the folders are swapped: a cancelled restore leaves the library as it was.
     """
     root = lib.root.resolve()
@@ -208,6 +216,8 @@ def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = 
                     if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
                         raise ValueError("バックアップの原文PDFが破損しています。")
         manifest_path.unlink()
+        if not import_settings:
+            _keep_current_settings(root, staging)
         # The last point to stop; once the folders are swapped the restore runs to the end.
         _stop_if_cancelled(cancel)
         root.rename(previous)
@@ -222,6 +232,20 @@ def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = 
     finally:
         if staging.exists():
             shutil.rmtree(staging)
+
+
+def _keep_current_settings(root: Path, staging: Path) -> None:
+    """Put the library's current settings and prompts in the restored copy in place of the backup's."""
+    for name in SETTINGS_ENTRIES:
+        restored, current = staging / name, root / name
+        if restored.is_dir():
+            shutil.rmtree(restored)
+        else:
+            restored.unlink(missing_ok=True)
+        if current.is_dir():
+            shutil.copytree(current, restored)
+        elif current.is_file():
+            shutil.copy2(current, restored)
 
 
 REVISION_SCHEMA = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"],

@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
-import os
 from pathlib import Path
 import platform
 import tempfile
@@ -17,6 +16,7 @@ import uuid
 import zipfile
 
 from papeer.core.fileio import atomic_output, atomic_write_json, is_temporary
+from papeer.core.paths import device_directory
 from papeer.core.reading_tools import create_backup, restore_backup
 from papeer.core.storage import Library
 from papeer.providers import check_cancel
@@ -25,8 +25,7 @@ FORMAT = "papeer-folder-sync-v1"
 
 
 def state_path(root: Path) -> Path:
-    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "PapeerSync"
-    return base / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".json")
+    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".json")
 
 
 def read_state(root: Path) -> dict:

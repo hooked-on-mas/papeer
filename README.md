@@ -23,7 +23,7 @@
 | 翻訳の確認・修正 | 要確認ページの一覧、段落の手動修正・AI修正案、変更前後の比較、PDFへの反映と取り消し |
 | 共通用語辞書 | 全論文で共有。翻訳前にAIが訳語に迷う未登録語と訳語案を抽出し、過去の登録語と一緒に確認・修正して追加。JSONでエクスポート・読み込み可能 |
 | 横断検索 | 論文情報・タグ・原文・訳文・メモを検索し、抜粋から該当ページへ移動 |
-| バックアップ・復元 | 設定画面からライブラリ全体をZIPで保存・復元。復元前のデータは別フォルダーに保持 |
+| バックアップ・復元 | 設定画面からライブラリ全体をZIPで保存・復元。復元前のデータは別フォルダーに保持。設定とプロンプトは、選んだときだけバックアップのものに戻す |
 
 翻訳処理の詳細な挙動と制限は [docs/translation.md](docs/translation.md) を参照してください。OCR は未実装のため、文字情報のある PDF が対象です。
 
@@ -123,7 +123,7 @@ CLI は PATH と既定のインストール先から自動検出します。見�
 2. `papeer/providers/registry.py` の `BACKENDS` に 1 行追加する。
 3. `papeer/core/code_version.py` の `TRANSLATION_SOURCES` に新しいファイルを追加する（`registry.py` は対象外なので、1 行追加だけではキャッシュは無効にならない）。
 
-設定画面の選択肢と入力欄は `GET /api/providers` から作られるため、フロントエンドの変更は不要です。接続先ごとの設定（CLI のパス、API URL、最後に選んだモデルと effort）は `settings.json` の `provider_options` に保存されます。
+設定画面の選択肢と入力欄は `GET /api/providers` から作られるため、フロントエンドの変更は不要です。接続先ごとの設定のうち、最後に選んだモデルと effort はライブラリの `settings.json` の `provider_options` に、CLI のパスと API URL（`config.DEVICE_OPTION_KEYS`）は PC ごとの `%LOCALAPPDATA%\PapeerSync\device-settings.json` に保存されます。後者は同期・バックアップに含めず、別の PC から届いた `settings.json` や復元したバックアップに書かれていても使いません（以前の版の `settings.json` にあった値は、初回の読み込み時に一度だけ PC ごとの保存先へ移します）。モデル名は半角英数字と `. : / @ [ ] + - _` だけ（先頭の `-` は不可）を受け付けます。保存済みのモデル名が不正な場合は、接続先の既定のモデルを使います。
 
 `papeer/providers/` のファイルは翻訳キャッシュの識別値に含まれます。編集すると、既存の論文は次回の翻訳で指定ページを訳し直します。
 
@@ -151,6 +151,10 @@ Papeer/
     glossary.json               旧辞書の移行元（共通辞書はlibrary.sqlite3に保存）
     article.md                解説
     note.md                   メモ
+
+PapeerSync/                   このPCだけの設定（同期・バックアップの対象外）
+  device-settings.json        CLI のパスと API URL
+  <ハッシュ>.json             同期フォルダーの保存先と最終同期の基準
 ```
 
 ## 環境変数

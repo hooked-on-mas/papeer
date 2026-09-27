@@ -9,6 +9,7 @@ import sqlite3
 import pytest
 
 from _isolation import REAL_LIBRARY, RealDataAccessError, is_under, path_forms, take_violations
+from papeer.core.config import device_settings_path
 from papeer.core.drive_sync import state_path
 from papeer.core.paths import data_directory
 
@@ -20,6 +21,7 @@ PROBE = REAL_LIBRARY / "__papeer_guard_probe__"
 def test_data_folders_point_at_the_test_folder(isolated_app_data):
     assert data_directory() == (isolated_app_data / "Papeer").resolve()
     assert state_path(Path("library")).is_relative_to(isolated_app_data)
+    assert device_settings_path().is_relative_to(isolated_app_data)
     assert not data_directory().is_relative_to(REAL_LIBRARY)
 
 
