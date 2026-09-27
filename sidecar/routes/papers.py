@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, 
 from fastapi.responses import FileResponse, StreamingResponse
 
 from papeer.core import reading_state, search
+from papeer.core.bibtex import bibtex, export_bibtex
 from papeer.core.library_list import LibrarySort, library_rows, paper_row
 from papeer.core.paths import PaperFiles
 from papeer.core.reading_tools import validate_terms
@@ -23,6 +24,8 @@ from papeer.providers import Cancelled
 from sidecar import deps
 from sidecar.jobs import ConcurrencyConflict, TurnQueue
 from sidecar.schemas import (
+    BibtexExportRequest,
+    BibtexRequest,
     BookmarkEditRequest,
     BookmarkRequest,
     CreateCollectionRequest,
@@ -151,7 +154,8 @@ def update_paper(paper_id: str, body: UpdatePaperRequest) -> dict[str, str]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="タイトルを入力してください。")
     fields = {"title": body.title.strip() if body.title is not None else None, "first_author": body.author,
               "publication_year": str(body.year) if body.year is not None else None,
-              "collection_name": body.collection, "note": body.note, "tags": body.tags, "read_status": body.read_status}
+              "collection_name": body.collection, "note": body.note, "tags": body.tags, "read_status": body.read_status,
+              "doi": body.doi, "arxiv_id": body.arxiv_id, "venue": body.venue}
     updates = {key: value for key, value in fields.items() if value is not None}
     try:
         if updates:
@@ -186,6 +190,19 @@ def delete_paper(paper_id: str) -> dict[str, str]:
     lib.delete_paper(paper_id)
     deps.library_changed()
     return {"status": "deleted"}
+
+
+@router.post("/api/papers/bibtex")
+def papers_bibtex(body: BibtexRequest) -> dict[str, Any]:
+    """BibTeX entries of the papers, to copy; made from the library's own data (nothing is looked up online)."""
+    lib = deps.get_library()
+    try:
+        papers = lib.papers_by_id(body.paper_ids)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc.args[0]))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return {"text": bibtex(papers), "count": len(papers)}
 
 
 # --- What the reader shows ---
@@ -414,6 +431,18 @@ def rename_collection(body: RenameCollectionRequest) -> dict[str, str]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     deps.library_changed()
     return {"status": "renamed", "name": destination}
+
+
+@router.post("/api/collections/bibtex")
+def export_collection_bibtex(body: BibtexExportRequest) -> dict[str, Any]:
+    """Save the BibTeX entries of a folder's papers (with its subfolders') to a .bib file outside the library."""
+    lib = deps.get_library()
+    try:
+        papers = lib.collection_papers(body.collection)
+        count = export_bibtex(Path(body.destination), papers, lib.root)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return {"count": count, "destination": str(Path(body.destination).resolve())}
 
 
 @router.delete("/api/collections/{name:path}")

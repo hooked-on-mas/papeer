@@ -26,3 +26,10 @@ export function paperExportFilename(paper: PaperIdentity, kind: PaperExportKind)
   const extension = kind === "markdown" ? "md" : "pdf";
   return `${shortened}-${labels[kind]}.${extension}`;
 }
+
+/** The .bib file a folder's BibTeX is saved to by default: the folder's own name (the last part of its path). */
+export function bibtexFilename(folder: string): string {
+  const leaf = folder.split(/[\/]/).map((part) => part.trim()).filter(Boolean).pop() ?? "";
+  const stem = safeStem(leaf).slice(0, 160).replace(/[\uD800-\uDBFF]$/, "").replace(/[. ]+$/g, "");
+  return `${stem || "文献"}.bib`;
+}

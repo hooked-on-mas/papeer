@@ -10,6 +10,7 @@ from typing import Callable
 
 from papeer.core.fileio import atomic_write_bytes, atomic_write_json, atomic_write_text, replace_file
 from papeer.pdf.pdf_engine import PDF_LOCK, batches, build_translated_pdf, translation_units
+from papeer.pdf.pdf_typography import fonts_need_conversion, prepare_fonts_in_background
 import pymupdf as fitz
 from papeer.providers import ProviderBackend, check_cancel
 from papeer.core.paths import PaperFiles
@@ -236,6 +237,10 @@ class PaperService:
             archive.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(cache_path, archive)
         self.library.update(paper_id, status=translation_status(running=True))
+        # The first translation on a PC converts the bundled fonts; that overlaps the first requests.
+        if fonts_need_conversion():
+            self.progress("日本語フォントを準備しています（初回のみ・約30秒）")
+        prepare_fonts_in_background()
         try:
             def skipped(unit):
                 # A unit taking another's translation is given up with the unit sent for it.

@@ -54,7 +54,8 @@ export const api = createClient<paths>({
 });
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  /** `code` is the body's machine-readable reason when it gives one, such as library_busy (libraryBusy.ts). */
+  constructor(message: string, readonly status: number, readonly code?: string) {
     super(message);
   }
 }
@@ -89,6 +90,9 @@ export async function apiRequest<T = any>(method: string, path: string, body?: u
     const text = await response.text();
     return { ok: response.ok, status: response.status, body: text ? JSON.parse(text) : null };
   });
-  if (!response.ok) throw new ApiError(errorMessage(response.body, response.status), response.status);
+  if (!response.ok) {
+    const code = typeof response.body?.code === "string" ? response.body.code : undefined;
+    throw new ApiError(errorMessage(response.body, response.status), response.status, code);
+  }
   return response.body as T;
 }

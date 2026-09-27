@@ -11,6 +11,10 @@ export type PaperData = {
   original_name?: string;
   first_author?: string;
   publication_year?: string;
+  /** For citing it (BibTeX): read from the PDF when added, editable in 論文情報; "" when unknown. */
+  doi?: string;
+  arxiv_id?: string;
+  venue?: string;
   collection_name?: string;
   /** Only in GET /api/papers/{id}: the list rows leave the memo out. */
   note?: string;

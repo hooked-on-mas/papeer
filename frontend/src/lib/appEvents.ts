@@ -13,6 +13,8 @@ export type AppEvents = {
   "open-lightbox": { src: string; alt?: string };
   /** Show the paper in the library tree; focus moves the keyboard focus to its row. */
   "reveal-paper": { paperId: string; focus: boolean };
+  /** Move the keyboard focus to the library tree: its focused row, or else the open paper (Ctrl+L). */
+  "focus-library": void;
   "ink-changed": { paperId: string };
 };
 
