@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/api/client";
+import { apiRequest, ApiError } from "@/api/client";
 import type { PaperData, ReadingData } from "@/api/hooks";
 import { askConfirm, askText, showMessage } from "@/components/AppDialogs";
 import { showStartedJob, startJob } from "@/features/jobs/jobEvents";
@@ -119,21 +119,40 @@ async function undoLastMove(): Promise<void> {
   const last = history[history.length - 1];
   if (!last) return;
   const { setMoveHistory, setStatus } = useStore.getState();
+  const removeRecord = () => setMoveHistory(useStore.getState().moveHistory.filter((entry) => entry !== last));
+  if ("kind" in last) {
+    try {
+      const result = await apiRequest<{ name: string }>("POST", `/api/collections/restore/${last.token}`);
+      removeRecord();
+      expandToCollection(result.name);
+      useStore.getState().setSelectedFolder(result.name);
+      useStore.getState().setCurrentCollection(result.name);
+      refreshLibrary();
+      setStatus(`「${result.name}」と論文の配置を復元しました。`);
+    } catch (error) {
+      showError(error, "フォルダーを復元できませんでした");
+    }
+    return;
+  }
   try {
     // Do not overwrite a later edit made through the metadata form.
     const current = normalizeCollection((await paper(last.paperId)).collection_name || "");
     if (current !== last.to) {
-      setMoveHistory(history.slice(0, -1));
+      removeRecord();
       setStatus("分類が別の操作で変更されています。この移動は取り消せません。");
       return;
     }
-  } catch {
-    setMoveHistory(history.slice(0, -1));
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 404) {
+      showError(error, "移動を取り消せませんでした");
+      return;
+    }
+    removeRecord();
     setStatus("移動した論文が見つかりません。この移動は取り消せません。");
     return;
   }
   if (await movePaper(last.paperId, last.from, false)) {
-    setMoveHistory(useStore.getState().moveHistory.slice(0, -1));
+    removeRecord();
     setStatus(`移動を取り消しました：${last.from || "未分類"}`);
   }
 }
@@ -186,7 +205,7 @@ export async function renameFolder(path: string): Promise<void> {
   useStore.setState({
     currentCollection: mapped(s.currentCollection),
     selectedFolder: s.selectedFolder === null ? null : mapped(s.selectedFolder),
-    moveHistory: s.moveHistory.map((m) => ({ ...m, from: mapped(m.from), to: mapped(m.to) })),
+    moveHistory: s.moveHistory.map((m) => "kind" in m ? m : ({ ...m, from: mapped(m.from), to: mapped(m.to) })),
     expandedCollections: s.expandedCollections?.map(mapped) ?? null,
   });
   refreshLibrary();
@@ -203,8 +222,11 @@ export async function deleteFolder(path: string, papers: PaperData[]): Promise<v
     if (!ok) return;
   }
   let moved: string[] = [];
+  let token: string;
   try {
-    moved = (await apiRequest<{ moved: string[] }>("DELETE", `/api/collections/${encodeURIComponent(path)}`)).moved ?? [];
+    const result = await apiRequest<{ moved: string[]; undo_token: string }>("DELETE", `/api/collections/${encodeURIComponent(path)}`);
+    moved = result.moved ?? [];
+    token = result.undo_token;
   } catch (error) {
     showError(error, "フォルダーを削除できませんでした");
     return;
@@ -213,8 +235,7 @@ export async function deleteFolder(path: string, papers: PaperData[]): Promise<v
   useStore.setState({
     currentCollection: isInside(s.currentCollection, path) ? "" : s.currentCollection,
     selectedFolder: s.selectedFolder !== null && isInside(s.selectedFolder, path) ? null : s.selectedFolder,
-    // Old move history must not recreate the deleted subtree.
-    moveHistory: s.moveHistory.filter((m) => !moved.includes(m.paperId) && !isInside(m.from, path) && !isInside(m.to, path)),
+    moveHistory: [...s.moveHistory, { kind: "delete-folder", path, token }],
     expandedCollections: s.expandedCollections?.filter((e) => !isInside(e, path)) ?? null,
   });
   refreshLibrary();
@@ -261,7 +282,7 @@ export async function deletePaper(paperId: string): Promise<void> {
   }
   const s = useStore.getState();
   if (s.activePaperId === paperId) s.setActivePaperId(null);
-  useStore.setState({ moveHistory: s.moveHistory.filter((m) => m.paperId !== paperId) });
+  useStore.setState({ moveHistory: s.moveHistory.filter((m) => "kind" in m || m.paperId !== paperId) });
   refreshLibrary();
   s.setStatus(`「${current.title}」を削除しました。`);
 }

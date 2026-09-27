@@ -6,6 +6,7 @@ import re
 import shutil
 import tempfile
 import threading
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
@@ -428,9 +429,20 @@ def rename_collection(body: RenameCollectionRequest) -> dict[str, str]:
 @router.delete("/api/collections/{name:path}")
 def delete_collection(name: str) -> dict[str, Any]:
     lib = deps.get_library()
+    token = uuid.uuid4().hex
     try:
-        moved = lib.delete_collection(name)
+        moved = lib.delete_collection(name, undo_token=token)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     deps.library_changed()
-    return {"status": "deleted", "moved": moved}
+    return {"status": "deleted", "moved": moved, "undo_token": token}
+
+
+@router.post("/api/collections/restore/{undo_token}")
+def restore_collection(undo_token: str) -> dict[str, str]:
+    try:
+        name = deps.get_library().restore_collection(undo_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    deps.library_changed()
+    return {"status": "restored", "name": name}

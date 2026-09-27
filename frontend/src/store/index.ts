@@ -18,6 +18,8 @@ export interface MoveRecord {
   to: string;
 }
 
+export type LibraryUndoRecord = MoveRecord | { kind: "delete-folder"; path: string; token: string };
+
 /** Text handed from the reader to the チャット or メモ tab, used once by that paper's pane. */
 export interface PaperHandoff {
   paperId: string;
@@ -81,7 +83,7 @@ interface UiState {
   /** null until known: expand everything, as the old tree did on first launch. */
   expandedCollections: string[] | null;
   /** Library moves made during this session, newest last. */
-  moveHistory: MoveRecord[];
+  moveHistory: LibraryUndoRecord[];
   uiStateLoaded: boolean;
   chatDraft: PaperHandoff | null;
   noteInsert: PaperHandoff | null;
@@ -108,7 +110,7 @@ interface UiState {
   setLibrarySearch: (query: string) => void;
   setSortOrder: (order: number) => void;
   setExpandedCollections: (paths: string[] | null) => void;
-  setMoveHistory: (history: MoveRecord[]) => void;
+  setMoveHistory: (history: LibraryUndoRecord[]) => void;
   setChatDraft: (draft: PaperHandoff | null) => void;
   setNoteInsert: (insert: PaperHandoff | null) => void;
   addChatAttachment: (attachment: PassageAttachment) => void;

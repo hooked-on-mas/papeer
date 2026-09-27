@@ -8,7 +8,7 @@ import {
 } from "@dnd-kit/core";
 import {
   ArrowUpDown, ChevronDown, ChevronRight, Edit2, ExternalLink, FilePlus2, FileText, Folder, FolderOpen,
-  FolderPlus, Loader2, Save, Search, Trash2, X,
+  FolderPlus, Loader2, Save, Search, Trash2, Undo2, X,
 } from "lucide-react";
 import { paperDisplayName, useCollections, usePaperList, type PaperData } from "@/api/hooks";
 import { isRunning, useStore } from "@/store";
@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   chooseNewCollection, createFolder, deleteFolder, deletePaper, importPdfs, movePaper, normalizeCollection,
-  openPaperFile, openPaperFolder, renameFolder, renamePaperFile, saveOriginal,
+  openPaperFile, openPaperFolder, renameFolder, renamePaperFile, saveOriginal, undoMove,
 } from "@/app/actions";
 import { useDropTarget } from "@/app/fileDrop";
 import { usePendingImports, type PendingImport } from "@/app/pendingImports";
@@ -94,6 +94,9 @@ function allFolderPaths(nodes: FolderNode[]): string[] {
 }
 
 export function LibrarySidebar() {
+  const undoHistory = useStore((s) => s.moveHistory);
+  const lastUndo = undoHistory[undoHistory.length - 1];
+  const undoLabel = lastUndo && "kind" in lastUndo ? `「${lastUndo.path}」の削除を元に戻す` : "論文の移動を元に戻す";
   const { data: readingStatuses = [] } = useTagChoices("status");
   const librarySearch = useStore((s) => s.librarySearch);
   const setLibrarySearch = useStore((s) => s.setLibrarySearch);
@@ -185,7 +188,14 @@ export function LibrarySidebar() {
   };
 
   return (
-    <div className="flex flex-col h-full text-[13px] select-none">
+    <div className="flex flex-col h-full text-[13px] select-none" onKeyDown={(event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest("input, textarea, [contenteditable=true], [role=dialog]")) return;
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "z" && lastUndo) {
+        event.preventDefault();
+        void undoMove();
+      }
+    }}>
       <div className="p-2 space-y-2 shrink-0">
         <button
           onClick={importPdfs}
@@ -198,6 +208,10 @@ export function LibrarySidebar() {
         <div className="text-[12px] text-muted-foreground truncate px-0.5" title={currentCollection || "未分類"}>
           追加先：{currentCollection || "未分類"}
         </div>
+        <button onClick={undoMove} disabled={!lastUndo} title={`${undoLabel}（ライブラリ内で Ctrl+Z）`}
+          className="w-full flex items-center justify-center gap-2 h-7 border rounded-md hover:bg-muted disabled:opacity-40 disabled:cursor-default">
+          <Undo2 className="w-3.5 h-3.5" /> 元に戻す
+        </button>
         <div className="flex gap-1.5">
           <div className="relative flex-1">
             <Search className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />

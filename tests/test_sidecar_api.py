@@ -379,6 +379,12 @@ def test_collection_rules_match_old_library(test_env):
     assert deleted.json()["moved"] == [paper_id]
     assert client.get(f"/api/papers/{paper_id}").json()["collection_name"] == ""
     assert client.delete("/api/collections/存在しない").status_code == 400
+    token = deleted.json()["undo_token"]
+    restored = client.post(f"/api/collections/restore/{token}")
+    assert restored.status_code == 200
+    assert restored.json()["name"] == "制御工学"
+    assert client.get(f"/api/papers/{paper_id}").json()["collection_name"] == "制御工学 / 輪講"
+    assert client.post(f"/api/collections/restore/{token}").status_code == 400
 
     # Importing the same PDF again opens the existing paper instead of adding one.
     again = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])

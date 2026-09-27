@@ -51,9 +51,9 @@ export function StatusBar() {
         <button
           onClick={undoMove}
           className="flex items-center gap-1 h-6 px-2 rounded border hover:bg-muted hover:text-foreground shrink-0"
-          title="今回の起動中に行った分類移動を、直前のものから取り消します。"
+          title="今回の起動中に行った論文の移動・フォルダー削除を、直前のものから取り消します。"
         >
-          <Undo2 className="w-3 h-3" /> 移動を戻す
+          <Undo2 className="w-3 h-3" /> 元に戻す
         </button>
       )}
       {usageTitle && (

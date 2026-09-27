@@ -6,7 +6,7 @@ import { apiRequest } from "@/api/client";
 import { useCollections, usePaper, useReading, type PaperData, type ReadingData } from "@/api/hooks";
 import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
-import { openPaperFolder } from "@/app/actions";
+import { normalizeCollection, openPaperFolder } from "@/app/actions";
 import { showError } from "@/components/errorDialog";
 import { ReadingOrganization } from "./ReadingOrganization";
 import { NoteTemplates } from "./NoteTemplates";
@@ -155,11 +155,15 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
     }
     setSavingMeta(true);
     try {
+      const previous = await apiRequest<PaperData>("GET", `/api/papers/${paperId}`);
       await apiRequest("PATCH", `/api/papers/${paperId}`, {
         title: title.trim(), author, year: year.trim(), collection: collection.trim(),
       });
       setFormDirty(false);
       const store = useStore.getState();
+      const from = normalizeCollection(previous.collection_name || "");
+      const to = normalizeCollection(collection);
+      if (from !== to) store.setMoveHistory([...store.moveHistory, { paperId, from, to }]);
       if (store.selectedFolder === null && store.activePaperId === paperId) {
         store.setCurrentCollection(collection.split(/[\\/]/).map((p) => p.trim()).filter(Boolean).join(" / "));
       }

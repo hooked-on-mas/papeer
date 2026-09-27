@@ -306,7 +306,7 @@ class Library:
                     db.execute("UPDATE papers SET collection_name=? WHERE id=?", (mapped(name), row["id"]))
         return destination
 
-    def delete_collection(self, path: str) -> list[str]:
+    def delete_collection(self, path: str, *, undo_token: str | None = None) -> list[str]:
         """Remove a folder subtree, preserving every paper and its files."""
         path = normalize_collection_name(path)
         if not path:
@@ -315,10 +315,17 @@ class Library:
             name = normalize_collection_name(name)
             return name == path or name.startswith(path + " / ")
         with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
             names = [row[0] for row in db.execute("SELECT name FROM collections")]
             papers = db.execute("SELECT id,collection_name FROM papers").fetchall()
             if not any(inside(name) for name in names) and not any(inside(row["collection_name"]) for row in papers):
                 raise ValueError("フォルダーが見つかりません。")
+            if undo_token:
+                db.execute("CREATE TABLE IF NOT EXISTS collection_undo (token TEXT PRIMARY KEY, snapshot TEXT NOT NULL)")
+                snapshot = {"path": path, "names": [name for name in names if inside(name)],
+                            "papers": [dict(row) for row in papers if inside(row["collection_name"])],
+                            "glossaries": [dict(row) for row in db.execute("SELECT name,terms FROM collection_glossaries") if inside(row["name"])]}
+                db.execute("INSERT INTO collection_undo VALUES(?,?)", (undo_token, json.dumps(snapshot)))
             # Keep implicit ancestors when their last descendant is removed.
             parent = " / ".join(path.split(" / ")[:-1])
             if parent:
@@ -329,6 +336,30 @@ class Library:
             db.executemany("DELETE FROM collection_glossaries WHERE name=?",
                            [(row[0],) for row in db.execute("SELECT name FROM collection_glossaries").fetchall() if inside(row[0])])
         return identities
+
+    def restore_collection(self, token: str) -> str:
+        """Restore a deleted subtree atomically, refusing to overwrite later edits."""
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='collection_undo'").fetchone():
+                raise ValueError("復元できるフォルダーが見つかりません。")
+            row = db.execute("SELECT snapshot FROM collection_undo WHERE token=?", (token,)).fetchone()
+            if not row:
+                raise ValueError("復元できるフォルダーが見つかりません。")
+            saved = json.loads(row[0])
+            path = saved["path"]
+            names = [r[0] for r in db.execute("SELECT name FROM collections UNION SELECT collection_name FROM papers UNION SELECT name FROM collection_glossaries")]
+            if any(n == path or n.startswith(path + " / ") for n in names):
+                raise ValueError("同じ場所にフォルダーが作成されています。名前を変更してから復元してください。")
+            for paper in saved["papers"]:
+                current = db.execute("SELECT collection_name FROM papers WHERE id=?", (paper["id"],)).fetchone()
+                if not current or current[0]:
+                    raise ValueError("削除後に論文が移動または削除されています。先にその操作を確認してください。")
+            db.executemany("INSERT OR IGNORE INTO collections(name) VALUES(?)", [(n,) for n in [path, *saved["names"]]])
+            db.executemany("UPDATE papers SET collection_name=? WHERE id=?", [(p["collection_name"], p["id"]) for p in saved["papers"]])
+            db.executemany("INSERT INTO collection_glossaries(name,terms) VALUES(?,?)", [(g["name"], g["terms"]) for g in saved["glossaries"]])
+            db.execute("DELETE FROM collection_undo WHERE token=?", (token,))
+        return path
 
     def rename_paper(self, paper_id: str, name: str) -> str:
         name = name.strip()
