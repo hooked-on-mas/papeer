@@ -46,6 +46,11 @@ def sync_state_path(root: Path) -> Path:
     return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".json")
 
 
+def fingerprint_cache_path(root: Path) -> Path:
+    """The file digests this PC remembers for the library at `root` (see drive_sync.fingerprint)."""
+    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".fingerprint.json")
+
+
 def _has_papers(root: Path) -> bool:
     papers = root / "papers"
     return papers.is_dir() and any(papers.iterdir())

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/api/client";
-import { cancelSync, confirmOpenEdits, syncDrive, useSyncState } from "./driveSync";
+import { cancelSync, confirmOpenEdits, runDriveSync, syncDrive, useSyncState } from "./driveSync";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,8 @@ import { shell, joinPath } from "@/shell";
 import { isRunning, useStore } from "@/store";
 import { openSettings, useSettingsNavigation } from "./settingsNavigation";
 import { openEditLabels } from "@/lib/pendingSaves";
+import { isAppClosing } from "@/app/appClosing";
+import { PublishSchedule, type SyncCheck } from "./autoSyncSchedule";
 
 type Revision = { id: string; device: string; created: string };
 type Counts = Partial<Record<"papers" | "notes" | "stickies" | "ink", number>>;
@@ -39,14 +41,19 @@ async function tellReview(review: SyncReview): Promise<void> {
 }
 const DIALOG_KEYS = new Set(["Tab", "Enter", " ", "Escape"]);
 
-/** Mounted once: flush editors before every sync and block new edits until it finishes. */
+/**
+ * Mounted once: runs the automatic sync, flushes editors before every sync, and blocks new edits until
+ * a sync with the waiting screen finishes. The background one leaves the app usable (see syncDrive).
+ */
 export function DriveSyncHost() {
   const busy = useSyncState(s => s.busy);
+  const background = useSyncState(s => s.background);
   const jobId = useSyncState(s => s.jobId);
   const cancelling = useSyncState(s => s.cancelling);
   const queryClient = useQueryClient();
+  const blocking = busy && !background;
   useEffect(() => {
-    if (!busy) return;
+    if (!blocking) return;
     const block = (event: KeyboardEvent) => {
       // Dialogs stay usable from the keyboard: the 中止 button, and the confirmation when closing the app.
       if (DIALOG_KEYS.has(event.key) && !event.ctrlKey && !event.altKey && !event.metaKey
@@ -55,11 +62,14 @@ export function DriveSyncHost() {
     };
     window.addEventListener("keydown", block, true);
     return () => window.removeEventListener("keydown", block, true);
-  }, [busy]);
+  }, [blocking]);
   useEffect(() => {
+    const schedule = new PublishSchedule();
+    // While the app is closing, its own last sync runs (AppShell); one started here would get in its way.
+    const idle = () => useStore.getState().uiStateLoaded && !useSyncState.getState().busy && !isAppClosing()
+      && !useStore.getState().activeJobs.some(isRunning);
     const tick = async () => {
-      if (!useStore.getState().uiStateLoaded || useSyncState.getState().busy
-          || useStore.getState().activeJobs.some(isRunning)) return;
+      if (!idle()) return;
       try {
         const state = await apiRequest<DriveStatus>("GET", "/api/drive");
         if (state.library_missing) {
@@ -72,12 +82,24 @@ export function DriveSyncHost() {
           }
           return;
         }
-        // Waits while the settings or a dialog holding a draft is open: taking in another PC's library
-        // reloads the page. A review waits for the user's answer, like a conflict or an error.
+        // A review waits for the user's answer, like a conflict or an error.
         if (state.connected && state.review) { await tellReview(state.review); return; }
-        if (!state.connected || !state.auto_sync || state.conflicts.length || state.error
-            || useSettingsNavigation.getState().open || openEditLabels().length) return;
-        if (await syncDrive()) return; // Reloading.
+        if (!state.connected || !state.auto_sync || state.conflicts.length || state.error) return;
+        // Cheap, and the library stays usable meanwhile: a sync (which holds it) runs only when there is
+        // something to do. Hashing every file each minute is what this avoids (drive_sync.check).
+        const check = await apiRequest<SyncCheck>("GET", "/api/drive/check");
+        // Taking in another PC's library reloads the page: a sync that may do so waits while the settings
+        // or a dialog holding a draft is open, and runs with the waiting screen (autoSyncSchedule.ts).
+        const editing = () => useSettingsNavigation.getState().open || openEditLabels().length > 0;
+        const mode = schedule.next(check, Date.now(), editing());
+        if (!mode || !idle()) return;
+        schedule.synced();
+        const result = await runDriveSync(undefined, undefined, false, mode === "background");
+        if (result.reloading) return;
+        if (schedule.afterBackground(result.status, editing()) && idle()) {
+          // Another PC's library arrived: take it in now rather than a minute later, before more edits here.
+          if (await syncDrive()) return; // Reloading.
+        }
         await queryClient.invalidateQueries({ queryKey: ["drive"] });
         const after = await apiRequest<DriveStatus>("GET", "/api/drive");
         if (after.review) await tellReview(after.review);
@@ -89,7 +111,7 @@ export function DriveSyncHost() {
     const interval = setInterval(() => void tick(), 60_000);
     return () => { clearTimeout(initial); clearInterval(interval); };
   }, [queryClient]);
-  return <Dialog open={busy}><DialogContent showCloseButton={false}>
+  return <Dialog open={blocking}><DialogContent showCloseButton={false}>
     <DialogTitle>同期フォルダーを更新中</DialogTitle>
     <DialogDescription>{cancelling ? "中止しています…" : "完了までお待ちください…"}</DialogDescription>
     <DialogFooter>
@@ -176,7 +198,7 @@ export function DriveSection() {
     {data.connected && <>
       <label className="flex items-center gap-2"><input type="checkbox" checked={data.auto_sync} disabled={busy}
         onChange={e => { void apiRequest("PUT", "/api/drive", { auto_sync: e.target.checked }).then(refresh).catch(e => showError(e, "同期設定を保存できませんでした")); }} />
-        起動後と1分ごとに自動同期する（処理中、設定画面や編集中のダイアログを開いている間は待機）</label>
+        変更を自動で同期する（起動後と1分ごとに確認。編集が続いている間は最長5分まとめ、処理中は待機。他のPCのデータの取り込みは、設定画面や編集中のダイアログを閉じてから）</label>
       <p>最終フォルダー同期：{data.last_sync ? new Date(data.last_sync).toLocaleString() : "まだ同期していません"}</p>
       {data.error && <p role="alert" className="text-destructive">{data.error}</p>}
       {data.restored && !data.review && <p className="text-amber-700 dark:text-amber-400">要確認：バックアップから復元しました。次の同期で、同期フォルダーに保存してよいか確認します。</p>}

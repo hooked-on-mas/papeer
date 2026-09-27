@@ -1,5 +1,7 @@
 from copy import deepcopy
 import hashlib
+import json
+import os
 from pathlib import Path
 import threading
 
@@ -675,3 +677,147 @@ def test_same_contents_from_a_newer_papeer_are_not_taken_as_synced(pair):
     with pytest.raises(NewerSchemaError):
         run(a, remote)
     assert "base" not in sync.read_state(a.root)
+
+
+# --- Automatic sync: the cheap check, and the background sync that never replaces the library ---
+
+@pytest.fixture
+def settled(monkeypatch):
+    """Files written just now are recorded at once (see test_sync_load)."""
+    monkeypatch.setattr(sync, "RACY_NS", -3600 * 10**9)
+
+
+def test_check_tells_what_an_automatic_sync_would_do(pair, settled):
+    a, b, identity, remote = pair
+    assert sync.check(a.root, remote)["action"] == "quiet"  # never published
+    connect_pair(a, b, remote)
+    assert sync.check(a.root, remote) == {"action": "none", "local_version": sync.fingerprint(a)}
+    # The second PC took in the first's library after hashing its own: the records are of the old files,
+    # so the check leaves it to a sync (in the background, and it finds nothing to publish).
+    assert sync.check(b.root, remote)["action"] == "quiet"
+    count = len(remote.items)
+    run(b, remote, background=True)
+    assert len(remote.items) == count
+    assert sync.check(b.root, remote)["action"] == "none"
+    a.save_note_template("custom", "template")
+    # A change to the database alone is hashed from the records.
+    assert sync.check(a.root, remote) == {"action": "quiet", "local_version": sync.fingerprint(a)}
+    a.update(identity, note="A")  # note.md changes too: the check leaves the hashing to the sync
+    assert sync.check(a.root, remote)["action"] == "quiet"
+    run(a, remote)
+    assert sync.check(a.root, remote)["action"] == "none"
+    assert sync.check(b.root, remote)["action"] == "pull"
+    b.update(identity, note="B")
+    assert sync.check(b.root, remote)["action"] == "quiet"  # a conflict: recorded without touching the library
+
+
+def test_the_first_check_after_launch_trusts_no_record(pair, settled):
+    """A change that kept every file's size, time and ID waits at most until the next launch."""
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    assert sync.check(a.root, remote)["action"] == "none"
+    sync._VERIFIED.clear()  # as after a restart of the sidecar
+    assert sync.check(a.root, remote) == {"action": "quiet", "local_version": None}
+    run(a, remote, background=True)  # hashes every file, and nothing changed: nothing is published
+    assert sync.check(a.root, remote)["action"] == "none"
+
+
+def test_background_sync_publishes_but_leaves_taking_in_to_a_later_sync(pair):
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    a.update(identity, note="A")
+    assert run(a, remote, background=True)["status"] == "synced"
+    state = sync.read_state(b.root)
+    count = len(remote.items)
+    assert run(b, remote, background=True) == {"status": "deferred", "reloaded": False, "previous_path": None}
+    assert b.paper(identity)["note"] == "" and sync.read_state(b.root) == state and len(remote.items) == count
+    assert run(b, remote)["reloaded"] is True
+    assert Library(b.root).paper(identity)["note"] == "A"
+
+
+def test_a_wrong_recorded_hash_never_reaches_the_sync_folder(pair, settled):
+    """The records only decide whether to sync; what is published is hashed from the files."""
+    from papeer.core.paths import fingerprint_cache_path
+    a, b, identity, remote = pair
+    (a.root / "prompts").mkdir()
+    (a.root / "prompts" / "chat.txt").write_text("prompt", "utf-8")
+    connect_pair(a, b, remote)
+    sync.check(a.root, remote)  # settles the record after the last sync
+    assert sync.check(a.root, remote)["action"] == "none"
+    path = fingerprint_cache_path(a.root)
+    value = json.loads(path.read_text("utf-8"))
+    count = len(remote.items)
+
+    # A damaged record that claims a change: the sync finds none, publishes nothing, and mends the record.
+    path.write_text(json.dumps({**value, "hash": "0" * 64}), "utf-8")
+    assert sync.check(a.root, remote)["action"] == "quiet"
+    run(a, remote, background=True)
+    assert len(remote.items) == count and sync.read_state(a.root)["hash"] == sync.fingerprint(a)
+    sync.check(a.root, remote)
+    assert sync.check(a.root, remote)["action"] == "none"
+
+    # A stale record that hides a change (rewritten in place, size and time kept) only delays the automatic
+    # sync: a sync still publishes it.
+    prompt = a.root / "prompts" / "chat.txt"
+    before = prompt.stat()
+    prompt.write_text("PROMPT", "utf-8")
+    os.utime(prompt, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert sync.check(a.root, remote)["action"] == "none"
+    run(a, remote)
+    assert len(remote.items) == count + 1
+    assert remote.items[-1]["hash"] == sync.fingerprint(a) == sync.read_state(a.root)["hash"]
+    assert run(b, remote)["reloaded"] is True
+    assert (b.root / "prompts" / "chat.txt").read_text("utf-8") == "PROMPT"
+
+
+def test_check_api_and_background_flag(pair, monkeypatch, settled):
+    import time
+    from fastapi.testclient import TestClient
+    from sidecar.app import app
+    from sidecar import deps
+    from sidecar.jobs import JobManager
+
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    run(b, remote)  # records the files it took in
+    for lib in (a, b):
+        state = sync.read_state(lib.root)
+        sync.save_state(lib.root, {**state, "folder": str(lib.root.parent / "shared")})
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
+    monkeypatch.setattr(deps, "job_manager", JobManager())
+    monkeypatch.setattr(sync, "FolderDrive", lambda _: remote)
+    a.update(identity, note="A")
+    run(a, remote)
+    monkeypatch.setattr(deps, "get_data_dir", lambda: b.root)
+    with TestClient(app) as client:
+        assert client.get("/api/drive/check").json()["action"] == "pull"
+        job_id = client.post("/api/drive/sync", json={"background": True}).json()["job_id"]
+        deadline = time.monotonic() + 5
+        while deps.job_manager.get_job(job_id).running and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert deps.job_manager.get_job(job_id).result["status"] == "deferred"
+        assert b.paper(identity)["note"] == ""
+
+        def unreachable(_):
+            raise ValueError("同期フォルダーが見つかりません。")
+        monkeypatch.setattr(sync, "FolderDrive", unreachable)
+        # The sync reports the problem; the check only says a sync has something to tell.
+        assert client.get("/api/drive/check").json() == {"action": "quiet", "local_version": None}
+        sync.disconnect(b.root)
+        assert client.get("/api/drive/check").json()["action"] == "none"
+
+
+def test_a_newer_revision_at_launch_is_taken_in_by_the_first_sync(pair, settled):
+    """Until the library is hashed once the check cannot tell a take-in from a publication, so the first
+    automatic sync after launch runs with the waiting screen (not in the background) and takes it in."""
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    run(b, remote)
+    a.update(identity, note="A")
+    run(a, remote)
+    sync._VERIFIED.clear()  # as after a restart of the sidecar
+    assert sync.check(b.root, remote) == {"action": "quiet", "local_version": None}
+    # A background sync could only defer it (see autoSyncSchedule.ts: the take-in then runs at once).
+    assert run(b, remote, background=True)["status"] == "deferred"
+    assert run(b, remote)["reloaded"] is True
+    assert Library(b.root).paper(identity)["note"] == "A"

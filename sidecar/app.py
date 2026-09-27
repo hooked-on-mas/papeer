@@ -11,6 +11,7 @@ from typing import AsyncGenerator
 from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from papeer.core.paths import app_env
 from papeer.core.code_version import application_version
@@ -50,6 +51,17 @@ app = FastAPI(
 # and stopping it or the whole app (closing the window cancels the job, then calls /shutdown).
 SNAPSHOT_READS = {"/health", "/api/jobs", "/api/drive"}
 SNAPSHOT_CONTROLS = re.compile(r"/api/jobs/(?:cancel-all|[^/]+/cancel)|/shutdown")
+# What a background sync lets through (deps.snapshot_blocks): the PDFs, images and summary that pdf.js,
+# <img> and the summary pane load, which have no way to wait and send again (unlike apiRequest). Their
+# handlers only read files and query the database, and the background sync only reads the library too
+# (it never takes in another PC's), so neither changes what the other sees: the snapshot the sync hashes
+# and archives stays consistent. They are counted like other requests, so a sync, backup or restore that
+# starts later waits for them.
+BACKGROUND_SYNC_READS = re.compile(r"/api/papers/[0-9a-f]{32}/(?:files/[^?]+|media/[^/]+|article)")
+
+
+def read_beside_background_sync(method: str, path: str) -> bool:
+    return method == "GET" and BACKGROUND_SYNC_READS.fullmatch(path) is not None
 
 
 def allowed_during_snapshot(method: str, path: str) -> bool:
@@ -60,24 +72,52 @@ def allowed_during_snapshot(method: str, path: str) -> bool:
     return method == "POST" and SNAPSHOT_CONTROLS.fullmatch(path) is not None
 
 
-@app.middleware("http")
-async def protect_library_snapshot(request: Request, call_next):
-    """While a backup or restore copies the library, answer everything else with 409."""
-    guarded = not allowed_during_snapshot(request.method, request.url.path)
-    # Authentication comes first: a request without the token is refused by its route (401), and must
-    # neither learn that a snapshot is running nor be counted among the requests a snapshot waits for.
-    if guarded and not deps.token_matches(deps.provided_token(request.headers.get("authorization"),
-                                                              request.query_params.get("token"))):
-        return await call_next(request)
-    if guarded and not deps.begin_library_request():
-        return JSONResponse(status_code=409, content={"detail": "同期・バックアップ・復元が終わるまでお待ちください。"})
-    try:
-        return await call_next(request)
-    finally:
-        if guarded:
-            deps.end_library_request()
+def library_busy_response(exc: deps.LibraryBusy) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "code": deps.LIBRARY_BUSY})
 
 
+@app.exception_handler(deps.LibraryBusy)
+async def refused_for_snapshot(_request: Request, exc: deps.LibraryBusy) -> JSONResponse:
+    return library_busy_response(exc)
+
+
+class ProtectLibrarySnapshot:
+    """While a sync, backup or restore holds the library, answer everything else with 409.
+
+    A plain ASGI middleware rather than @app.middleware("http"): the app returns only once the response
+    is sent, file bodies included, so a request stays counted while pdf.js or <img> still reads its file.
+    A snapshot that waits for the counted requests therefore finds no file of the library held open by
+    the sidecar (a restore renames the whole folder, which Windows refuses while a file in it is open).
+    """
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope)
+        guarded = not allowed_during_snapshot(request.method, request.url.path)
+        # Authentication comes first: a request without the token is refused by its route (401), and must
+        # neither learn that a snapshot is running nor be counted among the requests a snapshot waits for.
+        if not guarded or not deps.token_matches(deps.provided_token(request.headers.get("authorization"),
+                                                                     request.query_params.get("token"))):
+            await self.app(scope, receive, send)
+            return
+        admitted = deps.begin_library_request(read_beside_background_sync(request.method, request.url.path))
+        if not admitted:
+            # The request did not run at all, so the frontend may send it again once the job is over.
+            await library_busy_response(deps.LibraryBusy())(scope, receive, send)
+            return
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            deps.end_library_request(admitted)
+
+
+# Before CORS: the last middleware added runs first, so refusals get the CORS headers too.
+app.add_middleware(ProtectLibrarySnapshot)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[

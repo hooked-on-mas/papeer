@@ -7,9 +7,31 @@ import { flushPendingSaves, describeFailure, openEditLabels } from "@/lib/pendin
 import { askConfirm } from "@/components/AppDialogs";
 import { flushUiState, suspendUiStateSync } from "@/app/uiStateSync";
 import { reloadUnlessClosing } from "@/app/appClosing";
+import { setLibraryBusyWaiter } from "@/lib/libraryBusy";
 
-export const useSyncState = create<{ busy: boolean; jobId: string | null; cancelling: boolean }>(
-  () => ({ busy: false, jobId: null, cancelling: false }));
+/** background: the automatic sync that runs without the waiting screen (it never replaces the library). */
+export const useSyncState = create<{ busy: boolean; jobId: string | null; cancelling: boolean; background: boolean }>(
+  () => ({ busy: false, jobId: null, cancelling: false, background: false }));
+
+// When the last sync ended, if it ran in the background: a refusal answered just before that is its own too.
+let backgroundEndedAt = 0;
+
+// A request the sidecar refused because a background sync held the library is sent again once the sync
+// is over (libraryBusy.ts); the user's edit is neither lost nor reported as a failure.
+setLibraryBusyWaiter(async () => {
+  const start = useSyncState.getState();
+  if (!start.busy) return Date.now() - backgroundEndedAt < 3000;
+  if (!start.background) return false;
+  return new Promise<boolean>(resolve => {
+    const unsubscribe = useSyncState.subscribe(state => {
+      if (!state.busy) { clearTimeout(timer); unsubscribe(); resolve(true); }
+    });
+    // The request that starts the sync is refused only for another job (a backup): its id never comes.
+    const timer = setTimeout(() => {
+      if (!useSyncState.getState().jobId) { unsubscribe(); resolve(false); }
+    }, 2000);
+  });
+});
 
 /** Stop the running sync; the library stays as it was unless the final replacement had already begun. */
 export async function cancelSync(): Promise<void> {
@@ -40,21 +62,36 @@ export async function confirmOpenEdits(): Promise<boolean> {
 /**
  * confirm: 「このまま同期する」 on a sync that stopped for review (a library that lost many items,
  * or one restored from a backup); the sidecar applies it only if nothing changed since.
+ * background: the automatic sync, without the waiting screen; the user's requests wait for it. It never
+ * takes in another PC's library (the page would reload under the user), and leaves that to a later sync.
  */
-export async function syncDrive(choice?: string, heads?: string[], confirm = false): Promise<boolean> {
-  if (useSyncState.getState().busy || useStore.getState().activeJobs.some(isRunning)) return false;
-  useSyncState.setState({ busy: true });
+export async function syncDrive(choice?: string, heads?: string[], confirm = false, background = false): Promise<boolean> {
+  return (await runDriveSync(choice, heads, confirm, background)).reloading;
+}
+
+/**
+ * syncDrive, also telling how the sync ended: the result's status ("synced", "deferred", "conflict",
+ * "review"), "cancelled", or undefined when it did not run.
+ */
+export async function runDriveSync(choice?: string, heads?: string[], confirm = false, background = false):
+    Promise<{ reloading: boolean; status?: string }> {
+  if (useSyncState.getState().busy || useStore.getState().activeJobs.some(isRunning)) return { reloading: false };
+  useSyncState.setState({ busy: true, background });
   let reloading = false;
+  let status: string | undefined;
   try {
     const failure = await flushPendingSaves();
     if (failure) throw new Error(describeFailure(failure));
     await flushUiState();
     suspendUiStateSync(true);
     await new Promise<void>((resolve, reject) => {
-      startJob("/api/drive/sync", { choice, expected_heads: heads, confirm }, { kind: "drive-sync", paperId: null }, event => {
+      startJob("/api/drive/sync", { choice, expected_heads: heads, confirm, background }, { kind: "drive-sync", paperId: null }, event => {
         // Stopped on request: not an error (the status line already says so).
-        if (event.status === "cancelled") { resolve(); return; }
+        if (event.status === "cancelled") { status = "cancelled"; resolve(); return; }
         if (event.status !== "succeeded") { reject(new Error(event.error || "同期を完了できませんでした。")); return; }
+        status = event.result?.status;
+        // A background sync found another PC's library to take in; the caller takes it in with the waiting screen.
+        if (status === "deferred") { resolve(); return; }
         if (event.result?.status === "conflict") {
           useStore.getState().setStatus("Google Driveとの変更が競合しています。設定 → 保存先・同期で確認してください。");
         } else if (event.result?.status === "review") {
@@ -76,9 +113,12 @@ export async function syncDrive(choice?: string, heads?: string[], confirm = fal
   } finally {
     if (!reloading) {
       suspendUiStateSync(false);
-      useSyncState.setState({ busy: false, jobId: null, cancelling: false });
+      backgroundEndedAt = background ? Date.now() : 0;
+      useSyncState.setState({ busy: false, jobId: null, cancelling: false, background: false });
+      // Pages turned during a background sync were not saved meanwhile.
+      if (background) void flushUiState();
     }
   }
-  return reloading;
+  return { reloading, status };
 }
 

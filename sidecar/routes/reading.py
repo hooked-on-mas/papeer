@@ -261,10 +261,10 @@ def citation_excerpts(paper_id: str, page: int):
 def backup(body: BackupRequest):
     lib = deps.get_library()
     def action(cancel, progress, _page_ready):
-        deps.wait_for_library_requests()
-        check_cancel(cancel)
-        progress("ライブラリ全体をバックアップしています…")
         try:
+            deps.wait_for_library_requests(cancel=cancel)
+            check_cancel(cancel)
+            progress("ライブラリ全体をバックアップしています…")
             tools.create_backup(lib, Path(body.path), cancel)
         except Cancelled:
             raise Cancelled("バックアップを中止しました。") from None
@@ -275,10 +275,10 @@ def backup(body: BackupRequest):
 def restore(body: RestoreRequest):
     lib = deps.get_library()
     def action(cancel, progress, _page_ready):
-        deps.wait_for_library_requests()
-        check_cancel(cancel)
-        progress("バックアップを検証して復元しています…")
         try:
+            deps.wait_for_library_requests(cancel=cancel)
+            check_cancel(cancel)
+            progress("バックアップを検証して復元しています…")
             previous = tools.restore_backup(lib, Path(body.path), cancel, import_settings=body.import_settings)
         except Cancelled:
             raise Cancelled("復元を中止しました。ライブラリは変更していません。") from None

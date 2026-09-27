@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import tempfile
 import threading
+import time
 import uuid
 import zipfile
 
@@ -19,7 +20,7 @@ from papeer.core.paths import PaperFiles
 from papeer import __version__
 from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, newer_papeer
 from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision
-from papeer.core.fileio import atomic_output, atomic_write_json, is_temporary
+from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
 from papeer.pdf.pdf_engine import translation_units
 
 __all__ = ["effective_glossary", "validate_revision"]
@@ -133,12 +134,29 @@ def _stop_if_cancelled(cancel: threading.Event | None) -> None:
         check_cancel(cancel)
 
 
+# Already compressed: deflating them again takes most of a backup's time and saves a few percent at best.
+# Stored entries are part of the ZIP format since its first version, so every Papeer reads these backups.
+STORED_SUFFIXES = frozenset({".pdf", ".png", ".jpg", ".jpeg"})
+DATABASE_FILES = ("library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm")
+
+
 def create_backup(lib: Library, destination: Path, cancel: threading.Event | None = None) -> None:
     """Write the whole library to a ZIP; a cancelled backup leaves no file behind (Cancelled is raised)."""
     destination = destination.resolve()
     if destination.is_relative_to(lib.root.resolve()):
         raise ValueError("バックアップはデータ保存フォルダーの外に保存してください。")
     destination.parent.mkdir(parents=True, exist_ok=True)
+    files = []
+    for path in lib.root.rglob("*"):
+        _stop_if_cancelled(cancel)
+        # Half-written files left by a forced exit must not travel with the backup or sync.
+        if path.is_file() and not is_temporary(path) and path.name not in DATABASE_FILES:
+            files.append(path)
+    database = sum(path.stat().st_size for path in (lib.root / name for name in DATABASE_FILES[:2]) if path.is_file())
+    # The ZIP is at most the files as they are (PDFs and images are stored, the rest shrinks) plus the
+    # database, whose snapshot also sits in the temporary folder until the ZIP is complete.
+    ensure_free_space({destination: sum(path.stat().st_size for path in files) + database,
+                       Path(tempfile.gettempdir()): database})
     with atomic_output(destination) as temporary, tempfile.TemporaryDirectory() as directory:
         snapshot = Path(directory) / "library.sqlite3"
         with lib.connection() as source, closing(sqlite3.connect(snapshot)) as target:
@@ -149,12 +167,10 @@ def create_backup(lib: Library, destination: Path, cancel: threading.Event | Non
             # "version" is the archive layout; schema_version lets an older Papeer refuse a newer library.
             archive.writestr("papeer-backup.json", json.dumps(
                 {"version": 1, "schema_version": schema_version, "app_version": __version__}))
-            for path in lib.root.rglob("*"):
+            for path in files:
                 _stop_if_cancelled(cancel)
-                # Half-written files left by a forced exit must not travel with the backup or sync.
-                if (path.is_file() and not is_temporary(path)
-                        and path.name not in {"library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm"}):
-                    archive.write(path, path.relative_to(lib.root).as_posix())
+                archive.write(path, path.relative_to(lib.root).as_posix(),
+                              zipfile.ZIP_STORED if path.suffix.lower() in STORED_SUFFIXES else zipfile.ZIP_DEFLATED)
 
 
 # The library's settings (settings.json: connection, model, effort, ...) and the user's prompt texts.
@@ -176,6 +192,8 @@ def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = 
     staging.mkdir()
     try:
         with zipfile.ZipFile(source) as archive:
+            # The restored copy is written beside the library before the two are swapped.
+            ensure_free_space({staging: sum(item.file_size for item in archive.infolist())})
             total = 0
             names = set()
             for item in archive.infolist():
@@ -233,7 +251,7 @@ def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = 
             _keep_current_settings(root, staging)
         # The last point to stop; once the folders are swapped the restore runs to the end.
         _stop_if_cancelled(cancel)
-        root.rename(previous)
+        _rename_folder(root, previous)
         try:
             staging.rename(root)
         except Exception:
@@ -243,6 +261,21 @@ def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = 
     finally:
         if staging.exists():
             shutil.rmtree(staging)
+
+
+def _rename_folder(source: Path, target: Path, attempts: int = 50, wait: float = 0.1) -> None:
+    """Rename a folder, waiting a few seconds while Windows refuses it.
+
+    The sidecar holds no file of the library open by now (a restore waits for every request), but a
+    virus scan, the search indexer or Explorer's preview may still have one open for a moment.
+    """
+    for _ in range(attempts - 1):
+        try:
+            source.rename(target)
+            return
+        except PermissionError:
+            time.sleep(wait)
+    source.rename(target)
 
 
 def _keep_current_settings(root: Path, staging: Path) -> None:

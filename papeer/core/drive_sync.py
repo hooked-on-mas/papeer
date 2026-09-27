@@ -6,20 +6,24 @@ The caller must hold exclusive library access throughout sync().
 from __future__ import annotations
 
 from contextlib import closing
+from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import sqlite3
 import tempfile
 import re
+import threading
+import time
 import uuid
 import zipfile
 
 from papeer import __version__
-from papeer.core.fileio import atomic_output, atomic_write_json, is_temporary
-from papeer.core.paths import sync_state_path
+from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
+from papeer.core.paths import fingerprint_cache_path, sync_state_path
 from papeer.core.reading_tools import create_backup, restore_backup
 from papeer.core.storage import (SCHEMA_VERSION, Library, NewerSchemaError, database_version, library_missing,
                                   newer_papeer)
@@ -177,6 +181,12 @@ def _kinds_text(kinds: list[str]) -> str:
     return "・".join(COUNT_LABELS[kind] for kind in kinds)
 
 
+# What revisions() read from each archive, by (path, size, modification time); shared by every FolderDrive,
+# so by the check (a request thread) and a sync (a job thread) at once.
+_REVISION_CACHE: dict[tuple[str, int, int], dict] = {}
+_REVISION_LOCK = threading.Lock()
+
+
 class FolderDrive:
     """One complete revision per file, so Drive cannot separate metadata from data.
 
@@ -190,7 +200,18 @@ class FolderDrive:
 
     def revisions(self) -> list[dict]:
         result = []
+        seen = set()
         for path in sorted(self.folder.glob("*.papeer-sync")):
+            # A revision is never rewritten once published, so what was read from it stays valid while the
+            # file keeps its size and time; the automatic check then need not open every archive each minute.
+            stat = path.stat()
+            key = (str(path), stat.st_size, stat.st_mtime_ns)
+            seen.add(key)
+            with _REVISION_LOCK:
+                cached = deepcopy(_REVISION_CACHE.get(key))
+            if cached is not None:
+                result.append(cached)
+                continue
             with zipfile.ZipFile(path) as archive:
                 info = archive.getinfo("revision.json")
                 if info.file_size > 1024 * 1024:
@@ -209,6 +230,11 @@ class FolderDrive:
                     raise ValueError("同期履歴の形式が不正です。")
                 archive.getinfo("library.zip")
                 result.append(meta)
+                with _REVISION_LOCK:
+                    _REVISION_CACHE[key] = deepcopy(meta)
+        with _REVISION_LOCK:
+            for key in [key for key in _REVISION_CACHE if Path(key[0]).parent == self.folder and key not in seen]:
+                del _REVISION_CACHE[key]
         ids = {item["id"] for item in result}
         if any(parent not in ids for item in result for parent in item["parents"]):
             raise ValueError("同期データがまだ揃っていません。Google Driveの同期完了後に再試行してください。")
@@ -216,6 +242,8 @@ class FolderDrive:
 
     def upload(self, path: Path, metadata: dict, cancel, progress) -> str:
         identity = uuid.uuid4().hex
+        # The revision is the ZIP plus a small header, written beside the others before it is renamed.
+        ensure_free_space({self.folder: path.stat().st_size + 1024**2})
         # Readers list only *.papeer-sync, so the half-written temporary file is never picked up.
         with atomic_output(self.folder / (identity + ".papeer-sync")) as temporary:
             with zipfile.ZipFile(temporary, "w", zipfile.ZIP_STORED, allowZip64=True) as archive:
@@ -231,6 +259,7 @@ class FolderDrive:
             raise ValueError("同期データのIDが不正です。")
         progress("同期フォルダーから読み込んでいます…")
         with zipfile.ZipFile(self.folder / (revision + ".papeer-sync")) as archive:
+            ensure_free_space({path: archive.getinfo("library.zip").file_size})
             with archive.open("library.zip") as source, path.open("wb") as output:
                 self._copy(source, output, cancel)
 
@@ -245,28 +274,171 @@ def _valid_counts(value: object) -> bool:
     return isinstance(value, dict) and all(isinstance(k, str) and type(v) is int and v >= 0 for k, v in value.items())
 
 
-def fingerprint(lib: Library | Path, cancel=None) -> str:
-    """Logical DB contents avoid false changes caused by SQLite checkpoint/layout.
+# --- Fingerprint ---
+#
+# A library's hash is SHA-256 over its database's logical dump, then the path and SHA-256 of every other
+# file. Reading every PDF for each automatic check would read the whole library (often gigabytes) every
+# minute, so each sync records every file's digest by its size, modification time and file ID, in this
+# PC's device folder (never synced), and the check (check()) reads no file: when every file still matches
+# its record it computes the hash from the records, and otherwise leaves the answer to a sync. A sync always
+# hashes the library from its files, so a stale or damaged record can delay a sync, but never publish a
+# wrong hash or hide a change from conflict detection. A change that keeps a file's size, time and ID
+# (tools that restore the time) could stay unnoticed by the check; its first check after each launch
+# therefore trusts no record (see check()), which bounds that delay to one session.
+FINGERPRINT_CACHE_FORMAT = 1
+# Not part of the hash: SQLite's own files (the dump stands for them) and the window state.
+UNHASHED = frozenset({"library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm", "ui-state.json"})
+# A file written this shortly before it was hashed is not recorded (a second write within the same clock
+# tick would leave its size and time unchanged: "racily clean" in git), so the check leaves it to a sync.
+RACY_NS = 2 * 10**9
+_now_ns = time.time_ns  # The clock the racy window is measured by (replaced in tests).
 
-    UI state is carried in snapshots, but merely navigating doesn't trigger uploads.
-    Given a folder instead of a Library, its database is read as it is, without migrating it.
+
+def _settled(mtime_ns: int, now_ns: int) -> bool:
+    """Whether a file with this modification time may be recorded: not written within RACY_NS of now.
+
+    A time further in the future (a file copied from a PC whose clock runs ahead) is recorded as well:
+    any later write gives the file the current time, which differs from it. Otherwise such a file would
+    never be recorded, and every check would leave the whole library to a sync.
     """
-    root = lib.root if isinstance(lib, Library) else lib
+    return abs(mtime_ns - now_ns) > RACY_NS
+
+
+def _stat_key(stat: os.stat_result) -> list[int]:
+    return [stat.st_size, stat.st_mtime_ns, stat.st_ino]
+
+
+def _database_key(root: Path) -> list[list[int] | None]:
+    """The database file and its write-ahead log as they are on disk; every commit changes one of them."""
+    keys: list[list[int] | None] = []
+    for name in ("library.sqlite3", "library.sqlite3-wal"):
+        try:
+            key = _stat_key((root / name).stat())
+        except FileNotFoundError:
+            key = None
+        # An empty log holds nothing: it exists only while a connection is open, which says nothing of the contents.
+        keys.append(None if name.endswith("-wal") and key is not None and key[0] == 0 else key)
+    return keys
+
+
+def _library_files(root: Path, cancel=None) -> list[Path]:
+    """The files the hash covers, in the order it takes them."""
+    paths = []
+    for path in sorted(root.rglob("*")):
+        if cancel is not None:
+            check_cancel(cancel)
+        if path.is_file() and not is_temporary(path) and path.name not in UNHASHED:
+            paths.append(path)
+    return paths
+
+
+def _dump_digest(root: Path):
     digest = hashlib.sha256()
     with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db:
         for line in db.iterdump():
             digest.update(line.encode("utf-8"))
             digest.update(b"\n")
-    for path in sorted(root.rglob("*")):
+    return digest
+
+
+def _read_fingerprint_cache(root: Path) -> dict:
+    """The records; an empty set when the file is missing, unreadable or malformed."""
+    try:
+        value = json.loads(fingerprint_cache_path(root).read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if (not isinstance(value, dict) or value.get("format") != FINGERPRINT_CACHE_FORMAT
+            or value.get("root") != str(root) or not isinstance(value.get("files"), dict)):
+        return {}
+    # A malformed entry is dropped (that file then counts as changed); the rest stays usable.
+    files = {rel: entry for rel, entry in value["files"].items()
+             if isinstance(entry, list) and len(entry) == 4 and all(type(n) is int for n in entry[:3])
+             and isinstance(entry[3], str) and re.fullmatch(r"[0-9a-f]{64}", entry[3])}
+    whole = isinstance(value.get("hash"), str) and isinstance(value.get("database"), list)
+    return {"files": files, "database": value["database"] if whole else None, "hash": value["hash"] if whole else None}
+
+
+def _write_fingerprint_cache(root: Path, value: dict, before: dict) -> None:
+    if value == before:
+        return
+    try:
+        path = fingerprint_cache_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, {"format": FINGERPRINT_CACHE_FORMAT, "root": str(root), **value}, indent=None)
+    except OSError:
+        pass  # Only the next check is less sure.
+
+
+def fingerprint(lib: Library | Path, cancel=None, *, remember: bool = False) -> str:
+    """Logical DB contents avoid false changes caused by SQLite checkpoint/layout.
+
+    UI state is carried in snapshots, but merely navigating doesn't trigger uploads.
+    Given a folder instead of a Library, its database is read as it is, without migrating it.
+    Every file is read. remember=True also records the digests for check() (the library itself, never a
+    staging copy).
+    """
+    root = lib.root if isinstance(lib, Library) else lib
+    before = _read_fingerprint_cache(root) if remember else {}
+    paths = _library_files(root, cancel)
+    database, database_seen = _database_key(root), _now_ns()
+    digest = _dump_digest(root)
+    files: dict[str, list] = {}
+    for path in paths:
         if cancel is not None:
             check_cancel(cancel)
-        if path.is_file() and not is_temporary(path) and path.name not in {
-            "library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm", "ui-state.json",
-        }:
-            digest.update(path.relative_to(root).as_posix().encode("utf-8"))
-            with path.open("rb") as stream:
-                digest.update(hashlib.file_digest(stream, "sha256").digest())
-    return digest.hexdigest()
+        rel = path.relative_to(root).as_posix()
+        with path.open("rb") as stream:
+            file_digest = hashlib.file_digest(stream, "sha256")
+            # Read from the open file, so the key and the digest describe the same file even if it is
+            # replaced meanwhile.
+            key = _stat_key(os.fstat(stream.fileno()))
+        digest.update(rel.encode("utf-8"))
+        digest.update(file_digest.digest())
+        # Measured against now, not the start: reading a large library can take longer than the racy window.
+        if _settled(key[1], _now_ns()):
+            files[rel] = [*key, file_digest.hexdigest()]
+    result = digest.hexdigest()
+    if remember:
+        _VERIFIED.add(str(root))
+        # The hash itself is recorded only when no part of the library was written just now.
+        whole = len(files) == len(paths) and all(key is None or _settled(key[1], database_seen) for key in database)
+        _write_fingerprint_cache(root, {"files": files, "database": database if whole else None,
+                                        "hash": result if whole else None}, before)
+    return result
+
+
+def recorded_fingerprint(root: Path) -> tuple[str | None, str | None]:
+    """(hash, version) of the library from the records, reading no file.
+
+    The hash is None unless every file matches its record (size, time and ID), and the database is
+    dumped only when it changed since the hash was recorded. The version changes whenever the library
+    does: the hash when known, else a digest of the files' sizes and times (None if a file vanished).
+    """
+    record = _read_fingerprint_cache(root)
+    paths = _library_files(root)
+    database, database_seen = _database_key(root), _now_ns()
+    try:
+        current = {path.relative_to(root).as_posix(): _stat_key(path.stat()) for path in paths}
+    except FileNotFoundError:  # Removed meanwhile.
+        return None, None
+    known = record.get("files", {})
+    if current != {rel: entry[:3] for rel, entry in known.items()}:
+        return None, "files:" + hashlib.sha256(json.dumps([current, database]).encode()).hexdigest()
+    if record.get("hash") and record.get("database") == database:
+        return record["hash"], record["hash"]
+    digest = _dump_digest(root)
+    for path in paths:
+        rel = path.relative_to(root).as_posix()
+        digest.update(rel.encode("utf-8"))
+        digest.update(bytes.fromhex(known[rel][3]))
+    result = digest.hexdigest()
+    if all(key is None or _settled(key[1], database_seen) for key in database):
+        _write_fingerprint_cache(root, {"files": known, "database": database, "hash": result}, record)
+    return result, result
+
+
+# Libraries (roots) this sidecar has hashed from their files at least once since it started.
+_VERIFIED: set[str] = set()
 
 
 def revision_heads(revisions: list[dict]) -> list[dict]:
@@ -274,8 +446,38 @@ def revision_heads(revisions: list[dict]) -> list[dict]:
     return [revision for revision in revisions if revision["id"] not in parents]
 
 
+def check(root: Path, remote) -> dict:
+    """What an automatic sync would do now, worked out cheaply and without holding the library.
+
+    {"action": "none"}: nothing changed here or in the sync folder. "pull": another PC's library would be
+    taken in, which reloads the page. "quiet": anything else (publishing this library, recording a
+    conflict or a review, reporting an error), none of which touches the library. "local_version" lets
+    the caller tell whether this library is still changing (see autoSyncSchedule.ts).
+    The answer rests on the records of the last sync (recorded_fingerprint) and may be out of date by
+    the time a sync runs; sync() decides again from the files themselves. Whatever the records cannot
+    tell (a file changed or without a record, the first check since launch) is "quiet": the sync, which
+    can be stopped, reads the files instead of this request.
+    """
+    state = read_state(root)
+    if not state.get("connected") or library_missing(root):
+        return {"action": "none", "local_version": None}
+    heads = revision_heads(remote.revisions())
+    base = state.get("base")
+    local_hash, version = recorded_fingerprint(root) if str(root) in _VERIFIED else (None, None)
+    if local_hash is None:
+        return {"action": "quiet", "local_version": version}
+    dirty = local_hash != state.get("hash")
+    if len(heads) == 1 and heads[0]["id"] != base and not dirty and heads[0]["hash"] != local_hash:
+        action = "pull"
+    elif dirty or [item["id"] for item in heads] != ([base] if base else []):
+        action = "quiet"
+    else:
+        action = "none"
+    return {"action": action, "local_version": version}
+
+
 def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
-         expected_heads: list[str] | None = None, confirm: bool = False) -> dict:
+         expected_heads: list[str] | None = None, confirm: bool = False, background: bool = False) -> dict:
     """Publish an immutable snapshot or adopt a remote one, retaining both on conflict.
 
     Resolving a conflict creates a revision with all observed heads as its parents.
@@ -285,6 +487,9 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
     ahead, as long as neither the sync folder nor this library changed since. To back out without
     losing anything, the review's heads serve as expected_heads for a choice: the head itself (take
     the sync folder's library, even when it is the common ancestor) or "local" (publish this PC's).
+    background=True is an automatic sync the user carries on working through: it never replaces this
+    library (the page would reload under the user), and returns {"status": "deferred"} instead of taking
+    in another PC's; a later sync with the usual waiting screen does that.
     """
     state = read_state(lib.root)
     if not state.get("connected"):
@@ -293,7 +498,8 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
     revisions = remote.revisions()
     heads = revision_heads(revisions)
     ids = sorted(item["id"] for item in heads)
-    local_hash = fingerprint(lib, cancel)
+    # Hashed from the files every time (the records only serve check()), and recorded afresh.
+    local_hash = fingerprint(lib, cancel, remember=True)
     dirty = local_hash != state.get("hash")
     base = state.get("base")
     if base and base not in {item["id"] for item in revisions}:
@@ -355,6 +561,8 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
             if pull.get("schema_version", 0) > SCHEMA_VERSION:
                 raise NewerSchemaError(f"この同期データは{newer_papeer(pull.get('app_version'))}で作成されたため取り込めません。"
                                        "このPCのPapeerを最新版に更新してから同期してください。")
+            if background and choice is None:
+                return {"status": "deferred", "reloaded": False, "previous_path": None}
             remote.download(pull["id"], archive, cancel, progress)
             check_cancel(cancel)
             with archive.open("rb") as stream:

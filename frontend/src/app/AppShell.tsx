@@ -89,7 +89,10 @@ function useCloseHandling(): void {
         try {
           const drive = await apiRequest<{ connected: boolean; auto_sync: boolean; review: unknown; library_missing: boolean }>("GET", "/api/drive");
           // Like the automatic sync: not while a review waits for the user, nor over a missing data folder.
-          if (drive.connected && drive.auto_sync && !drive.review && !drive.library_missing && await syncDrive()) {
+          // Unchanged since the last sync (drive_sync.check): closing need not hash and copy the library.
+          const check = drive.connected && drive.auto_sync && !drive.review && !drive.library_missing
+            && await apiRequest<{ action: string }>("GET", "/api/drive/check");
+          if (check && check.action !== "none" && await syncDrive()) {
             setAppClosing(false);
             return;
           }

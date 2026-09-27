@@ -1,5 +1,6 @@
 import createClient from "openapi-fetch";
 import type { paths } from "./schema";
+import { sendWhenLibraryFree } from "@/lib/libraryBusy";
 
 export function backendPort(): number {
   return Number((window as any).__PAPEER_PORT || import.meta.env.VITE_PAPEER_PORT || import.meta.env.VITE_PAPERDESK_PORT || 8000);
@@ -34,7 +35,7 @@ export function authorizedUrl(path: string): string {
 
 export const api = createClient<paths>({
   baseUrl: "http://127.0.0.1:8000/", // dummy
-  fetch: (request) => {
+  fetch: async (request) => {
     const url = new URL(request.url);
     url.port = backendPort().toString();
     const newRequest = new Request(url.toString(), request);
@@ -42,7 +43,13 @@ export const api = createClient<paths>({
     if (token) {
       newRequest.headers.set("Authorization", `Bearer ${token}`);
     }
-    return fetch(newRequest);
+    // Like apiRequest: one refused while the automatic sync runs in the background is sent again after it.
+    const { response } = await sendWhenLibraryFree(async () => {
+      const response = await fetch(newRequest.clone());
+      const body = response.status === 409 ? await response.clone().json().catch(() => null) : null;
+      return { status: response.status, body, response };
+    });
+    return response;
   }
 });
 
@@ -59,24 +66,29 @@ function errorMessage(body: any, status: number): string {
   return `通信エラー (${status})`;
 }
 
-/** Untyped request for endpoints the generated schema does not describe yet. */
+/**
+ * Untyped request for endpoints the generated schema does not describe yet.
+ * One refused while the automatic sync runs in the background waits for it and is sent again (libraryBusy.ts).
+ */
 export async function apiRequest<T = any>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   const token = authToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  let response: Response;
-  try {
-    response = await fetch(backendUrl(path), {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch {
-    throw new ApiError("バックエンドに接続できませんでした。", 0);
-  }
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!response.ok) throw new ApiError(errorMessage(data, response.status), response.status);
-  return data as T;
+  const response = await sendWhenLibraryFree(async () => {
+    let response: Response;
+    try {
+      response = await fetch(backendUrl(path), {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    } catch {
+      throw new ApiError("バックエンドに接続できませんでした。", 0);
+    }
+    const text = await response.text();
+    return { ok: response.ok, status: response.status, body: text ? JSON.parse(text) : null };
+  });
+  if (!response.ok) throw new ApiError(errorMessage(response.body, response.status), response.status);
+  return response.body as T;
 }
