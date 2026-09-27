@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, apiRequest } from "./client";
 import type { Usage, UsageLimits } from "@/lib/usage";
 import type { PassageLocation } from "@/store";
+import type { StoredStatus } from "@/lib/paperStatus";
 import { QK } from "@/lib/queryKeys";
 
 export type PaperData = {
@@ -15,10 +16,12 @@ export type PaperData = {
   arxiv_id?: string;
   venue?: string;
   collection_name?: string;
+  /** Only in GET /api/papers/{id}: the list rows leave the memo out. */
   note?: string;
   tags?: string[];
   read_status?: string;
-  status?: string;
+  /** The stored translation state: a code, which storedStatusLabel (lib/paperStatus.ts) shows. */
+  status?: StoredStatus;
   has_article?: boolean;
   has_translated?: boolean;
   translated_count?: number;
@@ -219,6 +222,8 @@ export function useUsageLimits(provider: string | undefined) {
     queryFn: () => apiRequest<UsageLimits | null>("GET", "/api/usage/limits"),
     enabled: !!provider,
     staleTime: 5 * 60_000,
+    // Unlike the rest (App.tsx): usage goes on in other apps and devices. At most every staleTime.
+    refetchOnWindowFocus: true,
     retry: false,
   });
 }

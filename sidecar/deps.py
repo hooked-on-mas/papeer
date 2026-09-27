@@ -15,7 +15,7 @@ from pathlib import Path
 import sys
 import threading
 import time
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 from fastapi import Header, HTTPException, Query, status
 
@@ -237,6 +237,18 @@ def submit_job(kind: str, action: Callable[..., Any], paper_id: str | None = Non
 def library_changed() -> None:
     """Tell the frontend to reload the library list."""
     job_manager.broadcast({"type": "library.changed"})
+
+
+def paper_changed(paper_id: str, fields: Iterable[str] | None = None) -> None:
+    """Tell the frontend that one paper changed, so it reloads only that paper's row (jobEvents.ts).
+
+    `fields`: the papers columns written (Library.update); None when anything about the paper may have
+    changed, such as its translation.
+    """
+    event: dict[str, Any] = {"type": "paper.changed", "paper_id": paper_id}
+    if fields is not None:
+        event["fields"] = sorted(fields)
+    job_manager.broadcast(event)
 
 
 # --- Settings and AI connections ---

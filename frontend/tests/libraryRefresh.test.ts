@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createRefreshGate, type RefreshTimers } from "../src/lib/libraryRefresh.ts";
+import { createRefreshGate, type PaperChanges, type RefreshTimers } from "../src/lib/libraryRefresh.ts";
+import { paperChangeEffects } from "../src/lib/paperRows.ts";
 
 /** Timers run by hand: `advance(ms)` moves the clock and runs what is due. */
 function fakeTimers() {
@@ -100,4 +101,71 @@ test("changes during nested holds wait for the last release", () => {
   second();
   advance(1000);
   assert.equal(runs, 0);
+});
+
+// paper.changed (a memo saved, a paper renamed, each PATCH of an action on several papers).
+const row = paperChangeEffects(["title"]);
+
+test("while held, a changed paper's row is not reloaded, nor after the release", () => {
+  const { timers, advance, pending } = fakeTimers();
+  const gate = createRefreshGate(timers, 400, 3000);
+  const flushed: PaperChanges[] = [];
+  // Changed just before the hold: the holder's reload covers it as well.
+  gate.paperChanged("a", row, (changes) => flushed.push(changes));
+  const release = gate.hold();
+  for (const id of ["b", "c", "d"]) {
+    gate.paperChanged(id, paperChangeEffects(["collection_name"]), (changes) => flushed.push(changes));
+    advance(500);
+  }
+  assert.equal(pending(), 0);
+  release();
+  advance(5000);
+  assert.equal(flushed.length, 0);
+  // Afterwards, changes are reloaded again, without the ones held.
+  gate.paperChanged("e", row, (changes) => flushed.push(changes));
+  advance(400);
+  assert.deepEqual(flushed, [{ rows: ["e"], collections: false, tags: false }]);
+});
+
+test("papers changed in quick succession are reloaded together, once", () => {
+  const { timers, advance } = fakeTimers();
+  const gate = createRefreshGate(timers, 400, 3000);
+  const flushed: PaperChanges[] = [];
+  gate.paperChanged("a", row, (changes) => flushed.push(changes));
+  advance(300);
+  gate.paperChanged("b", paperChangeEffects(["tags"]), (changes) => flushed.push(changes));
+  advance(300);
+  // A memo only: nothing but the library's search to reload for it.
+  gate.paperChanged("c", paperChangeEffects(["note"]), (changes) => flushed.push(changes));
+  gate.paperChanged("a", paperChangeEffects(["collection_name"]), (changes) => flushed.push(changes));
+  advance(399);
+  assert.equal(flushed.length, 0);
+  advance(1);
+  assert.deepEqual(flushed, [{ rows: ["a", "b"], collections: true, tags: true }]);
+  advance(1000);
+  assert.equal(flushed.length, 1);
+});
+
+test("with many papers changed, the lists are reloaded as a whole", () => {
+  const { timers, advance } = fakeTimers();
+  const gate = createRefreshGate(timers, 400, 3000, 10);
+  const flushed: PaperChanges[] = [];
+  const changeMany = (count: number) => {
+    for (let i = 0; i < count; i++) gate.paperChanged(`p${i}`, row, (changes) => flushed.push(changes));
+    advance(400);
+  };
+  changeMany(10);
+  assert.equal(flushed.pop()?.rows.length, 10);
+  changeMany(11);
+  assert.deepEqual(flushed, [{ rows: "all", collections: false, tags: false }]);
+});
+
+test("a library reload due at the same time covers the papers changed", () => {
+  const { timers, advance } = fakeTimers();
+  const gate = createRefreshGate(timers, 400, 3000);
+  const runs: string[] = [];
+  gate.paperChanged("a", row, () => runs.push("paper"));
+  gate.request(() => runs.push("library"));
+  advance(400);
+  assert.deepEqual(runs, ["library"]);
 });

@@ -247,7 +247,7 @@ def adopt_revision(paper_id: str, body: RevisionRequest):
         if result.get("skipped_pages"):
             raise ValueError("修正したページのPDF生成に失敗しました。翻訳の要確認一覧から確認してください。")
         tools.save_revision_history(lib.folder(paper_id), body.unit_id, current["text"], text)
-        deps.library_changed()
+        deps.paper_changed(paper_id)
         return result
     return deps.submit_job("revision", action, paper_id)
 

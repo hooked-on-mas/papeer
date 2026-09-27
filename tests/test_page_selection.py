@@ -575,7 +575,7 @@ class PageSelectionTests(unittest.TestCase):
                 self.assertEqual(report['skipped_pages'], sorted(failed))
                 self.assertEqual(set(report['page_errors']), {str(n) for n in failed})
                 self.assertEqual(report['translated_pages'], sorted({1, 2, 3} - failed))
-                self.assertEqual(library.paper(identity)['status'], '一部翻訳済み')
+                self.assertEqual(library.paper(identity)['status'], 'partial')
                 self.assertTrue(any('スキップ' in message for message in messages))
                 with fitz.open(source) as original, fitz.open(folder / 'translated.pdf') as translated:
                     self.assertEqual(translated.page_count, 3)
@@ -628,7 +628,7 @@ class PageSelectionTests(unittest.TestCase):
             self.assertEqual(report['selected_pages'], [2])
             self.assertEqual(report['translated_pages'], [2])
             self.assertEqual(report['untranslated_pages'], [1, 3])
-            self.assertEqual(library.paper(identity)['status'], '一部翻訳済み')
+            self.assertEqual(library.paper(identity)['status'], 'partial')
             self.assertEqual(translated_page_numbers(folder, 3), [2])
             self.assertTrue(read_preview(folder)['complete'])
             with fitz.open(folder / 'translated.pdf') as pdf:
@@ -655,7 +655,7 @@ class PageSelectionTests(unittest.TestCase):
             self.assertEqual(provider.calls, 2)
             service.translate(identity)
             self.assertEqual(provider.requested_pages, [{2}, {3}, {1}])
-            self.assertEqual(library.paper(identity)['status'], '翻訳済み')
+            self.assertEqual(library.paper(identity)['status'], 'translated')
             self.assertEqual(translated_page_numbers(folder, 3), [1, 2, 3])
 
     def test_unselected_pages_show_original_while_selected_pages_wait(self):
@@ -690,7 +690,7 @@ class PageSelectionTests(unittest.TestCase):
                 with self.subTest(selection=selection), self.assertRaises(ValueError):
                     PaperService(library, provider, threading.Event()).translate(identity, selection)
             self.assertEqual(provider.calls, 0)
-            self.assertEqual(library.paper(identity)['status'], '追加済み')
+            self.assertEqual(library.paper(identity)['status'], 'not_translated')
             self.assertFalse((library.folder(identity) / 'translation-cache.json').exists())
 
 

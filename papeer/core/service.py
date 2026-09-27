@@ -15,6 +15,7 @@ import pymupdf as fitz
 from papeer.providers import ProviderBackend, check_cancel
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library
+from papeer.core.translation_status import translation_status
 from papeer.layout.math_layout import restore_formula_text
 from papeer.layout.ocr_pages import needs_ocr_message, ocr_markdown_note
 from papeer.translation.translation import RetryState, TranslationKey, shared_translations, translate_batches, page_fingerprint
@@ -261,7 +262,7 @@ class PaperService:
             archive = preview_page(folder, preview, 1).parent / PREVIOUS_CACHE
             archive.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(cache_path, archive)
-        self.library.update(paper_id, status="翻訳中")
+        self.library.update(paper_id, status=translation_status(running=True))
         # The first translation on a PC converts the bundled fonts; that overlaps the first requests.
         if fonts_need_conversion():
             self.progress("日本語フォントを準備しています（初回のみ・約30秒）")
@@ -504,7 +505,7 @@ class PaperService:
                 elif block.get("kind") in {"formula", "table", "reference", "figure", "algorithm"} and block["page"] in preview["pages"]:
                     lines += [f"## p.{block['page']} / {block['id']}", "", block["text"], ""]
             atomic_write_text(files.translation_md, "\n".join(lines))
-            self.library.update(paper_id, status="一部翻訳済み" if report["untranslated_pages"] or report["skipped_blocks"] else "翻訳済み")
+            self.library.update(paper_id, status=translation_status(report=report))
             # The reader now shows translated.pdf: the page previews, the earlier pages kept for a
             # stop and the staging files of this run go too, and only the replaced cache stays.
             remove_unused_runs(folder)
@@ -526,7 +527,7 @@ class PaperService:
                 remove_unused_runs(folder)
             except OSError:
                 pass
-            self.library.update(paper_id, status="翻訳途中・再開可" if done else "翻訳未完了")
+            self.library.update(paper_id, status=translation_status(resumable=bool(done)))
             raise
 
     def article(self, paper_id: str) -> str:

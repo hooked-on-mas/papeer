@@ -13,6 +13,7 @@ import { requestLibraryRefresh } from "@/lib/libraryRefresh";
 import { useLastUsage, usageSummary, type Usage } from "@/lib/usage";
 import { readingTime } from "@/lib/statusLifetime";
 import { markConnected, markDisconnected, useConnection } from "./connection";
+import { handlePaperChanged, refreshPaper } from "./paperRefresh";
 import { addJobFailure, clearJobFailure, showJobFailure } from "./jobFailures";
 import { jobHandler, type JobContext, type JobFinished } from "./jobHandlers";
 import { AI_PLAN_JOBS, isJobKind, type JobKind } from "./jobKinds";
@@ -217,11 +218,12 @@ function handleFinished(event: JobFinished, queryClient: QueryClient): void {
   }
 
   // Any job may change the list and the paper's state; the job's feature names what else is stale
-  // (also after a failure, which may have hit the plan limit).
-  const stale = [[QK.papers], [QK.collections], ...(jobHandler(event.kind)?.refresh?.(event) ?? [])];
+  // (also after a failure, which may have hit the plan limit). A job of one paper changes only its row.
+  const stale = [...(event.paper_id ? [] : [[QK.papers], [QK.collections]]), ...(jobHandler(event.kind)?.refresh?.(event) ?? [])];
   if (isJobKind(event.kind, AI_PLAN_JOBS)) stale.push([QK.usageLimits]);
   if (event.paper_id) stale.push([QK.article, event.paper_id], [QK.messages, event.paper_id], [QK.reading, event.paper_id]);
   stale.forEach((queryKey) => queryClient.invalidateQueries({ queryKey }));
+  if (event.paper_id) void refreshPaper(queryClient, event.paper_id);
 
   recentlyFinished.set(event.job_id, event);
   setTimeout(() => recentlyFinished.delete(event.job_id), 60_000);
@@ -311,6 +313,8 @@ export function useJobEvents(): void {
         } else if (data.type === "job.finished") {
           store.removeJob(data.job_id);
           handleFinished(data as JobFinished, queryClient);
+        } else if (data.type === "paper.changed") {
+          if (typeof data.paper_id === "string") handlePaperChanged(queryClient, data.paper_id, Array.isArray(data.fields) ? data.fields : undefined);
         } else if (data.type === "library.changed") {
           // Once the events stop coming, and not while an action on several papers runs (libraryRefresh.ts).
           requestLibraryRefresh(() => {

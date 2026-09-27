@@ -404,7 +404,7 @@ def test_translation_names_ocr_pages_and_explains_papers_without_text(tmp_path, 
     paper_id, _ = library.import_pdf(only)
     with pytest.raises(ValueError, match="要OCR"):
         PaperService(library, FakeProvider(), threading.Event()).translate(paper_id)
-    from papeer.core.reading_state import translation_state
+    from papeer.core.library_list import translation_state
     state = translation_state(library.folder(paper_id), 1)
     assert state["translation_required_count"] == 0 and state["translation_ocr_count"] == 1
 

@@ -1,6 +1,7 @@
 import { apiRequest } from "@/api/client";
 import { useStore } from "@/store";
 import { retryUntil } from "@/lib/retry";
+import { librarySortOrder } from "@/lib/librarySort";
 import { mergeSavedAnchors } from "@/features/reader/sidePanel";
 
 type UiStateFile = {
@@ -63,7 +64,7 @@ function applyUiState(state: UiStateFile): void {
     paperPages: { ...paperPages, ...s.paperPages },
     // Likewise for the places within those pages.
     paperAnchors: mergeSavedAnchors({ saved: state.reading_anchors, savedPages: paperPages, pages: s.paperPages, anchors: s.paperAnchors }),
-    sortOrder: Number(state.sort) || 0,
+    sortOrder: librarySortOrder(state.sort),
     // An empty list from a fresh install means nothing was ever collapsed.
     expandedCollections: expanded.length ? expanded : null,
     uiStateLoaded: true,

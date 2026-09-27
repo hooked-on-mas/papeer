@@ -412,23 +412,12 @@ def test_readers_leave_the_shared_document_as_it_was(tmp_path):
     assert shared == json.loads(PaperFiles(library.folder(identity)).document_json.read_text("utf-8"))
 
 
-def test_required_pages_are_worked_out_once_per_document_file(tmp_path, monkeypatch):
+def test_reference_recognition_leaves_the_document_as_it_was(tmp_path):
     library, identity = make_paper(tmp_path, [["Original content on page one."], ["Original content on page two."]])
-    folder = library.folder(identity)
-    calls = []
-    original = translation_review.required_translation_pages
-    monkeypatch.setattr(translation_review, "required_translation_pages", lambda document: calls.append(1) or original(document))
-    assert translation_review.cached_review_pages(folder, 2)["required"] == [1, 2]
-    assert translation_review.cached_review_pages(folder, 2)["required"] == [1, 2]
-    assert len(calls) == 1
+    # Reference recognition works on copies of the blocks (the shared document is read-only in tests).
     document = library.document(identity)
-    changed = dict(document, blocks=[b for b in document["blocks"] if b["page"] == 1])
-    atomic_write_json(PaperFiles(folder).document_json, changed, indent=None)
-    assert translation_review.cached_review_pages(folder, 2)["required"] == [1]
-    assert len(calls) == 2
-    # Reference recognition works on copies of the blocks.
     kept = copy.deepcopy(document)
-    original(document)
+    assert translation_review.required_translation_pages(document) == [1, 2]
     assert document == kept
 
 

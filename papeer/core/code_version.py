@@ -3,7 +3,8 @@
 It no longer decides whether a translation is reused: translations are keyed by what the
 model receives (papeer.translation.translation.TranslationKey), so editing this code only
 redraws PDFs from the saved translations. The hash is recorded in translation reports and
-shown in the status bar, and `just build-app` checks it against the bundled sidecar.
+shown in the status bar, and `just build-app` checks it against the bundled sidecar. It also
+keys the pages needing translation that each PC keeps (translation_review.ReviewPagesCache).
 """
 from __future__ import annotations
 
@@ -14,11 +15,12 @@ import re
 import sys
 
 
-# Explicit scope: extraction, layout and PDF drawing. UI, viewing, Windows integration,
-# library management and AI communication are left out. Every module in RENDER_DIRECTORIES
+# Explicit scope: extraction, layout and PDF drawing, and which pages need translation
+# (core/translation_review.py: editing it works the kept pages out again). UI, viewing, Windows
+# integration, library management and AI communication are left out. Every module in RENDER_DIRECTORIES
 # must be listed here or in RENDER_EXCLUDED (tests/test_code_version.py checks it).
 RENDER_SOURCES = (
-    "core/service.py",
+    "core/service.py", "core/translation_review.py",
     "layout/algorithm_layout.py", "layout/figure_layout.py", "layout/math_layout.py", "layout/ocr_pages.py",
     "layout/reading_flow.py", "layout/reference_layout.py", "layout/table_layout.py",
     "pdf/pdf_engine.py", "pdf/pdf_fonts.py", "pdf/pdf_math_crops.py", "pdf/pdf_typography.py",

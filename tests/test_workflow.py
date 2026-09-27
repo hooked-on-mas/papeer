@@ -337,7 +337,7 @@ class WorkflowTests(unittest.TestCase):
         # The first retry went out but got no answer.
         self.assertEqual(cache["retry_state"]["unanswered"], {provider.missing_id: 1})
         self.assertEqual((folder / "translated.pdf").read_bytes(), existing)
-        self.assertEqual(self.library.paper(self.paper_id)["status"], "翻訳途中・再開可")
+        self.assertEqual(self.library.paper(self.paper_id)["status"], "resumable")
 
         class ResumeProvider(FakeProvider):
             def generate(inner, instruction, data, schema=None):
@@ -352,7 +352,7 @@ class WorkflowTests(unittest.TestCase):
         resumed = ResumeProvider()
         PaperService(self.library, resumed, self.cancel).translate(self.paper_id)
         self.assertEqual(resumed.calls, 2)
-        self.assertEqual(self.library.paper(self.paper_id)["status"], "翻訳済み")
+        self.assertEqual(self.library.paper(self.paper_id)["status"], "translated")
 
     def test_retry_limit_skips_block_continues_pages_and_persists_on_reopen(self):
         class InvalidProvider(FakeProvider):
@@ -371,7 +371,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(provider.calls, 5)  # Two pages and three retries.
         self.assertEqual(report["skipped_blocks"], [provider.missing_id])
         self.assertEqual(report["translated_pages"], [1, 2])
-        self.assertEqual(self.library.paper(self.paper_id)["status"], "一部翻訳済み")
+        self.assertEqual(self.library.paper(self.paper_id)["status"], "partial")
         folder = self.library.folder(self.paper_id)
         before = (folder / "translation-cache.json").read_bytes()
         cache = json.loads(before)

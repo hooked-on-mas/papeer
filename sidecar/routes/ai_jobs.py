@@ -39,7 +39,7 @@ def translate_paper(paper_id: str, body: TranslateRequest) -> dict[str, str]:
     def action(cancel: threading.Event, progress: Any, page_ready: Any) -> dict:
         service = PaperService(lib, deps.provider_for(settings, cancel), cancel, progress=progress, page_ready=page_ready)
         result = service.translate(paper_id, pages=selected_pages)
-        deps.library_changed()
+        deps.paper_changed(paper_id)
         return result
 
     return deps.submit_job("translate", action, paper_id)
@@ -66,7 +66,7 @@ def generate_article(paper_id: str) -> dict[str, str]:
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict:
         service = PaperService(lib, deps.provider_for(settings, cancel), cancel, progress=progress)
         result = service.article(paper_id)
-        deps.library_changed()
+        deps.paper_changed(paper_id)
         return {"content": result, "usage": service.usage()}
 
     return deps.submit_job("article", action, paper_id)
