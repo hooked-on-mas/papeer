@@ -192,8 +192,8 @@ def test_search_of_the_translation_reads_saved_translations_once_for_all_pages(t
     # Without translation.md, each page's text comes from the saved translations.
     (library.folder(identity) / "translation.md").unlink()
     calls = []
-    original = search.cached_translations
-    monkeypatch.setattr(search, "cached_translations", lambda *args: calls.append(args) or original(*args))
+    original = search.cached_page_texts
+    monkeypatch.setattr(search, "cached_page_texts", lambda *args: calls.append(args) or original(*args))
     found = search.search_paper(library, identity, "訳", "translated")
     assert [item["page"] for item in found["results"]] == [1, 2, 3]
     assert len(calls) == 1

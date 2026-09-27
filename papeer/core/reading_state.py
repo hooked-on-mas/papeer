@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import stat
 from typing import Any
 
 from papeer.core.paths import PaperFiles
@@ -55,17 +56,24 @@ def reading_state(lib: Library, paper_id: str, last_page: int = 0) -> dict[str, 
 
     # Where the right pane finds each page: a per-page preview while translating,
     # the original for pages outside the request, or nothing while it waits.
+    # Asked again whenever a page is ready: each file (translated.pdf for every page once complete)
+    # is looked up once, not once per page.
+    files_seen: dict[Path, tuple[str, int] | None] = {}
     translated_pages: dict[str, dict[str, Any] | None] = {}
     for index in range(page_count):
         path, page_index = translated_page(folder, index, preview)
-        if path is None or not path.is_file():
+        if path is not None and path not in files_seen:
+            try:
+                found_file = path.stat()
+                files_seen[path] = ((path.relative_to(folder).as_posix(), int(found_file.st_mtime))
+                                    if stat.S_ISREG(found_file.st_mode) else None)
+            except (OSError, ValueError):
+                files_seen[path] = None
+        found = files_seen.get(path) if path is not None else None
+        if found is None:
             translated_pages[str(index + 1)] = None
         else:
-            translated_pages[str(index + 1)] = {
-                "file": path.resolve().relative_to(folder.resolve()).as_posix(),
-                "index": page_index,
-                "mtime": int(path.stat().st_mtime),
-            }
+            translated_pages[str(index + 1)] = {"file": found[0], "index": page_index, "mtime": found[1]}
 
     # The translation key (TranslationKey.identity, or the code revision of older records)
     # and model that produced each page, as the old reader showed.

@@ -27,6 +27,7 @@ import pytest
 
 # Must come before the environment changes below: it records the real folders.
 from _isolation import audit_hook, take_violations
+from _frozen_documents import frozen_view
 
 pytest_plugins = ["pytester"]
 
@@ -69,6 +70,17 @@ def isolated_app_data(tmp_path_factory, monkeypatch):
     found = take_violations()
     if found:
         pytest.fail("\n".join(found), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def frozen_shared_documents(monkeypatch):
+    """Library.document gives every caller the same value until document.json changes: changing it
+    in place (instead of a copy) raises in tests (tests/_frozen_documents.py)."""
+    try:
+        from papeer.core.storage import Library
+    except ModuleNotFoundError:  # A pytester run of this conftest outside the repository (test_isolation).
+        return
+    monkeypatch.setattr(Library, "document", frozen_view(Library.document))
 
 
 def pytest_sessionfinish(session):

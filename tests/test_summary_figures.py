@@ -1,3 +1,4 @@
+import copy
 import threading
 from unittest.mock import patch
 
@@ -80,7 +81,7 @@ def test_article_only_passes_grounded_assets_to_both_stages(tmp_path):
         pdf.save(source)
     library = Library(tmp_path / "library")
     paper_id, _ = library.import_pdf(source)
-    document = library.document(paper_id)
+    document = copy.deepcopy(library.document(paper_id))  # The shared value is never changed in place.
     # Exercise splitting at the old boundary between an image and its caption.
     document["pages"][0]["text"] = "x" * 9990
 

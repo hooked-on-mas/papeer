@@ -11,6 +11,7 @@ import threading
 import uuid
 
 from papeer.core.fileio import atomic_write_json, atomic_write_text
+from papeer.core.shared_json import read_shared_json, remember
 from papeer.pdf.pdf_engine import PDF_LOCK, extract_pdf
 from papeer.core.translation_review import cached_review_pages
 from papeer.core.bibliography import clean_arxiv_id, extract_bibliography, extract_identifiers, typed_doi
@@ -262,6 +263,16 @@ def migrate_database(root: Path) -> None:
             raise
 
 
+def write_document(path: Path, document: dict) -> None:
+    """Save an extraction as document.json, kept in memory for the next read (Library.document).
+
+    Without indentation: only the app reads it, and a long paper's is a third smaller and written
+    in less than half the time (198 pages: 4.2 MB in 0.15 s instead of 6.5 MB in 0.4 s).
+    """
+    atomic_write_json(path, document, indent=None)
+    remember(path, document)
+
+
 class Library:
     def __init__(self, root: Path):
         self.root = root
@@ -313,7 +324,7 @@ class Library:
         folder.mkdir()
         try:
             shutil.copyfile(source, PaperFiles(folder).original_pdf)
-            atomic_write_json(PaperFiles(folder).document_json, info)
+            write_document(PaperFiles(folder).document_json, info)
             with self.connection() as db:
                 db.execute("""INSERT INTO papers(id,sha256,title,original_name,pages,collection_name,first_author,publication_year,
                            doi,arxiv_id,venue,bibliography_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)""",
@@ -573,13 +584,18 @@ class Library:
                 "ocr_pages": review["ocr"]}
 
     def document(self, paper_id: str) -> dict:
+        """The paper's extraction (document.json), extracted again when made by an older LAYOUT_VERSION.
+
+        Shared with every caller until the file changes (shared_json): read it, never modify it in
+        place; code that adjusts blocks works on its own copies (materialize_flows and the like).
+        """
         folder = self.folder(paper_id)
         path = PaperFiles(folder).document_json
-        document = json.loads(path.read_text("utf-8"))
+        document = read_shared_json(path)
         if document.get("layout_version") != LAYOUT_VERSION:
             refreshed = extract_pdf(PaperFiles(folder).original_pdf)
             refreshed["title"] = document["title"]
-            atomic_write_json(path, refreshed)
+            write_document(path, refreshed)
             document = refreshed
         return document
 
