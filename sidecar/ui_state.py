@@ -65,7 +65,9 @@ def load_ui_state(data_dir: Path) -> dict[str, Any]:
 
     # Migrate from window.ini if present
     state = migrate_window_ini(data_dir / "window.ini")
-    save_ui_state(data_dir, state)
+    # Reading must not create a data folder that is missing (see storage.library_missing).
+    if data_dir.is_dir():
+        save_ui_state(data_dir, state)
     return state
 
 

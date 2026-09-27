@@ -87,8 +87,9 @@ function useCloseHandling(): void {
       // Syncing right after the user stopped a sync (or a backup) would only start it over; the next launch syncs.
       if (!snapshot) {
         try {
-          const drive = await apiRequest<{ connected: boolean; auto_sync: boolean }>("GET", "/api/drive");
-          if (drive.connected && drive.auto_sync && await syncDrive()) {
+          const drive = await apiRequest<{ connected: boolean; auto_sync: boolean; review: unknown; library_missing: boolean }>("GET", "/api/drive");
+          // Like the automatic sync: not while a review waits for the user, nor over a missing data folder.
+          if (drive.connected && drive.auto_sync && !drive.review && !drive.library_missing && await syncDrive()) {
             setAppClosing(false);
             return;
           }

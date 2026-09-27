@@ -3,12 +3,13 @@ from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
+import sys
 import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from papeer.core import reading_tools as tools
+from papeer.core import drive_sync, reading_tools as tools
 from papeer.providers import Cancelled, check_cancel
 from papeer.core.service import PaperService
 from papeer.core.terminology import global_glossary, save_global_glossary, GlossaryConflict
@@ -283,6 +284,11 @@ def restore(body: RestoreRequest):
             raise Cancelled("復元を中止しました。ライブラリは変更していません。") from None
         except (OSError, ValueError, sqlite3.DatabaseError, zipfile.BadZipFile) as exc:
             raise ValueError(f"バックアップを復元できませんでした：{exc}") from exc
+        # The backup may be older than what the sync folder holds: the next sync asks before publishing it.
+        try:
+            drive_sync.mark_restored(lib.root)
+        except Exception as exc:  # The restore itself has succeeded; a missing mark must not report it as failed.
+            print(f"警告: 復元後の同期確認の印を保存できませんでした: {exc!r}", file=sys.stderr)
         deps.library_changed()
         return {"previous_path": str(previous)}
     return deps.submit_job("restore", action)

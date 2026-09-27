@@ -3,7 +3,8 @@ import { ApiError, apiRequest } from "@/api/client";
 import { showError } from "@/components/errorDialog";
 import { isRunning, useStore } from "@/store";
 import { startJob } from "@/features/jobs/jobEvents";
-import { flushPendingSaves, describeFailure } from "@/lib/pendingSaves";
+import { flushPendingSaves, describeFailure, openEditLabels } from "@/lib/pendingSaves";
+import { askConfirm } from "@/components/AppDialogs";
 import { flushUiState, suspendUiStateSync } from "@/app/uiStateSync";
 import { reloadUnlessClosing } from "@/app/appClosing";
 
@@ -24,7 +25,23 @@ export async function cancelSync(): Promise<void> {
   }
 }
 
-export async function syncDrive(choice?: string, heads?: string[]): Promise<boolean> {
+/**
+ * Before a sync the user started: taking in another PC's library reloads the page, which would throw
+ * away a draft still open in a dialog (a sticky note hidden behind the settings, for example).
+ */
+export async function confirmOpenEdits(): Promise<boolean> {
+  const labels = openEditLabels();
+  if (!labels.length) return true;
+  return askConfirm("編集中の内容があります",
+    `${labels.join("・")}を編集中です。同期で他のPCのデータを取り込むと画面を再読み込みするため、保存していない編集内容は失われます。\n同期を続けますか？`,
+    "同期する", true);
+}
+
+/**
+ * confirm: 「このまま同期する」 on a sync that stopped for review (a library that lost many items,
+ * or one restored from a backup); the sidecar applies it only if nothing changed since.
+ */
+export async function syncDrive(choice?: string, heads?: string[], confirm = false): Promise<boolean> {
   if (useSyncState.getState().busy || useStore.getState().activeJobs.some(isRunning)) return false;
   useSyncState.setState({ busy: true });
   let reloading = false;
@@ -34,12 +51,14 @@ export async function syncDrive(choice?: string, heads?: string[]): Promise<bool
     await flushUiState();
     suspendUiStateSync(true);
     await new Promise<void>((resolve, reject) => {
-      startJob("/api/drive/sync", { choice, expected_heads: heads }, { kind: "drive-sync", paperId: null }, event => {
+      startJob("/api/drive/sync", { choice, expected_heads: heads, confirm }, { kind: "drive-sync", paperId: null }, event => {
         // Stopped on request: not an error (the status line already says so).
         if (event.status === "cancelled") { resolve(); return; }
         if (event.status !== "succeeded") { reject(new Error(event.error || "同期を完了できませんでした。")); return; }
         if (event.result?.status === "conflict") {
           useStore.getState().setStatus("Google Driveとの変更が競合しています。設定 → 保存先・同期で確認してください。");
+        } else if (event.result?.status === "review") {
+          useStore.getState().setStatus("同期を一時停止しました。データが大きく減っているか、復元した直後です。設定 → 保存先・同期で確認してください。");
         } else if (event.result?.reloaded) {
           reloading = true;
           useStore.setState({ uiStateLoaded: false, activePaperId: null, paperPages: {}, currentPage: 1,

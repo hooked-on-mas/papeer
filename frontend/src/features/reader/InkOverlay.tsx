@@ -4,6 +4,7 @@ import { boundsOf, eraseInk, fitInk, hitInk, inBounds, kindOf, rectBetween, sele
 import type { InkEditor } from "./useInkEditor";
 import { AnnotationTextEditor } from "./AnnotationTextEditor";
 import { canResumeShape, SHAPE_LIFT_GRACE_MS } from "./inkInteraction";
+import { useOpenEdit } from "@/lib/pendingSaves";
 export type { InkTool } from "./inkGeometry";
 
 type Gesture = {
@@ -53,6 +54,7 @@ export function InkOverlay({ editor, aspectRatio: ratio, onCapture }: { editor: 
   const [pointerType, setPointerType] = useState("mouse");
   const [captureBounds, setCaptureBounds] = useState<Bounds | null>(null);
   const [textDraft, setTextDraft] = useState<{ at: Point; text: string; previous?: InkStroke } | null>(null);
+  useOpenEdit(!!textDraft, "書き込みテキスト");
   const root = useRef<HTMLDivElement>(null);
   const height = 1000 * ratio;
   const interactive = tool === "capture" || (editor.visible && !editor.locked && tool !== "select");

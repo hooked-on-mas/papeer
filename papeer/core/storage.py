@@ -16,7 +16,7 @@ from papeer.core.translation_review import cached_required_translation_pages
 from papeer.core.bibliography import extract_bibliography
 import pymupdf as fitz
 from papeer.layout.math_layout import LAYOUT_VERSION
-from papeer.core.paths import PaperFiles
+from papeer.core.paths import PaperFiles, sync_state_path
 
 
 def normalize_collection_name(value: str) -> str:
@@ -36,6 +36,30 @@ def newer_papeer(app_version: object) -> str:
 
 
 NEWER_LIBRARY = "このライブラリは新しいバージョンのPapeerで更新されています。Papeerを最新版に更新してください。"
+
+
+class LibraryMissingError(ValueError):
+    """The data folder of a library this PC has synced is gone: an empty one must not replace it."""
+
+
+def library_missing(root: Path) -> bool:
+    """True when folder sync is on for `root` and has synced it, but its database is not there.
+
+    A moved or deleted data folder (or a drive that is not mounted) would otherwise be recreated
+    empty, and the next automatic sync would publish the empty library over the synced one.
+    """
+    if (root / "library.sqlite3").exists():
+        return False
+    try:
+        state = json.loads(sync_state_path(root).read_text("utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(state, dict) and bool(state.get("connected")) and bool(state.get("base") or state.get("hash"))
+
+
+def missing_library_message(root: Path) -> str:
+    return (f"データフォルダー（{root}）が見つかりません。移動・削除した場合は元の場所に戻してください。"
+            "新しいライブラリとして始める場合は、設定 → 保存先・同期で「新しいライブラリとして始める」を選んでください。")
 
 
 def _baseline(db: sqlite3.Connection, root: Path) -> None:
@@ -179,6 +203,8 @@ def migrate_database(root: Path) -> None:
 class Library:
     def __init__(self, root: Path):
         self.root = root
+        if library_missing(root):
+            raise LibraryMissingError(missing_library_message(root))
         self.root.mkdir(parents=True, exist_ok=True)
         (root / "papers").mkdir(exist_ok=True)
         # One pragma per open, so a database a restore or sync put in place is migrated on first use.

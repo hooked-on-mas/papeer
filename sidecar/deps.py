@@ -19,7 +19,7 @@ from fastapi import Header, HTTPException, Query, status
 
 from papeer.core.config import Settings, api_key_from_env
 from papeer.core.paths import app_env, data_directory
-from papeer.core.storage import Library, NewerSchemaError
+from papeer.core.storage import Library, LibraryMissingError, NewerSchemaError, library_missing, missing_library_message
 from papeer.providers import ProviderBackend, create_provider
 from sidecar.jobs import ConcurrencyConflict, JobManager
 from sidecar.schemas import ProviderActionRequest
@@ -123,9 +123,21 @@ def get_library() -> Library:
         raise HTTPException(status_code=409, detail="バックアップ・復元が終わるまでお待ちください。")
     try:
         return Library(get_data_dir())
-    except NewerSchemaError as exc:
-        # Opened by a newer Papeer: say so instead of a bare server error on every request.
+    except (NewerSchemaError, LibraryMissingError) as exc:
+        # Opened by a newer Papeer, or a synced library's folder is gone: say so instead of a bare
+        # server error (or an empty library) on every request.
         raise HTTPException(status_code=409, detail=str(exc)) from None
+
+
+def require_library_folder() -> None:
+    """For writes that go to the data folder without opening the Library (settings, prompts, ui-state).
+
+    They would otherwise create the folder of a synced library that has gone missing, and the moved
+    folder could not simply be put back.
+    """
+    root = get_data_dir()
+    if library_missing(root):
+        raise HTTPException(status_code=409, detail=missing_library_message(root))
 
 
 def paper_folder(lib: Library, paper_id: str) -> Path:

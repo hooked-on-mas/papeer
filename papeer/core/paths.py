@@ -5,6 +5,7 @@ so the on-disk layout is written down once.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -38,6 +39,11 @@ def device_directory() -> Path:
     moves the library elsewhere.
     """
     return Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "PapeerSync"
+
+
+def sync_state_path(root: Path) -> Path:
+    """This PC's folder-sync state for the library at `root` (see drive_sync)."""
+    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".json")
 
 
 def _has_papers(root: Path) -> bool:

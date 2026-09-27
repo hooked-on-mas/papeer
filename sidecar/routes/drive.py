@@ -19,6 +19,8 @@ class FolderRequest(BaseModel):
 class SyncRequest(BaseModel):
     choice: str | None = None
     expected_heads: list[str] | None = None
+    # 「このまま同期する」 after a sync stopped for review (a library that shrank a lot, or was restored).
+    confirm: bool = False
 
 
 class OptionsRequest(BaseModel):
@@ -51,6 +53,23 @@ def disconnect():
     return {"status": "disconnected"}
 
 
+@router.delete("/api/drive/review")
+def dismiss_review():
+    """「同期しない」 on a sync that stopped for review: automatic sync stops until turned on again."""
+    require_idle()
+    return drive_sync.dismiss_review(deps.get_data_dir())
+
+
+@router.post("/api/drive/new-library")
+def start_new_library():
+    """The data folder of a synced library is gone and the user chose to start a new, empty one."""
+    require_idle()
+    try:
+        return drive_sync.start_new_library(deps.get_data_dir())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.put("/api/drive")
 def options(body: OptionsRequest):
     require_idle()
@@ -71,7 +90,7 @@ def sync(body: SyncRequest):
             if not state.get("connected") or not state.get("folder"):
                 raise ValueError("同期フォルダーを指定してください。")
             return drive_sync.sync(Library(root), drive_sync.FolderDrive(Path(state["folder"])), cancel, progress,
-                                   choice=body.choice, expected_heads=body.expected_heads)
+                                   choice=body.choice, expected_heads=body.expected_heads, confirm=body.confirm)
         except Cancelled:
             # Stopping is not a failure: no error is recorded, so automatic sync resumes next time.
             raise Cancelled("同期を中止しました。") from None

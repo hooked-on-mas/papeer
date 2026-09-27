@@ -129,7 +129,9 @@ def test_leftover_temporary_files_do_not_spread(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("field,value", [("schema_version", "1"), ("schema_version", -1),
-                                         ("schema_version", True), ("app_version", 2)])
+                                         ("schema_version", True), ("app_version", 2),
+                                         ("counts", [1]), ("counts", {"papers": -1}), ("counts", {"papers": "1"}),
+                                         ("counts", {"papers": True})])
 def test_malformed_version_fields_are_rejected(tmp_path, field, value):
     folder = tmp_path / "drive"
     folder.mkdir()

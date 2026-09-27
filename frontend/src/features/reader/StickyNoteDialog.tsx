@@ -10,12 +10,15 @@ import { AnnotationTextEditor } from "./AnnotationTextEditor";
 import { stickyQuote, type StickyNote } from "./stickyNotes";
 import { openStickyNote, useStickyNotes } from "./stickyNotesStore";
 import { QK } from "@/lib/queryKeys";
+import { useOpenEdit } from "@/lib/pendingSaves";
 
 /** One small editor shared by PDF markers, selections, and the sticky-notes tab. */
 export function StickyNoteDialog() {
   const draft = useStickyNotes(s => s.draft);
   const busy = useStickyNotes(s => s.busy);
   const settingsOpen = useSettingsNavigation(s => s.open);
+  // Also while hidden behind the settings: the draft is still there.
+  useOpenEdit(!!draft, "付箋");
   const { data: labels = [] } = useTagChoices("sticky");
   const [error, setError] = useState("");
   const client = useQueryClient();

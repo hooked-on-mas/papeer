@@ -11,6 +11,7 @@ import { showError } from "@/components/errorDialog";
 import { askConfirm } from "@/components/AppDialogs";
 import { GlossaryTransfer } from "./GlossaryTransfer";
 import { QK } from "@/lib/queryKeys";
+import { useOpenEdit } from "@/lib/pendingSaves";
 
 interface TranslationDialogProps {
   open: boolean;
@@ -39,6 +40,7 @@ export function parsePageSelection(value: string, pageCount: number): number[] {
 
 export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: TranslationDialogProps) {
   const queryClient = useQueryClient();
+  useOpenEdit(open, "翻訳の設定・辞書");
   const [scope, setScope] = useState<"all" | "current" | "custom">("all");
   const [customRange, setCustomRange] = useState("");
   const [model, setModel] = useState("");

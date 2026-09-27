@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { showError } from "@/components/errorDialog";
+import { useOpenEdit } from "@/lib/pendingSaves";
 
 type Template = { name: string; content: string; builtin: boolean };
 type Draft = { originalName: string | null; name: string; content: string; initialName: string; initialContent: string };
@@ -22,6 +23,8 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
     queryKey, queryFn: () => apiRequest<Template[]>("GET", "/api/note-templates"),
   });
   const [mode, setMode] = useState<"use" | "manage" | null>(embedded ? "manage" : null);
+  // Embedded in the settings, which automatic sync waits for anyway.
+  useOpenEdit(!embedded && mode !== null, "メモのテンプレート");
   const [selected, setSelected] = useState("読書メモ");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);

@@ -12,6 +12,7 @@ import { jumpToPage } from "./navigation";
 import { onAppEvent, type AppEvents } from "@/lib/appEvents";
 import { paragraphOfSelection } from "@/lib/pdfSelection";
 import { QK } from "@/lib/queryKeys";
+import { useOpenEdit } from "@/lib/pendingSaves";
 
 type Paragraph = { id: string; page: number; pages: number[]; source: string; text: string };
 type Revision = { id: string; unit_id: string; before: string; after: string; created_at: string };
@@ -26,6 +27,7 @@ function PaperReview({ paperId }: { paperId: string }) {
   const currentPage = useStore(s => s.currentPage);
   const busy = useStore(s => paperBusy(s.activeJobs, paperId));
   const [open, setOpen] = useState(false);
+  useOpenEdit(open, "訳文の修正");
   const [tab, setTab] = useState<"issues" | "edit">("issues");
   const [selected, setSelected] = useState<Paragraph | null>(null);
   const [text, setText] = useState("");

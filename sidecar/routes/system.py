@@ -64,6 +64,7 @@ def get_ui_state() -> dict[str, Any]:
 
 @router.put("/api/ui-state")
 def put_ui_state(body: UIStateModel) -> dict[str, str]:
+    deps.require_library_folder()
     save_ui_state(deps.get_data_dir(), body.model_dump())
     return {"status": "saved"}
 

@@ -41,6 +41,7 @@ def update_settings(body: SettingsModel) -> dict[str, str]:
         spec_for(settings.provider)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    deps.require_library_folder()
     settings.save(deps.get_data_dir())
     if body.api_key is not None:
         deps.set_runtime_api_key(body.api_key)
@@ -60,6 +61,7 @@ def get_default_prompts() -> dict[str, str]:
 
 @router.put("/api/prompts")
 def update_prompts(body: dict[str, str]) -> dict[str, str]:
+    deps.require_library_folder()
     try:
         prompts.save_overrides(body)
     except ValueError as exc:
