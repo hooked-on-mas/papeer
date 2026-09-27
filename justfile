@@ -41,9 +41,10 @@ lint-frontend:
 
 # Run sidecar server in development
 # 前回の本アプリの sidecar がポート 8000 に残っていれば止めてから起動する
+# 認証トークンはデバッグ版 Tauri (src-tauri/src/lib.rs の DEV_TOKEN) と同じ固定値を使う
 dev-sidecar:
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/stop_stale_dev.ps1 -Port 8000
-    uv run python -m sidecar
+    $env:PAPEER_TOKEN = 'dev_token'; uv run python -m sidecar
 
 # Run frontend in development
 # 前回の Vite (1420) とデバッグ版のウィンドウが残っていれば止めてから起動する

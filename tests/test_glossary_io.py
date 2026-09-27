@@ -60,7 +60,7 @@ def test_api_stages_import_without_changing_global_dictionary(tmp_path, monkeypa
     from sidecar import app as runtime
     lib = Library(tmp_path / "library")
     monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     existing = [{"source": "a", "target": "既存"}]
     incoming = [{"source": "b", "target": "追加"}]
     save_global_glossary(lib.root, existing)

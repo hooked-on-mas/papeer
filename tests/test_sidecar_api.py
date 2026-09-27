@@ -64,7 +64,7 @@ class FakeProvider:
 def test_env():
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
-        with patch.dict("os.environ", {"PAPEER_DATA_DIR": str(tmp_path), "PAPEER_TOKEN": ""}):
+        with patch.dict("os.environ", {"PAPEER_DATA_DIR": str(tmp_path), "PAPEER_TOKEN": "", "PAPEER_DEV_NO_AUTH": "1"}):
             client = TestClient(app)
             yield client, tmp_path
 

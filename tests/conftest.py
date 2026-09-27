@@ -49,6 +49,9 @@ def isolated_app_data(tmp_path_factory, monkeypatch):
     base = tmp_path_factory.mktemp("appdata")
     _point_environment_at(base, monkeypatch.setenv)
     monkeypatch.delenv("PAPERDESK_DATA_DIR", raising=False)
+    # The sidecar's token or no-auth flag from the developer's shell must not decide what a test sees.
+    for name in ("PAPEER_TOKEN", "PAPERDESK_TOKEN", "PAPEER_DEV_NO_AUTH"):
+        monkeypatch.delenv(name, raising=False)
     yield base
     found = take_violations()
     if found:

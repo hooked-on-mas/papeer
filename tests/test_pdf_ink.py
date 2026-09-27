@@ -26,7 +26,7 @@ def stroke(identity="stroke-1", **kwargs):
 @pytest.fixture
 def ink_env(tmp_path, monkeypatch):
     monkeypatch.setenv("PAPEER_DATA_DIR", str(tmp_path / "library"))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     source = tmp_path / "sample.pdf"
     with fitz.open() as pdf:
         for _ in range(2):

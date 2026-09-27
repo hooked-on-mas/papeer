@@ -5,8 +5,19 @@ export function backendPort(): number {
   return Number((window as any).__PAPEER_PORT || import.meta.env.VITE_PAPEER_PORT || import.meta.env.VITE_PAPERDESK_PORT || 8000);
 }
 
+/**
+ * The token `just dev-sidecar` starts the development sidecar with (the same value as DEV_TOKEN in
+ * src-tauri/src/lib.rs). Only a Vite dev server falls back to it; a production build has no default.
+ */
+const DEV_TOKEN = "dev_token";
+
+/**
+ * The sidecar's token. Inside Tauri it comes from get_backend_config (main.tsx); in a plain browser
+ * during development, from VITE_PAPEER_TOKEN, else the development default.
+ */
 export function authToken(): string {
-  return (window as any).__PAPEER_TOKEN || import.meta.env.VITE_PAPEER_TOKEN || import.meta.env.VITE_PAPERDESK_TOKEN || "";
+  return (window as any).__PAPEER_TOKEN || import.meta.env.VITE_PAPEER_TOKEN || import.meta.env.VITE_PAPERDESK_TOKEN
+    || (import.meta.env.DEV ? DEV_TOKEN : "");
 }
 
 export function backendUrl(path: string): string {

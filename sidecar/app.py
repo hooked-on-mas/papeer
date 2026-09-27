@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import json
+import sys
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect, status
@@ -26,6 +27,10 @@ app = FastAPI(
     title="Papeer Sidecar",
     version=application_version(),
     lifespan=lifespan,
+    # The API schema and its pages would be the only routes open without the token.
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 
@@ -68,8 +73,7 @@ app.include_router(system.public)
 @app.websocket("/ws/events")
 async def ws_events(websocket: WebSocket, token: str | None = Query(None)) -> None:
     """Job progress and library changes, pushed to the frontend."""
-    expected_token = deps.get_auth_token()
-    if expected_token and token != expected_token:
+    if not deps.token_matches(token):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
@@ -100,11 +104,25 @@ async def ws_events(websocket: WebSocket, token: str | None = Query(None)) -> No
         manager.remove_listener(queue)
 
 
+def startup_error() -> str | None:
+    """Why the sidecar must not start, if it must not."""
+    if deps.get_auth_token() or deps.auth_disabled():
+        return None
+    return ("PAPEER_TOKEN が設定されていないため起動しません。開発時は `just dev-sidecar` で起動してください"
+            "（認証なしで起動する場合は PAPEER_DEV_NO_AUTH=1 を指定）。")
+
+
 def main() -> None:
     import uvicorn
 
+    error = startup_error()
+    if error:
+        sys.exit(error)
+    if deps.auth_disabled():
+        print("警告: PAPEER_DEV_NO_AUTH=1 のため認証なしで起動します（開発専用）。", file=sys.stderr)
     port = int(app_env("PORT") or "8000")
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+    # Media URLs carry the token in the query string, so the access log would write it out.
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info", access_log=False)
 
 
 if __name__ == "__main__":

@@ -2499,6 +2499,7 @@ dependencies = [
 name = "papeer"
 version = "0.2.0"
 dependencies = [
+ "getrandom 0.3.4",
  "glob",
  "serde",
  "serde_json",

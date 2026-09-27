@@ -179,7 +179,7 @@ def test_drive_api_sync_status_and_error_redaction(pair, monkeypatch):
 
     a, _, _, remote = pair
     monkeypatch.setattr(deps, "get_data_dir", lambda: a.root)
-    monkeypatch.setattr(deps, "get_auth_token", lambda: None)
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     monkeypatch.setattr(deps, "job_manager", JobManager())
     sync.save_state(a.root, {"connected": True, "folder": str(a.root.parent / "shared")})
     monkeypatch.setattr(sync, "FolderDrive", lambda _: remote)

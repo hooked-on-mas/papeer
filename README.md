@@ -72,6 +72,10 @@ just dev-sidecar    # ターミナル 1: FastAPI サーバー (ポート 8000)
 just dev-frontend   # ターミナル 2: Tauri + Vite
 ```
 
+sidecar は `/health` 以外のすべての API と WebSocket に認証トークンを求め、`PAPEER_TOKEN` が未設定なら起動しません。`just dev-sidecar` は開発用の固定トークン `dev_token` で起動し、デバッグビルドの Tauri も同じ値をフロントエンドへ渡します。Tauri を使わずブラウザーで Vite を開く場合も、開発サーバーでは同じ値を既定で使います（別の値にするときは `VITE_PAPEER_TOKEN` を指定）。本番ビルドでは Tauri が起動ごとに OS の乱数生成器で 256 bit のトークンを作ります。API ドキュメント（`/docs`、`/openapi.json`）は配信しません。
+
+フロントエンドの `frontend/openapi.json` は、リポジトリのルートで `uv run python -c "import json; from sidecar.app import app; open('frontend/openapi.json', 'wb').write(json.dumps(app.openapi(), indent=2).encode())"` を実行して作り直します（`frontend/src/api/schema.d.ts` はこれを openapi-typescript で変換したものです）。
+
 ### テストと lint
 
 ```bash
@@ -154,7 +158,8 @@ Papeer/
 | --- | --- |
 | `PAPEER_DATA_DIR` | データの保存先を変更する |
 | `PAPEER_PORT` | sidecar の待ち受けポート（既定 8000） |
-| `PAPEER_TOKEN` | sidecar の認証トークン。未設定なら認証なし（開発用） |
+| `PAPEER_TOKEN` | sidecar の認証トークン。必須で、未設定なら sidecar は起動しない（本番は Tauri が起動ごとに生成、開発は `just dev-sidecar` が `dev_token` を設定） |
+| `PAPEER_DEV_NO_AUTH` | `1` のとき、`PAPEER_TOKEN` なしで認証なしの sidecar を起動する（開発専用。PyInstaller で作った sidecar では無視） |
 | `PAPEER_API_KEY` | API 接続で使う API キーの初期値（未設定なら `OPENAI_API_KEY`、次に `GEMINI_API_KEY`） |
 
 ## キーボードショートカット

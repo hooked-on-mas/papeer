@@ -8,7 +8,10 @@ API key in one place.
 from __future__ import annotations
 
 from dataclasses import replace
+import hmac
+import os
 from pathlib import Path
+import sys
 import threading
 from typing import Any, Callable
 
@@ -56,14 +59,38 @@ def wait_for_library_requests() -> None:
 
 
 # --- Access ---
+#
+# Every route except /health needs the token that Tauri hands the sidecar at launch (PAPEER_TOKEN).
+# Without one the sidecar refuses to start, and a request is refused, unless the developer asked for
+# an unauthenticated server with PAPEER_DEV_NO_AUTH=1; a packaged sidecar never honours that flag.
+
+# A new flag, so unlike the other variables it has no PAPERDESK_* spelling.
+DEV_NO_AUTH = "PAPEER_DEV_NO_AUTH"
+
 
 def get_auth_token() -> str | None:
-    return app_env("TOKEN")
+    return app_env("TOKEN") or None
+
+
+def auth_disabled() -> bool:
+    """True only for a development server started without a token on purpose."""
+    if get_auth_token() or getattr(sys, "frozen", False):
+        return False
+    return os.environ.get(DEV_NO_AUTH) == "1"
+
+
+def token_matches(provided: str | None) -> bool:
+    """Whether a request may pass; compared in constant time so the token cannot be guessed byte by byte."""
+    if auth_disabled():
+        return True
+    expected = get_auth_token()
+    if not expected or not provided:
+        return False
+    return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
 
 
 def verify_token(authorization: str | None = Header(None), token: str | None = Query(None)) -> None:
-    expected = get_auth_token()
-    if not expected:
+    if auth_disabled():
         return
     # <img> tags cannot send headers, so media URLs carry the token as a query parameter.
     if authorization and authorization.startswith("Bearer "):
@@ -72,7 +99,7 @@ def verify_token(authorization: str | None = Header(None), token: str | None = Q
         provided = token
     else:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="認証トークンが必要です。")
-    if provided != expected:
+    if not token_matches(provided):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="認証トークンが不正です。")
 
 

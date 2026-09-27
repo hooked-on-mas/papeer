@@ -103,6 +103,6 @@ Papeer 固有の新技術を出願する意向があるなら、**GitHub でソ�
 3. **実際に同梱する素材を確認**する。Source Han/CMap/Foxit の既存ライセンス文を維持し、Liberation 1.07.4 の GPLv2 対応ソースを確認する。アイコンの原画と合成テスト PDF の作成来歴・再配布権を記録する。
 4. **README の AI 接続案内を正す。** ソース公開自体と利用者の実行を分け、Antigravity 個人規約との衝突可能性を明示する。Codex・Claude の利用可否を一律保証せず、本人の契約プラン確認を促す。翻訳・解説・質問で送る本文、関連ページ、会話履歴、ローカル保存先を具体的に記す。[個人情報保護委員会の注意喚起](https://www.ppc.go.jp/files/pdf/230602_alert_generative_AI_service.pdf)。
 5. **特許出願の意向を公開前に決める。** OSS の公開は発明の新規性に影響する。第三者特許については、候補の登録・請求項と配布国を確認し、具体的懸念が残る場合に専門家へ FTO を依頼する。Papeer 名の商標検索も行う。
-6. **利用者が実行するコードの安全性を別途点検**する。現実装のローカル API トークンは時刻由来で URL クエリにも載り、Tauri 設定は `csp: null`、Mermaid SVG は HTML として挿入される。ソース公開のライセンス義務ではないが、利用者の PDF を扱うツールとして修正または明確な既知課題化が妥当。[Tauri の CSP 説明](https://tauri.app/security/csp/)、[OWASP のトークン指針](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
+6. **利用者が実行するコードの安全性を別途点検**する。ローカル API トークンは起動ごとに OS の乱数生成器で作る 256 bit の値に改め、トークンなしでは sidecar が起動せず、URL クエリに載る分もアクセスログに出さないようにした（2026-09）。現実装の Tauri 設定は `csp: null`、Mermaid SVG は HTML として挿入される。ソース公開のライセンス義務ではないが、利用者の PDF を扱うツールとして修正または明確な既知課題化が妥当。[Tauri の CSP 説明](https://tauri.app/security/csp/)、[OWASP のトークン指針](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
 
 この文書の現状確認は Git 追跡ファイル、コード、ロックファイル、手元のビルド成果物と公開資料による。GitHub Release 等で後にバイナリを追加した場合、この結論はそのまま適用できない。

@@ -12,6 +12,18 @@ struct BackendConfig {
     token: String,
 }
 
+/// The token `just dev-sidecar` starts the development sidecar with; a debug build does not launch its own.
+#[cfg(debug_assertions)]
+const DEV_TOKEN: &str = "dev_token";
+
+/// A fresh token for each launch: 256 bits from the OS CSPRNG, hex-encoded.
+#[cfg(not(debug_assertions))]
+fn new_token() -> Result<String, getrandom::Error> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes)?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
 #[tauri::command]
 fn get_backend_config(state: tauri::State<BackendConfig>) -> (u16, String) {
     (state.port, state.token.clone())
@@ -93,10 +105,10 @@ pub fn run() {
             };
 
             #[cfg(debug_assertions)]
-            let token = "dev_token".to_string();
+            let token = DEV_TOKEN.to_string();
             #[cfg(not(debug_assertions))]
-            let token = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
-            
+            let token = new_token().map_err(|e| format!("sidecar の認証トークンを作れませんでした: {e}"))?;
+
             app.manage(BackendConfig { port, token: token.clone() });
 
             // The frontend opens paper folders and PDFs in external apps. Limit that to the

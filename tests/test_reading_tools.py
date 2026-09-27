@@ -87,7 +87,7 @@ def test_delete_tag_preserves_papers_notes_and_other_tags(library, tmp_path, mon
     lib.update(identity, tags=[tag, tag + "a", "残す"], note="大切な読書メモ", read_status="読了")
     lib.update(other_id, tags=[tag, "別のタグ"])
     monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     with TestClient(runtime.app) as client:
         response = client.delete("/api/tags", params={"name": tag})
@@ -110,7 +110,7 @@ def test_tag_choices_persist_without_papers_and_deleted_labels_stay_deleted(libr
     from sidecar import app as runtime
     lib, identity = library
     monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     bookmark = lib.add_bookmark(identity, 1, "original", "引用", label="重要", note="残すメモ")
     with TestClient(runtime.app) as client:
@@ -140,7 +140,7 @@ def test_reading_status_choices_can_be_deleted_and_restored(library, monkeypatch
     from sidecar import app as runtime
     lib, identity = library
     monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     with TestClient(runtime.app) as client:
         defaults = ["未読", "読書中", "読了", "再読したい"]
         assert client.get("/api/reading-statuses").json() == defaults
@@ -278,7 +278,7 @@ def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
     from sidecar import deps
     lib, identity = library
     monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     monkeypatch.setattr("sidecar.deps.create_provider", FakeProvider)
     PaperService(lib, FakeProvider(), threading.Event()).translate(identity)
@@ -328,7 +328,7 @@ def test_snapshot_api_and_write_guard(library, tmp_path, monkeypatch):
     from sidecar import deps
     lib, identity = library
     monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     def wait(job_id):
         job = deps.job_manager.get_job(job_id)
@@ -376,7 +376,7 @@ def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
     from sidecar import deps
     lib, identity = library
     monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     with lib.connection() as db:
         db.execute("UPDATE pages SET text=? WHERE paper_id=?",
@@ -443,7 +443,7 @@ def test_global_glossary_applies_to_unrelated_papers_and_checks_stale_edits(libr
     other.write_bytes(FIXTURE.read_bytes() + b"\n% other paper\n")
     other_id, _ = lib.import_pdf(other, "unrelated")
     monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
     terms = [{"source": f"term {i}", "target": f"訳語 {i}"} for i in range(250)]
     with TestClient(runtime.app) as client:

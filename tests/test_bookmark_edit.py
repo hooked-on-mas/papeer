@@ -16,7 +16,7 @@ def test_bookmark_edit_is_scoped_and_persistent(tmp_path, monkeypatch):
     source.write_bytes(source.read_bytes() + b"\n% other")
     other, _ = lib.import_pdf(source)
     monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     with TestClient(runtime.app) as client:
         base = f"/api/papers/{paper}/bookmarks"
         saved = client.post(base, json={"page": 1, "side": "original", "quote": "読書位置", "anchor_y": .6}).json()

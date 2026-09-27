@@ -19,7 +19,7 @@ def notes_env(tmp_path, monkeypatch):
         lib.update(paper, title=name)
         ids.append(paper)
     monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     return lib, ids
 
 

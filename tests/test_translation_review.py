@@ -26,7 +26,7 @@ def test_review_only_requires_pages_with_translatable_content(tmp_path, monkeypa
     lib = Library(root)
     paper_id, _ = lib.import_pdf(source)
     monkeypatch.setenv("PAPEER_DATA_DIR", str(root))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     with TestClient(app) as client:
         reading = client.get(f"/api/papers/{paper_id}/reading").json()
     assert reading["translation_required_pages"] == [1, 4]
