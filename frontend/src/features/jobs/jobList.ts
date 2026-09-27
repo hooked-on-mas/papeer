@@ -4,6 +4,7 @@
  * tests/jobList.test.ts can check the rules.
  */
 import type { Job } from "@/store";
+import type { JobFinished } from "./jobHandlers";
 
 const KIND_LABELS: Record<string, string> = {
   translate: "翻訳",
@@ -34,6 +35,22 @@ export function failureTitle(kind: string | undefined, paperTitle?: string | nul
 /** A failure of a paper not on screen; its name may be unknown (the paper was removed meanwhile). */
 export function backgroundFailureTitle(kind: string | undefined, paperTitle?: string | null): string {
   return paperTitle ? failureTitle(kind, paperTitle) : `別の論文の${jobKindLabel(kind)}を完了できませんでした`;
+}
+
+/** 「翻訳が終わりました」, or for a paper not on screen 「『論文』の翻訳が終わりました」. */
+export function doneTitle(kind: string | undefined, paperTitle?: string | null): string {
+  const what = jobKindLabel(kind);
+  return paperTitle ? `『${paperTitle}』の${what}が終わりました` : `${what}が終わりました`;
+}
+
+/**
+ * The status after a job whose cancel was asked has ended, replacing 「中止しています…」 whatever the
+ * outcome (it may have finished or failed before the cancel took effect; the toast or the error
+ * dialog tells that); null while other jobs asked to stop are still running.
+ */
+export function statusWhenCancelEnds(outcome: JobFinished["status"], othersPending: boolean, error?: string | null): string | null {
+  if (othersPending) return null;
+  return outcome === "cancelled" ? error || "中止しました。" : "";
 }
 
 /** The paper on screen first, then library-wide jobs, then the other papers' jobs, each in starting order. */

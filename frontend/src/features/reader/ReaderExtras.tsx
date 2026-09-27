@@ -30,7 +30,7 @@ export function ReaderExtras({ paperId, search, setSearch, onSearchJump }: {
   useEffect(() => {
     return onAppEvent("open-reader-search", () => setPanel("search"));
   }, []);
-  return <div className="border-b bg-background text-[12px] shrink-0">
+  return <div className="border-b bg-background text-[0.75rem] shrink-0">
     <div className="flex flex-wrap items-center gap-2 px-3 py-1">
       <TranslationReview paperId={paperId} />
       <button className="inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-muted" onClick={() => setPanel(panel === "search" ? null : "search")}><Search className="size-3.5" /> 論文内検索</button>

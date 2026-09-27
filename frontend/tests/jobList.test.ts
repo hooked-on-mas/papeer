@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  backgroundFailureTitle, connectionBanner, connectionBannerDelay, failureTitle, FIRST_CONNECT_GRACE_MS, jobCountText,
-  jobKindLabel, jobPercent, orderJobs, QUICK_RECONNECT_MS, RECONNECT_GRACE_MS,
+  backgroundFailureTitle, connectionBanner, connectionBannerDelay, doneTitle, failureTitle, FIRST_CONNECT_GRACE_MS, jobCountText,
+  jobKindLabel, jobPercent, orderJobs, QUICK_RECONNECT_MS, RECONNECT_GRACE_MS, statusWhenCancelEnds,
 } from "../src/features/jobs/jobList.ts";
 
 test("job kinds are named in Japanese, unknown ones as 処理", () => {
@@ -18,6 +18,23 @@ test("a failure is titled with the paper when there is one", () => {
   assert.equal(failureTitle("article", null), "解説の作成を完了できませんでした");
   assert.equal(backgroundFailureTitle("translate", "Paper"), "『Paper』の翻訳を完了できませんでした");
   assert.equal(backgroundFailureTitle("translate", null), "別の論文の翻訳を完了できませんでした");
+});
+
+test("a finished job is titled with the paper only when another paper is on screen", () => {
+  assert.equal(doneTitle("translate"), "翻訳が終わりました");
+  assert.equal(doneTitle("translate", "Paper"), "『Paper』の翻訳が終わりました");
+  assert.equal(doneTitle("export", null), "PDFの書き出しが終わりました");
+});
+
+test("「中止しています…」 gives way when the job asked to stop ends, however it ends", () => {
+  assert.equal(statusWhenCancelEnds("cancelled", false), "中止しました。");
+  assert.equal(statusWhenCancelEnds("cancelled", false, "翻訳を中止しました。3ページ保存済み。"), "翻訳を中止しました。3ページ保存済み。");
+  // Finished or failed before the cancel took effect: the toast or the error dialog tells the outcome.
+  assert.equal(statusWhenCancelEnds("succeeded", false), "");
+  assert.equal(statusWhenCancelEnds("failed", false, "boom"), "");
+  // Other jobs asked to stop are still running.
+  assert.equal(statusWhenCancelEnds("cancelled", true), null);
+  assert.equal(statusWhenCancelEnds("succeeded", true), null);
 });
 
 test("the job list shows the paper on screen, then library-wide jobs, then other papers, each in order", () => {

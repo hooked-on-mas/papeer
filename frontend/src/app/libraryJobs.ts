@@ -15,8 +15,9 @@ export const libraryJobHandlers: JobHandlers = {
     },
   },
   export: {
-    succeeded: (event, { status }) =>
-      status(event.result?.kind === "bilingual" ? "対訳PDFを保存しました。" : "原文・日本語訳の交互PDFを保存しました。"),
+    succeeded: (event, { done }) => done(event.result?.destination || "", {
+      title: event.result?.kind === "bilingual" ? "対訳PDFを保存しました" : "原文・日本語訳の交互PDFを保存しました",
+    }),
   },
   interleaved: {
     succeeded: (event) => {

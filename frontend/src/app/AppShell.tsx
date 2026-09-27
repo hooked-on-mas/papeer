@@ -6,6 +6,7 @@ import { FilePlus2, Settings2 } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest } from "@/api/client";
+import { showToast } from "@/components/toast";
 import { usePaper } from "@/api/hooks";
 import { AppDialogs, askConfirm } from "@/components/AppDialogs";
 import { isRunning, useStore } from "../store";
@@ -80,7 +81,8 @@ function useCloseHandling(): void {
       const failure = await flushPendingSaves();
       if (failure) {
         setAppClosing(false);
-        useStore.getState().setStatus(`${failure.message} 終了を中止しました。`);
+        useStore.getState().setStatus(""); // 「処理を中止しています…」 no longer holds.
+        showToast({ title: "終了を中止しました", description: failure.message, tone: "error", timeout: 0 });
         return;
       }
       await flushUiState();
@@ -134,6 +136,8 @@ function useCloseHandling(): void {
 /**
  * The webview's own zoom stays enabled only so touchpad pinch reaches the page as Ctrl+wheel
  * (the reader turns it into PDF zoom); everywhere else it must not scale the whole app.
+ * The app's own size is 設定「表示」の文字の大きさ (app/uiScale.ts), which scales the UI but not the PDF;
+ * it has no shortcut, since Ctrl + / Ctrl − / Ctrl 0 are the PDF zoom.
  */
 function useBlockWebviewZoom(): void {
   useEffect(() => {
@@ -173,7 +177,7 @@ function DropOverlay() {
   const destination = target ?? currentCollection;
   return (
     <div className="pointer-events-none fixed inset-2 z-40 rounded-xl border-2 border-dashed border-primary/60 bg-primary/5 flex items-end justify-center pb-10">
-      <div className="rounded-lg bg-card border shadow px-4 py-2 text-[13px]">
+      <div className="rounded-lg bg-card border shadow px-4 py-2 text-[0.8125rem]">
         ここにドロップして追加（追加先：{destination || "未分類"}）
       </div>
     </div>
@@ -313,7 +317,7 @@ export function AppShell() {
               className="bg-sidebar flex flex-col border-r"
             >
               <div
-                className="h-12 flex items-center gap-2 px-4 font-semibold text-[15px] shrink-0 cursor-pointer hover:bg-muted/50 transition-colors"
+                className="h-12 flex items-center gap-2 px-4 font-semibold text-[0.9375rem] shrink-0 cursor-pointer hover:bg-muted/50 transition-colors"
                 onClick={() => useStore.getState().setSidebarCollapsed(true)}
                 title="左パネルを閉じる（Ctrl+B）"
               >
@@ -326,7 +330,7 @@ export function AppShell() {
                 <LibrarySidebar />
               </div>
               <button
-                className="h-10 border-t flex items-center gap-2 px-4 shrink-0 text-[13px] hover:bg-muted/50 transition-colors text-left"
+                className="h-10 border-t flex items-center gap-2 px-4 shrink-0 text-[0.8125rem] hover:bg-muted/50 transition-colors text-left"
                 onClick={() => setIsSettingsOpen(true)}
               >
                 <Settings2 className="w-4 h-4 text-muted-foreground" /> 接続・設定
@@ -359,13 +363,13 @@ export function AppShell() {
 
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(String(value))} className="flex-1 flex flex-col min-h-0 gap-0">
             <div hidden={focusMode} className="border-b px-4 shrink-0 bg-background/50">
-              <TabsList variant="line" className="h-[40px] bg-transparent border-b-0 space-x-2">
+              <TabsList variant="line" className="h-10 bg-transparent border-b-0 space-x-2">
                 <TabsTrigger value="reader" title="Ctrl+1">PDFを読む</TabsTrigger>
                 <TabsTrigger value="summary" title="Ctrl+2">サマリー</TabsTrigger>
                 <TabsTrigger value="chat" title="Ctrl+3">
                   チャット
                   {attachmentCount > 0 && (
-                    <span className="min-w-4 rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground" title={`添付 ${attachmentCount} 件`}>
+                    <span className="min-w-4 rounded-full bg-primary px-1 text-[0.75rem] leading-4 text-primary-foreground" title={`添付 ${attachmentCount} 件`}>
                       {attachmentCount}
                     </span>
                   )}

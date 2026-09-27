@@ -85,14 +85,14 @@ export function PromptsSection({ form }: { form: PromptsForm }) {
         </Button>
       </div>
       <textarea
-        className="min-h-[240px] w-full flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2 font-mono text-[12px] leading-relaxed outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        className="min-h-[240px] w-full flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2 font-mono text-[0.75rem] leading-relaxed outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         value={text}
         spellCheck={false}
         onChange={(e) => form.setPrompt(name, e.target.value)}
         placeholder="空のまま保存すると既定の文面を使います。"
         aria-label={PROMPT_LABELS[name] ?? name}
       />
-      <p className="text-[12px] text-muted-foreground">
+      <p className="text-[0.75rem] text-muted-foreground">
         AI への指示文です。変更は新しく実行する翻訳・サマリー・チャットから使われます。
       </p>
     </div>

@@ -4,8 +4,8 @@ import { apiRequest, authToken, backendUrl } from "@/api/client";
 import type { PaperData } from "@/api/hooks";
 import { paperExportFilename } from "@/lib/exportFilename";
 import { shell, tauriShell } from "@/shell";
-import { useStore } from "@/store";
 import { showError } from "@/components/errorDialog";
+import { showSaved } from "@/app/savedNotice";
 import { flushInkSaves } from "./inkStore";
 import type { InkEditor } from "./useInkEditor";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -52,7 +52,7 @@ export function InkToolbar({ editor, disabled, onStickyNote }: Props) {
         link.href = url; link.download = name; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 60000);
       }
-      useStore.getState().setStatus(`書き込み付きPDFを保存しました${destination ? `：${destination}` : "。"}`);
+      showSaved("書き込み付きPDFを保存しました", destination);
     } catch (error) { showError(error, "書き込み付きPDFを保存できませんでした"); }
     finally { setExporting(false); }
   };
@@ -124,7 +124,7 @@ export function InkToolbar({ editor, disabled, onStickyNote }: Props) {
     </div>}
     {editable && selecting && <div className="flex flex-wrap items-center gap-1.5 border-t mt-1 pt-1 text-xs text-foreground" role="toolbar" aria-label="書き込みの選択操作">
       <select aria-label="書き込みの選び方" className="h-7 border rounded bg-background" value={tool} onChange={e => setTool(e.target.value as InkTool)}><option value="region">四角で選択</option><option value="lasso">投げ縄</option></select>
-      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground whitespace-nowrap select-none">{selected.length ? `${selected.length}件選択` : "書き込みを囲んで選択"}</span>
+      <span className="rounded-full bg-muted px-2 py-0.5 text-[0.75rem] text-muted-foreground whitespace-nowrap select-none">{selected.length ? `${selected.length}件選択` : "書き込みを囲んで選択"}</span>
       {selected.length > 0 && <>
         <button className={selectionButton} onClick={editor.copy} title="書き込みをコピー（Ctrl+C）"><Copy aria-hidden="true" className="size-3.5" />コピー</button>
         <button className={selectionButton} onClick={editor.cut} title="書き込みを切り取り（Ctrl+X）"><Scissors aria-hidden="true" className="size-3.5" />切り取り</button>

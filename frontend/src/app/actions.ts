@@ -9,6 +9,7 @@ import { joinPath, shell } from "@/shell";
 import { useStore } from "@/store";
 import { paperExportFilename } from "@/lib/exportFilename";
 import { addPendingImports, removePendingImports, usePendingImports } from "./pendingImports";
+import { showSaved } from "./savedNotice";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 
@@ -321,7 +322,7 @@ export async function saveOriginal(paperId: string): Promise<void> {
     const destination = await shell.saveFile(paperExportFilename(current, "original"), [{ name: "PDF", extensions: ["pdf"] }]);
     if (!destination) return;
     await apiRequest("POST", `/api/papers/${paperId}/export`, { kind: "original", destination });
-    useStore.getState().setStatus(`原文PDFを保存しました：${destination}`);
+    showSaved("原文PDFを保存しました", destination);
   } catch (error) {
     showError(error, "保存できませんでした");
   }
@@ -343,11 +344,11 @@ export async function exportPdf(paperId: string, kind: PdfExportKind): Promise<v
     const current = await paper(paperId);
     const destination = await shell.saveFile(paperExportFilename(current, kind), [{ name: "PDF", extensions: ["pdf"] }]);
     if (!destination) return;
-    const result = await apiRequest<{ job_id?: string }>("POST", `/api/papers/${paperId}/export`, { kind, destination });
+    const result = await apiRequest<{ job_id?: string; destination?: string }>("POST", `/api/papers/${paperId}/export`, { kind, destination });
     if (result.job_id) {
       showStartedJob(result.job_id, { kind: "export", paperId });
     } else {
-      useStore.getState().setStatus("日本語訳PDFを保存しました。");
+      showSaved("日本語訳PDFを保存しました", result.destination ?? destination);
     }
   } catch (error) {
     showError(error, "PDFを書き出せませんでした");
@@ -365,7 +366,7 @@ export async function exportMarkdown(paperId: string): Promise<void> {
     const destination = await shell.saveFile(paperExportFilename(current, "markdown"), [{ name: "Markdown", extensions: ["md"] }]);
     if (!destination) return;
     await apiRequest("POST", `/api/papers/${paperId}/export`, { kind: "markdown", destination });
-    useStore.getState().setStatus(`サマリーを保存しました：${destination}`);
+    showSaved("サマリーを保存しました", destination);
   } catch (error) {
     showError(error, "Markdownを保存できませんでした");
   }

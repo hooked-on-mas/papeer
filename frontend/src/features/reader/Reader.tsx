@@ -136,8 +136,8 @@ export function Reader() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8">
         <FilePlus2 className="w-16 h-16 mb-4 opacity-20" />
-        <p className="text-[15px] font-medium mb-1 text-foreground">論文を追加して、読み始めよう</p>
-        <p className="text-[13px] mb-6">左のライブラリから論文を選ぶか、PDF を追加してください（ドロップでも追加できます）</p>
+        <p className="text-[0.9375rem] font-medium mb-1 text-foreground">論文を追加して、読み始めよう</p>
+        <p className="text-[0.8125rem] mb-6">左のライブラリから論文を選ぶか、PDF を追加してください（ドロップでも追加できます）</p>
         <button onClick={importPdfs} className="bg-primary text-primary-foreground px-4 py-2 rounded-md font-medium hover:opacity-90 transition-opacity">
           PDF を追加
         </button>
@@ -165,7 +165,7 @@ export function Reader() {
         まだ翻訳していません。「翻訳する」で訳文を作成します。
         <button
           onClick={() => emitAppEvent("open-translate-dialog")}
-          className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90"
+          className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[0.8125rem] font-medium hover:opacity-90"
         >
           <Languages className="w-4 h-4" /> 翻訳する
         </button>
@@ -180,7 +180,7 @@ export function Reader() {
       <ReaderExtras paperId={activePaperId} search={search} setSearch={setSearch}
         onSearchJump={(item, index) => setBookmarkTarget({ id: -index - 1, page: item.page, side: search.side, anchor_y: item.anchor_y })} />
       {noTranslatedPages ? (
-        <div className="flex-1 flex items-center justify-center text-muted-foreground p-8 text-[13px]">
+        <div className="flex-1 flex items-center justify-center text-muted-foreground p-8 text-[0.8125rem]">
           翻訳済みのページはまだありません。完了すると自動で表示します。
         </div>
       ) : (
@@ -194,7 +194,7 @@ export function Reader() {
           }}
         >
           <ResizablePanel id="original" defaultSize={`${readerSplit * 100}%`} minSize="15%" className="flex flex-col">
-            <div className="h-[28px] border-b flex items-center px-4 bg-background shrink-0 text-muted-foreground font-medium text-xs">
+            <div className="h-7 border-b flex items-center px-4 bg-background shrink-0 text-muted-foreground font-medium text-xs">
               原文
             </div>
             <div className="flex-1 relative min-h-0">
@@ -216,10 +216,10 @@ export function Reader() {
           <ResizableHandle className="w-1 bg-border hover:bg-primary/60 transition-colors cursor-col-resize z-10" />
 
           <ResizablePanel id="translated" defaultSize={`${(1 - readerSplit) * 100}%`} minSize="15%" className="flex flex-col">
-            <div className="h-[28px] border-b flex items-center px-4 bg-background shrink-0 justify-between">
+            <div className="h-7 border-b flex items-center px-4 bg-background shrink-0 justify-between">
               <span className="text-muted-foreground font-medium text-xs">{caption}</span>
               {translating && (
-                <span className="flex items-center gap-1 text-[11px] text-primary">
+                <span className="flex items-center gap-1 text-[0.75rem] text-primary">
                   <Loader2 className="w-3 h-3 animate-spin" /> 翻訳中
                 </span>
               )}

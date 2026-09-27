@@ -46,19 +46,19 @@ function JobRow({ job, active }: { job: Job; active: boolean }) {
   return (
     <li className="grid gap-1 px-3 py-2">
       <div className="flex items-center gap-2 min-w-0">
-        <div className="min-w-0 flex-1 text-[13px] leading-5">
+        <div className="min-w-0 flex-1 text-[0.8125rem] leading-5">
           <div className="font-medium">
             {label}
-            {active && <span className="ml-1.5 rounded bg-primary/10 px-1 text-[11px] font-normal text-primary">表示中</span>}
-            {!job.paper_id && <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">ライブラリ全体</span>}
+            {active && <span className="ml-1.5 rounded bg-primary/10 px-1 text-[0.75rem] font-normal text-primary">表示中</span>}
+            {!job.paper_id && <span className="ml-1.5 text-[0.75rem] font-normal text-muted-foreground">ライブラリ全体</span>}
           </div>
-          {job.paper_id && <div className="text-[12px] text-muted-foreground min-w-0"><PaperName paperId={job.paper_id} /></div>}
+          {job.paper_id && <div className="text-[0.75rem] text-muted-foreground min-w-0"><PaperName paperId={job.paper_id} /></div>}
         </div>
         <button
           type="button"
           onClick={cancel}
           disabled={cancelling}
-          className="flex h-7 shrink-0 items-center gap-1 rounded border px-2 text-[12px] hover:bg-muted disabled:opacity-60"
+          className="flex h-7 shrink-0 items-center gap-1 rounded border px-2 text-[0.75rem] hover:bg-muted disabled:opacity-60"
           aria-label={`${label}を中止`}
         >
           <Square className="size-3" aria-hidden="true" /> {cancelling ? "中止中…" : "中止"}
@@ -66,9 +66,9 @@ function JobRow({ job, active }: { job: Job; active: boolean }) {
       </div>
       <div className="flex items-center gap-2">
         <Progress value={percent} aria-label={`${label}の進み具合`} className="flex-1" />
-        {count && <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{count}</span>}
+        {count && <span className="shrink-0 text-[0.75rem] tabular-nums text-muted-foreground">{count}</span>}
       </div>
-      {job.message && <div className="truncate text-[12px] text-muted-foreground" title={job.message}>{job.message}</div>}
+      {job.message && <div className="truncate text-[0.75rem] text-muted-foreground" title={job.message}>{job.message}</div>}
     </li>
   );
 }
@@ -83,7 +83,7 @@ function FailureRow({ report }: { report: ErrorReport }) {
   }, [removed, paperId]);
   if (removed) return null;
   return (
-    <li className="flex items-center gap-2 px-3 py-2 text-[12px]">
+    <li className="flex items-center gap-2 px-3 py-2 text-[0.75rem]">
       <CircleAlert className="size-3.5 shrink-0 text-destructive" aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <div className="truncate font-medium">{report.title}</div>
@@ -125,7 +125,7 @@ export function JobListPopover() {
           <Popover.Popup className="w-[min(26rem,calc(100vw-2rem))] max-h-[min(28rem,70vh)] overflow-y-auto rounded-lg border bg-popover text-popover-foreground shadow-lg outline-none origin-(--transform-origin) transition-[opacity,transform] duration-150 data-starting-style:opacity-0 data-ending-style:opacity-0">
             {running.length > 0 && (
               <section aria-label="実行中の処理">
-                <Popover.Title className="border-b px-3 py-2 text-[12px] font-medium text-muted-foreground">実行中の処理</Popover.Title>
+                <Popover.Title className="border-b px-3 py-2 text-[0.75rem] font-medium text-muted-foreground">実行中の処理</Popover.Title>
                 <ul className="divide-y">
                   {running.map((job) => <JobRow key={job.job_id} job={job} active={!!job.paper_id && job.paper_id === activePaperId} />)}
                 </ul>
@@ -133,7 +133,7 @@ export function JobListPopover() {
             )}
             {failed.length > 0 && (
               <section aria-label="未確認のエラー">
-                <h3 className="border-y px-3 py-2 text-[12px] font-medium text-muted-foreground">未確認のエラー</h3>
+                <h3 className="border-y px-3 py-2 text-[0.75rem] font-medium text-muted-foreground">未確認のエラー</h3>
                 <ul className="divide-y">
                   {failed.map((report) => <FailureRow key={report.id} report={report} />)}
                 </ul>

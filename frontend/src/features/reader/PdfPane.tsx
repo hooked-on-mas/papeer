@@ -232,7 +232,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   }, [onTextLayerRendered, selectJumpPassage]);
 
   const message = (text: React.ReactNode) => (
-    <div className="h-full flex items-center justify-center p-8 text-center text-[13px] text-muted-foreground leading-relaxed">
+    <div className="h-full flex items-center justify-center p-8 text-center text-[0.8125rem] text-muted-foreground leading-relaxed">
       <div className="max-w-sm">{text}</div>
     </div>
   );

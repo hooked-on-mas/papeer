@@ -152,7 +152,7 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
               className={`mb-1 flex w-full items-start gap-2 rounded-md px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected === template.name ? "bg-accent text-accent-foreground" : "hover:bg-muted"}`}
               onClick={() => { setSelected(template.name); setNotice(""); }}>
               <FileText className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1"><span className="block break-words font-medium">{template.name}</span><span className="mt-0.5 block text-[11px] text-muted-foreground">{template.builtin ? "標準テンプレート" : "自分のテンプレート"}</span></span>
+              <span className="min-w-0 flex-1"><span className="block break-words font-medium">{template.name}</span><span className="mt-0.5 block text-[0.75rem] text-muted-foreground">{template.builtin ? "標準テンプレート" : "自分のテンプレート"}</span></span>
               {selected === template.name && <Check className="mt-0.5 size-4 shrink-0 text-primary" />}
             </button>)}
           </nav>

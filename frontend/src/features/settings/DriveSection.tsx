@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/api/client";
-import { cancelSync, confirmOpenEdits, runDriveSync, syncDrive, useSyncState } from "./driveSync";
+import { cancelSync, confirmOpenEdits, reportSyncOutcome, runDriveSync, syncDrive, useSyncState } from "./driveSync";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { askConfirm } from "@/components/AppDialogs";
 import { showError } from "@/components/errorDialog";
+import { showToast } from "@/components/toast";
 import { shell, joinPath } from "@/shell";
 import { isRunning, useStore } from "@/store";
 import { openSettings, useSettingsNavigation } from "./settingsNavigation";
@@ -107,7 +108,8 @@ export function DriveSyncHost() {
         const after = await apiRequest<DriveStatus>("GET", "/api/drive");
         if (after.review) await tellReview(after.review);
       } catch {
-        useStore.getState().setStatus("同期フォルダーを更新できませんでした。データはこのPCに保存されています。設定から再試行できます。");
+        // Told once while the automatic sync keeps failing, not every minute.
+        reportSyncOutcome("failed");
       }
     };
     const initial = setTimeout(() => void tick(), 5000);
@@ -160,7 +162,7 @@ export function DriveSection() {
   const skipReview = async () => {
     try {
       await apiRequest("DELETE", "/api/drive/review");
-      useStore.getState().setStatus("同期しませんでした。自動同期を停止しています。確認後に「今すぐ同期」または自動同期を有効にしてください。");
+      showToast({ title: "同期しませんでした", description: "自動同期を停止しています。確認後に「今すぐ同期」または自動同期を有効にしてください。", tone: "error", timeout: 0 });
     } catch (e) { showError(e, "同期設定を保存できませんでした"); }
     finally { void refresh(); }
   };

@@ -10,15 +10,22 @@ import { showToast } from "@/components/toast";
 import { errorAdvice, type ErrorReport } from "@/lib/errorReports";
 import { QK } from "@/lib/queryKeys";
 import { useLastUsage, usageSummary, type Usage } from "@/lib/usage";
+import { readingTime } from "@/lib/statusLifetime";
 import { markConnected, markDisconnected, useConnection } from "./connection";
 import { addJobFailure, clearJobFailure, showJobFailure } from "./jobFailures";
-import { jobHandler, type JobFinished } from "./jobHandlers";
+import { jobHandler, type JobContext, type JobFinished } from "./jobHandlers";
 import { AI_PLAN_JOBS, isJobKind, type JobKind } from "./jobKinds";
-import { backgroundFailureTitle, failureTitle, jobKindLabel, QUICK_RECONNECT_MS } from "./jobList";
+import { backgroundFailureTitle, doneTitle, failureTitle, jobKindLabel, QUICK_RECONNECT_MS, statusWhenCancelEnds } from "./jobList";
 
 export type { JobFinished } from "./jobHandlers";
 
 type Watcher = (event: JobFinished) => void;
+
+/** Shown from a cancel request until the job ends, which replaces it (see markCancelling). */
+const CANCELLING_STATUS = "中止しています… API通信中の場合は応答またはタイムアウトまで待ちます。";
+
+// Jobs asked to stop that have not ended yet; while any is left, the status says CANCELLING_STATUS.
+const cancelRequested = new Set<string>();
 
 const watchers = new Map<string, Watcher[]>();
 // A fast job can finish before its starter registers a watcher.
@@ -68,15 +75,42 @@ export async function cancelVisibleJobs(): Promise<boolean> {
     return false;
   }
   await Promise.all(targets.map((j) => apiRequest("POST", `/api/jobs/${j.job_id}/cancel`).catch(() => undefined)));
-  setStatus("中止しています… API通信中の場合は応答またはタイムアウトまで待ちます。");
+  markCancelling(targets.map((j) => j.job_id));
   return true;
+}
+
+/**
+ * Say 「中止しています…」 until these jobs end, whatever way they end (handleFinished). Not for jobs
+ * whose finished event came before the answer to the cancel request: their outcome is already shown.
+ */
+function markCancelling(jobIds: string[]): void {
+  const pending = jobIds.filter((id) => !recentlyFinished.has(id));
+  if (!pending.length) return;
+  pending.forEach((id) => cancelRequested.add(id));
+  useStore.getState().setStatus(CANCELLING_STATUS);
+}
+
+/** A job asked to stop has ended: true if it was one. */
+function endCancelling(event: JobFinished): boolean {
+  if (!cancelRequested.delete(event.job_id)) return false;
+  const next = statusWhenCancelEnds(event.status, cancelRequested.size > 0, event.error);
+  const store = useStore.getState();
+  if (next !== null && store.statusMessage === CANCELLING_STATUS) store.setStatus(next);
+  return true;
+}
+
+/** After reconnecting: jobs that ended while the event stream was down will send no finished event. */
+function forgetEndedCancels(running: string[]): void {
+  for (const id of [...cancelRequested]) if (!running.includes(id)) cancelRequested.delete(id);
+  const store = useStore.getState();
+  if (!cancelRequested.size && store.statusMessage === CANCELLING_STATUS) store.setStatus("");
 }
 
 /** Cancel one job, whichever paper it belongs to (the status bar's job list); false if the request failed. */
 export async function cancelJob(jobId: string): Promise<boolean> {
   try {
     await apiRequest("POST", `/api/jobs/${jobId}/cancel`);
-    useStore.getState().setStatus("中止しています… API通信中の場合は応答またはタイムアウトまで待ちます。");
+    markCancelling([jobId]);
     return true;
   } catch (error) {
     // 404: the job has just finished by itself.
@@ -141,23 +175,42 @@ async function reportFailure(event: JobFinished, visible: boolean, queryClient: 
   });
 }
 
-function handleSuccess(event: JobFinished, visible: boolean): void {
+function handleSuccess(event: JobFinished, visible: boolean, queryClient: QueryClient): void {
   const usage: Usage | null = event.result?.usage ?? null;
   if (usage) useLastUsage.setState({ usage, kind: event.kind });
+  const withUsage = (message: string) => usage ? `${message}（${usageSummary(usage)}）` : message;
   const status = (message: string) => {
-    if (visible) useStore.getState().setStatus(usage ? `${message}（${usageSummary(usage)}）` : message);
+    if (visible) useStore.getState().setStatus(withUsage(message));
   };
-  jobHandler(event.kind)?.succeeded?.(event, { visible, status });
+  const done: JobContext["done"] = async (message, options = {}) => {
+    // Named only when another paper is on screen; the paper may have been removed meanwhile.
+    const paper = !visible && event.paper_id ? await paperTitle(queryClient, event.paper_id) : null;
+    const title = options.title && !paper ? options.title : doneTitle(event.kind, paper);
+    const description = withUsage(message);
+    const tone = options.tone ?? "success";
+    showToast({
+      id: `job-done-${event.kind}-${event.paper_id ?? "library"}`,
+      title,
+      description: description || undefined,
+      tone,
+      timeout: readingTime(title + description, 6_000, tone === "info" ? 30_000 : 15_000),
+      // Another paper that could not be found has been removed: nothing to open.
+      action: !visible && event.paper_id && !paper ? undefined : options.action,
+    });
+  };
+  jobHandler(event.kind)?.succeeded?.(event, { visible, status, done });
   if (event.paper_id) clearJobFailure(event.paper_id, event.kind);
 }
 
 function handleFinished(event: JobFinished, queryClient: QueryClient): void {
   const store = useStore.getState();
   const visible = !event.paper_id || event.paper_id === store.activePaperId;
+  // First, so that a status set below (a job's own outcome) is not cleared.
+  const cancelAsked = endCancelling(event);
   if (event.status === "succeeded") {
-    handleSuccess(event, visible);
+    handleSuccess(event, visible, queryClient);
   } else if (event.status === "cancelled") {
-    if (visible) store.setStatus(event.error || "中止しました。");
+    if (visible && !cancelAsked) store.setStatus(event.error || "中止しました。");
   } else {
     void reportFailure(event, visible, queryClient);
   }
@@ -205,6 +258,7 @@ export function useJobEvents(): void {
       try {
         const serverJobs = await apiRequest<any[]>("GET", "/api/jobs");
         const running = serverJobs.filter((j) => j.running);
+        forgetEndedCancels(running.map((j) => j.job_id));
         useStore.setState({
           activeJobs: running.map((j) => ({
             job_id: j.job_id, paper_id: j.paper_id, kind: j.kind, message: j.message,

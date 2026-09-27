@@ -31,7 +31,7 @@ export function AppearanceSection() {
           </button>
         ))}
       </div>
-      <p className="text-[12px] text-muted-foreground">テーマはすぐに反映され、保存ボタンを押す必要はありません。</p>
+      <p className="text-[0.75rem] text-muted-foreground">テーマはすぐに反映され、保存ボタンを押す必要はありません。</p>
     </div>
   );
 }

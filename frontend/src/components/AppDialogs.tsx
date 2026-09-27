@@ -73,7 +73,7 @@ function PromptDialogs() {
               finish(value);
             }}
           >
-            <label className="text-[13px] text-muted-foreground">{current.label}</label>
+            <label className="text-[0.8125rem] text-muted-foreground">{current.label}</label>
             <Input ref={inputRef} value={value} onChange={(e) => setValue(e.target.value)} />
           </form>
         )}
@@ -136,25 +136,25 @@ function JobErrorDialog() {
             {report?.title}
           </DialogTitle>
           {report?.paperTitle && (
-            <p className="text-[13px] text-muted-foreground break-words">論文：{report.paperTitle}</p>
+            <p className="text-[0.8125rem] text-muted-foreground break-words">論文：{report.paperTitle}</p>
           )}
         </DialogHeader>
-        <DialogDescription className="text-[14px] text-foreground">{advice?.summary}</DialogDescription>
+        <DialogDescription className="text-[0.875rem] text-foreground">{advice?.summary}</DialogDescription>
         {detailLine && detailLine !== advice?.summary && (
-          <p className="text-[12px] text-muted-foreground break-words">{detailLine}</p>
+          <p className="text-[0.75rem] text-muted-foreground break-words">{detailLine}</p>
         )}
-        <details key={report?.id} className="rounded-md border bg-muted/30 text-[12px]">
+        <details key={report?.id} className="rounded-md border bg-muted/30 text-[0.75rem]">
           <summary className="cursor-pointer select-none px-3 py-1.5 text-muted-foreground hover:text-foreground">エラーの詳細</summary>
           <textarea
             readOnly
             aria-label="エラー詳細"
             value={report?.message ?? ""}
-            className="block h-[200px] w-full resize-none border-t bg-transparent p-3 font-mono text-[12px] leading-relaxed outline-none"
+            className="block h-[200px] w-full resize-none border-t bg-transparent p-3 font-mono text-[0.75rem] leading-relaxed outline-none"
           />
         </details>
         <DialogFooter className="items-center">
           {waiting > 0 && (
-            <span className="mr-auto text-[12px] text-muted-foreground" aria-live="polite">ほかに {waiting} 件のエラーがあります</span>
+            <span className="mr-auto text-[0.75rem] text-muted-foreground" aria-live="polite">ほかに {waiting} 件のエラーがあります</span>
           )}
           {advice?.actions.map((action) => (
             <Button key={action} variant={action === advice.primary ? "default" : "outline"} onClick={() => run(action)}>

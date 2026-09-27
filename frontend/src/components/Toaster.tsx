@@ -19,10 +19,10 @@ function ToastList() {
       <Toast.Content className="flex items-start gap-2 p-3">
         {ICONS[(toast.type as keyof typeof ICONS) ?? "info"] ?? ICONS.info}
         <div className="min-w-0 flex-1">
-          <Toast.Title className="text-[13px] font-medium leading-5 break-words" />
-          <Toast.Description className="mt-0.5 text-[12px] leading-5 text-muted-foreground break-words" />
+          <Toast.Title className="text-[0.8125rem] font-medium leading-5 break-words" />
+          <Toast.Description className="mt-0.5 text-[0.75rem] leading-5 text-muted-foreground break-words" />
           {toast.actionProps && (
-            <Toast.Action className="mt-2 h-7 rounded-md border px-2.5 text-[12px] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" />
+            <Toast.Action className="mt-2 h-7 rounded-md border px-2.5 text-[0.75rem] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" />
           )}
         </div>
         <Toast.Close aria-label="通知を閉じる" className="-m-1 flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground">

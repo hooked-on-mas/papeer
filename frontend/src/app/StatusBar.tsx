@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Gauge, Loader2, Square, Undo2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { providerLabel, useHealth, useProviders, useSettings, useUsageLimits } from "@/api/hooks";
@@ -6,6 +7,7 @@ import { isRunning, useStore } from "@/store";
 import { cancelVisibleJobs } from "@/features/jobs/jobEvents";
 import { JobListPopover } from "@/features/jobs/JobListPopover";
 import { undoMove } from "./actions";
+import { holdStatus } from "./statusExpiry";
 
 export function StatusBar() {
   const statusMessage = useStore((s) => s.statusMessage);
@@ -17,6 +19,8 @@ export function StatusBar() {
   const { data: providers } = useProviders();
   const { data: limits } = useUsageLimits(settings?.provider);
   const lastUsage = useLastUsage((s) => s.usage);
+  // Hidden while the pointer was on it (focus mode): the message must not stay held forever.
+  useEffect(() => () => holdStatus(false), []);
 
   const running = activeJobs.filter(isRunning);
   // The paper on screen first, then library-wide jobs, as the old status line did.
@@ -33,9 +37,15 @@ export function StatusBar() {
   ].filter(Boolean).join("\n\n");
 
   return (
-    <footer className="h-[32px] border-t flex items-center px-3 gap-3 text-[12px] text-muted-foreground shrink-0 bg-background">
+    <footer
+      className="h-8 border-t flex items-center px-3 gap-3 text-[0.75rem] text-muted-foreground shrink-0 bg-background"
+      onPointerEnter={() => holdStatus(true)}
+      onPointerLeave={() => holdStatus(false)}
+    >
       {running.length > 0 && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary shrink-0" />}
-      <span className="flex-1 truncate min-w-0" title={message}>{message}</span>
+      {/* Screen readers hear the outcomes (statusMessage) here, not every step of a job's progress. */}
+      <span role="status" className="sr-only">{statusMessage}</span>
+      <span className="flex-1 truncate min-w-0 text-foreground/80" title={message} aria-hidden={message === statusMessage || undefined}>{message}</span>
       {running.length > 0 && (
         <>
           <Progress value={percent} className="w-32 shrink-0" />

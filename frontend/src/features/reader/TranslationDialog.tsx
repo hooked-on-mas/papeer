@@ -227,14 +227,14 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
         </DialogHeader>
         <div className="grid gap-4 py-1">
           <div className="grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2">
-            <label className="text-[13px]">モデル</label>
+            <label className="text-[0.8125rem]">モデル</label>
             <NativeSelect value={model} onChange={(e) => setModel(e.target.value)} disabled={loadingModels && !models.length}>
               <option value="">AI接続の設定と同じ</option>
               {models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </NativeSelect>
             {efforts.length > 0 && (
               <>
-                <label className="text-[13px]">推論の強さ (effort)</label>
+                <label className="text-[0.8125rem]">推論の強さ (effort)</label>
                 <NativeSelect value={effort} onChange={(e) => setEffort(e.target.value)}>
                   <option value="">AI接続の設定と同じ</option>
                   {efforts.filter((e) => e.id).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
@@ -242,11 +242,11 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
               </>
             )}
           </div>
-          <p className="text-[12px] text-muted-foreground whitespace-pre-line">
+          <p className="text-[0.75rem] text-muted-foreground whitespace-pre-line">
             {`${connection}：${effectiveModel || "既定モデル"} / effort: ${shownEffort || "既定値"}\n`
               + "今回の翻訳と対応表の作成に適用します。接続先・解説・チャットの設定は変更しません。"}
           </p>
-          <p className="text-[12px] text-muted-foreground whitespace-pre-line leading-relaxed">
+          <p className="text-[0.75rem] text-muted-foreground whitespace-pre-line leading-relaxed">
             {`全${pageCount}ページ。PDFの先頭を1ページとして指定します。\n`
               + "文が前後のページへ続く場合は、つながるページも翻訳対象に含めます。\n"
               + "同じモデルでは保存済みの訳文を再利用します（effortの変更は次のAI処理から適用）。\n"
@@ -265,11 +265,11 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
               disabled={scope !== "custom"}
               onKeyDown={(e) => { if (e.key === "Enter") handleStart(); }}
             />
-            <p className={`text-[12px] ${selection.error ? "text-destructive" : "text-muted-foreground"}`}>
+            <p className={`text-[0.75rem] ${selection.error ? "text-destructive" : "text-muted-foreground"}`}>
               {selection.error ?? (selection.pages ? translationTargetText(selection.pages.length, planFetching ? undefined : plan) : "")}
             </p>
           </div>
-          <details className="border rounded p-2 text-[12px]" open={glossaryOpen} onToggle={e => setGlossaryOpen(e.currentTarget.open)}>
+          <details className="border rounded p-2 text-[0.75rem]" open={glossaryOpen} onToggle={e => setGlossaryOpen(e.currentTarget.open)}>
             <summary className="cursor-pointer font-medium">全論文共通の専門用語辞書（{glossary.length}件）</summary>
             <p className="text-muted-foreground my-2">用語を確認すると、翻訳前にAIがこの論文から共通辞書にない専門用語のうち、訳語が定まっていない語や訳し方に迷う語だけを日本語訳の案と一緒に抽出します。「モデル予測制御」のように訳語が一つに決まる語は候補に含めません。候補を確認・修正して追加すると、今後のすべての論文で使えます。過去の登録語もここで確認・修正できます。辞書の変更は各論文を次に翻訳するときに反映されます。</p>
             <fieldset disabled={busy} className="min-w-0">
@@ -306,7 +306,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
                 setGlossaryView("new"); setGlossarySearch("");
               }} />
           </details>
-          <div role="status" className="grid gap-1 text-[12px]">
+          <div role="status" className="grid gap-1 text-[0.75rem]">
             {generating ? <div className="flex items-center gap-2">
               <p className="text-muted-foreground flex-1">AIが未登録の専門用語を抽出しています。閉じても抽出は続き、終わったらお知らせします。</p>
               {draft.jobId && <Button variant="outline" onClick={() => {

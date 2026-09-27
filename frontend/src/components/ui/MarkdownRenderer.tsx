@@ -79,7 +79,7 @@ export function MarkdownRenderer({ content, className, paperId, onCitationClick,
                   title={`原文の${page}ページを開く`}
                   aria-label={`原文の${page}ページを開く`}
                   onClick={() => cite(page, paperId)}
-                  className="citation-link inline-flex items-center justify-center px-1.5 py-0.5 mx-0.5 text-[11px] font-semibold leading-normal text-primary bg-primary/10 hover:bg-primary/20 rounded cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                  className="citation-link inline-flex items-center justify-center px-1.5 py-0.5 mx-0.5 text-[0.75rem] font-semibold leading-normal text-primary bg-primary/10 hover:bg-primary/20 rounded cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                 >
                   {props.children || page}
                 </button>
@@ -93,7 +93,7 @@ export function MarkdownRenderer({ content, className, paperId, onCitationClick,
                   type="button"
                   title={`原文の${match[1]}ページを開く`}
                   onClick={() => cite(Number(match[1]))}
-                  className="citation-link inline-flex items-center justify-center px-1.5 py-0.5 mx-0.5 text-[11px] font-semibold leading-normal text-primary bg-primary/10 hover:bg-primary/20 rounded cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                  className="citation-link inline-flex items-center justify-center px-1.5 py-0.5 mx-0.5 text-[0.75rem] font-semibold leading-normal text-primary bg-primary/10 hover:bg-primary/20 rounded cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                 >
                   {match[1]}
                 </button>
@@ -104,14 +104,14 @@ export function MarkdownRenderer({ content, className, paperId, onCitationClick,
             return <a {...props} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer" />;
           },
           pre: ({ node, ...props }) => (
-            <pre className="bg-muted p-3 rounded-md overflow-x-auto text-[13px]" {...props} />
+            <pre className="bg-muted p-3 rounded-md overflow-x-auto text-[0.8125rem]" {...props} />
           ),
           code: ({ node, className, children, ...props }) => {
             const match = /language-(\w+)/.exec(className || "");
             if (match && match[1] === "mermaid") {
               return <MermaidDiagram chart={String(children).replace(/\n$/, "")} />;
             }
-            return <code className={cn("bg-muted px-1 py-0.5 rounded text-[13px]", className)} {...props}>{children}</code>;
+            return <code className={cn("bg-muted px-1 py-0.5 rounded text-[0.8125rem]", className)} {...props}>{children}</code>;
           },
           img: ({ node, ...props }) => {
             // markdownUrlTransform has already turned a media image's file:// URI into its sidecar path

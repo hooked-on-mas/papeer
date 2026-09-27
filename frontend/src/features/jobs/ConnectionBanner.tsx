@@ -24,7 +24,7 @@ export function ConnectionBanner() {
     // The live region stays mounted so that screen readers announce the text when it appears.
     <div role="status" aria-live="polite" className="pointer-events-none fixed inset-x-0 top-2 z-[70] flex justify-center px-4">
       {text && (
-        <div className="pointer-events-auto flex max-w-2xl items-center gap-2 rounded-md border border-amber-500/40 bg-amber-50 px-3 py-1.5 text-[13px] text-amber-950 shadow-md dark:bg-amber-950 dark:text-amber-100">
+        <div className="pointer-events-auto flex max-w-2xl items-center gap-2 rounded-md border border-amber-500/40 bg-amber-50 px-3 py-1.5 text-[0.8125rem] text-amber-950 shadow-md dark:bg-amber-950 dark:text-amber-100">
           <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
           <span>{text}</span>
         </div>

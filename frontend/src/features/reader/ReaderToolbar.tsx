@@ -55,7 +55,7 @@ export function ReaderToolbar() {
   const button = "p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:pointer-events-none";
 
   return (
-    <div className="h-[40px] flex items-center px-3 gap-1 border-b shrink-0 bg-background/50 text-[13px] min-w-0">
+    <div className="h-10 flex items-center px-3 gap-1 border-b shrink-0 bg-background/50 text-[0.8125rem] min-w-0">
       <button onClick={() => movePage(-1)} disabled={!activePaperId || atStart} className={button} title="前のページ（←）">
         <ChevronLeft className="w-4 h-4" />
       </button>
@@ -74,7 +74,7 @@ export function ReaderToolbar() {
         title="ページ番号を入力し、Enterで移動（Ctrl+G）"
         className="w-11 h-6 text-center border rounded bg-background focus:ring-2 focus:ring-ring focus:outline-none tabular-nums"
       />
-      <button onClick={commitPage} disabled={!activePaperId} className="h-6 px-2 rounded border text-[12px] hover:bg-muted disabled:opacity-40">
+      <button onClick={commitPage} disabled={!activePaperId} className="h-6 px-2 rounded border text-[0.75rem] hover:bg-muted disabled:opacity-40">
         移動
       </button>
       <button onClick={() => movePage(1)} disabled={!activePaperId || atEnd} className={button} title="次のページ（→）">
@@ -82,7 +82,7 @@ export function ReaderToolbar() {
       </button>
       <span className="ml-2 text-muted-foreground tabular-nums truncate min-w-0" title={pageLabel}>{pageLabel}</span>
       {version && (
-        <span className="ml-2 text-[11px] text-muted-foreground/80 truncate hidden lg:inline" title="このページを翻訳したときのコード版とモデル">
+        <span className="ml-2 text-[0.75rem] text-muted-foreground/80 truncate hidden lg:inline" title="このページを翻訳したときのコード版とモデル">
           翻訳時SHA：{version.sha} ({version.model})
         </span>
       )}
@@ -98,7 +98,7 @@ export function ReaderToolbar() {
             }
           }}
           title="表示するページ"
-          className="h-6 bg-transparent border rounded text-[12px] px-1 hover:bg-muted cursor-pointer"
+          className="h-6 bg-transparent border rounded text-[0.75rem] px-1 hover:bg-muted cursor-pointer"
         >
           <option value="all">全ページ</option>
           <option value="translated">翻訳済みページのみ</option>
@@ -112,7 +112,7 @@ export function ReaderToolbar() {
           value={String(ZOOM_PRESETS.includes(zoom) ? zoom : 1)}
           onChange={(e) => setZoom(Number(e.target.value))}
           title="原文・日本語訳の共通倍率（幅に合わせた表示が基準）"
-          className="h-6 bg-transparent border rounded text-[12px] px-1 hover:bg-muted cursor-pointer tabular-nums"
+          className="h-6 bg-transparent border rounded text-[0.75rem] px-1 hover:bg-muted cursor-pointer tabular-nums"
         >
           {ZOOM_PRESETS.map((value) => (
             <option key={value} value={String(value)}>{ZOOM_LABELS[value] ?? `${Math.round(value * 100)}%`}</option>
@@ -132,7 +132,7 @@ export function ReaderToolbar() {
               <button
                 key={tab}
                 onClick={() => setFocusPanel(focusPanel === tab ? null : tab)}
-                className={`flex items-center gap-1 h-6 px-2 rounded text-[12px] border transition-colors ${focusPanel === tab ? "text-primary bg-primary/10 border-primary/40" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                className={`flex items-center gap-1 h-6 px-2 rounded text-[0.75rem] border transition-colors ${focusPanel === tab ? "text-primary bg-primary/10 border-primary/40" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
                 title={`${label}を右に表示（${key}）`}
               >
                 <Icon className="w-3.5 h-3.5" />
@@ -144,7 +144,7 @@ export function ReaderToolbar() {
         )}
         <button
           onClick={() => setFocusMode(!focusMode)}
-          className={`flex items-center gap-1 h-6 px-2 rounded text-[12px] border transition-colors ${focusMode ? "text-primary bg-primary/10 border-primary/40" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+          className={`flex items-center gap-1 h-6 px-2 rounded text-[0.75rem] border transition-colors ${focusMode ? "text-primary bg-primary/10 border-primary/40" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
           title="PDFとページ操作を大きく表示（F11で切り替え）"
         >
           {focusMode ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}

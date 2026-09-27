@@ -146,7 +146,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       <label className="pt-1.5">{label}</label>
       <div className="min-w-0 space-y-1">
         {children}
-        {hint && <p className="text-[12px] text-muted-foreground">{hint}</p>}
+        {hint && <p className="text-[0.75rem] text-muted-foreground">{hint}</p>}
       </div>
     </div>
   );
@@ -176,7 +176,7 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
               <Icon className={cn("mt-0.5 size-4 shrink-0", selected ? "text-primary" : "text-muted-foreground")} />
               <span className="min-w-0">
                 <span className="block font-medium">{label}</span>
-                <span className="block text-[12px] leading-snug text-muted-foreground">{description}</span>
+                <span className="block text-[0.75rem] leading-snug text-muted-foreground">{description}</span>
               </span>
             </button>
           );
@@ -248,10 +248,10 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
             {form.checking ? <Loader2 className="animate-spin" /> : <PlugZap />}
             {form.checking ? "確認中…" : "接続を確認"}
           </Button>
-          <span className="text-[12px] text-muted-foreground">入力中の内容で確認します（保存はされません）</span>
+          <span className="text-[0.75rem] text-muted-foreground">入力中の内容で確認します（保存はされません）</span>
         </div>
         {form.checkResult && (
-          <p className={cn("flex items-start gap-1.5 text-[12px] whitespace-pre-wrap",
+          <p className={cn("flex items-start gap-1.5 text-[0.75rem] whitespace-pre-wrap",
             form.checkResult.ok ? "text-success" : "text-destructive")}>
             {form.checkResult.ok ? <CheckCircle2 className="mt-px size-3.5 shrink-0" /> : <XCircle className="mt-px size-3.5 shrink-0" />}
             {form.checkResult.text}
@@ -259,7 +259,7 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
         )}
       </div>
 
-      <p className="text-[12px] leading-relaxed text-muted-foreground">
+      <p className="text-[0.75rem] leading-relaxed text-muted-foreground">
         {!isCli
           ? "翻訳・解説・チャットを実行すると、対象テキストがこの API へ送られます。接続先によっては従量課金になります。"
           : "翻訳・解説・チャットを実行すると、対象テキストがこの CLI へ送られます。実行できるかどうかは各ツールのログイン状態と利用枠に従います。"}

@@ -26,20 +26,31 @@ function translationQueries(event: JobFinished) {
  * (and shows what it will send) instead of calling the AI straight from the error dialog.
  */
 function openTranslationDialog(event: JobFinished): void {
-  if (!event.paper_id) return;
+  if (!openPaper(event)) return;
+  emitAppEvent("open-translate-dialog");
+}
+
+/** Show the job's paper in the reader (from a notice about another paper); false without one. */
+function openPaper(event: JobFinished): boolean {
+  if (!event.paper_id) return false;
   const store = useStore.getState();
   store.setSelectedFolder(null);
   store.setActivePaperId(event.paper_id);
   store.setActiveTab("reader");
   emitAppEvent("reveal-paper", { paperId: event.paper_id, focus: false });
-  emitAppEvent("open-translate-dialog");
+  return true;
 }
 
 export const translationJobHandlers: JobHandlers = {
   translate: {
-    succeeded: (event, { status }) => {
+    succeeded: (event, { visible, done }) => {
       const message = translateMessage(event.result ?? {});
-      status(message);
+      done(message, {
+        title: "翻訳処理が終了しました",
+        // Pages whose PDF could not be made stay in the original: worth reading, so shown longer.
+        tone: event.result?.skipped_pages?.length ? "info" : "success",
+        action: visible ? undefined : { label: "開く", run: () => openPaper(event) },
+      });
       notifyIfAway("翻訳処理が終了しました", message);
     },
     refresh: translationQueries,
@@ -48,13 +59,13 @@ export const translationJobHandlers: JobHandlers = {
   revision: { refresh: translationQueries },
   "glossary-draft": {
     // The translation dialog shows the candidates itself; closed, it may be long forgotten.
-    succeeded: (event, { status }) => {
+    succeeded: (event, { done }) => {
       // Only a check whose candidates now wait for the dialog (not a stale or superseded job).
       if (!finishGlossaryDraft(event) || isGlossaryDialogOpen(event.paper_id)) return;
       const count = (event.result?.terms ?? []).length;
       const message = (count ? `未登録の専門用語を${count}件抽出しました。` : "未登録の専門用語の確認が終わりました（候補はありません）。")
         + "翻訳の設定を開くと、確認して翻訳を開始できます。";
-      status(message);
+      done(message, { title: "用語の確認が終わりました", action: { label: "翻訳の設定を開く", run: () => openTranslationDialog(event) } });
       notifyIfAway("用語の確認が終わりました", message);
     },
     resume: { label: "翻訳の設定を開く…", run: openTranslationDialog },

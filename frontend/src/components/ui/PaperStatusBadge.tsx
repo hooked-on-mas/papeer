@@ -25,7 +25,7 @@ export function PaperStatusBadge({ status, text, className, hasSummary, descript
 
   return (
     <div className={cn("inline-flex items-center gap-1.5", className)}>
-      <span title={description ?? text} className={cn("inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium leading-4 whitespace-nowrap", tone)}>
+      <span title={description ?? text} className={cn("inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.75rem] font-medium leading-4 whitespace-nowrap", tone)}>
         <Icon aria-hidden="true" className={cn("size-3 shrink-0", status === "translating" && "animate-spin")} />{text}
       </span>
       {hasSummary && <span title="サマリーあり" aria-label="サマリーあり"><FileText className="size-3 text-muted-foreground" /></span>}
