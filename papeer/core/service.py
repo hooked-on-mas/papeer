@@ -56,6 +56,23 @@ def link_citations(answer: str, allowed: dict[str, int]) -> str:
     return re.sub(r"\[([0-9a-f]{32}:[^\[\]]+)\]", replace, answer)
 
 
+def stored_translations(cache: dict) -> dict[str, str]:
+    """Every translation in a translation-cache.json, whatever key it was made with, by unit id.
+
+    PaperService.translate writes each translation once, with its completed page or at the top
+    for an unfinished page; caches of earlier versions held all of them at the top as well. For
+    tools and tests: translating checks each page's key, search and the reader each page's source
+    (cached_translations).
+    """
+    current = cache.get("translation_version")
+    values: dict[str, str] = {}
+    # Pages of an earlier key first, so that the current key's text of a paragraph wins.
+    for entry in sorted((cache.get("completed_pages") or {}).values(), key=lambda entry: entry.get("version") == current):
+        values.update(entry.get("translations") or {})
+    values.update(cache.get("translations") or {})
+    return values
+
+
 def cached_translations(folder: Path, document: dict) -> tuple[list[dict], dict[str, str]]:
     """The paper's units (with their glossary) and the saved translations of those still current.
 
@@ -73,14 +90,14 @@ def cached_translations(folder: Path, document: dict) -> tuple[list[dict], dict[
     return units, done
 
 
-def page_translation_text(folder: Path, document: dict, page: int,
-                          cached: tuple[list[dict], dict[str, str]] | None = None) -> list[str]:
-    """Translated blocks of one page with inline math as text.
+def cached_page_texts(folder: Path, document: dict) -> dict[int, list[str]]:
+    """The translated blocks of every page in the translation cache, by page number, with inline math as text.
 
     The translated PDF draws inline math as images, so text copied from it lacks the formulas.
-    `cached` is cached_translations(folder, document), for a caller reading several pages.
+    Blocks continued in the next column or on the next page are divided (materialize_flows) once
+    for the whole paper, so a caller reading many pages asks for them once.
     """
-    units, done = cached or cached_translations(folder, document)
+    units, done = cached_translations(folder, document)
     started = {u["block"] for u in units if u["id"] in done}
     block_text = {}
     for unit in units:
@@ -88,8 +105,16 @@ def page_translation_text(folder: Path, document: dict, page: int,
             block_text.setdefault(unit["block"], []).append(done.get(unit["id"], unit["text"]))
     rendered_document, rendered_text = materialize_flows(
         document, {key: "\n".join(parts) for key, parts in block_text.items()})
-    blocks = [restore_formula_text(rendered_text[b["id"]], b) for b in rendered_document["blocks"]
-              if b["page"] == page and b["id"] in rendered_text]
+    pages: dict[int, list[str]] = {}
+    for block in rendered_document["blocks"]:
+        if block["id"] in rendered_text:
+            pages.setdefault(block["page"], []).append(restore_formula_text(rendered_text[block["id"]], block))
+    return pages
+
+
+def page_translation_text(folder: Path, document: dict, page: int) -> list[str]:
+    """Translated blocks of one page with inline math as text (cached_page_texts)."""
+    blocks = cached_page_texts(folder, document).get(page)
     if blocks:
         return blocks
     # Otherwise the last completed translation.
@@ -259,7 +284,7 @@ class PaperService:
                     return pages
 
             def publish_ready():
-                # On this thread only: while pages are made, the translation workers go on (accept only saves).
+                # On this thread only: while pages are made, the translation workers go on (accept only records; the saves come with the next record).
                 for number, block_text in ready_pages().items():
                     check_cancel(self.cancel)
                     self.progress(f"p.{number} の日本語PDFを作成しています…")
@@ -282,28 +307,64 @@ class PaperService:
                     self.page_ready(paper_id, number)
                     self.progress(f"翻訳ページを表示できます：p.{number}（{len(preview['pages'])}/{document['page_count']}ページ完了）")
 
+            # Whether accept() took translations that translation-cache.json does not hold yet.
+            unsaved = False
+
             def save():
+                """Write translation-cache.json with the retry records and every translation so far.
+
+                Each translation is written once: with its completed page ("completed_pages", which
+                the next run reuses page by page and search and the reader read), or at the top
+                ("translations") while its page is unfinished (stored_translations reads both).
+                Caches of earlier versions also held every translation at the top; this code reads
+                them as before, and those versions read this format with the same result: the pages
+                of this key come back from "completed_pages" (see the loop over source_pages above).
+                The glossary in effect is written once at the top too; earlier versions repeated it
+                on every page (a library glossary of a few kilobytes made up half of a long paper's
+                file) and read it nowhere: the page's source (page_fingerprint) holds its terms.
+                """
+                nonlocal unsaved
+                paged = set()  # Paragraphs written with a completed page of this key.
                 for number, page_units in source_pages.items():
                     if page_units and all(u["id"] in done for u in page_units):
                         origin = completed_pages[str(number)] if number in revised_only else {}
                         completed_pages[str(number)] = {
-                            "version": origin.get("version", version), "source": page_keys[number], "glossary": glossary_key,
+                            "version": origin.get("version", version), "source": page_keys[number],
                             "model": origin.get("model", settings.model),
                             "translations": {u["id"]: done[u["id"]] for u in page_units}}
+                        if number not in revised_only:
+                            paged.update(u["id"] for u in page_units)
+                # Without indentation: only the app reads it, and it is written again for every batch.
                 atomic_write_json(cache_path, {"fingerprint": fingerprint,
-                                       "translations": {k: v for k, v in done.items() if k not in foreign_ids},
+                                       "translations": {k: v for k, v in done.items()
+                                                        if k not in foreign_ids and k not in paged},
                                        "translation_version": version,
                                        "model": settings.model,
+                                       "glossary": glossary_key,
                                        "completed_pages": completed_pages,
-                                       "retry_state": retry_state.to_cache()})
+                                       "retry_state": retry_state.to_cache()}, indent=None)
+                unsaved = False
 
             def accept(values):
                 # Holding `lock`, from translate_batches' workers when translating in parallel. The
                 # pages are made once their batch is done (finished), on this thread.
+                nonlocal unsaved
                 done.update(values)
                 for identity, text in values.items():
                     done.update(dict.fromkeys(copies.get(identity, ()), text))
-                save()
+                # Written with the next save rather than at once: the record of the next request is
+                # saved (with everything) before it goes out, which is right away while batches wait
+                # to be sent; otherwise finished() and the end or stop of the run write it (flush).
+                # A crash in between loses the answers taken since the last write, those of the last
+                # batch or, in parallel, of the last few: their blocks are still on record as sent
+                # without an answer (RetryState.unanswered), so resuming sends them again (counting
+                # towards MAX_UNANSWERED_SENDS, not towards the retries).
+                unsaved = True
+
+            def flush():
+                with lock:
+                    if unsaved:
+                        save()
 
             save()
             atomic_write_json(preview_path, preview)
@@ -322,6 +383,14 @@ class PaperService:
             def finished(_index):
                 nonlocal finished_chunks
                 finished_chunks += 1
+                if len(chunks) - finished_chunks < concurrency:
+                    # No batch waits for the worker this one freed, so no record comes to write
+                    # what accept() took: written now, not only when the slowest batch is done.
+                    flush()
+                # Translating one batch at a time, the page this batch completed is shown before its
+                # translations are written: the next batch's record writes them a few milliseconds
+                # later (after the page PDF is made). Until then the cache lacks the page, so search
+                # and copying its text find nothing for it, and a crash sends it again (accept).
                 publish_ready()
                 report_progress()
 
@@ -331,15 +400,21 @@ class PaperService:
                 translate_batches(self.provider, chunks, self.cancel, self.progress, accept, retry_state, save,
                                   concurrency=concurrency, finished=finished, instruction=instruction, paper=paper,
                                   lock=lock)
-            except Exception:
+            except BaseException as error:
+                # Also on KeyboardInterrupt or SystemExit: the translations taken are written first.
+                try:
+                    flush()
+                except Exception:
+                    pass  # The error that stopped the run is the one to report.
                 # Stopped by an error: batches answered while the run was stopping are saved but not
                 # finished, so their pages are made now (not after a cancel, which should end at once).
-                if not self.cancel.is_set():
+                if isinstance(error, Exception) and not self.cancel.is_set():
                     try:
                         publish_ready()
                     except Exception:
                         pass  # The error that stopped the run is the one to report.
                 raise
+            flush()
             check_cancel(self.cancel)
             # A shared sentence must not be published with half its destinations
             # missing. Retain cached translations for retry, but restore all

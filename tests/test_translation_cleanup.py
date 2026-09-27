@@ -136,10 +136,10 @@ def test_failure_before_the_new_preview_is_saved_keeps_the_pages_the_reader_show
     cache = PaperFiles(folder).translation_cache
     failing = atomic_write_json
 
-    def write(path, value):
+    def write(path, value, **options):
         if Path(path) == cache:
             raise OSError("disk full")
-        failing(path, value)
+        failing(path, value, **options)
 
     with patch("papeer.core.service.atomic_write_json", side_effect=write), pytest.raises(OSError):
         service.translate(identity, {3})

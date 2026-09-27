@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
@@ -17,7 +18,7 @@ from papeer.core.config import Settings
 from papeer.core.paths import PaperFiles
 from papeer.pdf.pdf_engine import batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, page_png, translation_units
 from papeer.providers import Cancelled, create_provider
-from papeer.core.service import PaperService, link_citations
+from papeer.core.service import PaperService, link_citations, stored_translations
 from papeer.translation.translation import validate_translations
 from papeer.core.storage import Library, normalize_collection_name
 from papeer.layout.math_layout import MATH_TOKEN
@@ -135,14 +136,14 @@ class WorkflowTests(unittest.TestCase):
         service = PaperService(self.library, provider, self.cancel)
         service.translate(self.paper_id, {1})
         path = self.library.folder(self.paper_id) / "translation-cache.json"
-        before = json.loads(path.read_text("utf-8"))["translations"]
+        before = stored_translations(json.loads(path.read_text("utf-8")))
         calls = provider.calls
         provider.settings.reasoning_effort = "high"
         service.translate(self.paper_id, {1})
         self.assertEqual(provider.calls, calls)
         service.translate(self.paper_id, {1, 2})
         self.assertGreater(provider.calls, calls)
-        after = json.loads(path.read_text("utf-8"))["translations"]
+        after = stored_translations(json.loads(path.read_text("utf-8")))
         self.assertTrue(all(after[key] == value for key, value in before.items()))
 
     def test_interleaved_pdf_preserves_rotation_and_existing_output_on_mismatch(self):
@@ -202,7 +203,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_cancel_keeps_completed_translation_for_next_run(self):
         folder = self.library.folder(self.paper_id)
-        document = self.library.document(self.paper_id)
+        document = copy.deepcopy(self.library.document(self.paper_id))  # The shared value is never changed in place.
         document["blocks"][0]["text"] = "Long English paragraph. " * 1500
         document["blocks"][0]["translation_text"] = document["blocks"][0]["text"]
         (folder / "document.json").write_text(json.dumps(document), "utf-8")
@@ -211,7 +212,7 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaises(Cancelled):
             PaperService(self.library, provider, self.cancel).translate(self.paper_id)
         cache = json.loads((folder / "translation-cache.json").read_text("utf-8"))
-        self.assertGreater(len(cache["translations"]), 0)
+        self.assertGreater(len(stored_translations(cache)), 0)
         self.assertFalse((folder / "translated.pdf").exists())
         from papeer.translation.translation_preview import read_preview
         self.assertNotIn(1, read_preview(folder)["pages"], "a partially translated page must not be published")
@@ -248,7 +249,7 @@ class WorkflowTests(unittest.TestCase):
         preview_path, _ = translated_page(folder, 0)
         self.assertTrue(preview_path.exists())
         paused = json.loads((folder / "translation-cache.json").read_text("utf-8"))
-        before = paused["translations"]
+        before = stored_translations(paused)
         provider = FakeProvider()
         PaperService(Library(self.library.root), provider, self.cancel).translate(self.paper_id)
         remaining = [u for u in translation_units(self.library.document(self.paper_id)) if u["id"] not in before]
@@ -257,7 +258,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(paused["retry_state"]["unanswered"], {u["id"]: 1 for u in remaining})
         self.assertEqual(provider.calls, 1, "interrupted second-page units go back to a normal request")
         self.assertEqual(json.loads((folder / "translation-cache.json").read_text("utf-8"))["retry_state"]["retry_calls"], 0)
-        after = json.loads((folder / "translation-cache.json").read_text("utf-8"))["translations"]
+        after = stored_translations(json.loads((folder / "translation-cache.json").read_text("utf-8")))
         self.assertTrue(all(after[k] == v for k, v in before.items()))
         self.assertTrue(read_preview(folder)["complete"])
         self.assertEqual(translated_page(folder, 1), (folder / "translated.pdf", 1))
@@ -290,7 +291,7 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "connection failed"):
             PaperService(self.library, provider, self.cancel).translate(self.paper_id)
         cache = json.loads((folder / "translation-cache.json").read_text("utf-8"))
-        self.assertEqual(set(cache["translations"]), provider.initial_ids - {provider.missing_id})
+        self.assertEqual(set(stored_translations(cache)), provider.initial_ids - {provider.missing_id})
         self.assertEqual(cache["retry_state"]["attempts"][provider.missing_id], 2)
         self.assertEqual(cache["retry_state"]["retry_calls"], 1)
         # The first retry went out but got no answer.
@@ -305,7 +306,7 @@ class WorkflowTests(unittest.TestCase):
                     # The unanswered retry is sent again as it was.
                     self.assertIn("source_parts", payload)
                 else:
-                    self.assertFalse({u["id"] for u in payload["blocks"]} & set(cache["translations"]))
+                    self.assertFalse({u["id"] for u in payload["blocks"]} & set(stored_translations(cache)))
                 return super().generate(instruction, data, schema)
 
         resumed = ResumeProvider()
@@ -334,11 +335,11 @@ class WorkflowTests(unittest.TestCase):
         folder = self.library.folder(self.paper_id)
         before = (folder / "translation-cache.json").read_bytes()
         cache = json.loads(before)
-        self.assertNotIn(provider.missing_id, cache["translations"])
+        self.assertNotIn(provider.missing_id, stored_translations(cache))
         self.assertEqual(cache["retry_state"]["retry_calls"], 3)
         self.assertEqual(cache["retry_state"]["attempts"][provider.missing_id], 4)
         units = translation_units(self.library.document(self.paper_id))
-        self.assertEqual(set(cache["translations"]), {u["id"] for u in units} - {provider.missing_id})
+        self.assertEqual(set(stored_translations(cache)), {u["id"] for u in units} - {provider.missing_id})
         source = next(u["text"] for u in units if u["id"] == provider.missing_id)
         self.assertIn(source, (folder / "translation.md").read_text("utf-8"))
         reopened = Library(self.library.root)

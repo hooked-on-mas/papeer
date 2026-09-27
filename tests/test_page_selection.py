@@ -14,7 +14,7 @@ import pymupdf as fitz
 from papeer.core import exports
 from papeer.core.paths import PaperFiles
 from papeer.layout.page_selection import parse_page_selection
-from papeer.core.service import PaperService
+from papeer.core.service import PaperService, stored_translations
 from papeer.pdf.pdf_engine import build_translated_pdf, translation_units
 from papeer.core.storage import Library
 from papeer.translation.translation import (BUILTIN_PROMPT_REVISION, EARLIER_BUILTIN_PROMPTS, TRANSLATION_PROTOCOL,
@@ -309,7 +309,9 @@ class PageSelectionTests(unittest.TestCase):
         cache['fingerprint'] = legacy_translation_fingerprint(provider.settings, units)
         for entry in cache['completed_pages'].values():
             entry['version'] = old
-        cache_path.write_text(json.dumps(cache), 'utf-8')
+        # Caches of that time held every translation at the top as well.
+        cache['translations'] = stored_translations(cache)
+        cache_path.write_text(json.dumps(cache, indent=2), 'utf-8')
         return library, identity, cache_path
 
     def test_cache_from_before_translation_key_is_adopted_without_asking_the_model(self):
@@ -638,7 +640,7 @@ class PageSelectionTests(unittest.TestCase):
             before = json.loads(cache_path.read_text('utf-8'))
             # Simulate an earlier completed recovery: selecting another range
             # must retain both the budget and saved translation content.
-            unit_id = next(iter(before['translations']))
+            unit_id = next(iter(stored_translations(before)))
             before['retry_state']['attempts'][unit_id] = 2
             before['retry_state']['retry_calls'] = 1
             cache_path.write_text(json.dumps(before), 'utf-8')
@@ -648,7 +650,7 @@ class PageSelectionTests(unittest.TestCase):
             self.assertEqual(report['translated_pages'], [2, 3])
             self.assertEqual(after['fingerprint'], before['fingerprint'])
             self.assertEqual(after['retry_state']['retry_calls'], 1)
-            self.assertEqual(after['translations'][unit_id], before['translations'][unit_id])
+            self.assertEqual(stored_translations(after)[unit_id], stored_translations(before)[unit_id])
             service.translate(identity, {2, 3})
             self.assertEqual(provider.calls, 2)
             service.translate(identity)

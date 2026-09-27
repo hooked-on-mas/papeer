@@ -224,12 +224,12 @@ Papeer/
   prompts/                    カスタマイズしたプロンプト
   papers/<論文ID>/
     original.pdf
-    document.json             抽出結果
+    document.json             抽出結果（アプリだけが読むのでインデントなし）
     translated.pdf
     interleaved.pdf           原文と訳文の交互ページ（「原文・日本語訳（交互）を外部で開く」で作成し、訳文が変わるまで再利用）
     translation-pages/        翻訳途中のページ（翻訳の完了時と起動時に不要なものを削除）
     translation.md
-    translation-cache.json
+    translation-cache.json    訳文と再翻訳の回数の記録（インデントなし）
     translation-report.json
     glossary.json               旧辞書の移行元（共通辞書はlibrary.sqlite3に保存）
     article.md                解説

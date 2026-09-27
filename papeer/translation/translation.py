@@ -473,8 +473,13 @@ def _locked_translation(answer: str, fragments: list[dict], parts: list[dict], t
 
 
 def _received(state, save, units, send, guard):
-    """send() the request of `units` and record them as answered.
+    """send() the request of `units` and return its answer, for the caller to record as answered.
 
+    The caller records a usable answer (RetryState.answered) holding `guard`, in the same hold as
+    the translations it takes from it (accept) or, when none passes the checks, before its next
+    record: another worker's save in between must not write the blocks answered while their
+    translations are not taken yet. A crash there would then resume by spending a retry on them
+    instead of sending the unanswered request again (MAX_UNANSWERED_SENDS).
     An answer that came back unusable (AnswerRejected: cut off, empty) was answered too: it is
     recorded and saved before the error goes on, so that the same request is not paid for again
     (translate_batches takes a first request on to recovery at once; a retry stops the run, and
@@ -496,8 +501,6 @@ def _received(state, save, units, send, guard):
                 state.timed_out(units)
                 save()
         raise
-    with guard:
-        state.answered(units)
     return answer
 
 
@@ -515,6 +518,8 @@ def _recover_unit(provider, unit, cancel, progress, state, save, guard, paper=No
     unusable answer here stops the run rather than moving on at once, so that a service that
     keeps cutting answers off is not asked again for every paragraph of the paper.
     Records and saves are made holding `guard`, the requests without it (translate_batches).
+    The translation returned has its answer not recorded yet: the caller records it holding
+    `guard` together with the translation (_received).
     """
     parts, tokens = _source_parts(unit)
     instruction = sent_instruction(prompts.load("translation_recovery"), paper)
@@ -534,7 +539,8 @@ def _recover_unit(provider, unit, cancel, progress, state, save, guard, paper=No
         try:
             return _checked(unit, _assemble_parts(answer, tokens))
         except ValueError:
-            pass
+            with guard:
+                state.answered([unit])
     while not state.exhausted(unit):
         with guard:
             if cancel.is_set():
@@ -548,7 +554,8 @@ def _recover_unit(provider, unit, cancel, progress, state, save, guard, paper=No
         try:
             return _checked(unit, _locked_translation(answer, fragments, parts, tokens))
         except ValueError:
-            pass
+            with guard:
+                state.answered([unit])
     state.check(unit)
 
 
@@ -591,7 +598,8 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
     two at a time, and the retry budget is saved before every request just as in serial
     translation; the requests go out without it. `finished(index)` runs on the calling thread,
     without the lock, once a batch is done (with concurrency, batches may finish out of order);
-    what it reads of the state `accept` changes, it reads holding `lock`.
+    what it reads of the state `accept` changes, it reads holding `lock`. `accept` need not save:
+    every `save` here writes the whole state, and the caller saves what is left at the end.
     `instruction` is the translation prompt the caller keyed its cache with (TranslationKey), as
     written; `paper` is the paper's title and abstract (paper_context), sent with every request.
 
@@ -632,6 +640,7 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
                 progress(str(error))
             return
         with guard:
+            state.answered([unit])
             accept(translated)
 
     def start(units):
@@ -652,7 +661,8 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
         return fresh
 
     def first_answer(fresh):
-        """The answer to the first request of `fresh`, or None when it came back unusable."""
+        """The answer to the first request of `fresh`, or None when it came back unusable (then recorded
+        as answered; a usable answer is recorded by finish, with its translations)."""
         try:
             return _received(state, save, fresh, lambda: provider.generate(sent, request_text(fresh, paper),
                                                                            TRANSLATION_SCHEMA), guard)
@@ -665,11 +675,14 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
     def finish(fresh, answer):
         accepted = _valid_items(answer, fresh) if answer is not None else {}
         with guard:
+            # Answered and accepted in one hold: no save of another batch writes one without the other.
+            state.answered(fresh)
             if accepted:
                 accept(accepted)
             else:
-                # accept() saves the answered record otherwise; a cancel before the first retry's
-                # record must not leave these blocks looking unanswered.
+                # accept() takes the answered record otherwise (the caller saves it then or with the
+                # next save); a cancel before the first retry's record must not leave these blocks
+                # looking unanswered.
                 save()
         for unit in fresh:
             if unit["id"] not in accepted:

@@ -171,8 +171,8 @@ def _publish(folder, review, manifest, entries):
         # RetryState requires every unanswered record to name a block in attempts.
         if isinstance(retry.get('unanswered'), dict):
             retry['unanswered'].pop(key, None)
-    atomic_write_json(stage/'translation-cache.json', cache)
-    atomic_write_json(stage/'document.json', document)
+    atomic_write_json(stage/'translation-cache.json', cache, indent=None)
+    atomic_write_json(stage/'document.json', document, indent=None)
     report = _read(folder/'translation-report.json', {})
     # Old whole-document counters cannot be subtracted reliably by page.
     aggregate_keys = ('scaled_blocks', 'inline_formulas', 'preserved_table_blocks', 'preserved_figure_blocks', 'preserved_formula_blocks')

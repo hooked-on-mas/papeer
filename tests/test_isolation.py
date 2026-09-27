@@ -59,7 +59,8 @@ def test_swallowed_access_still_fails_the_test(pytester, tmp_path, monkeypatch):
     # A separate pytest run whose "real" LOCALAPPDATA is a folder we own.
     here = Path(__file__).parent
     pytester.makeconftest((here / "conftest.py").read_text("utf-8"))
-    pytester.makepyfile(_isolation=(here / "_isolation.py").read_text("utf-8"))
+    pytester.makepyfile(_isolation=(here / "_isolation.py").read_text("utf-8"),
+                        _frozen_documents=(here / "_frozen_documents.py").read_text("utf-8"))
     fake_real = tmp_path / "fake-real-appdata"
     (fake_real / "Papeer").mkdir(parents=True)
     note = fake_real / "Papeer" / "note.md"

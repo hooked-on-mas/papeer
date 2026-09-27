@@ -1,27 +1,45 @@
 """Identify pages needing translation without flagging preserved end matter."""
-from copy import deepcopy
 import json
 from pathlib import Path
 import re
+import threading
 
 from papeer.layout.reading_flow import unit_pages
 from papeer.layout.reference_layout import mark_references
 from papeer.pdf.pdf_engine import translation_units
 from papeer.core.paths import PaperFiles
+from papeer.core.shared_json import signature
+
+# The pages of each document.json, while its signature stays the same: the reader asks for them
+# whenever a translated page is ready, and the library list for every paper.
+_REQUIRED_LOCK = threading.Lock()
+_REQUIRED: dict[Path, tuple[tuple[int, int, int], list[int]]] = {}
+_REQUIRED_LIMIT = 1024
 
 
 def cached_required_translation_pages(folder: Path, page_count: int) -> list[int]:
+    path = PaperFiles(folder).document_json
     try:
-        document = json.loads((PaperFiles(folder).document_json).read_text("utf-8"))
-        return required_translation_pages(document)
+        stamp = signature(path)
+        with _REQUIRED_LOCK:
+            known = _REQUIRED.get(path)
+        if known is not None and known[0] == stamp:
+            return list(known[1])
+        pages = required_translation_pages(json.loads(path.read_text("utf-8")))
     except (OSError, ValueError, KeyError, TypeError):
         return list(range(1, page_count + 1))
+    with _REQUIRED_LOCK:
+        if len(_REQUIRED) >= _REQUIRED_LIMIT:
+            _REQUIRED.clear()
+        _REQUIRED[path] = (stamp, pages)
+    return list(pages)
 
 
 def required_translation_pages(document: dict) -> list[int]:
     # Refresh reference recognition for older caches without rewriting the
-    # extraction or invalidating saved translations.
-    document = deepcopy(document)
+    # extraction or invalidating saved translations. mark_references only sets
+    # keys of blocks, so copies of the blocks keep the document as it was.
+    document = dict(document, blocks=[dict(block) for block in document["blocks"]])
     mark_references(document)
     reference_pages = {b["page"] for b in document["blocks"] if b.get("kind") == "reference"}
     dimensions = {p["number"]: p for p in document["pages"]}
