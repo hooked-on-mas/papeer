@@ -11,6 +11,7 @@ from papeer.core.errors import Invalid
 from papeer.core.storage import Library
 from papeer.providers import Cancelled
 from sidecar import deps
+from sidecar.job_types import JobKind
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
@@ -138,4 +139,4 @@ def sync(body: SyncRequest):
             state["error"] = message
             drive_sync.save_state(root, state)
             raise ValueError(message) from None
-    return deps.submit_job("drive-sync", action)
+    return deps.submit_job(JobKind.DRIVE_SYNC, action)

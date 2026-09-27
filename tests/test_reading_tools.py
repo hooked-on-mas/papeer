@@ -312,8 +312,8 @@ def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
         while job.running and time.monotonic() < deadline:
             time.sleep(.02)
         assert job.status == "succeeded", job.error
-        assert "修正した" in job.result["text"]
-        response = client.post(f"/api/papers/{identity}/revision", json={"unit_id": paragraph["id"], "text": job.result["text"], "expected_text": paragraph["text"]})
+        assert "修正した" in job.result.text
+        response = client.post(f"/api/papers/{identity}/revision", json={"unit_id": paragraph["id"], "text": job.result.text, "expected_text": paragraph["text"]})
         assert response.status_code == 200
         job = deps.job_manager.get_job(response.json()["job_id"])
         deadline = time.monotonic() + 10
@@ -367,7 +367,7 @@ def test_snapshot_api_and_write_guard(library, tmp_path, monkeypatch):
         return job
     with TestClient(runtime.app) as client:
         gate = threading.Event()
-        active = deps.job_manager.submit_job("backup", lambda *_: gate.wait(3))
+        active = deps.job_manager.submit_job("backup", lambda *_: {"path": str(tmp_path / "held.zip")} if gate.wait(3) else None)
         try:
             assert client.put("/api/prompts", json={"chat_answer": "changed"}).status_code == 409
             assert client.patch(f"/api/papers/{identity}", json={"note": "changed"}).status_code == 409
@@ -384,7 +384,7 @@ def test_snapshot_api_and_write_guard(library, tmp_path, monkeypatch):
         response = client.post("/api/restore", json={"path": str(backup)})
         assert response.status_code == 200
         job = wait(response.json()["job_id"])
-        assert Library(Path(job.result["previous_path"])).paper(identity)["note"] == "復元前のメモ"
+        assert Library(Path(job.result.previous_path)).paper(identity)["note"] == "復元前のメモ"
         assert client.get(f"/api/papers/{identity}").json()["note"] == ""
 
 
@@ -436,10 +436,11 @@ def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
         while job.running and time.monotonic() < deadline:
             time.sleep(0.01)
         assert job.status == "succeeded"
-        assert job.result["terms"] == [{"source": "tracking error", "target": "追従誤差"}]
+        terms = job.result.model_dump()["terms"]
+        assert terms == [{"source": "tracking error", "target": "追従誤差"}]
         assert calls[0]["existing_terms"] == existing
         assert client.get("/api/glossary").json() == existing
-        assert client.put("/api/glossary", json={"terms": existing + job.result["terms"],
+        assert client.put("/api/glossary", json={"terms": existing + terms,
                                                  "expected_terms": existing}).status_code == 200
         assert len(client.get("/api/glossary").json()) == 2
         assert client.post(base + "/glossary-draft", json={"terms": existing * 2}).status_code == 400

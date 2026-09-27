@@ -24,6 +24,7 @@ from papeer.core.errors import Conflict, NotFound
 from papeer.core.paths import app_env, data_directory
 from papeer.core.storage import Library, LibraryMissingError, NewerSchemaError, library_missing, missing_library_message
 from papeer.providers import ProviderBackend, check_cancel, create_provider
+from sidecar.job_types import SNAPSHOT_KINDS, JobKind, LibraryChangedEvent
 from sidecar.jobs import JobManager
 from sidecar.schemas import ProviderActionRequest
 
@@ -31,9 +32,6 @@ job_manager = JobManager()
 
 # Entered in the settings dialog or given at launch; kept only while the app runs.
 _runtime_api_key: str = api_key_from_env()
-
-# While these run, the library folder is being copied or replaced.
-SNAPSHOT_JOBS = {"backup", "restore", "drive-sync"}
 
 # A snapshot starts only after already-admitted HTTP handlers have finished (their responses sent, files
 # included: see app.ProtectLibrarySnapshot).
@@ -81,7 +79,7 @@ def snapshot_blocks(read_only: bool = False) -> bool:
         return False
     if not read_only or not _background_sync.is_set():
         return True
-    return not all(job.kind == "drive-sync" for job in job_manager.get_jobs() if job.running and job.kind in SNAPSHOT_JOBS)
+    return not all(job.kind == JobKind.DRIVE_SYNC for job in job_manager.get_jobs() if job.running and job.kind in SNAPSHOT_KINDS)
 
 
 def begin_library_request(read_only: bool = False) -> str | None:
@@ -188,7 +186,8 @@ def get_data_dir() -> Path:
 
 
 def snapshot_running() -> bool:
-    return any(job.running and job.kind in SNAPSHOT_JOBS for job in job_manager.get_jobs())
+    """Whether the library folder is being copied or replaced (job_types.SNAPSHOT_KINDS)."""
+    return any(job.running and job.kind in SNAPSHOT_KINDS for job in job_manager.get_jobs())
 
 
 def get_library() -> Library:
@@ -227,14 +226,14 @@ def paper_folder(lib: Library, paper_id: str) -> Path:
 
 # --- Jobs ---
 
-def submit_job(kind: str, action: Callable[..., Any], paper_id: str | None = None) -> dict[str, str]:
+def submit_job(kind: JobKind, action: Callable[..., Any], paper_id: str | None = None) -> dict[str, str]:
     """Start a background job; ConcurrencyConflict (409) when it would overlap a job it must not run beside."""
     return {"job_id": job_manager.submit_job(kind, action, paper_id=paper_id).job_id}
 
 
 def library_changed() -> None:
     """Tell the frontend to reload the library list."""
-    job_manager.broadcast({"type": "library.changed"})
+    job_manager.broadcast(LibraryChangedEvent())
 
 
 # --- Settings and AI connections ---

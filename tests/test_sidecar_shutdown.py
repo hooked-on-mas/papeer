@@ -57,6 +57,7 @@ def cancellable_job(started: threading.Event):
 
 @pytest.mark.parametrize(("method", "path", "expected"), [
     ("GET", "/api/jobs", 200),
+    ("GET", "/api/jobs/unknown", 404),  # how a job ended: reaches the route instead of 409
     ("GET", "/api/drive", 200),
     ("POST", "/api/jobs/cancel-all", 200),
     ("POST", "/api/jobs/unknown/cancel", 404),  # reaches the route instead of 409
@@ -146,6 +147,7 @@ def test_the_shown_pdfs_images_and_summary_load_beside_a_background_sync(client)
     ("PUT", "/api/jobs/x/cancel"),
     ("DELETE", "/api/jobs/cancel-all"),
     ("GET", "/api/jobs/"),
+    ("GET", "/api/jobs/x/extra"),
     ("GET", "/api/drive/sync"),
     ("POST", "/api/drive"),
     ("POST", "/health"),

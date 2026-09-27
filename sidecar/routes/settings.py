@@ -17,6 +17,7 @@ from papeer.core.config import Settings
 from papeer.core.errors import Invalid
 from papeer.providers import ProviderBackend, spec_for, specs
 from sidecar import deps
+from sidecar.job_types import JobKind
 from sidecar.schemas import ProviderActionRequest, ProviderSpecModel, SettingsModel
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
@@ -117,7 +118,7 @@ def provider_check(body: ProviderActionRequest | None = None) -> dict[str, str]:
         provider.cancel = cancel
         return provider.check()
 
-    return deps.submit_job("check", action)
+    return deps.submit_job(JobKind.CHECK, action)
 
 
 @router.get("/api/usage/limits")

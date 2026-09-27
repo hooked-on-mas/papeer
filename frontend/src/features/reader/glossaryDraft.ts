@@ -37,14 +37,14 @@ export function isGlossaryDialogOpen(paperId: string | null): boolean {
  * Record how the check ended (from its watcher, or from translationJobs, which runs first) and
  * tell whether its candidates now wait for the dialog. A job other than the paper's current check changes nothing.
  */
-export function finishGlossaryDraft(event: JobFinished): boolean {
+export function finishGlossaryDraft(event: JobFinished<"glossary-draft">): boolean {
   const paperId = event.paper_id;
   if (!paperId) return false;
   const current = useGlossaryDrafts.getState().drafts[paperId];
   // A null jobId: the job ended before its start request returned.
   if (current?.status === "running" && (current.jobId === null || current.jobId === event.job_id)) {
     setDraft(paperId, event.status === "succeeded"
-      ? { status: "done", jobId: event.job_id, terms: (event.result?.terms ?? []) as Term[] } : null);
+      ? { status: "done", jobId: event.job_id, terms: event.result.terms } : null);
   }
   const draft = useGlossaryDrafts.getState().drafts[paperId];
   return draft?.status === "done" && draft.jobId === event.job_id;

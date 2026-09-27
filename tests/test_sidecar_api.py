@@ -292,7 +292,7 @@ def test_translate_ask_export_workflow(test_env, tmp_path):
                 break
             time.sleep(0.05)
         assert job.result is not None
-        assert "papeer://" in job.result["answer"]  # Citation link!
+        assert "papeer://" in job.result.answer  # Citation link!
 
     # Messages
     msgs = client.get(f"/api/papers/{paper_id}/messages").json()
@@ -326,7 +326,7 @@ def test_reader_search_bookmarks_glossary_and_scoped_question(test_env):
     client, _ = test_env
     imported = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)],
         "collection": "研究 / 制御"}).json()["job_id"])
-    paper_id = imported.result["paper_ids"][0]
+    paper_id = imported.result.paper_ids[0]
     base = f"/api/papers/{paper_id}"
 
     with fitz.open(FIXTURE_PDF) as pdf:
@@ -351,7 +351,7 @@ def test_reader_search_bookmarks_glossary_and_scoped_question(test_env):
     with patch("sidecar.deps.create_provider", FakeProvider):
         job = _wait(client.post(f"{base}/translate", json={"pages": "1"}).json()["job_id"])
         assert job.status == "succeeded"
-        first_fingerprint = job.result["translation_version"]
+        first_fingerprint = job.result.translation_version
         scoped = _wait(client.post(f"{base}/ask", json={"question": "結果は？",
             "scope": "selected", "paper_ids": [paper_id]}).json()["job_id"])
         assert scoped.status == "succeeded"
@@ -362,8 +362,8 @@ def test_reader_search_bookmarks_glossary_and_scoped_question(test_env):
     with patch("sidecar.deps.create_provider", FakeProvider):
         updated = _wait(client.post(f"{base}/translate", json={"pages": "1"}).json()["job_id"])
     assert updated.status == "succeeded"
-    assert updated.result["already_translated_pages"] == []
-    assert updated.result["translation_version"] == first_fingerprint
+    assert updated.result.already_translated_pages == []
+    assert updated.result.translation_version == first_fingerprint
 
 
 def test_removed_compatibility_routes_stay_removed():
@@ -394,7 +394,7 @@ def test_scoped_question_only_uses_selected_papers(test_env):
             page.insert_text((72, 72), f"Adaptive controller experiment {index} and measured tracking error.")
             doc.save(path)
         job = _wait(client.post("/api/papers/import", json={"paths": [str(path)], "collection": collection}).json()["job_id"])
-        ids.append(job.result["paper_ids"][0])
+        ids.append(job.result.paper_ids[0])
     with patch("sidecar.deps.create_provider", FakeProvider):
         selected = _wait(client.post(f"/api/papers/{ids[0]}/ask", json={"question": "tracking error?",
             "scope": "selected", "paper_ids": [ids[1]]}).json()["job_id"])
@@ -402,8 +402,8 @@ def test_scoped_question_only_uses_selected_papers(test_env):
             "scope": "collection", "collection": "情報"}).json()["job_id"])
     for job in (selected, collection):
         assert job.status == "succeeded"
-        assert ids[1] in job.result["answer"]
-        assert ids[0] not in job.result["answer"]
+        assert ids[1] in job.result.answer
+        assert ids[0] not in job.result.answer
 
 
 def test_collection_rules_match_old_library(test_env):
@@ -418,8 +418,8 @@ def test_collection_rules_match_old_library(test_env):
     assert renamed.json()["name"] == "制御工学 / 輪講"
 
     job = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)], "collection": "制御工学 / 輪講"}).json()["job_id"])
-    assert job.result["added"] == 1
-    paper_id = job.result["paper_ids"][0]
+    assert job.result.added == 1
+    paper_id = job.result.paper_ids[0]
 
     deleted = client.delete("/api/collections/制御工学")
     assert deleted.json()["moved"] == [paper_id]
@@ -434,20 +434,20 @@ def test_collection_rules_match_old_library(test_env):
 
     # Importing the same PDF again opens the existing paper instead of adding one.
     again = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
-    assert again.result == {"paper_ids": [paper_id], "added": 0}
+    assert again.result.model_dump() == {"paper_ids": [paper_id], "added": 0}
 
 
 def test_import_announces_page_counts_before_each_paper(test_env):
     client, tmp_dir = test_env
     events = []
-    with patch.object(job_manager, "broadcast", side_effect=events.append):
+    with patch.object(job_manager, "broadcast", side_effect=lambda event: events.append(event.model_dump())):
         job = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
-    pages = client.get(f"/api/papers/{job.result['paper_ids'][0]}").json()["pages"]
+    pages = client.get(f"/api/papers/{job.result.paper_ids[0]}").json()["pages"]
     imports = [e for e in events if e["type"].startswith("import.")]
     # The library shows placeholder rows keyed by the path as sent, so both events echo it back.
     assert imports == [
         {"type": "import.pages", "pages": {str(FIXTURE_PDF): pages}},
-        {"type": "import.item", "path": str(FIXTURE_PDF), "paper_id": job.result["paper_ids"][0]},
+        {"type": "import.item", "path": str(FIXTURE_PDF), "paper_id": job.result.paper_ids[0]},
     ]
 
 
@@ -459,14 +459,14 @@ def test_imports_requested_together_run_in_turn(test_env):
     second = client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"]
     first, second = _wait(first), _wait(second)
     assert (first.status, second.status) == ("succeeded", "succeeded")
-    assert first.result["added"] == 1
-    assert second.result == {"paper_ids": first.result["paper_ids"], "added": 0}
+    assert first.result.added == 1
+    assert second.result.model_dump() == {"paper_ids": first.result.paper_ids, "added": 0}
 
 
 def test_paper_metadata_reading_and_export_guards(test_env, tmp_path):
     client, library_root = test_env
     job = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
-    paper_id = job.result["paper_ids"][0]
+    paper_id = job.result.paper_ids[0]
 
     assert client.patch(f"/api/papers/{paper_id}", json={"year": "2024", "author": "Smith"}).status_code == 200
     assert client.patch(f"/api/papers/{paper_id}", json={"year": ""}).status_code == 200
@@ -515,12 +515,12 @@ def test_paper_metadata_reading_and_export_guards(test_env, tmp_path):
     assert (tmp_path / "b.pdf").is_file()
     assert not (folder / "interleaved.pdf").exists()
     prepared = _wait(client.post(f"/api/papers/{paper_id}/interleaved").json()["job_id"])
-    built = Path(prepared.result["path"])
+    built = Path(prepared.result.path)
     assert built == (folder / "interleaved.pdf").resolve()
     stamp = built.stat().st_mtime_ns
     # Opened again with the translation unchanged, the same file is reused; the export copies it.
     again = _wait(client.post(f"/api/papers/{paper_id}/interleaved").json()["job_id"])
-    assert Path(again.result["path"]) == built and built.stat().st_mtime_ns == stamp
+    assert Path(again.result.path) == built and built.stat().st_mtime_ns == stamp
     started = client.post(f"/api/papers/{paper_id}/export", json={"kind": "interleaved", "destination": str(tmp_path / "i.pdf")})
     assert _wait(started.json()["job_id"]).status == "succeeded"
     assert (tmp_path / "i.pdf").read_bytes() == built.read_bytes()
@@ -618,7 +618,7 @@ def test_legacy_settings_file_is_served_in_the_new_shape(test_env):
 def test_unknown_effort_for_one_run_is_rejected(test_env):
     client, _ = test_env
     imported = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
-    paper_id = imported.result["paper_ids"][0]
+    paper_id = imported.result.paper_ids[0]
     response = client.post(f"/api/papers/{paper_id}/translate", json={"pages": "1", "effort": "ultra"})
     assert response.status_code == 400 and "effort" in response.json()["detail"]
 
@@ -634,7 +634,7 @@ def test_api_connection_needs_no_login(test_env):
 def test_ask_with_attached_passages(test_env):
     client, _ = test_env
     imported = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
-    base = f"/api/papers/{imported.result['paper_ids'][0]}"
+    base = f"/api/papers/{imported.result.paper_ids[0]}"
     requests = []
 
     class RecordingProvider(FakeProvider):

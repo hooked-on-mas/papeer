@@ -12,6 +12,7 @@ from papeer import __version__
 from papeer.core.code_version import application_version
 from papeer.core.errors import NotFound
 from sidecar import deps
+from sidecar.job_types import JobInfo
 from sidecar.schemas import HealthResponse, UIStateModel
 from sidecar.ui_state import load_ui_state, save_ui_state
 
@@ -73,15 +74,25 @@ def put_ui_state(body: UIStateModel) -> dict[str, str]:
     return {"status": "saved"}
 
 
-@router.get("/api/jobs")
-def get_jobs() -> list[dict[str, Any]]:
-    return [job.model_dump() for job in deps.job_manager.get_jobs()]
+@router.get("/api/jobs", response_model=list[JobInfo])
+def get_jobs() -> list[JobInfo]:
+    """The running jobs; how a finished one ended is GET /api/jobs/{job_id}."""
+    return [job for job in deps.job_manager.get_jobs() if job.running]
 
 
 @router.post("/api/jobs/cancel-all")
 def cancel_all_jobs() -> dict[str, int]:
     manager = deps.job_manager
     return {"cancelled": sum(manager.cancel_job(job.job_id) for job in manager.get_jobs() if job.running)}
+
+
+@router.get("/api/jobs/{job_id}", response_model=JobInfo)
+def get_job(job_id: str) -> JobInfo:
+    """A running job, or one of the last finished ones (jobs.FINISHED_JOBS_KEPT) with its result or error."""
+    job = deps.job_manager.get_job(job_id)
+    if job is None:
+        raise NotFound("ジョブが見つかりません。")
+    return job
 
 
 @router.post("/api/jobs/{job_id}/cancel")

@@ -18,6 +18,7 @@ from papeer.core.storage import normalize_collection_name
 from papeer.pdf.pdf_viewer import pdf_page_count
 from papeer.providers import Cancelled
 from sidecar import deps
+from sidecar.job_types import ImportItemEvent, ImportPagesEvent, JobKind
 from sidecar.jobs import ConcurrencyConflict, TurnQueue
 from sidecar.schemas import (
     BibtexExportRequest,
@@ -84,7 +85,7 @@ def submit_import(action: Any, before_turn: Any = None) -> str:
             import_turns.release(ticket)
 
     try:
-        return deps.job_manager.submit_job("import", queued, paper_id=None).job_id
+        return deps.job_manager.submit_job(JobKind.IMPORT, queued, paper_id=None).job_id
     except ConcurrencyConflict:
         import_turns.release(ticket)
         raise
@@ -101,8 +102,8 @@ def import_papers(body: ImportRequest) -> dict[str, str]:
     def announce_pages() -> None:
         # Page counts are cheap, so the library can show them on its placeholder rows
         # long before text extraction (or an earlier import) finishes. Keyed by the path as sent.
-        deps.job_manager.broadcast({"type": "import.pages", "pages": {
-            source: pdf_page_count(path) for source, path in zip(body.paths, paths)}})
+        deps.job_manager.broadcast(ImportPagesEvent(pages={
+            source: pdf_page_count(path) for source, path in zip(body.paths, paths)}))
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, Any]:
         imported_ids: list[str] = []
@@ -116,7 +117,7 @@ def import_papers(body: ImportRequest) -> dict[str, str]:
             added += is_new
             lib.document(paper_id)
             # Also a library change: the client refreshes the list, then drops the placeholder row.
-            deps.job_manager.broadcast({"type": "import.item", "path": source, "paper_id": paper_id})
+            deps.job_manager.broadcast(ImportItemEvent(path=source, paper_id=paper_id))
         return {"paper_ids": imported_ids, "added": added}
 
     return {"job_id": submit_import(action, announce_pages)}

@@ -6,10 +6,11 @@ from contextlib import asynccontextmanager
 import json
 import re
 import sys
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -19,6 +20,7 @@ from papeer.core.paths import app_env
 from papeer.translation import translation_preview
 from sidecar import deps
 from sidecar.errors import AnswerUnexpectedErrors, error_response, log_to_file, where
+from sidecar.job_types import event_schemas
 from sidecar.routes import ai_jobs, drive, ink, papers, reading, settings, system
 
 
@@ -49,9 +51,11 @@ app = FastAPI(
 )
 
 
-# What must still answer while a sync, backup or restore holds the library: reading its progress,
-# and stopping it or the whole app (closing the window cancels the job, then calls /shutdown).
+# What must still answer while a sync, backup or restore holds the library: reading its progress (and how
+# the jobs a reconnecting window waited on ended), and stopping it or the whole app (closing the window
+# cancels the job, then calls /shutdown).
 SNAPSHOT_READS = {"/health", "/api/jobs", "/api/drive"}
+SNAPSHOT_JOB_READ = re.compile(r"/api/jobs/[^/]+")
 SNAPSHOT_CONTROLS = re.compile(r"/api/jobs/(?:cancel-all|[^/]+/cancel)|/shutdown")
 # What a background sync lets through (deps.snapshot_blocks): the PDFs, images and summary that pdf.js,
 # <img> and the summary pane load, which have no way to wait and send again (unlike apiRequest). Their
@@ -70,7 +74,7 @@ def allowed_during_snapshot(method: str, path: str) -> bool:
     if method == "OPTIONS":
         return True
     if method == "GET":
-        return path in SNAPSHOT_READS
+        return path in SNAPSHOT_READS or SNAPSHOT_JOB_READ.fullmatch(path) is not None
     return method == "POST" and SNAPSHOT_CONTROLS.fullmatch(path) is not None
 
 
@@ -148,9 +152,23 @@ for module in (system, settings, papers, ai_jobs, reading, ink, drive):
 app.include_router(system.public)
 
 
+def openapi() -> dict[str, Any]:
+    """The API's schema (never served: openapi_url=None), with the events of /ws/events among its components."""
+    if app.openapi_schema is None:
+        schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+        components = schema.setdefault("components", {}).setdefault("schemas", {})
+        for name, event_schema in event_schemas().items():
+            components.setdefault(name, event_schema)
+        app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = openapi
+
+
 @app.websocket("/ws/events")
 async def ws_events(websocket: WebSocket, token: str | None = Query(None)) -> None:
-    """Job progress and library changes, pushed to the frontend."""
+    """Job progress and library changes, pushed to the frontend (the events of sidecar/job_types.py)."""
     if not deps.token_matches(token):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return

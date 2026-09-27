@@ -115,7 +115,7 @@ export async function runDriveSync(choice?: string, heads?: string[], confirm = 
         // Stopped on request: not an error (the status line already says so).
         if (event.status === "cancelled") { status = "cancelled"; resolve(); return; }
         if (event.status !== "succeeded") { reject(new Error(event.error || "同期を完了できませんでした。")); return; }
-        status = event.result?.status;
+        status = event.result.status;
         // A background sync found another PC's library to take in; the caller takes it in with the waiting screen.
         if (status === "deferred") { resolve(); return; }
         if (status === "conflict" || status === "review") {
@@ -124,16 +124,16 @@ export async function runDriveSync(choice?: string, heads?: string[], confirm = 
           return;
         }
         reportSyncOutcome(null);
-        if (event.result?.reloaded) {
+        if (event.result.reloaded) {
           reloading = true;
           useStore.setState({ uiStateLoaded: false, activePaperId: null, paperPages: {}, currentPage: 1,
             librarySearch: "", currentCollection: "", selectedFolder: null, expandedCollections: null,
             moveHistory: [], chatAttachments: [], chatInputs: {} });
           // While the app is closing, the close goes on and the next launch opens the new library.
           reloadUnlessClosing(() => window.location.reload());
-        } else if (event.result?.not_set_aside?.length) {
+        } else if (event.result.not_set_aside?.length) {
           showToast({ title: "選んだデータで同期しました", description: "選ばなかった同期データの一部は退避できませんでした（設定 → 保存先・同期）。", tone: "error" });
-        } else if (event.result?.set_aside?.length) {
+        } else if (event.result.set_aside?.length) {
           showToast({ title: "選んだデータで同期しました", description: "選ばなかったデータは退避しています（設定 → バックアップ → 退避データから復元）。", tone: "success" });
         } else if (background) {
           // The automatic sync every minute: the status bar only, which clears itself.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from contextlib import contextmanager
 import re
 import threading
@@ -8,19 +9,27 @@ import time
 import uuid
 from typing import Any, Callable, Iterator
 
+from pydantic import BaseModel
+
 from papeer.core.errors import Conflict
 from sidecar.errors import job_error_message
-from sidecar.schemas import JobInfo
+from sidecar.job_types import (
+    SNAPSHOT_KINDS, EventModel, JobFinishedEvent, JobInfo, JobKind, JobPageReadyEvent, JobProgressEvent,
+    JobStartedEvent, job_result,
+)
 
 COUNTER = re.compile(r"(\d+)\s*/\s*(\d+)")
-# The jobs that copy or replace the whole library (deps.SNAPSHOT_JOBS names the same ones).
-SNAPSHOT_KINDS = frozenset({"backup", "restore", "drive-sync"})
+# How many finished jobs GET /api/jobs/{job_id} still answers for, the oldest forgotten first: a window
+# that reconnects to the event stream asks how the jobs it waited on ended (jobEvents.ts).
+FINISHED_JOBS_KEPT = 50
 
 
 class JobManager:
     def __init__(self, event_loop: asyncio.AbstractEventLoop | None = None) -> None:
         self._lock = threading.Lock()
+        # The running jobs and the last FINISHED_JOBS_KEPT finished ones (in _finished, oldest first).
         self._jobs: dict[str, JobInfo] = {}
+        self._finished: deque[str] = deque()
         self._events: dict[str, threading.Event] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._listeners: set[asyncio.Queue] = set()
@@ -40,9 +49,11 @@ class JobManager:
         with self._lock:
             self._listeners.discard(queue)
 
-    def broadcast(self, data: dict[str, Any]) -> None:
+    def broadcast(self, event: EventModel | dict[str, Any]) -> None:
+        """Send an event (sidecar/job_types.py) to every open /ws/events."""
         if not self._loop:
             return
+        data = event.model_dump(mode="json") if isinstance(event, BaseModel) else event
         with self._lock:
             listeners = list(self._listeners)
         for queue in listeners:
@@ -52,6 +63,7 @@ class JobManager:
                 pass
 
     def get_jobs(self) -> list[JobInfo]:
+        """The running jobs and the finished ones still kept (see `running`)."""
         with self._lock:
             return list(self._jobs.values())
 
@@ -108,10 +120,11 @@ class JobManager:
 
     def submit_job(
         self,
-        kind: str,
+        kind: JobKind | str,
         action: Callable[[threading.Event, Callable[[str], None], Callable[[int], None]], Any],
         paper_id: str | None = None,
     ) -> JobInfo:
+        kind = JobKind(kind)
         with self._lock:
             if self._closed:
                 raise ConcurrencyConflict("アプリを終了しています。")
@@ -129,7 +142,7 @@ class JobManager:
                 if any(j.running and j.paper_id == paper_id for j in self._jobs.values()):
                     raise ConcurrencyConflict(f"この論文（{paper_id}）の処理がすでに実行中です。")
             else:
-                if kind != 'import' and any(j.running and j.paper_id is None for j in self._jobs.values()):
+                if kind != JobKind.IMPORT and any(j.running and j.paper_id is None for j in self._jobs.values()):
                     raise ConcurrencyConflict("別の全体処理がすでに実行中です。")
 
             job_id = uuid.uuid4().hex[:12]
@@ -165,15 +178,8 @@ class JobManager:
                 job.message = message
                 job.done = done
                 job.total = total
-            self.broadcast({
-                "type": "job.progress",
-                "job_id": job_id,
-                "paper_id": paper_id,
-                "kind": kind,
-                "message": message,
-                "done": done,
-                "total": total,
-            })
+            self.broadcast(JobProgressEvent(job_id=job_id, paper_id=paper_id, kind=kind, message=message,
+                                            done=done, total=total))
 
         def page_ready(*args: Any) -> None:
             if len(args) == 2:
@@ -182,28 +188,16 @@ class JobManager:
                 p_id, page = paper_id, args[0]
             else:
                 return
-            self.broadcast({
-                "type": "job.page_ready",
-                "paper_id": p_id,
-                "page": page,
-            })
+            self.broadcast(JobPageReadyEvent(paper_id=p_id, page=page))
 
         def runner() -> None:
             try:
-                result = action(cancel_event, progress, page_ready)
+                # A result that is not its kind's model (job_types.RESULT_TYPES) fails the job as a bug.
+                result = job_result(kind, action(cancel_event, progress, page_ready))
                 with self._lock:
                     job.running = False
                     job.status = "succeeded"
                     job.result = result
-                self.broadcast({
-                    "type": "job.finished",
-                    "job_id": job_id,
-                    "paper_id": paper_id,
-                    "kind": kind,
-                    "status": "succeeded",
-                    "result": result,
-                    "cancelled": False,
-                })
             except Exception as exc:
                 is_cancelled = cancel_event.is_set()
                 error = job_error_message(exc, kind)
@@ -212,36 +206,25 @@ class JobManager:
                     job.cancelled = is_cancelled
                     job.status = "cancelled" if is_cancelled else "failed"
                     job.error = error
-                self.broadcast({
-                    "type": "job.finished",
-                    "job_id": job_id,
-                    "paper_id": paper_id,
-                    "kind": kind,
-                    "status": "cancelled" if is_cancelled else "failed",
-                    "error": error,
-                    "cancelled": is_cancelled,
-                })
             finally:
-                # Cleanup job after a delay so that clients and tests can read the final status
-                def cleanup():
-                    time.sleep(5)
-                    with self._lock:
-                        self._jobs.pop(job_id, None)
-                        self._events.pop(job_id, None)
-                        self._threads.pop(job_id, None)
-                threading.Thread(target=cleanup, daemon=True).start()
+                with self._lock:
+                    self._finish(job_id)
+                    finished = JobFinishedEvent(**dict(job))  # The result as it is, not validated again.
+            self.broadcast(finished)
 
         try:
-            self.broadcast({
-                "type": "job.started",
-                "job_id": job_id,
-                "paper_id": paper_id,
-                "kind": kind,
-                "message": job.message,
-            })
+            self.broadcast(JobStartedEvent(job_id=job_id, paper_id=paper_id, kind=kind, message=job.message))
         finally:
             released.set()
         return job
+
+    def _finish(self, job_id: str) -> None:
+        """Keep a job that has just ended among the finished ones, forgetting the oldest beyond FINISHED_JOBS_KEPT."""
+        self._events.pop(job_id, None)
+        self._threads.pop(job_id, None)
+        self._finished.append(job_id)
+        while len(self._finished) > FINISHED_JOBS_KEPT:
+            self._jobs.pop(self._finished.popleft(), None)
 
 
 class ConcurrencyConflict(Conflict):

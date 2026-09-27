@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 from papeer.core.config import Settings
@@ -159,16 +159,3 @@ class UIStateModel(BaseModel):
     sort: int = 0
     expanded_collections: list[str] = Field(default_factory=list)
 
-
-class JobInfo(BaseModel):
-    job_id: str
-    paper_id: str | None = None
-    kind: str
-    message: str = ""
-    done: int | None = None
-    total: int | None = None
-    status: str = "running"
-    running: bool = True
-    cancelled: bool = False
-    result: Any | None = None
-    error: str | None = None

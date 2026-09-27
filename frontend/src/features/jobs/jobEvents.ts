@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { ApiError, apiRequest, authToken, backendPort } from "@/api/client";
 import { paperDisplayName, type PaperData } from "@/api/hooks";
+import type { JobInfo, ServerEvent } from "@/api/jobTypes";
 import { isRunning, useStore, type Job } from "@/store";
 import { notifyIfAway, shell } from "@/shell";
 import { removePendingImports, setPendingPages } from "@/app/pendingImports";
@@ -14,13 +15,15 @@ import { useLastUsage, usageSummary, type Usage } from "@/lib/usage";
 import { readingTime } from "@/lib/statusLifetime";
 import { markConnected, markDisconnected, useConnection } from "./connection";
 import { addJobFailure, clearJobFailure, showJobFailure } from "./jobFailures";
-import { jobHandler, type JobContext, type JobFinished } from "./jobHandlers";
+import { jobHandler, type JobContext, type JobFinished, type JobSucceeded } from "./jobHandlers";
 import { AI_PLAN_JOBS, isJobKind, type JobKind } from "./jobKinds";
 import { backgroundFailureTitle, doneTitle, failureTitle, jobKindLabel, QUICK_RECONNECT_MS, statusWhenCancelEnds } from "./jobList";
+import { endedWhileAway, lostJob, settledJob, shownJob, stillRunning } from "./jobReconnect";
 
 export type { JobFinished } from "./jobHandlers";
 
-type Watcher = (event: JobFinished) => void;
+type Watcher<K extends JobKind = JobKind> = (event: JobFinished<K>) => void;
+type JobMeta = { kind: JobKind; paperId: string | null };
 
 /** Shown from a cancel request until the job ends, which replaces it (see markCancelling). */
 const CANCELLING_STATUS = "中止しています… API通信中の場合は応答またはタイムアウトまで待ちます。";
@@ -28,18 +31,22 @@ const CANCELLING_STATUS = "中止しています… API通信中の場合は応�
 // Jobs asked to stop that have not ended yet; while any is left, the status says CANCELLING_STATUS.
 const cancelRequested = new Set<string>();
 
-const watchers = new Map<string, Watcher[]>();
-// A fast job can finish before its starter registers a watcher.
+// With the job's kind and paper, to tell its watchers how it ended should the sidecar have forgotten it.
+const watchers = new Map<string, JobMeta & { callbacks: Watcher[] }>();
+// A fast job can finish before its starter registers a watcher; also keeps an end from being handled twice.
 const recentlyFinished = new Map<string, JobFinished>();
 
 /** Run `watcher` once when the job ends (immediately if it already has). */
-export function watchJob(jobId: string, watcher: Watcher): void {
+function watchJob<K extends JobKind>(jobId: string, meta: { kind: K; paperId: string | null }, watcher: Watcher<K>): void {
+  // A job's end is of the kind it was started as, the only events this watcher is given.
+  const callback = watcher as unknown as Watcher;
   const finished = recentlyFinished.get(jobId);
   if (finished) {
-    watcher(finished);
+    callback(finished);
     return;
   }
-  watchers.set(jobId, [...(watchers.get(jobId) ?? []), watcher]);
+  const entry = watchers.get(jobId) ?? { ...meta, callbacks: [] };
+  watchers.set(jobId, { ...entry, callbacks: [...entry.callbacks, callback] });
 }
 
 /** Show a just-started job as running, unless its finished event already arrived. */
@@ -55,15 +62,15 @@ export function showStartedJob(jobId: string, meta: { kind: JobKind; paperId: st
 }
 
 /** Start a sidecar job and show it as running before the first progress event. */
-export async function startJob(
+export async function startJob<K extends JobKind>(
   path: string,
   body: unknown,
-  meta: { kind: JobKind; paperId: string | null },
-  watcher?: Watcher,
+  meta: { kind: K; paperId: string | null },
+  watcher?: Watcher<K>,
 ): Promise<string> {
   const response = await apiRequest<{ job_id: string }>("POST", path, body ?? {});
   showStartedJob(response.job_id, meta);
-  if (watcher) watchJob(response.job_id, watcher);
+  if (watcher) watchJob(response.job_id, meta, watcher);
   return response.job_id;
 }
 
@@ -176,8 +183,14 @@ async function reportFailure(event: JobFinished, visible: boolean, queryClient: 
   });
 }
 
-function handleSuccess(event: JobFinished, visible: boolean, queryClient: QueryClient): void {
-  const usage: Usage | null = event.result?.usage ?? null;
+/** The AI usage a succeeded job reports, if its kind reports one. */
+function resultUsage(event: JobSucceeded): Usage | null {
+  const result = event.result;
+  return typeof result === "object" && "usage" in result ? result.usage ?? null : null;
+}
+
+function handleSuccess(event: JobSucceeded, visible: boolean, queryClient: QueryClient): void {
+  const usage = resultUsage(event);
   if (usage) useLastUsage.setState({ usage, kind: event.kind });
   const withUsage = (message: string) => usage ? `${message}（${usageSummary(usage)}）` : message;
   const status = (message: string) => {
@@ -204,6 +217,8 @@ function handleSuccess(event: JobFinished, visible: boolean, queryClient: QueryC
 }
 
 function handleFinished(event: JobFinished, queryClient: QueryClient): void {
+  // Once only: after a reconnect, a job asked about may also send its job.finished.
+  if (recentlyFinished.has(event.job_id)) return;
   const store = useStore.getState();
   const visible = !event.paper_id || event.paper_id === store.activePaperId;
   // First, so that a status set below (a job's own outcome) is not cleared.
@@ -225,9 +240,29 @@ function handleFinished(event: JobFinished, queryClient: QueryClient): void {
 
   recentlyFinished.set(event.job_id, event);
   setTimeout(() => recentlyFinished.delete(event.job_id), 60_000);
-  const pending = watchers.get(event.job_id) ?? [];
+  const pending = watchers.get(event.job_id)?.callbacks ?? [];
   watchers.delete(event.job_id);
   pending.forEach((watcher) => watcher(event));
+}
+
+/**
+ * A job that ended while the event stream was down: handled as its job.finished would have been, from
+ * how the sidecar says it ended. One the sidecar no longer knows ends as a failure (lostJob), so that
+ * what waits on it is released; while the sidecar cannot be reached, it stays for the next reconnect.
+ * One still running (started after the job list was read) is shown in the list again.
+ */
+async function settleEndedJob(jobId: string, meta: JobMeta | null, queryClient: QueryClient): Promise<void> {
+  const handled = (id: string) => recentlyFinished.has(id);
+  let event: JobFinished | null;
+  try {
+    const settled = settledJob(await apiRequest<JobInfo>("GET", `/api/jobs/${jobId}`), handled);
+    if (settled && "running" in settled) useStore.getState().addJob(settled.running);
+    event = settled && "finished" in settled ? settled.finished : null;
+  } catch (error) {
+    if (!(error instanceof ApiError && error.status === 404)) return;
+    event = meta && lostJob(jobId, meta);
+  }
+  if (event) handleFinished(event, queryClient);
 }
 
 function syncTaskbar(jobs: Job[]): void {
@@ -257,15 +292,22 @@ export function useJobEvents(): void {
 
     const refreshJobs = async () => {
       try {
-        const serverJobs = await apiRequest<any[]>("GET", "/api/jobs");
-        const running = serverJobs.filter((j) => j.running);
-        forgetEndedCancels(running.map((j) => j.job_id));
-        useStore.setState({
-          activeJobs: running.map((j) => ({
-            job_id: j.job_id, paper_id: j.paper_id, kind: j.kind, message: j.message,
-            done: j.done, total: j.total, status: "running" as const,
-          })),
-        });
+        const serverJobs = await apiRequest<JobInfo[]>("GET", "/api/jobs");
+        // Not those whose job.finished came first on the new stream.
+        const running = stillRunning(serverJobs, (id) => recentlyFinished.has(id));
+        const runningIds = running.map((j) => j.job_id);
+        // Those waited on, and those shown as running, that have ended meanwhile.
+        const shown = useStore.getState().activeJobs;
+        const metaOf = (jobId: string): JobMeta | null => {
+          const watched = watchers.get(jobId);
+          if (watched) return { kind: watched.kind, paperId: watched.paperId };
+          const job = shown.find((j) => j.job_id === jobId);
+          return job?.kind ? { kind: job.kind, paperId: job.paper_id ?? null } : null;
+        };
+        const ended = endedWhileAway(runningIds, [...watchers.keys(), ...shown.map((j) => j.job_id)], (id) => recentlyFinished.has(id));
+        forgetEndedCancels(runningIds);
+        useStore.setState({ activeJobs: running.map(shownJob) });
+        for (const jobId of ended) void settleEndedJob(jobId, metaOf(jobId), queryClient);
       } catch {
         // The sidecar may still be starting; the next reconnect retries.
       }
@@ -277,8 +319,8 @@ export function useJobEvents(): void {
       if (token) url.searchParams.set("token", token);
       ws = new WebSocket(url);
       ws.onopen = () => {
-        // Events sent while the stream was down are lost: the running jobs are read again, and what
-        // a missed library.changed or job.finished would have refreshed is refreshed now.
+        // Events sent while the stream was down are lost: the running jobs are read again (and those that
+        // ended meanwhile asked about), and what a missed library.changed would have refreshed is refreshed now.
         if (useConnection.getState().everConnected) {
           for (const root of [QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.reading]) {
             queryClient.invalidateQueries({ queryKey: [root] });
@@ -289,9 +331,9 @@ export function useJobEvents(): void {
         void refreshJobs();
       };
       ws.onmessage = (message) => {
-        let data: any;
+        let data: ServerEvent;
         try {
-          data = JSON.parse(message.data);
+          data = JSON.parse(message.data) as ServerEvent;
         } catch {
           return;
         }
@@ -310,7 +352,7 @@ export function useJobEvents(): void {
           }
         } else if (data.type === "job.finished") {
           store.removeJob(data.job_id);
-          handleFinished(data as JobFinished, queryClient);
+          handleFinished(data, queryClient);
         } else if (data.type === "library.changed") {
           // Once the events stop coming, and not while an action on several papers runs (libraryRefresh.ts).
           requestLibraryRefresh(() => {
@@ -319,7 +361,7 @@ export function useJobEvents(): void {
             }
           });
         } else if (data.type === "import.pages") {
-          setPendingPages(data.pages ?? {});
+          setPendingPages(data.pages);
         } else if (data.type === "import.item") {
           // Keep the placeholder until the real row is in the list, so nothing flickers.
           queryClient.invalidateQueries({ queryKey: [QK.collections] });

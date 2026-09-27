@@ -14,6 +14,7 @@ from papeer.core.service import PaperService
 from papeer.core.translation_plan import translation_plan as plan_translation
 from papeer.layout.page_selection import parse_page_selection
 from sidecar import deps
+from sidecar.job_types import JobKind
 from sidecar.schemas import AskRequest, ExportRequest, TranslateRequest
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
@@ -37,7 +38,7 @@ def translate_paper(paper_id: str, body: TranslateRequest) -> dict[str, str]:
         deps.library_changed()
         return result
 
-    return deps.submit_job("translate", action, paper_id)
+    return deps.submit_job(JobKind.TRANSLATE, action, paper_id)
 
 
 @router.get("/api/papers/{paper_id}/translation-plan")
@@ -61,7 +62,7 @@ def generate_article(paper_id: str) -> dict[str, str]:
         deps.library_changed()
         return {"content": result, "usage": service.usage()}
 
-    return deps.submit_job("article", action, paper_id)
+    return deps.submit_job(JobKind.ARTICLE, action, paper_id)
 
 
 @router.get("/api/papers/{paper_id}/messages")
@@ -91,7 +92,7 @@ def ask_paper(paper_id: str, body: AskRequest) -> dict[str, str]:
                              retrieval_query=body.retrieval_query, max_pages=body.max_pages)
         return {"answer": answer, "usage": service.usage()}
 
-    return deps.submit_job("ask", action, paper_id)
+    return deps.submit_job(JobKind.ASK, action, paper_id)
 
 
 @router.post("/api/papers/{paper_id}/export")
@@ -107,7 +108,7 @@ def export_paper(paper_id: str, body: ExportRequest) -> dict[str, str]:
             exports.build_paired_pdf(files, body.kind, dest)
             return {"kind": body.kind, "destination": str(dest)}
 
-        return {"status": "started", **deps.submit_job("export", action, paper_id), "destination": str(dest)}
+        return {"status": "started", **deps.submit_job(JobKind.EXPORT, action, paper_id), "destination": str(dest)}
 
     exports.copy_export(files, body.kind, dest)
     return {"status": "exported", "destination": str(dest)}
@@ -124,4 +125,4 @@ def prepare_interleaved(paper_id: str) -> dict[str, str]:
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, str]:
         return {"kind": "interleaved", "path": str(exports.interleaved_cache(files, progress).resolve())}
 
-    return deps.submit_job("interleaved", action, paper_id)
+    return deps.submit_job(JobKind.INTERLEAVED, action, paper_id)

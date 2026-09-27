@@ -15,6 +15,7 @@ from papeer.providers import Cancelled, check_cancel
 from papeer.core.service import PaperService
 from papeer.core.terminology import global_glossary, save_global_glossary
 from sidecar import deps
+from sidecar.job_types import JobKind
 
 
 class TemplateRequest(BaseModel):
@@ -181,7 +182,7 @@ def glossary_draft(paper_id: str, body: GlossaryDraftRequest):
     settings = deps.settings_for_run(body.model, body.effort)
     def action(cancel, progress, _page_ready):
         return tools.draft_glossary(lib, paper_id, deps.provider_for(settings, cancel), cancel, progress, existing)
-    return deps.submit_job("glossary-draft", action, paper_id)
+    return deps.submit_job(JobKind.GLOSSARY_DRAFT, action, paper_id)
 
 @router.get("/api/papers/{paper_id}/paragraphs")
 def paragraphs(paper_id: str):
@@ -212,7 +213,7 @@ def draft_revision(paper_id: str, body: RevisionRequest):
         text = tools.draft_revision(lib, paper_id, paragraph, body.instruction,
                                    deps.provider_for(settings, cancel), cancel, body.char_budget)
         return {"text": text, "unit_id": paragraph["id"]}
-    return deps.submit_job("revision-draft", action, paper_id)
+    return deps.submit_job(JobKind.REVISION_DRAFT, action, paper_id)
 
 @router.post("/api/papers/{paper_id}/revision")
 def adopt_revision(paper_id: str, body: RevisionRequest):
@@ -230,7 +231,7 @@ def adopt_revision(paper_id: str, body: RevisionRequest):
         tools.save_revision_history(lib.folder(paper_id), body.unit_id, current["text"], text)
         deps.library_changed()
         return result
-    return deps.submit_job("revision", action, paper_id)
+    return deps.submit_job(JobKind.REVISION, action, paper_id)
 
 @router.get("/api/papers/{paper_id}/citation-excerpts")
 def citation_excerpts(paper_id: str, page: int):
@@ -252,7 +253,7 @@ def backup(body: BackupRequest):
         except Cancelled:
             raise Cancelled("バックアップを中止しました。") from None
         return {"path": body.path}
-    return deps.submit_job("backup", action)
+    return deps.submit_job(JobKind.BACKUP, action)
 
 @router.post("/api/restore")
 def restore(body: RestoreRequest):
@@ -274,4 +275,4 @@ def restore(body: RestoreRequest):
             print(f"警告: 復元後の同期確認の印を保存できませんでした: {exc!r}", file=sys.stderr)
         deps.library_changed()
         return {"previous_path": str(previous)}
-    return deps.submit_job("restore", action)
+    return deps.submit_job(JobKind.RESTORE, action)

@@ -71,15 +71,15 @@ def test_health_check():
 
 def test_job_outcome():
     running = {"job_id": "a", "kind": "import", "running": True, "status": "running"}
-    assert job_outcome([running], "a") is None
+    assert job_outcome(running, "a") is None
     done = {**running, "running": False, "status": "succeeded", "result": {"paper_ids": ["x"]}}
-    assert job_outcome([{"job_id": "b"}, done], "a") == done
+    assert job_outcome(done, "a") == done
     with pytest.raises(SmokeFailure, match="failed で終わりました: 壊れたPDF"):
-        job_outcome([{**running, "running": False, "status": "failed", "error": "壊れたPDF"}], "a")
-    with pytest.raises(SmokeFailure, match="ジョブ一覧にありません"):
-        job_outcome([], "a")
-    with pytest.raises(SmokeFailure, match="ジョブ一覧にありません"):
-        job_outcome({"detail": "unexpected"}, "a")
+        job_outcome({**running, "running": False, "status": "failed", "error": "壊れたPDF"}, "a")
+    with pytest.raises(SmokeFailure, match="応答が不正"):
+        job_outcome({"job_id": "b"}, "a")
+    with pytest.raises(SmokeFailure, match="応答が不正"):
+        job_outcome([done], "a")
 
 
 def test_stub_answers_pass_the_translation_checks():
