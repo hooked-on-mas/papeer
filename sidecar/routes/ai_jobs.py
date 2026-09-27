@@ -94,7 +94,7 @@ def export_paper(paper_id: str, body: ExportRequest) -> dict[str, str]:
     lib = deps.get_library()
     files = PaperFiles(deps.paper_folder(lib, paper_id))
     try:
-        dest = exports.check_export(files, body.kind, Path(body.destination))
+        dest = exports.check_export(files, body.kind, Path(body.destination), lib.root)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     dest.parent.mkdir(parents=True, exist_ok=True)

@@ -78,17 +78,20 @@ async def protect_library_snapshot(request: Request, call_next):
             deps.end_library_request()
 
 
+# The Tauri window's origins (macOS/Linux, then Windows). Only a development sidecar (`just dev-sidecar`,
+# which `tauri dev` talks to) also answers the Vite dev server the window, or a browser, loads the
+# frontend from; the packaged sidecar, a PyInstaller exe, serves the release build alone.
+APP_ORIGINS = ("tauri://localhost", "http://tauri.localhost", "https://tauri.localhost")
+DEV_ORIGINS = ("http://localhost:1420", "http://localhost:5173", "http://127.0.0.1:1420", "http://127.0.0.1:5173")
+
+
+def allowed_origins(packaged: bool) -> list[str]:
+    return list(APP_ORIGINS if packaged else APP_ORIGINS + DEV_ORIGINS)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "tauri://localhost",
-        "http://tauri.localhost",
-        "https://tauri.localhost",
-        "http://localhost:1420",
-        "http://localhost:5173",
-        "http://127.0.0.1:1420",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=allowed_origins(getattr(sys, "frozen", False)),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

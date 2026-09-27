@@ -217,8 +217,8 @@ def test_concurrency_conflict(test_env):
     time.sleep(1.1)
 
 
-def test_translate_ask_export_workflow(test_env):
-    client, tmp_dir = test_env
+def test_translate_ask_export_workflow(test_env, tmp_path):
+    client, _ = test_env
 
     # 1. Import
     import_resp = client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]})
@@ -274,7 +274,7 @@ def test_translate_ask_export_workflow(test_env):
     assert msgs[1]["role"] == "assistant"
 
     # 4. Export translated PDF
-    export_dest = tmp_dir / "exported_translated.pdf"
+    export_dest = tmp_path / "exported_translated.pdf"
     exp_resp = client.post(
         f"/api/papers/{paper_id}/export",
         json={"kind": "translated", "destination": str(export_dest)},
@@ -417,8 +417,8 @@ def test_imports_requested_together_run_in_turn(test_env):
     assert second.result == {"paper_ids": first.result["paper_ids"], "added": 0}
 
 
-def test_paper_metadata_reading_and_export_guards(test_env):
-    client, tmp_dir = test_env
+def test_paper_metadata_reading_and_export_guards(test_env, tmp_path):
+    client, library_root = test_env
     job = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
     paper_id = job.result["paper_ids"][0]
 
@@ -437,12 +437,19 @@ def test_paper_metadata_reading_and_export_guards(test_env):
     assert reading["in_progress"] is False
     assert client.get(f"/api/papers/{paper_id}/translation-text/1").json() == {"blocks": []}
 
-    # Untranslated papers cannot be exported, and library files are never overwritten.
-    blocked = client.post(f"/api/papers/{paper_id}/export", json={"kind": "translated", "destination": str(tmp_dir / "x.pdf")})
+    # Untranslated papers cannot be exported, and nothing is written inside the library.
+    blocked = client.post(f"/api/papers/{paper_id}/export", json={"kind": "translated", "destination": str(tmp_path / "x.pdf")})
     assert blocked.status_code == 400
     folder = Path(client.get(f"/api/papers/{paper_id}").json()["folder_path"])
-    same = client.post(f"/api/papers/{paper_id}/export", json={"kind": "original", "destination": str(folder / "original.pdf")})
-    assert same.status_code == 400
+    long_form = Path("\\\\?\\" + str(library_root.resolve()))
+    for inside in (folder / "original.pdf", folder / "copy.pdf", library_root / "library.sqlite3",
+                   library_root / "exports" / "x.pdf", long_form / "copy.pdf", Path(f"{library_root} ") / "copy.pdf"):
+        refused = client.post(f"/api/papers/{paper_id}/export", json={"kind": "original", "destination": str(inside)})
+        assert refused.status_code == 400 and refused.json()["detail"] == "ライブラリの外に保存先を選んでください。"
+    assert not (folder / "copy.pdf").exists() and not (library_root / "exports").exists()
+    assert client.post(f"/api/papers/{paper_id}/export",
+                       json={"kind": "original", "destination": str(tmp_path / "original.pdf")}).status_code == 200
+    assert (tmp_path / "original.pdf").read_bytes() == (folder / "original.pdf").read_bytes()
 
     with patch("sidecar.deps.create_provider", FakeProvider):
         _wait(client.post(f"/api/papers/{paper_id}/translate", json={"pages": "1"}).json()["job_id"])
@@ -457,9 +464,9 @@ def test_paper_metadata_reading_and_export_guards(test_env):
     assert client.get(f"/api/papers/{paper_id}/translation-text/99").json() == {"blocks": []}
 
     # Paired PDFs run as paper jobs; interleaved.pdf is built for external viewers when first opened.
-    started = client.post(f"/api/papers/{paper_id}/export", json={"kind": "bilingual", "destination": str(tmp_dir / "b.pdf")})
+    started = client.post(f"/api/papers/{paper_id}/export", json={"kind": "bilingual", "destination": str(tmp_path / "b.pdf")})
     assert _wait(started.json()["job_id"]).status == "succeeded"
-    assert (tmp_dir / "b.pdf").is_file()
+    assert (tmp_path / "b.pdf").is_file()
     assert not (folder / "interleaved.pdf").exists()
     prepared = _wait(client.post(f"/api/papers/{paper_id}/interleaved").json()["job_id"])
     built = Path(prepared.result["path"])
@@ -468,9 +475,9 @@ def test_paper_metadata_reading_and_export_guards(test_env):
     # Opened again with the translation unchanged, the same file is reused; the export copies it.
     again = _wait(client.post(f"/api/papers/{paper_id}/interleaved").json()["job_id"])
     assert Path(again.result["path"]) == built and built.stat().st_mtime_ns == stamp
-    started = client.post(f"/api/papers/{paper_id}/export", json={"kind": "interleaved", "destination": str(tmp_dir / "i.pdf")})
+    started = client.post(f"/api/papers/{paper_id}/export", json={"kind": "interleaved", "destination": str(tmp_path / "i.pdf")})
     assert _wait(started.json()["job_id"]).status == "succeeded"
-    assert (tmp_dir / "i.pdf").read_bytes() == built.read_bytes()
+    assert (tmp_path / "i.pdf").read_bytes() == built.read_bytes()
 
 
 def test_prompts_customize_and_reset(test_env):

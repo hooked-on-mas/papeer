@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 from typing import Callable
 
+from papeer.core.destinations import inside_library
 from papeer.core.fileio import atomic_output
 from papeer.core.paths import PaperFiles
 from papeer.pdf.pdf_engine import bilingual_pdf, interleaved_pdf
@@ -15,14 +16,17 @@ KINDS = ("translated", "original", "interleaved", "bilingual", "markdown")
 PAIRED_KINDS = ("interleaved", "bilingual")
 
 
-def check_export(files: PaperFiles, kind: str, destination: Path) -> Path:
-    """The resolved destination, after checking the export can be made; raises ValueError otherwise."""
+def check_export(files: PaperFiles, kind: str, destination: Path, library_root: Path) -> Path:
+    """The resolved destination, after checking the export can be made; raises ValueError otherwise.
+
+    Nothing is written inside the library: a copy there could replace a paper's files or the
+    database, and would itself be backed up and synced as if it belonged to the library.
+    """
     if kind not in KINDS:
         raise ValueError("不明なエクスポート形式です。")
     destination = destination.resolve()
-    library_files = {p.resolve() for p in (files.original_pdf, files.translated_pdf, files.interleaved_pdf, files.article_md)}
-    if destination in library_files:
-        raise ValueError("別の保存先を選んでください。")
+    if inside_library(destination, library_root):
+        raise ValueError("ライブラリの外に保存先を選んでください。")
     if kind in ("translated", *PAIRED_KINDS):
         preview = read_preview(files.folder)
         if preview and not preview["complete"]:

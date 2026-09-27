@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, model_validator
 
+from papeer.core.destinations import inside_library
 from papeer.core.fileio import atomic_write_bytes
 from papeer.core.paths import PaperFiles
 from papeer.pdf.pdf_capture import capture_png
@@ -136,7 +137,7 @@ def export_ink(paper_id: str, body: InkExportRequest):
     if not source.is_file():
         raise HTTPException(400, "保存するPDFがありません。")
     destination = Path(body.destination).resolve() if body.destination else None
-    if destination and (destination.is_relative_to((lib.root / "papers").resolve()) or destination.suffix.lower() != ".pdf"):
+    if destination and (inside_library(destination, lib.root) or destination.suffix.lower() != ".pdf"):
         raise HTTPException(400, "ライブラリの外に、拡張子 .pdf の保存先を選んでください。")
     try:
         data = annotated_pdf(source, lib.ink_by_page(paper_id, body.side))

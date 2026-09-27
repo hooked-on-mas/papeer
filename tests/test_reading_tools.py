@@ -501,3 +501,12 @@ def test_glossary_draft_can_extend_large_global_dictionary(library):
     result = draft_glossary(lib, identity, DraftProvider(), threading.Event(), lambda _: None, terms)
     assert result == {"terms": [{"source": "tracking error", "target": "追従誤差"}]}
     assert global_glossary(lib.root) == terms
+
+
+def test_backup_is_never_written_inside_the_library(library):
+    lib, _ = library
+    long_form = Path("\\\\?\\" + str(lib.root.resolve()))
+    for inside in (lib.root / "backup.zip", lib.root / "papers" / "backup.zip", long_form / "backup.zip"):
+        with pytest.raises(ValueError, match="データ保存フォルダーの外"):
+            create_backup(lib, inside)
+    assert not list(lib.root.rglob("backup.zip"))

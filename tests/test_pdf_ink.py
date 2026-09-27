@@ -124,6 +124,10 @@ def test_export_all_pages_preserves_sources_and_blocks_library_overwrite(ink_env
     assert client.post(path, json={"side": "original", "destination": str(dest)}).status_code == 200
     assert dest.read_bytes().startswith(b"%PDF-")
     assert client.post(path, json={"side": "original", "destination": str(folder / "original.pdf")}).status_code == 400
+    long_form = "\\\\?\\" + str(lib.root.resolve())
+    for inside in (str(lib.root / "ink.pdf"), long_form + "\\ink.pdf", str(lib.root) + " \\ink.pdf"):
+        assert client.post(path, json={"side": "original", "destination": inside}).status_code == 400
+    assert not (lib.root / "ink.pdf").exists()
     assert (folder / "original.pdf").read_bytes() == original
     assert (folder / "translated.pdf").read_bytes() == original
     (folder / "translation-preview.json").write_text(json.dumps({"run_id": "a" * 32, "complete": False}))
