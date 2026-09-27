@@ -35,7 +35,7 @@ RENDER_EXCLUDED = {
     # Translation inputs are keyed by TranslationKey (units, prompt, provider/model and the
     # hand-maintained TRANSLATION_PROTOCOL), not by these files.
     "translation/translation.py": "翻訳の依頼と検証（翻訳キャッシュは TRANSLATION_PROTOCOL で管理）",
-    "translation/translation_context.py": "依頼にだけ添える前後の文脈",
+    "translation/translation_context.py": "依頼の形（送る項目・前後の文脈・辞書）",
     "translation/translation_preview.py": "翻訳中のページ表示の置き場所",
     "providers/__init__.py": "AI 接続（翻訳キャッシュは接続先・モデルで区別）",
     "providers/antigravity.py": "AI 接続（翻訳キャッシュは接続先・モデルで区別）",

@@ -11,7 +11,7 @@ import unicodedata
 
 from papeer.layout.math_layout import MATH_TOKEN
 from papeer.providers import AnswerRejected, TransientError, check_cancel, parse_json_answer
-from papeer.translation.translation_context import recovery_context
+from papeer.translation.translation_context import recovery_context, request_text
 
 
 TRANSLATION_SCHEMA = {
@@ -136,6 +136,77 @@ class TranslationKey:
             return True
         # Old page records name their model but not the provider; the model decides.
         return self._legacy(entry.get("version")) and entry.get("model") == self.model
+
+
+# What makes a source text read on its own (standalone_source): the end of a sentence, a number or
+# label in front ("2.1", "(a)", "Table 1"), or the look of a heading.
+_SENTENCE_END = re.compile(r"[.!?:;。．！？：；][\"'”’)\]）」』]*$")
+_NUMBERED = re.compile(r"(?:\(?[0-9A-Za-z]{1,3}[.)]|[0-9]+(?:\.[0-9]+)*|[IVX]+\.)(?:\s|$)")
+_LABEL = re.compile(r"(?:Tab|Fig|Eq)\.|(?:Table|Figure|Algorithm|Appendix|Section|Chapter|Theorem|Lemma|Proof|"
+                    r"Definition|Proposition|Corollary|Remark|Example|Assumption|Equation)\b")
+_OPEN_END = frozenset("a an the of to in on at by for from with and or nor but as than that which who whose "
+                      "whom where when while if is are was were be been being this these those its their our "
+                      "we it can may will would should must has have had not into onto via per".split())
+
+
+def standalone_source(text: str) -> bool:
+    """Whether a source text reads on its own, so that the same text elsewhere means the same.
+
+    False for what looks like a piece of a sentence whose continuation was not detected: it begins
+    in lower case, or it has neither the end of a sentence nor the look of a heading or label, that
+    is a phrase of up to 12 words not ending in a word such as "the" or "of", with a number or label
+    in front ("2.1", "(a)", "Table 1"), in title case, or of up to 3 words. Translated alone, such a
+    piece takes its meaning from the sentence around it.
+    """
+    body = " ".join(MATH_TOKEN.sub(" ", text).split())
+    if not body or body[0].islower():
+        return False
+    words = re.findall(r"[A-Za-z]+", body)
+    if _SENTENCE_END.search(body) or not words:
+        return True
+    if len(words) > 12 or (body[-1].isalpha() and words[-1].casefold() in _OPEN_END):
+        return False
+    title = all(word[0].isupper() for word in words if len(word) >= 4)
+    return bool(_NUMBERED.match(body) or _LABEL.match(body)) or len(words) <= 3 or title
+
+
+def shared_translations(units: list[dict], pending: list[dict], done: dict[str, str],
+                        excluded=frozenset(), marginal=frozenset()) -> tuple[dict[str, list[str]], dict[str, dict]]:
+    """Translate each source text of a paper once: units with the same text (formula markers
+    included, which name their block, and so the same glossary) take the same translation.
+    Running heads repeated on every page are the common case.
+
+    Only texts that read on their own are shared (standalone_source), and those of running heads
+    and margin notes (ids in `marginal`) always: a piece of a sentence is translated in its place.
+    A unit of `pending` not in `done` whose text has a translation in `done` takes it into `done` at
+    once: the first in reading order, leaving out `excluded` (paragraphs kept from another key, and
+    translations revised by hand, which apply to their own paragraph only). Of the rest, the first
+    unit of each text is sent. Returns (copies, followers): for each unit sent, the ids that take
+    its translation; for each of those ids, the unit sent for it. The copies are saved under their
+    own ids like any translation, so the cache keeps its format and page_fingerprint its input.
+    """
+    def shared(unit):
+        return unit["id"] in marginal or standalone_source(unit["text"])
+
+    translated: dict[str, str] = {}
+    for unit in units:
+        if unit["id"] in done and unit["id"] not in excluded and shared(unit):
+            translated.setdefault(unit["text"], done[unit["id"]])
+    first: dict[str, dict] = {}
+    copies: dict[str, list[str]] = {}
+    followers: dict[str, dict] = {}
+    for unit in pending:
+        if unit["id"] in done or not shared(unit):
+            continue
+        if unit["text"] in translated:
+            done[unit["id"]] = translated[unit["text"]]
+        elif unit["text"] in first:
+            leader = first[unit["text"]]
+            copies.setdefault(leader["id"], []).append(unit["id"])
+            followers[unit["id"]] = leader
+        else:
+            first[unit["text"]] = unit
+    return copies, followers
 
 
 class RetryLimitExceeded(ValueError):
@@ -492,7 +563,7 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
         return fresh
 
     def request(fresh):
-        return provider.generate(instruction, json.dumps(fresh, ensure_ascii=False), TRANSLATION_SCHEMA)
+        return provider.generate(instruction, request_text(fresh), TRANSLATION_SCHEMA)
 
     def first_answer(fresh, send):
         """The answer to the first request of `fresh`, or None when it came back unusable."""

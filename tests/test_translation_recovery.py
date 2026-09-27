@@ -9,6 +9,7 @@ from papeer.providers import AnswerRejected, Cancelled
 from papeer.providers.common import TransientError
 from papeer.translation.translation import (MAX_BLOCK_RETRIES, MAX_UNANSWERED_SENDS, RetryState,
                                    _assemble_parts, translate_batch, validate_translations)
+from papeer.translation.translation_context import request_payload
 
 
 A = "[[PD_MATH_p1b1_0]]"
@@ -336,7 +337,7 @@ class TranslationRecoveryTests(unittest.TestCase):
         state = RetryState.from_cache(journal[-1])
         saved = self.run_batch_with_state(resumed, UNITS, state, persist)
         # One normal request for both blocks, no recovery request and no retry spent.
-        self.assertEqual([call[1] for call in resumed.calls], [UNITS])
+        self.assertEqual([call[1] for call in resumed.calls], [request_payload(UNITS)])
         self.assertEqual(saved, [{"good": "正常な文章。", "bad": A + "には" + B + "を使う。"}])
         self.assertEqual(journal[-1]["unanswered"], {"good": 2, "bad": 2})  # Recorded before the request went out.
         self.assertEqual(state.to_cache(), {"attempts": {"good": 1, "bad": 1}, "retry_calls": 0, "unanswered": {}})
@@ -399,7 +400,7 @@ class TranslationRecoveryTests(unittest.TestCase):
         saved = []
         translate_batch(provider, UNITS, threading.Event(), lambda _: None, saved.append, state)
         self.assertEqual(saved, [{"good": "正常。"}])
-        self.assertEqual(provider.calls[0][1], UNITS[:1])
+        self.assertEqual(provider.calls[0][1], request_payload(UNITS[:1]))
         self.assertEqual(state.attempts["bad"], 4)
 
     def test_old_exhausted_record_gets_one_more_retry(self):

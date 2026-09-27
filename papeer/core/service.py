@@ -15,11 +15,11 @@ from papeer.providers import ProviderBackend, check_cancel
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library
 from papeer.layout.math_layout import restore_formula_text
-from papeer.translation.translation import RetryState, TranslationKey, translate_batches, page_fingerprint
+from papeer.translation.translation import RetryState, TranslationKey, shared_translations, translate_batches, page_fingerprint
 from papeer.core.code_version import loaded_version
 from papeer.translation.translation_preview import PREVIOUS_CACHE, preview_page, remove_unused_runs, translated_page, translated_page_numbers
 from papeer.translation.translation_context import contextual_units
-from papeer.layout.reading_flow import unit_pages, expand_pages, materialize_flows
+from papeer.layout.reading_flow import unit_pages, expand_pages, materialize_flows, translation_blocks
 from papeer.core.summary_figures import summary_figures
 from papeer.core import exports, prompts
 from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision, glossary_for_folder
@@ -159,6 +159,20 @@ class PaperService:
                 if identity not in by_id or identity not in done:
                     raise ValueError("この段落の原文または辞書が変更されています。先に再翻訳してください。")
                 done[identity] = validate_revision(by_id[identity]["text"], text)
+        # A source text found more than once (a running head on every page) is translated once.
+        # A translation revised by hand (now or earlier) applies to its own paragraph only.
+        try:
+            history = files.read_json(files.translation_revisions, [])
+        except ValueError:  # A damaged history only loses this exclusion; translation goes on.
+            history = []
+        revised = set(replacements or ()) | {entry.get("unit_id") for entry in (history if isinstance(history, list) else [])
+                                            if isinstance(entry, dict)}
+        marginal_blocks = {b["id"] for b in translation_blocks(document) if b.get("reading_margin") or b.get("running_header")}
+        known = len(done)
+        copies, followers = shared_translations(units, [u for u in units if unit_pages(u) & selected], done,
+                                                foreign_ids | revised, {u["id"] for u in units if u["block"] in marginal_blocks})
+        if len(done) > known or followers:
+            self.progress(f"同じ原文の段落は訳を使い回します（AIに送らない段落：{len(done) - known + len(followers)}件）")
         already_done = {n for n in selected if source_pages[n]
                         and all(u["id"] in done for u in source_pages[n])}
         if already_done:
@@ -171,7 +185,8 @@ class PaperService:
         by_page = {number: [u for u in units if number in unit_pages(u)]
                    for number in range(1, document["page_count"] + 1)}
         chunks = [chunk for number in sorted({u['page'] for u in selected_units})
-                  for chunk in batches([u for u in selected_units if u['page'] == number and u['id'] not in done])]
+                  for chunk in batches([u for u in selected_units if u['page'] == number
+                                        and u['id'] not in done and u['id'] not in followers])]
         preview = {"fingerprint": fingerprint, "run_id": uuid.uuid4().hex,
                    "requested_pages": sorted(requested), "pages": [], "skipped_pages": [], "page_errors": {}, "target_pages": sorted(selected),
                    "total_pages": document["page_count"], "complete": False}
@@ -210,7 +225,8 @@ class PaperService:
         self.library.update(paper_id, status="翻訳中")
         try:
             def skipped(unit):
-                return unit["id"] not in done and retry_state.exhausted(unit)
+                # A unit taking another's translation is given up with the unit sent for it.
+                return unit["id"] not in done and retry_state.exhausted(followers.get(unit["id"], unit))
 
             def publish_ready():
                 for number, page_units in by_page.items():
@@ -260,6 +276,8 @@ class PaperService:
 
             def accept(values):
                 done.update(values)
+                for identity, text in values.items():
+                    done.update(dict.fromkeys(copies.get(identity, ()), text))
                 save()
                 publish_ready()
 
@@ -420,7 +438,7 @@ class PaperService:
                     # Keep each image and its evidence together across chunk boundaries.
                     page_units.append({"id": figure["id"], "page": page["number"],
                                        "text": f"{image}{caption}"})
-        chunks = list(batches(page_units, limit=18000))
+        chunks = list(batches(page_units, limit=18000, size=lambda chunk: sum(len(x["text"]) + 100 for x in chunk)))
         notes = []
         for index, chunk in enumerate(chunks):
             check_cancel(self.cancel)

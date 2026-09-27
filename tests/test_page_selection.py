@@ -29,7 +29,7 @@ from test_workflow import FakeProvider
 
 
 # The built-in translation.txt this test last approved (test_builtin_translation_prompt_edits_are_decided).
-BUILTIN_TRANSLATION_PROMPT_SHA256 = 'ba81d7adc7ad4747c848d34313425193809a93595f312ba0142e54289dbfb450'
+BUILTIN_TRANSLATION_PROMPT_SHA256 = '3a67b4686483bdd0bdfd5aaaa6e48ea5ab4e4fb703575544aa01b93997831f60'
 
 
 class PageSelectionTests(unittest.TestCase):
@@ -267,7 +267,7 @@ class PageSelectionTests(unittest.TestCase):
                     if kind in refuse:
                         raise HTTPError('http://localhost:1234/v1', 400, 'unsupported', Message(),
                                         io.BytesIO(b'response_format is not supported'))  # type: ignore[arg-type]
-                    units = json.loads(payload['messages'][1]['content'])
+                    units = json.loads(payload['messages'][1]['content'])['blocks']
                     content = json.dumps({'translations': [{'id': u['id'], 'text': '適応制御の検証結果。'} for u in units]},
                                          ensure_ascii=False)
                     return json.dumps({'choices': [{'finish_reason': 'stop', 'message': {'content': content}}]}).encode()
@@ -454,7 +454,7 @@ class PageSelectionTests(unittest.TestCase):
             sent = []
             class RecordingProvider(FakeProvider):
                 def generate(inner, instruction, data, schema=None):
-                    sent.extend(json.loads(data))
+                    sent.extend(json.loads(data)['blocks'])
                     return super().generate(instruction, data, schema)
             provider = RecordingProvider()
             messages = []
@@ -587,7 +587,7 @@ class PageSelectionTests(unittest.TestCase):
             class RecordingProvider(FakeProvider):
                 requested_pages = []
                 def generate(inner, instruction, data, schema=None):
-                    inner.requested_pages.append({u['page'] for u in json.loads(data)})
+                    inner.requested_pages.append({int(u['id'][1:].split('b')[0]) for u in json.loads(data)['blocks']})
                     return super().generate(instruction, data, schema)
 
             provider = RecordingProvider()

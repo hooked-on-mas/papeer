@@ -45,9 +45,10 @@ class GatedProvider:
 
     def generate(self, instruction, data, schema=None):
         units = json.loads(data)
-        if isinstance(units, dict):  # A recovery request for one paragraph.
+        if "blocks" not in units:  # A recovery request for one paragraph.
             self.recoveries.append(units)
             return RECOVERED
+        units = units["blocks"]
         self.threads.add(threading.current_thread())
         # Each block must be recorded as sent before its request leaves.
         self.seen_attempts.append(all(self.persisted.get(u["id"]) == 1 for u in units))
@@ -106,7 +107,7 @@ class TranslateBatchesTests(unittest.TestCase):
                 time.sleep(0.05)
                 with lock:
                     in_flight -= 1
-                return answer(json.loads(data))
+                return answer(json.loads(data)["blocks"])
 
         self.run_batches(CountingProvider(), concurrency=2)
         self.assertEqual(len(self.accepted), 3)
@@ -161,7 +162,7 @@ class TranslateBatchesTests(unittest.TestCase):
             persisted = {}
 
             def generate(self, instruction, data, schema=None):
-                name = json.loads(data)[0]["id"]
+                name = json.loads(data)["blocks"][0]["id"]
                 if name == "a":
                     raise RuntimeError("未ログインです。")
                 time.sleep(0.2)  # Still in flight when the error of "a" stops the run.

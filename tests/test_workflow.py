@@ -39,6 +39,8 @@ class FakeProvider:
             raise Cancelled("test interruption")
         if schema:
             units = json.loads(data)
+            if isinstance(units, dict) and "blocks" in units:  # The first request of a batch.
+                units = units["blocks"]
             if isinstance(units, dict) and "source_parts" in units:
                 return json.dumps({"parts": [dict(part) if part["kind"] == "math" else
                     {"kind": "text", "text": "適応制御の検証結果。追従誤差を18%削減した。"}
@@ -236,8 +238,8 @@ class WorkflowTests(unittest.TestCase):
                     self.assertFalse((folder / "translated.pdf").exists())
                     self.assertIn((self.paper_id, 1), notifications)
                     raise Cancelled("pause after page one")
-                units = json.loads(data)
-                self.assertEqual({u["page"] for u in units}, {1})
+                units = json.loads(data)["blocks"]
+                self.assertEqual({u["id"].split("b")[0] for u in units}, {"p1"})
                 return super().generate(instruction, data, schema)
 
         with self.assertRaises(Cancelled):
@@ -303,7 +305,7 @@ class WorkflowTests(unittest.TestCase):
                     # The unanswered retry is sent again as it was.
                     self.assertIn("source_parts", payload)
                 else:
-                    self.assertFalse({u["id"] for u in payload} & set(cache["translations"]))
+                    self.assertFalse({u["id"] for u in payload["blocks"]} & set(cache["translations"]))
                 return super().generate(instruction, data, schema)
 
         resumed = ResumeProvider()
@@ -315,7 +317,7 @@ class WorkflowTests(unittest.TestCase):
         class InvalidProvider(FakeProvider):
             def generate(inner, instruction, data, schema=None):
                 payload = json.loads(data)
-                if isinstance(payload, list):
+                if "blocks" in payload:
                     answer = json.loads(super().generate(instruction, data, schema))
                     if not hasattr(inner, "missing_id"):
                         inner.missing_id = answer["translations"].pop()["id"]

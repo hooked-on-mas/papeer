@@ -33,6 +33,8 @@ class FakeProvider:
             raise Cancelled("test interruption")
         if schema:
             units = json.loads(data)
+            if isinstance(units, dict) and "blocks" in units:  # The first request of a batch.
+                units = units["blocks"]
             if isinstance(units, dict) and "source_parts" in units:
                 return json.dumps({
                     "parts": [
