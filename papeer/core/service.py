@@ -22,7 +22,7 @@ from papeer.translation.translation_context import contextual_units
 from papeer.layout.reading_flow import unit_pages, expand_pages, materialize_flows, translation_blocks
 from papeer.core.summary_figures import summary_figures
 from papeer.core import exports, prompts
-from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision, glossary_for_folder
+from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision, glossary_for_folder, glossary_warnings, kept_glossary_warnings
 
 
 def link_citations(answer: str, allowed: dict[str, int]) -> str:
@@ -56,22 +56,31 @@ def link_citations(answer: str, allowed: dict[str, int]) -> str:
     return re.sub(r"\[([0-9a-f]{32}:[^\[\]]+)\]", replace, answer)
 
 
-def page_translation_text(folder: Path, document: dict, page: int) -> list[str]:
-    """Translated blocks of one page with inline math as text.
+def cached_translations(folder: Path, document: dict) -> tuple[list[dict], dict[str, str]]:
+    """The paper's units (with their glossary) and the saved translations of those still current.
 
-    The translated PDF draws inline math as images, so text copied from it lacks the formulas.
+    Cached pages count only while they match the current extraction: after a re-extraction
+    the math tokens of renumbered blocks would resolve to other formulas.
     """
     units = translation_units(document)
-    glossary = glossary_for_folder(folder)
-    apply_glossary(units, glossary)
+    apply_glossary(units, glossary_for_folder(folder))
     cache = PaperFiles.read_json(PaperFiles(folder).translation_cache, {})
-    # Cached pages count only while they match the current extraction: after a re-extraction
-    # the math tokens of renumbered blocks would resolve to other formulas.
     done = {}
     for number, entry in cache.get("completed_pages", {}).items():
         page_units = [u for u in units if int(number) in unit_pages(u)]
         if page_units and entry.get("source") == page_fingerprint(page_units):
             done.update(entry.get("translations", {}))
+    return units, done
+
+
+def page_translation_text(folder: Path, document: dict, page: int,
+                          cached: tuple[list[dict], dict[str, str]] | None = None) -> list[str]:
+    """Translated blocks of one page with inline math as text.
+
+    The translated PDF draws inline math as images, so text copied from it lacks the formulas.
+    `cached` is cached_translations(folder, document), for a caller reading several pages.
+    """
+    units, done = cached or cached_translations(folder, document)
     started = {u["block"] for u in units if u["id"] in done}
     block_text = {}
     for unit in units:
@@ -345,6 +354,11 @@ class PaperService:
             report["skipped_block_pages"] = sorted({page for unit in units if unit["id"] in skipped_ids for page in unit_pages(unit)})
             report["readability_warnings"] = report.get("readability_warnings", []) + [
                 item for item in previous_report.get("readability_warnings", []) if item.get("page") in retained]
+            # Paragraphs whose glossary rendering the translation lacks, for review (kept for kept pages).
+            report["glossary_warnings"] = glossary_warnings(
+                [u for u in units if unit_pages(u) & (set(preview["pages"]) - retained) and u["id"] in done], done)
+            report["glossary_warnings"] += kept_glossary_warnings(
+                previous_report.get("glossary_warnings", []), {u["id"]: u for u in units if unit_pages(u) <= retained})
             report["requested_pages"] = sorted(requested)
             report["translation_version"] = version
             # The code that drew this run's pages; preserved pages keep their earlier drawing.

@@ -13,6 +13,7 @@ import { onAppEvent, type AppEvents } from "@/lib/appEvents";
 import { paragraphOfSelection } from "@/lib/pdfSelection";
 import { QK } from "@/lib/queryKeys";
 import { useOpenEdit } from "@/lib/pendingSaves";
+import { GlossaryWarnings } from "./GlossaryWarnings";
 
 type Paragraph = { id: string; page: number; pages: number[]; source: string; text: string };
 type Revision = { id: string; unit_id: string; before: string; after: string; created_at: string };
@@ -49,8 +50,11 @@ function PaperReview({ paperId }: { paperId: string }) {
     [...(reading.report?.skipped_pages ?? []), ...(reading.preview?.skipped_pages ?? [])].forEach(page => add(page,
       reading.preview?.page_errors?.[String(page)] ?? reading.report?.page_errors?.[String(page)] ?? "PDF生成をスキップしました"));
   }
-  // The issues tab only appears when there is something to check.
-  const view = issues.size ? tab : "edit";
+  // The issues tab only appears when there is something to check. Glossary warnings have a list of
+  // their own there and do not count among the issues shown on the toolbar.
+  const glossaryWarnings = reading?.report?.glossary_warnings ?? [];
+  const hasIssues = issues.size > 0 || glossaryWarnings.length > 0;
+  const view = hasIssues ? tab : "edit";
   const { data: paragraphs = [], isFetching, isError } = useQuery({ queryKey: [QK.paragraphs, paperId],
     queryFn: () => apiRequest<Paragraph[]>("GET", `/api/papers/${paperId}/paragraphs`), enabled: open && view === "edit" });
   const { data: history = [] } = useQuery({ queryKey: [QK.revisions, paperId],
@@ -62,6 +66,8 @@ function PaperReview({ paperId }: { paperId: string }) {
     if (!target || isFetching) return;
     setTarget(null);
     if (isError) return;
+    const unit = target.unit && paragraphs.find(p => p.id === target.unit);
+    if (unit) { setSelected(unit); setText(unit.text); return; }
     const candidates = paragraphs.filter(p => p.pages.includes(target.page));
     const index = paragraphOfSelection(target.text, candidates.map(p => target.side === "translated" ? p.text : p.source));
     if (index < 0) { setUnmatched(true); return; }
@@ -99,14 +105,15 @@ function PaperReview({ paperId }: { paperId: string }) {
       setOpen(next);
     }}>
       <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-y-auto">
-        <DialogTitle>{issues.size ? "翻訳の確認・修正" : "翻訳を修正"}</DialogTitle>
-        <DialogDescription>{issues.size ? "要確認箇所へ移動したり、訳文を修正してPDFに反映できます。" : "訳文を段落ごとに修正してPDFに反映できます。"}</DialogDescription>
-        {!!issues.size && <div className="flex gap-2"><Button variant={view === "issues" ? "default" : "outline"} onClick={() => setTab("issues")}>要確認箇所</Button>
+        <DialogTitle>{hasIssues ? "翻訳の確認・修正" : "翻訳を修正"}</DialogTitle>
+        <DialogDescription>{hasIssues ? "要確認箇所へ移動したり、訳文を修正してPDFに反映できます。" : "訳文を段落ごとに修正してPDFに反映できます。"}</DialogDescription>
+        {hasIssues && <div className="flex gap-2"><Button variant={view === "issues" ? "default" : "outline"} onClick={() => setTab("issues")}>要確認箇所</Button>
           <Button variant={view === "edit" ? "default" : "outline"} onClick={() => setTab("edit")}>翻訳を修正</Button></div>}
         {view === "issues" ? <div className="space-y-2 text-sm">
           {[...issues].sort(([a], [b]) => a - b).map(([page, messages]) => <button key={page} className="block w-full text-left border rounded p-3 hover:bg-muted"
             onClick={() => { jumpToPage(page); setOpen(false); }}>p.{page} — {[...messages].join(" / ")}</button>)}
           {!!reading?.report?.skipped_blocks?.length && <p className="text-destructive">翻訳をスキップした段落が{reading.report.skipped_blocks.length}箇所あります。原文と照合してください。</p>}
+          <GlossaryWarnings warnings={glossaryWarnings} />
         </div> : <div className="space-y-3 text-sm">
           {isFetching && <p>段落を読み込み中…</p>}{isError && <p className="text-destructive">段落を読み込めませんでした。</p>}
           {!isFetching && !paragraphs.length && <p>修正できる翻訳済み段落はありません。翻訳後、または辞書変更後の再翻訳後に利用できます。</p>}

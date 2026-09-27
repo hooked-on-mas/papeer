@@ -18,7 +18,7 @@ from papeer.core import prompts
 from papeer.core.paths import PaperFiles
 from papeer import __version__
 from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, newer_papeer
-from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision
+from papeer.core.terminology import effective_glossary, apply_glossary, matching_terms, validate_revision
 from papeer.core.fileio import atomic_output, atomic_write_json, is_temporary
 from papeer.pdf.pdf_engine import translation_units
 
@@ -64,7 +64,7 @@ def draft_glossary(lib, paper_id, provider, cancel, progress, existing):
         progress(f"専門用語の翻訳対応表を作っています… {index + 1}/{len(chunks)}")
         answer = provider.generate(
             prompts.load("glossary_draft"),
-            json.dumps({"source": chunk, "existing_terms": [t for key, t in known.items() if key in chunk.casefold()]}, ensure_ascii=False), schema)
+            json.dumps({"source": chunk, "existing_terms": matching_terms(chunk, list(known.values()))}, ensure_ascii=False), schema)
         try:
             value = parse_json_answer(answer, schema)
         except ValueError:
@@ -78,7 +78,8 @@ def draft_glossary(lib, paper_id, provider, cancel, progress, existing):
             term = {"source": item["source"].strip(), "target": item["target"].strip()}
             key = term["source"].casefold()
             if (term["source"] and term["target"] and max(len(term["source"]), len(term["target"])) <= 100
-                    and key not in known and key in chunk.casefold()):
+                    # In the source, as a translation finds glossary terms (plural, across lines) or as a part.
+                    and key not in known and (key in chunk.casefold() or matching_terms(chunk, [term]))):
                 result.append(term)
                 known[key] = term
     check_cancel(cancel)

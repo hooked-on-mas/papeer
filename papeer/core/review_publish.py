@@ -180,6 +180,9 @@ def _publish(folder, review, manifest, entries):
     if previous_metrics:
         report['previous_aggregate_metrics'] = previous_metrics
     report['readability_warnings'] = [w for w in report.get('readability_warnings', []) if w['page'] not in selected]
+    # The glossary check of the replaced pages no longer applies (the review brings no check of its own).
+    if 'glossary_warnings' in report:
+        report['glossary_warnings'] = [w for w in report['glossary_warnings'] if w.get('page') not in selected]
     page_reports = report.setdefault('reviewed_page_reports', {})
     for result, _, _, _ in entries:
         page_reports[str(result['page'])] = result['report']

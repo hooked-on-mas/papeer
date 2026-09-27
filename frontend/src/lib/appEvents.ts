@@ -6,8 +6,8 @@
 export type AppEvents = {
   "open-translate-dialog": void;
   "open-reader-search": void;
-  /** Opens the translation editor on the page's paragraph containing the selected text. */
-  "open-paragraph-editor": { page: number; side: "original" | "translated"; text: string };
+  /** Opens the translation editor on the page's paragraph containing the selected text (or on `unit`, a paragraph id). */
+  "open-paragraph-editor": { page: number; side: "original" | "translated"; text: string; unit?: string };
   "open-lightbox": { src: string; alt?: string };
   /** Show the paper in the library tree; focus moves the keyboard focus to its row. */
   "reveal-paper": { paperId: string; focus: boolean };
