@@ -2,6 +2,7 @@ import pymupdf
 import pytest
 from fastapi.testclient import TestClient
 
+from _legacy_library import mark_unversioned
 from papeer.core.storage import Library
 from sidecar import app as runtime
 
@@ -28,7 +29,7 @@ def test_legacy_notes_migrate_and_new_positions_survive_reopen(notes_env):
     old = lib.add_bookmark(alpha, 1, "original", "old quote", "疑問", "old note", .42)
     with lib.connection() as db:
         db.execute("ALTER TABLE bookmarks DROP COLUMN anchor_x")
-        db.execute("PRAGMA user_version=0")  # as saved by a version before schema versioning
+        mark_unversioned(db)  # as saved by a version before schema versioning
     reopened = Library(lib.root)
     assert reopened.bookmarks(alpha)[0] == {**old, "anchor_x": 0}
     with TestClient(runtime.app) as client:

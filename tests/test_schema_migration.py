@@ -11,7 +11,7 @@ import zipfile
 from fastapi import HTTPException
 import pytest
 
-from _legacy_library import STAGES, legacy_backup, legacy_library
+from _legacy_library import LATER_COLUMNS, STAGES, legacy_backup, legacy_library, mark_unversioned
 from papeer import __version__
 from papeer.core import storage
 from papeer.core.drive_sync import fingerprint
@@ -72,19 +72,60 @@ def test_libraries_from_before_versioning_reach_the_current_schema(tmp_path, sta
     assert dump(root) == before
 
 
-def test_last_library_before_versioning_upgrades_without_changing_its_contents(tmp_path):
-    # Such a library already has every table and column; only the version number is new.
+def at_first_version(monkeypatch) -> None:
+    """Libraries opened from here on stop at version 1 (the baseline), as the first versioned Papeer made them."""
+    monkeypatch.setattr(storage, "MIGRATIONS", storage.MIGRATIONS[:1])
+    monkeypatch.setattr(storage, "SCHEMA_VERSION", 1)
+
+
+def test_last_library_before_versioning_upgrades_without_changing_its_contents(tmp_path, monkeypatch):
+    # Such a library already has every table and column of the baseline; only the version number is new.
     # Its sync fingerprint must not change, or every PC would publish a revision after updating.
+    # (A later step that changes the schema does change it, once: see the comment above MIGRATIONS.)
     lib = Library(tmp_path / "library")
     identity, _ = lib.import_pdf(SAMPLE_PDF)
-    lib.add_bookmark(identity, 1, "original", "quote", anchor_x=.5)
     lib.create_collection("A / B")
     lib.delete_collection("A", undo_token="undo")
-    set_version(lib.root, 0)
+    with lib.connection() as db:
+        db.execute("INSERT INTO bookmarks(paper_id,page,side,quote,anchor_x) VALUES(?,1,'original','quote',.5)", (identity,))
+        mark_unversioned(db)
     before = fingerprint(lib.root)
+    at_first_version(monkeypatch)
     Library(lib.root)
-    assert database_version(lib.root / "library.sqlite3") == SCHEMA_VERSION
+    assert database_version(lib.root / "library.sqlite3") == 1
     assert fingerprint(lib.root) == before
+
+
+def test_later_columns_lists_what_the_steps_after_the_baseline_add(tmp_path, monkeypatch):
+    # Tests that make a current database look unversioned drop these (_legacy_library.mark_unversioned).
+    latest = columns(Library(tmp_path / "latest").root)
+    at_first_version(monkeypatch)
+    first = columns(Library(tmp_path / "first").root)
+    added = {table: names - first.get(table, set()) for table, names in latest.items()}
+    expected = {table: set(names) for table, names in LATER_COLUMNS.items()}
+    assert {table: names for table, names in added.items() if names} == expected
+
+
+def test_bibliographic_ids_of_earlier_papers_come_from_their_first_page(tmp_path):
+    lib = Library(tmp_path / "library")
+    found, _ = lib.import_pdf(SAMPLE_PDF)
+    first_page = ("arXiv:2101.00001v2 [cs.LG] 4 Jan 2021\nPublished as a conference paper at ICLR 2021\n"
+                  "Deep things\nhttps://doi.org/10.1234/abc.def.")
+    with lib.connection() as db:
+        db.execute("UPDATE pages SET text=? WHERE paper_id=? AND number=1", (first_page, found))
+        # Another paper, with nothing to find on its first page.
+        db.execute("INSERT INTO papers(id,sha256,title,original_name,pages) VALUES(?,?,?,?,1)", ("b" * 32, "x", "Plain", "b.pdf"))
+        db.execute("INSERT INTO pages VALUES(?,1,'no identifiers here')", ("b" * 32,))
+        mark_unversioned(db)
+    lib = Library(lib.root)
+    paper = lib.paper(found)
+    assert (paper["doi"], paper["arxiv_id"], paper["venue"]) == ("10.1234/abc.def", "2101.00001", "ICLR 2021")
+    assert [lib.paper("b" * 32)[name] for name in ("doi", "arxiv_id", "venue")] == ["", "", ""]
+    # Edited by hand, they stay: the step runs once.
+    lib.update(found, doi="", venue="International Conference on Learning Representations")
+    storage.migrate_database(lib.root)
+    paper = Library(lib.root).paper(found)
+    assert (paper["doi"], paper["venue"]) == ("", "International Conference on Learning Representations")
 
 
 def test_a_failed_step_leaves_the_database_as_it_was(tmp_path, monkeypatch):

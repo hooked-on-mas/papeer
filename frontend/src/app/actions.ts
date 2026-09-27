@@ -6,7 +6,7 @@ import { showStartedJob, startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { joinPath, shell } from "@/shell";
 import { useStore, type MovePapersRecord, type MoveRecord } from "@/store";
-import { paperExportFilename } from "@/lib/exportFilename";
+import { bibtexFilename, paperExportFilename } from "@/lib/exportFilename";
 import { addPendingImports, removePendingImports, usePendingImports } from "./pendingImports";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
@@ -428,6 +428,48 @@ export async function saveOriginal(paperId: string): Promise<void> {
     useStore.getState().setStatus(`原文PDFを保存しました：${destination}`);
   } catch (error) {
     showError(error, "保存できませんでした");
+  }
+}
+
+/**
+ * Puts text still being fetched on the clipboard. The write starts during the click, as the image copy
+ * does (InkCapture.tsx), so that the WebView still counts it as the user's action when the text arrives.
+ */
+async function copyWhenReady(text: Promise<string>): Promise<void> {
+  if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+    await navigator.clipboard.write([new ClipboardItem({ "text/plain": text.then((value) => new Blob([value], { type: "text/plain" })) })]);
+  } else {
+    await navigator.clipboard.writeText(await text);
+  }
+}
+
+/** Copies the BibTeX entries of the papers (one, or those selected together), made from the library's own data. */
+export async function copyBibtex(paperIds: string[]): Promise<void> {
+  const request = apiRequest<{ text: string; count: number }>("POST", "/api/papers/bibtex", { paper_ids: paperIds });
+  request.catch(() => undefined); // Reported below, not as an unhandled rejection.
+  try {
+    try {
+      await copyWhenReady(request.then((result) => result.text));
+    } catch (error) {
+      await request; // When the request failed, its error says more than the clipboard's.
+      throw error;
+    }
+    const { count } = await request;
+    useStore.getState().setStatus(count > 1 ? `${count}件の論文の BibTeX をコピーしました。` : "BibTeX をコピーしました。");
+  } catch (error) {
+    showError(error, "BibTeX をコピーできませんでした");
+  }
+}
+
+/** Saves the BibTeX entries of the papers in folder `path` and its subfolders to a .bib file the user chooses. */
+export async function exportFolderBibtex(path: string): Promise<void> {
+  try {
+    const destination = await shell.saveFile(bibtexFilename(path), [{ name: "BibTeX", extensions: ["bib"] }]);
+    if (!destination) return;
+    const result = await apiRequest<{ count: number }>("POST", "/api/collections/bibtex", { collection: path, destination });
+    useStore.getState().setStatus(`${result.count}件の論文の BibTeX を保存しました：${destination}`);
+  } catch (error) {
+    showError(error, "BibTeX を保存できませんでした");
   }
 }
 

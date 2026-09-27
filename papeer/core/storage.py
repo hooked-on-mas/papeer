@@ -13,7 +13,7 @@ import uuid
 from papeer.core.fileio import atomic_write_json, atomic_write_text
 from papeer.pdf.pdf_engine import PDF_LOCK, extract_pdf
 from papeer.core.translation_review import cached_required_translation_pages
-from papeer.core.bibliography import extract_bibliography
+from papeer.core.bibliography import clean_arxiv_id, extract_bibliography, extract_identifiers, typed_doi
 import pymupdf as fitz
 from papeer.layout.math_layout import LAYOUT_VERSION
 from papeer.core.paths import PaperFiles, sync_state_path
@@ -152,6 +152,24 @@ def _baseline(db: sqlite3.Connection, root: Path) -> None:
                    (info["first_author"], info["publication_year"], paper_id))
 
 
+def _bibliographic_ids(db: sqlite3.Connection, _root: Path) -> None:
+    """DOI, arXiv ID and venue of each paper, for citing it (BibTeX).
+
+    Filled from the first page's text the library already holds (pages.text). An import reads the PDF
+    itself instead (its metadata, and the page's text as MuPDF gives it), so the two may find different
+    values for the same paper; opening every PDF here would hold this transaction too long. Each PC
+    derives the same values from the same text, so two PCs that both update agree when they next sync.
+    """
+    for name in ("doi", "arxiv_id", "venue"):
+        db.execute(f"ALTER TABLE papers ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+    # Read row by row: only papers is written meanwhile, not the pages being read.
+    for paper_id, text in db.execute("SELECT paper_id,text FROM pages WHERE number=1"):
+        found = extract_identifiers(text[:20000])
+        if any(found.values()):
+            db.execute("UPDATE papers SET doi=?,arxiv_id=?,venue=? WHERE id=?",
+                       (found["doi"], found["arxiv_id"], found["venue"], paper_id))
+
+
 # Schema migrations. PRAGMA user_version counts the steps a library database has been through.
 # To change the schema or convert stored values (a column, a table, an FTS index, status codes, ...),
 # append a function taking (db, library root) to MIGRATIONS. It runs once, on a database at exactly
@@ -163,8 +181,9 @@ def _baseline(db: sqlite3.Connection, root: Path) -> None:
 # revision once after updating; tables needed only when used (collection_undo, global_glossary) are
 # therefore still created on first use rather than here. They may be missing at any version: a later
 # step that touches them must check whether they exist first (sqlite_master), unlike other tables.
-# Add a test in tests/test_schema_migration.py.
-MIGRATIONS = [_baseline]
+# Add a test in tests/test_schema_migration.py, and list any new columns in LATER_COLUMNS in
+# tests/_legacy_library.py (tests that make a current database look unversioned drop them).
+MIGRATIONS = [_baseline, _bibliographic_ids]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 # The sidecar opens a Library per request; concurrent first requests after an upgrade wait here
@@ -253,10 +272,11 @@ class Library:
             shutil.copyfile(source, PaperFiles(folder).original_pdf)
             atomic_write_json(PaperFiles(folder).document_json, info)
             with self.connection() as db:
-                db.execute("""INSERT INTO papers(id,sha256,title,original_name,pages,collection_name,first_author,publication_year,bibliography_version)
-                           VALUES(?,?,?,?,?,?,?,?,1)""",
+                db.execute("""INSERT INTO papers(id,sha256,title,original_name,pages,collection_name,first_author,publication_year,
+                           doi,arxiv_id,venue,bibliography_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)""",
                            (paper_id, digest, info["title"], original_name or source.name, info["page_count"],
-                            normalize_collection_name(collection_name), info["first_author"], info["publication_year"]))
+                            normalize_collection_name(collection_name), info["first_author"], info["publication_year"],
+                            info.get("doi", ""), info.get("arxiv_id", ""), info.get("venue", "")))
                 if not db.execute("SELECT 1 FROM reading_status_choices WHERE name='未読'").fetchone():
                     db.execute("UPDATE papers SET read_status='' WHERE id=?", (paper_id,))
                 db.executemany("INSERT INTO pages(paper_id,number,text) VALUES(?,?,?)",
@@ -279,6 +299,38 @@ class Library:
         sql += " ORDER BY created_at DESC, id"
         with self.connection() as db:
             return [dict(row, tags=json.loads(row["tags"])) for row in db.execute(sql, arguments)]
+
+    @staticmethod
+    def _oldest_first(rows: list[sqlite3.Row]) -> list[dict]:
+        """Papers in the order they were added (as BibTeX keys are told apart): created_at counts whole
+        seconds, so papers added within one second keep the order they were inserted in (rowid)."""
+        rows = sorted(rows, key=lambda row: (row["created_at"], row["insert_order"]))
+        return [{**{k: row[k] for k in row.keys() if k != "insert_order"}, "tags": json.loads(row["tags"])} for row in rows]
+
+    def papers_by_id(self, paper_ids: list[str]) -> list[dict]:
+        """The papers `paper_ids`, oldest first (_oldest_first); raises KeyError for a missing one."""
+        wanted = list(dict.fromkeys(paper_ids))
+        for paper_id in wanted:
+            self.folder(paper_id)  # Checks the ID's form.
+        rows = []
+        with self.connection() as db:
+            for start in range(0, len(wanted), 500):
+                chunk = wanted[start:start + 500]
+                rows += db.execute(f"SELECT rowid AS insert_order,* FROM papers WHERE id IN ({','.join('?' * len(chunk))})",
+                                   chunk).fetchall()
+        if len(rows) != len(wanted):
+            raise KeyError("論文が見つかりません。")
+        return self._oldest_first(rows)
+
+    def collection_papers(self, path: str) -> list[dict]:
+        """The papers in folder `path` and its subfolders, oldest first (_oldest_first)."""
+        path = normalize_collection_name(path)
+        if not path:
+            raise ValueError("フォルダーを指定してください。")
+        with self.connection() as db:
+            rows = db.execute("SELECT rowid AS insert_order,* FROM papers").fetchall()
+        return self._oldest_first([row for row in rows if (name := normalize_collection_name(row["collection_name"])) == path
+                                   or name.startswith(path + " / ")])
 
     def paper(self, paper_id: str) -> dict:
         with self.connection() as db:
@@ -322,7 +374,8 @@ class Library:
         return affected
 
     def update(self, paper_id: str, **values) -> None:
-        if not values or not set(values) <= {"title", "status", "collection_name", "note", "first_author", "publication_year", "tags", "read_status"}:
+        if not values or not set(values) <= {"title", "status", "collection_name", "note", "first_author", "publication_year",
+                                             "tags", "read_status", "doi", "arxiv_id", "venue"}:
             raise ValueError("Invalid fields")
         if "tags" in values:
             tags = list(dict.fromkeys(tag.strip() for tag in values["tags"] if tag.strip()))
@@ -334,6 +387,19 @@ class Library:
                 values[name] = values[name].strip()
         if values.get("publication_year") and not re.fullmatch(r"[0-9]{4}", values["publication_year"]):
             raise ValueError("出版年は半角数字4桁で入力してください。")
+        # A DOI or arXiv ID may be pasted as a link ("https://doi.org/…", "arXiv:…"); it is kept bare.
+        if "doi" in values:
+            values["doi"] = typed_doi(values["doi"])
+        if values.get("arxiv_id", "").strip():
+            values["arxiv_id"] = clean_arxiv_id(values["arxiv_id"])
+            if not values["arxiv_id"]:
+                raise ValueError("arXiv IDは「2101.00001」のような形式で入力してください。")
+        elif "arxiv_id" in values:
+            values["arxiv_id"] = ""
+        if "venue" in values:
+            values["venue"] = " ".join(values["venue"].split())
+            if len(values["venue"]) > 300:
+                raise ValueError("掲載誌は300文字以内で入力してください。")
         if "collection_name" in values:
             values["collection_name"] = normalize_collection_name(values["collection_name"])
         with self.connection() as db:

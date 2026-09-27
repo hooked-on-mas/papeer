@@ -9,7 +9,7 @@ import {
   type KeyboardCodes, type KeyboardCoordinateGetter, type UniqueIdentifier,
 } from "@dnd-kit/core";
 import {
-  ArrowUpDown, BookOpen, ChevronDown, ChevronRight, Edit2, ExternalLink, FilePlus2, FileText, Folder, FolderOpen,
+  ArrowUpDown, BookOpen, ChevronDown, ChevronRight, Copy, Download, Edit2, ExternalLink, FilePlus2, FileText, Folder, FolderOpen,
   FolderPlus, Loader2, Save, Search, Tag, Trash2, Undo2, X,
 } from "lucide-react";
 import { paperDisplayName, useCollections, usePaperList, type PaperData } from "@/api/hooks";
@@ -22,7 +22,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  chooseNewCollection, createFolder, deleteFolder, importPdfs, movePaper,
+  chooseNewCollection, copyBibtex, createFolder, deleteFolder, exportFolderBibtex, importPdfs, movePaper,
   openPaperFile, openPaperFolder, renameFolder, renamePaperFile, saveOriginal, undoLabel, undoMove,
 } from "@/app/actions";
 import { deletePapers, movePapers, movePapersToNewCollection, setPapersReadStatus, tagPapers } from "@/app/bulkActions";
@@ -668,6 +668,10 @@ function FolderRowView({ node, depth, ...rest }: { node: FolderNode; depth: numb
               <ContextMenuItem onClick={() => renameFolderRow(node.path)}>
                 <Edit2 className="w-4 h-4 mr-2" /> 名前を変更…
               </ContextMenuItem>
+              {/* The folder's papers and its subfolders', as its count shows them. */}
+              <ContextMenuItem disabled={!node.count} onClick={() => void exportFolderBibtex(node.path)}>
+                <Download className="w-4 h-4 mr-2" /> BibTeX を書き出す…
+              </ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem onClick={() => deleteFolderRow(node.path, papers)} className="text-destructive">
                 <Trash2 className="w-4 h-4 mr-2" /> フォルダーを削除
@@ -857,6 +861,9 @@ function PaperMenu({ paper, collection, collections }: { paper: PaperData; colle
       <ContextMenuItem onClick={() => openPaperFolder(paper.id)}>
         <FolderOpen className="w-4 h-4 mr-2" /> 保存フォルダーを開く
       </ContextMenuItem>
+      <ContextMenuItem onClick={() => void copyBibtex([paper.id])}>
+        <Copy className="w-4 h-4 mr-2" /> BibTeX をコピー
+      </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem onClick={() => deletePaperRow(paper.id)} className="text-destructive">
         <Trash2 className="w-4 h-4 mr-2" /> ライブラリから削除
@@ -931,6 +938,9 @@ function SelectionMenu({ ids, paperId, collections }: { ids: string[]; paperId: 
           {!statuses.length && <ContextMenuItem disabled>読書状態がありません</ContextMenuItem>}
         </ContextMenuSubContent>
       </ContextMenuSub>
+      <ContextMenuItem onClick={() => void copyBibtex(ids)}>
+        <Copy className="w-4 h-4 mr-2" /> {ids.length}件の BibTeX をコピー
+      </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem onClick={() => clearSelection(usePaperSelection.getState().anchor)}>
         <X className="w-4 h-4 mr-2" /> 選択を解除

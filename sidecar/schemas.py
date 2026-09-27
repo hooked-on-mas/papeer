@@ -118,6 +118,18 @@ class UpdatePaperRequest(BaseModel):
     note: str | None = None
     tags: list[str] | None = None
     read_status: str | None = None
+    doi: str | None = Field(default=None, max_length=500)  # "" clears it; a doi.org link is kept bare
+    arxiv_id: str | None = Field(default=None, max_length=200)
+    venue: str | None = Field(default=None, max_length=1000)
+
+
+class BibtexRequest(BaseModel):
+    paper_ids: list[str] = Field(min_length=1, max_length=10000)
+
+
+class BibtexExportRequest(BaseModel):
+    collection: str  # The folder, with its subfolders.
+    destination: str  # A .bib file outside the library.
 
 
 class RenamePaperRequest(BaseModel):
