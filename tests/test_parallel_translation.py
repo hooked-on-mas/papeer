@@ -7,11 +7,12 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 import pymupdf as fitz
 
 from papeer.core.config import Settings
-from papeer.providers import Cancelled, create_provider
+from papeer.providers import AnswerRejected, Cancelled, create_provider
 from papeer.providers.openai_compat import API_RETRIES
 from papeer.core.service import PaperService
 from papeer.core.storage import Library
@@ -30,9 +31,10 @@ def answer(units):
 class GatedProvider:
     """Answers first requests only once `width` of them are in flight together."""
 
-    def __init__(self, width, fail=None):
+    def __init__(self, width, fail=None, error=None):
         self.barrier = threading.Barrier(width, timeout=5)
         self.fail = fail
+        self.error = error or RuntimeError("connection failed")
         self.threads = set()
         self.seen_attempts = []
         self.persisted = {}
@@ -43,7 +45,7 @@ class GatedProvider:
         # Each block must be recorded as sent before its request leaves.
         self.seen_attempts.append(all(self.persisted.get(u["id"]) == 1 for u in units))
         if self.fail and units[0]["id"] == self.fail:
-            raise RuntimeError("connection failed")
+            raise self.error
         self.barrier.wait()
         return answer(units)
 
@@ -108,8 +110,19 @@ class TranslateBatchesTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "connection failed"):
             self.run_batches(provider)
         self.assertEqual(self.accepted, {"a": "文a。", "c": "文c。"})
-        # The failed block was recorded as sent, so resuming goes through recovery.
+        # The failed block was recorded as sent but got no answer: resuming sends it with a batch again.
         self.assertEqual(self.state.attempts, {"a": 1, "b": 1, "c": 1})
+        self.assertEqual(self.state.unanswered, {"b": 1})
+        self.assertEqual(self.state.answered_level(BATCHES[1][0]), 0)
+
+    def test_unusable_answer_in_flight_is_recorded_as_answered(self):
+        provider = GatedProvider(2, fail="b", error=AnswerRejected("AIの回答が出力上限で途切れました。"))
+        with self.assertRaises(AnswerRejected):
+            self.run_batches(provider)
+        self.assertEqual(self.accepted, {"a": "文a。", "c": "文c。"})
+        # Answered, if unusably: resuming takes the block to recovery, not the same request again.
+        self.assertEqual(self.state.unanswered, {})
+        self.assertEqual(self.state.answered_level(BATCHES[1][0]), 1)
 
     def test_cancel_stops_requests_in_flight(self):
         cancel = threading.Event()
@@ -183,7 +196,13 @@ class ParallelPaperTranslationTests(unittest.TestCase):
 
 
 class ApiRateLimitTests(unittest.TestCase):
-    def serve(self, statuses):
+    def setUp(self):
+        # The server asks for 0.01 seconds; honour it instead of the usual minimum, to keep the tests fast.
+        minimum = patch("papeer.providers.openai_compat.MIN_RETRY_AFTER", 0.0)
+        minimum.start()
+        self.addCleanup(minimum.stop)
+
+    def serve(self, statuses, error_body=b""):
         requests = []
 
         class Handler(BaseHTTPRequestHandler):
@@ -198,6 +217,8 @@ class ApiRateLimitTests(unittest.TestCase):
                 if status == 200:
                     handler.wfile.write(json.dumps({"choices": [{"finish_reason": "stop",
                                                                  "message": {"content": "訳文"}}]}).encode())
+                else:
+                    handler.wfile.write(error_body)
 
             def log_message(self, *args):
                 pass
@@ -222,6 +243,18 @@ class ApiRateLimitTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "HTTP 429"):
             provider.generate("test", "data")
         self.assertEqual(len(requests), API_RETRIES + 1)
+
+    def test_server_errors_are_retried(self):
+        provider, requests = self.serve([500, 502, 504, 200])
+        self.assertEqual(provider.generate("test", "data"), "訳文")
+        self.assertEqual(requests, [500, 502, 504, 200])
+
+    def test_exhausted_quota_is_not_retried(self):
+        body = json.dumps({"error": {"type": "insufficient_quota", "code": "insufficient_quota"}}).encode()
+        provider, requests = self.serve([429], body)
+        with self.assertRaisesRegex(RuntimeError, "HTTP 429"):
+            provider.generate("test", "data")
+        self.assertEqual(requests, [429])
 
     def test_other_errors_are_not_retried(self):
         provider, requests = self.serve([401])

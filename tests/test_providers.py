@@ -1,16 +1,24 @@
+from datetime import datetime, timedelta, timezone
+from email.message import Message
+from email.utils import format_datetime
 import json
 import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError, URLError
 
 from papeer.core.config import Settings
-from papeer.providers import create_provider, parse_json_answer
+from papeer.providers import AnswerRejected, Cancelled, ProviderBackend, ProviderSpec, create_provider, parse_json_answer
 from papeer.providers.antigravity import AntigravityProvider
+from papeer.providers.base import TRANSPORT_WAIT_LIMIT
 from papeer.providers.claude_code import ClaudeCodeProvider
 from papeer.providers.codex import CodexProvider, codex_limit_windows
+from papeer.providers.common import TransientError, cli_failure, run_cli_process
+from papeer.providers.openai_compat import MIN_RETRY_AFTER, OpenAICompatProvider, retry_after
 
 POPEN = "papeer.providers.common.subprocess.Popen"
 RUN = "papeer.providers.common.subprocess.run"
@@ -123,10 +131,12 @@ class ProvidersTests(unittest.TestCase):
             stderr.flush()
             return Mock(poll=Mock(return_value=1), returncode=1)
 
-        with cli(ClaudeCodeProvider), patch(POPEN, side_effect=mock_popen):
+        with cli(ClaudeCodeProvider), patch(POPEN, side_effect=mock_popen) as popen:
             provider = create_provider(Settings(provider="claude"), threading.Event())
             with self.assertRaisesRegex(RuntimeError, "weekly limit"):
                 provider.generate("Translate", "data")
+        # Running it again cannot get past a plan limit.
+        self.assertEqual(popen.call_count, 1)
 
     def test_antigravity_models(self):
         fake_stdout = "Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\ngemini-3.1-pro-high\tGemini 3.1 Pro (High)\n"
@@ -212,6 +222,7 @@ class ProvidersTests(unittest.TestCase):
         self.assertEqual((usage["input_tokens"], usage["cached_tokens"], usage["reasoning_tokens"]), (24, 8, 2))
         self.assertIsNone(usage["cost_usd"])
 
+    @patch.object(AntigravityProvider, "transport_backoff", 0.0)  # "stalled" below is temporary and is sent again.
     def test_agy_error_result_is_reported(self):
         lines = [{"event": "result", "result": {"status": "ERROR", "response": "", "error": "Individual quota reached."}}]
         with self.assertRaisesRegex(RuntimeError, "quota reached"):
@@ -288,11 +299,13 @@ class CliSafetyTests(unittest.TestCase):
                 # tomllib rejects this (duplicate key), yet its headings still name the servers to switch off.
                 config.write_text('[mcp_servers.node_repl]\ncommand = "a"\ncommand = "b"\n'
                                   '  [ mcp_servers.env-only.env ]\nX = "1"\n# [mcp_servers.commented]\n'
-                                  '[mcp_servers.node_repl.env]\n', "utf-8")
+                                  '[mcp_servers.node_repl.env]\n[mcp_servers."unreal-mcp"]\n'
+                                  '[mcp_servers."quoted".env]\n', "utf-8")
                 create_provider(Settings(), threading.Event()).generate("Translate", "data")
         first, second, third = ([arg for arg in command if "=" in arg] for command, _, _ in launched)
         self.assertEqual([arg for arg in third if arg.startswith("mcp_servers.")],
-                         ["mcp_servers.node_repl.enabled=false", "mcp_servers.env-only.enabled=false"])
+                         ["mcp_servers.node_repl.enabled=false", "mcp_servers.env-only.enabled=false",
+                          "mcp_servers.unreal-mcp.enabled=false", "mcp_servers.quoted.enabled=false"])
         for expected in ("features.plugins=false", "features.apps=false", "features.shell_tool=false",
                          "mcp_servers.node_repl.enabled=false", "mcp_servers.unreal-mcp.enabled=false"):
             self.assertIn(expected, first)
@@ -402,11 +415,294 @@ class CliSafetyTests(unittest.TestCase):
                 outside = root / "outside.js"
                 outside.write_text("", "utf-8")
                 for text in ('REM "%dp0%\\node_modules\\@openai\\codex\\cli.js"\r\nexit /b 1\r\n',
+                             # Comment lines passing %* on do not run anything either.
+                             'REM "%dp0%\\node_modules\\@openai\\codex\\cli.js" %*\r\nexit /b 1\r\n',
+                             '  @rem "%dp0%\\node_modules\\@openai\\codex\\cli.js" %*\r\n',
+                             ':: "%dp0%\\node_modules\\@openai\\codex\\cli.js" %*\r\n',
                              '"%dp0%\\..\\outside.js" %*\r\n',
                              '"%~dp0\\global\\5\\node_modules\\missing.js" %*\r\n'):
                     shim.write_text(text, "utf-8")
                     with self.assertRaisesRegex(RuntimeError, "codex.cmd は cmd.exe を経由するため使いません"):
                         provider.command()
+
+
+class RecordingEvent(threading.Event):
+    """A cancel event whose waits return at once and are recorded."""
+
+    def __init__(self):
+        super().__init__()
+        self.waits = []
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        return self.is_set()
+
+
+class FlakyProvider(ProviderBackend):
+    spec = ProviderSpec(id="flaky", label="flaky", description="", kind="http")
+
+    def __init__(self, *errors, cancel=None):
+        super().__init__(Settings(), cancel if cancel is not None else RecordingEvent())
+        self.errors = list(errors)
+        self.sends = 0
+
+    def _generate(self, instruction, data, schema):
+        self.sends += 1
+        if self.errors:
+            raise self.errors.pop(0)
+        return "answer"
+
+
+class TransportRetryTests(unittest.TestCase):
+    """ProviderBackend.generate sends a request again after temporary failures only, within bounds."""
+
+    def test_temporary_failures_are_sent_again_with_growing_waits(self):
+        provider = FlakyProvider(TransientError("offline"), TransientError("offline"))
+        self.assertEqual(provider.generate("i", "d"), "answer")
+        self.assertEqual(provider.sends, 3)
+        self.assertEqual(provider.cancel.waits, [2.0, 4.0])
+        self.assertEqual(provider.usage.calls, 1)
+
+    def test_retries_are_bounded(self):
+        provider = FlakyProvider(*[TransientError("offline")] * 5)
+        with self.assertRaisesRegex(TransientError, "offline"):
+            provider.generate("i", "d")
+        self.assertEqual(provider.sends, 1 + ProviderBackend.transport_retries)
+
+    def test_lasting_failures_are_not_sent_again(self):
+        for error in (RuntimeError("未ログイン"), ValueError("モデル名"), Cancelled()):
+            with self.subTest(error=error):
+                provider = FlakyProvider(error)
+                with self.assertRaises(type(error)):
+                    provider.generate("i", "d")
+                self.assertEqual(provider.sends, 1)
+
+    def test_retry_after_is_honoured_within_the_total_limit(self):
+        provider = FlakyProvider(TransientError("429", retry_after=7.0))
+        self.assertEqual(provider.generate("i", "d"), "answer")
+        self.assertEqual(provider.cancel.waits, [7.0])
+        # A longer wait than the limit is reported at once instead of blocking the job.
+        provider = FlakyProvider(TransientError("429", retry_after=TRANSPORT_WAIT_LIMIT + 1))
+        with self.assertRaisesRegex(TransientError, "429"):
+            provider.generate("i", "d")
+        self.assertEqual((provider.sends, provider.cancel.waits), (1, []))
+        provider = FlakyProvider(*[TransientError("429", retry_after=TRANSPORT_WAIT_LIMIT / 2 + 1)] * 3)
+        with self.assertRaises(TransientError):
+            provider.generate("i", "d")
+        self.assertEqual(provider.sends, 2)
+
+    def test_timeout_is_sent_again_only_once(self):
+        provider = FlakyProvider(*[TransientError("timeout", timed_out=True)] * 3)
+        with self.assertRaisesRegex(TransientError, "timeout"):
+            provider.generate("i", "d")
+        self.assertEqual(provider.sends, 2)
+
+    def test_cancel_ends_the_wait_at_once(self):
+        cancel = threading.Event()
+        provider = FlakyProvider(TransientError("offline"), cancel=cancel)
+        provider.transport_backoff = 60.0
+        threading.Timer(0.1, cancel.set).start()
+        started = time.monotonic()
+        with self.assertRaises(Cancelled):
+            provider.generate("i", "d")
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(provider.sends, 1)
+
+    def test_cli_failures_that_retrying_cannot_fix_are_told_apart(self):
+        lasting = [
+            "You've hit your weekly limit", "Claude AI usage limit reached|1790000000", "You've hit your limit · resets 3pm",
+            "Error: Not logged in · Please run /login", "Invalid API key · Please run /login",
+            "unexpected status 401 Unauthorized", "Individual quota reached.",
+            'AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429)"}', "Credit balance is too low",
+            "flag provided but not defined: -input-format", "error: unexpected argument '--foo' found",
+            "The 'gpt-x' model is not supported when using Codex with a ChatGPT account.",
+        ]
+        temporary = [
+            "", "stream disconnected before completion: error sending request", "API Error: 500 Internal server error",
+            "API Error: 529 Overloaded", "stalled for 5s", "Connection reset by peer",
+            # Claude Code's stream-json always carries a rate_limit_event and usage counts.
+            '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"}}\n'
+            '{"type":"result","is_error":true,"result":"API Error: 503","usage":{"input_tokens":401}}',
+        ]
+        for detail in lasting:
+            with self.subTest(detail=detail):
+                error = cli_failure("CLI", detail)
+                self.assertNotIsInstance(error, TransientError)
+                self.assertIn(detail[-40:], str(error))
+        for detail in temporary:
+            with self.subTest(detail=detail):
+                self.assertIsInstance(cli_failure("CLI", detail), TransientError)
+
+    def test_cli_that_stops_for_no_lasting_reason_runs_again(self):
+        runs = []
+
+        def flaky(command, cwd=None, stdin=None, stdout=None, stderr=None, **kwargs):
+            runs.append(command)
+            if len(runs) == 1:
+                stderr.write(b"stream disconnected before completion")
+                stderr.flush()
+                return Mock(poll=Mock(return_value=1), returncode=1)
+            stdout.write(b"answer")
+            stdout.flush()
+            return Mock(poll=Mock(return_value=0), returncode=0)
+
+        with cli(ClaudeCodeProvider), patch(POPEN, side_effect=flaky), \
+                patch.object(ClaudeCodeProvider, "transport_backoff", 0.0):
+            provider = create_provider(Settings(provider="claude"), threading.Event())
+            self.assertEqual(provider.generate("Translate", "data"), "answer")
+        self.assertEqual(len(runs), 2)
+
+    def test_cli_timeout_is_temporary(self):
+        process = Mock(poll=Mock(return_value=None), returncode=None)
+        with patch(POPEN, return_value=process), patch("papeer.providers.common.kill_tree"), \
+                tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(TransientError) as caught:
+                run_cli_process(["cli"], b"", threading.Event(), 0, "CLI", Path(directory))
+        self.assertTrue(caught.exception.timed_out)
+        self.assertIn("タイムアウト", str(caught.exception))
+
+    def test_api_timeouts_and_dropped_connections_are_sent_again(self):
+        body = json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": "訳文"}}]}).encode()
+        for error in (TimeoutError("timed out"), ConnectionResetError("reset"), URLError(ConnectionRefusedError())):
+            with self.subTest(error=error):
+                provider = create_provider(Settings(provider="api", model="m"), RecordingEvent())
+                with patch.object(OpenAICompatProvider, "_fetch", side_effect=[error, body]) as fetch:
+                    self.assertEqual(provider.generate("i", "d"), "訳文")
+                self.assertEqual(fetch.call_count, 2)
+
+    def test_retry_after_seconds_and_dates(self):
+        def error(value):
+            headers = Message()
+            if value is not None:
+                headers["Retry-After"] = value
+            return HTTPError("https://example.invalid", 429, "busy", headers, None)  # type: ignore[arg-type]
+
+        self.assertEqual(retry_after(error("3")), 3.0)
+        self.assertIsNone(retry_after(error(None)))
+        self.assertIsNone(retry_after(error("soon")))
+        later = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=30), usegmt=True)
+        self.assertTrue(20 < (retry_after(error(later)) or 0) <= 30)
+        # 0 or a date already past still waits a little rather than asking again at once.
+        self.assertEqual(retry_after(error("0")), MIN_RETRY_AFTER)
+        self.assertEqual(retry_after(error("Wed, 21 Oct 2015 07:28:00 GMT")), MIN_RETRY_AFTER)
+
+
+class UnusableAnswerTests(unittest.TestCase):
+    """Answers that came back unusable are AnswerRejected: not sent again, and not taken as unanswered."""
+
+    def claude(self, *runs, provider_id="claude", cls=ClaudeCodeProvider):
+        """Run generate() once over scripted CLI runs of (returncode, stdout lines, stderr); return (error, runs used)."""
+        used = []
+
+        def popen(command, cwd=None, stdin=None, stdout=None, stderr=None, **kwargs):
+            code, lines, err = runs[min(len(used), len(runs) - 1)]
+            used.append(command)
+            stdout.write("\n".join(json.dumps(line) for line in lines).encode("utf-8"))
+            stdout.flush()
+            stderr.write(err.encode("utf-8"))
+            stderr.flush()
+            return Mock(poll=Mock(return_value=code), returncode=code)
+
+        with cli(cls), patch(POPEN, side_effect=popen), patch.object(cls, "transport_backoff", 0.0):
+            provider = create_provider(Settings(provider=provider_id), threading.Event())
+            try:
+                provider.generate("Translate", "data")
+            except Exception as error:  # noqa: BLE001 - the test inspects the type
+                return error, len(used)
+        return None, len(used)
+
+    def result(self, text, subtype="success", output_tokens=0, is_error=True):
+        return {"type": "result", "subtype": subtype, "is_error": is_error, "result": text,
+                "usage": {"input_tokens": 10, "output_tokens": output_tokens}}
+
+    def test_claude_error_after_output_is_an_unusable_answer(self):
+        for code in (0, 1):  # Reported with exit 0 or 1, the result event decides.
+            with self.subTest(code=code):
+                error, runs = self.claude((code, [self.result("API Error: 500", output_tokens=120)], ""))
+                self.assertIsInstance(error, AnswerRejected)
+                self.assertEqual(runs, 1)
+
+    def test_claude_run_ended_by_its_own_limit_is_an_unusable_answer(self):
+        error, runs = self.claude((1, [self.result("", subtype="error_max_turns")], ""))
+        self.assertIsInstance(error, AnswerRejected)
+        self.assertEqual(runs, 1)
+
+    def test_claude_empty_answer_is_an_unusable_answer(self):
+        error, runs = self.claude((0, [self.result("  ", is_error=False)], ""))
+        self.assertIsInstance(error, AnswerRejected)
+        self.assertEqual(runs, 1)
+
+    def test_claude_errors_known_to_pass_are_sent_again(self):
+        for text in ("API Error: 529 Overloaded", "API Error: 503 Service Unavailable", "Request failed: ECONNRESET"):
+            with self.subTest(text=text):
+                error, runs = self.claude((1, [self.result(text)], ""), (0, [self.result("訳文", is_error=False)], ""))
+                self.assertIsNone(error)
+                self.assertEqual(runs, 2)
+
+    def test_claude_unknown_or_lasting_errors_are_not_sent_again(self):
+        for text in ("Something unexpected happened", "Claude AI usage limit reached|1790000000",
+                     "Invalid API key · Please run /login"):
+            with self.subTest(text=text):
+                error, runs = self.claude((1, [self.result(text, output_tokens=0)], ""))
+                self.assertIs(type(error), RuntimeError)
+                self.assertEqual(runs, 1)
+        # A plan limit stays a lasting failure even after output (not an unusable answer to move on from).
+        error, _ = self.claude((1, [self.result("You've hit your limit", output_tokens=5)], ""))
+        self.assertIs(type(error), RuntimeError)
+
+    def test_cli_exit_is_judged_by_stderr_and_stdout_together(self):
+        # A warning on stderr must not hide the plan limit printed on stdout.
+        error, runs = self.claude((1, [{"type": "system"}], "warning: something"),
+                                  (0, [self.result("訳文", is_error=False)], ""))
+        self.assertEqual((error, runs), (None, 2))  # Neither names a lasting failure: run again.
+        detail = "You've hit your usage limit"
+        error, runs = self.claude((1, [{"message": detail}], "warning: something"))
+        self.assertIs(type(error), RuntimeError)
+        self.assertEqual(runs, 1)
+        self.assertIn("warning: something", str(error))
+
+    def test_agy_error_status_is_sent_again_only_when_known_to_pass(self):
+        def status(value, error):
+            return [{"event": "result", "result": {"status": value, "response": "", "error": error}}]
+        success = [{"event": "result", "result": {"status": "SUCCESS", "response": "訳文"}}]
+        error, runs = self.claude((0, status("ERROR", "something odd"), ""), (0, success, ""),
+                                  provider_id="antigravity", cls=AntigravityProvider)
+        self.assertIs(type(error), RuntimeError)
+        self.assertEqual(runs, 1)
+        for value, message in (("UNAVAILABLE", "try later"), ("ERROR", "503 Service Unavailable"),
+                               ("DEADLINE_EXCEEDED", "")):
+            with self.subTest(status=value):
+                error, runs = self.claude((0, status(value, message), ""), (0, success, ""),
+                                          provider_id="antigravity", cls=AntigravityProvider)
+                self.assertIsNone(error)
+                self.assertEqual(runs, 2)
+        error, runs = self.claude((0, [{"event": "result", "result": {"status": "SUCCESS", "response": " "}}], ""),
+                                  provider_id="antigravity", cls=AntigravityProvider)
+        self.assertIsInstance(error, AnswerRejected)
+        self.assertEqual(runs, 1)
+
+    def test_codex_without_answer_file_is_an_unusable_answer(self):
+        runs = []
+
+        def popen(command, cwd=None, stdin=None, stdout=None, stderr=None, **kwargs):
+            runs.append(command)
+            return Mock(poll=Mock(return_value=0), returncode=0)
+
+        with cli(CodexProvider), patch(POPEN, side_effect=popen), patch.object(CodexProvider, "transport_backoff", 0.0):
+            with self.assertRaisesRegex(AnswerRejected, "回答ファイル"):
+                create_provider(Settings(), threading.Event()).generate("Translate", "data")
+        self.assertEqual(len(runs), 1)
+
+    def test_api_answer_cut_off_or_empty_is_an_unusable_answer(self):
+        for choice in ({"finish_reason": "length", "message": {"content": "途中"}},
+                       {"finish_reason": "stop", "message": {"content": "  "}}):
+            with self.subTest(choice=choice):
+                provider = create_provider(Settings(provider="api", model="m"), RecordingEvent())
+                body = json.dumps({"choices": [choice]}).encode()
+                with patch.object(OpenAICompatProvider, "_fetch", return_value=body) as fetch:
+                    with self.assertRaises(AnswerRejected):
+                        provider.generate("i", "d")
+                self.assertEqual(fetch.call_count, 1)
 
 
 if __name__ == "__main__":

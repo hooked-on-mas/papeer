@@ -168,6 +168,9 @@ def _publish(folder, review, manifest, entries):
     retry = cache.setdefault('retry_state', {'attempts': {}, 'retry_calls': 0})
     for key in reviewed_values:
         retry['attempts'].pop(key, None)
+        # RetryState requires every unanswered record to name a block in attempts.
+        if isinstance(retry.get('unanswered'), dict):
+            retry['unanswered'].pop(key, None)
     atomic_write_json(stage/'translation-cache.json', cache)
     atomic_write_json(stage/'document.json', document)
     report = _read(folder/'translation-report.json', {})

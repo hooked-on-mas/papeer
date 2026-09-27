@@ -114,7 +114,10 @@ if __name__ == "__main__":
             sys.exit(1)
         sys.exit(0)
     if sys.argv[1] == "--record-bundle":
-        (root / sys.argv[2]).write_text(bundle_version(root) + "\n", encoding="utf-8")
+        # Written before PyInstaller runs and moved into place once the sidecar is copied (justfile).
+        target = root / sys.argv[2]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(bundle_version(root) + "\n", encoding="utf-8")
         sys.exit(0)
     output = Path(sys.argv[1])
     output.parent.mkdir(parents=True, exist_ok=True)

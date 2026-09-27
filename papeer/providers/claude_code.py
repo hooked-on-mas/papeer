@@ -8,7 +8,8 @@ import tempfile
 from papeer.core.config import REASONING_EFFORTS
 from papeer.providers.base import OptionField, ProviderBackend, ProviderSpec
 from papeer.providers.common import (
-    CliBackend, json_lines, remember_limits, run_cli_process, to_int, wrap_document_prompt,
+    AnswerRejected, CliBackend, cli_failure, json_lines, lasting_cli_failure, remember_limits, run_cli_process,
+    to_int, wrap_document_prompt,
 )
 
 _ALIASES = [("sonnet", "sonnet (最新 Claude Sonnet)"), ("opus", "opus (Claude Opus)"), ("haiku", "haiku (Claude Haiku)")]
@@ -33,6 +34,33 @@ def claude_limit_windows(info: dict) -> list[dict]:
         windows.append({"label": _WINDOWS.get(key, key or "利用枠"), "used_percent": info["utilization"] * 100,
                         "resets_at": info.get("resetsAt")})
     return windows
+
+
+def claude_failure(result: dict, stderr: str = "") -> RuntimeError:
+    """The error for a result event that reports a failure (is_error, or no answer text).
+
+    A plan limit or a sign-in stays a lasting failure. Output the model had already written
+    (usage.output_tokens) or a run ended by one of its own limits (subtype error_max_turns,
+    error_max_budget_usd, ...) is a paid answer that cannot be used: AnswerRejected. Otherwise
+    only an API error or dropped connection known to pass (API Error 5xx/529, overloaded,
+    ECONNRESET, ...) is sent again.
+    """
+    text = result.get("result") if isinstance(result.get("result"), str) else ""
+    subtype = str(result.get("subtype") or "")
+    detail = text or subtype
+    evidence = "\n".join((stderr, text, subtype))
+    usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+    if not lasting_cli_failure(evidence) and (subtype.startswith("error_max_") or to_int(usage.get("output_tokens")) > 0):
+        return AnswerRejected("Claude Codeの回答を使えませんでした。\n" + detail[-1800:])
+    return cli_failure("Claude Code", detail, evidence, known_temporary_only=True)
+
+
+def claude_exit_failure(stderr: str, stdout: str) -> RuntimeError:
+    """The error for a nonzero exit: judged by its result event when it printed one (claude_failure)."""
+    result = next((e for e in reversed(json_lines(stdout)) if e.get("type") == "result"), None)
+    if result is None:
+        return cli_failure("Claude Code", (stderr or stdout)[-1800:], evidence=stderr + "\n" + stdout)
+    return claude_failure(result, stderr)
 
 
 def _catalog_models() -> list[dict]:
@@ -94,6 +122,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                 timeout_seconds=self.settings.timeout_seconds,
                 tool_name=self.tool_name,
                 root=root,
+                failure=claude_exit_failure,
             )
             events = json_lines(output)
             result = next((e for e in reversed(events) if e.get("type") == "result"), None)
@@ -103,8 +132,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
             if result is None:
                 return output  # an older CLI that printed plain text
             if result.get("is_error") or not isinstance(result.get("result"), str):
-                detail = result.get("result") if isinstance(result.get("result"), str) else result.get("subtype", "")
-                raise RuntimeError("Claude Code接続に失敗しました。ログイン状態・利用枠を確認してください。\n" + str(detail)[-1800:])
+                raise claude_failure(result)
             usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
             cache_read = to_int(usage.get("cache_read_input_tokens"))
             self.usage.add(
@@ -115,7 +143,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                 cost_usd=result.get("total_cost_usd"))
             answer = result["result"].strip()
             if not answer:
-                raise RuntimeError("Claude Codeの回答が空でした。")
+                raise AnswerRejected("Claude Codeの回答が空でした。")
             return answer
 
     def list_models(self) -> list[tuple[str, str]]:

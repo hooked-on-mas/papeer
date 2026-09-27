@@ -15,7 +15,7 @@ from papeer.pdf.pdf_engine import extract_pdf, translation_units
 from papeer.core import fileio
 from papeer.core.fileio import atomic_write_json
 from papeer.core.config import Settings
-from papeer.translation.translation import translation_fingerprint
+from papeer.translation.translation import RetryState, translation_fingerprint
 from tools.review_fresh_layout import review
 from test_workflow import FakeProvider
 
@@ -91,6 +91,19 @@ class ReviewPublishTests(unittest.TestCase):
             self.assertEqual(cache['fingerprint'],translation_fingerprint(Settings(),translation_units(extract_pdf(folder/'original.pdf'))))
             self.assertTrue(cache['translations'])
             self.assertEqual(json.loads((folder/'translation-report.json').read_text('utf8'))['readability_warnings'],[])
+
+    def test_published_blocks_leave_the_retry_record_readable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); folder=self.prepare(root)
+            units=translation_units(extract_pdf(folder/'original.pdf'))
+            reviewed=next(u['id'] for u in units if u['page']==2)
+            atomic_write_json(folder/'translation-cache.json', dict(
+                fingerprint=translation_fingerprint(Settings(),units), translations={},
+                retry_state=dict(attempts={reviewed:2}, retry_calls=1, unanswered={reviewed:1})))
+            apply_review(root/'papers',root/'review')
+            retry=json.loads((folder/'translation-cache.json').read_text('utf8'))['retry_state']
+            # An unanswered record without its attempt would be refused as corrupt by the next translation.
+            self.assertEqual(RetryState.from_cache(retry).to_cache(), dict(attempts={}, retry_calls=1, unanswered={}))
 
     def test_failed_commit_restores_all_existing_outputs(self):
         with tempfile.TemporaryDirectory() as temporary:

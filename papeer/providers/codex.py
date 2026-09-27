@@ -35,8 +35,11 @@ _EFFORTS = [
 # Codex takes MCP server names of letters, digits, "_" and "-" only, and `-c mcp_servers.<name>.enabled=false`
 # splits the dotted path on "." without accepting quoted keys, so no other name can be addressed anyway.
 _MCP_SERVER_NAME = re.compile(r"[A-Za-z0-9_-]+")
-# For a config.toml tomllib cannot read: the [mcp_servers.<name>] and [mcp_servers.<name>.env] headings.
-_MCP_SERVER_HEADING = re.compile(r"^[ \t]*\[[ \t]*mcp_servers\.([A-Za-z0-9_-]+)[ \t]*[\].]", re.MULTILINE)
+# For a config.toml tomllib cannot read: the [mcp_servers.<name>] and [mcp_servers.<name>.env] headings,
+# also with the name quoted ([mcp_servers."unreal-mcp"]). Accepted shortcut: a line inside a multi-line
+# string that looks like such a heading is taken too. Naming a server that is not configured fails the
+# run (no_mcp_overrides), which is still better than leaving servers on.
+_MCP_SERVER_HEADING = re.compile(r'^[ \t]*\[[ \t]*mcp_servers[ \t]*\.[ \t]*"?([A-Za-z0-9_-]+)"?[ \t]*[\].]', re.MULTILINE)
 
 
 def configured_mcp_servers() -> list[str]:

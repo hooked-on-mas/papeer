@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from papeer.core.config import Settings
@@ -19,6 +19,83 @@ if TYPE_CHECKING:
 
 class Cancelled(Exception):
     pass
+
+
+class TransientError(RuntimeError):
+    """A failure that sending the same request again may get past: a timeout, a lost connection,
+    a server error, a CLI that stopped for a reason retrying can help with.
+    ProviderBackend.generate retries it.
+
+    retry_after is the wait the service asked for (HTTP Retry-After), in seconds.
+    """
+
+    def __init__(self, message: str, retry_after: float | None = None, timed_out: bool = False):
+        super().__init__(message)
+        self.retry_after = retry_after
+        self.timed_out = timed_out
+
+
+class AnswerRejected(RuntimeError):
+    """The service answered, but with nothing usable: cut off at the output limit, empty, no answer
+    file, or an error after the model had already written output.
+
+    The request was paid for and asking the same again likely ends the same way, so generate()
+    does not send it again, and translation records it as answered (not unanswered): resuming
+    moves on to the next way of asking instead of repeating the same request.
+    """
+
+
+# What a failed CLI run reports when sending the request again cannot help: the plan's usage limit,
+# no sign-in, or options and models the CLI does not accept. Matched against its error output
+# (for Claude Code the stream-json events, which always hold "rate_limit_event" and "usage" keys,
+# so bare words like "limit" or "usage" are not enough). Anything else counts as temporary.
+_LASTING_CLI_FAILURE = re.compile("|".join((
+    # Plan limits and billing.
+    r"usage limit", r"hit your (?:\w+ )?limit", r"(?:weekly|daily|monthly|session|hourly|5-hour|five-hour) limit",
+    r"limit (?:reached|exceeded)", r"quota", r"resource.?exhausted", r"credit", r"billing", r"insufficient",
+    r"rate.?limit(?:ed| reached| exceeded)",
+    # Sign-in.
+    r"not (?:logged|signed) in", r"log ?in (?:required|again)", r"please (?:run )?(?:/login|log ?in|sign in)",
+    r"unauthori[sz]ed", r"authenticat", r"invalid (?:api[ _-]?key|token|credential)",
+    r"(?:token|session|credentials?) (?:has )?expired", r"forbidden", r"permission denied",
+    r"(?:status|http|code|error)\W{0,3}40[13]\b",
+    # Options and models.
+    r"provided but not defined", r"unknown (?:option|flag|argument|command|model)", r"unrecognized",
+    r"unexpected argument", r"invalid (?:model|value|argument|option)",
+    r"model\b[^\n]{0,60}\b(?:not found|does not exist|not supported|not available|unavailable)",
+    r"not (?:a )?(?:valid|supported) model", r"invalid_request",
+)), re.IGNORECASE)
+
+
+# Errors a CLI relays from its service that are known to pass: server errors and overload, and
+# dropped connections (the names Node.js and gRPC give them). For errors the CLI reports inside an
+# answer (a result event), where unknown errors are not sent again.
+_TEMPORARY_CLI_FAILURE = re.compile("|".join((
+    r"api error\W{0,3}(?:5\d\d|529)\b", r"\b(?:500|502|503|504|529)\b[^\n]{0,40}(?:error|unavailable|overloaded|timeout)",
+    r"overloaded", r"internal server error", r"bad gateway", r"gateway time-?out", r"service unavailable",
+    r"temporarily unavailable", r"\bunavailable\b", r"deadline.?exceeded", r"\baborted\b",
+    r"econnreset", r"econnrefused", r"econnaborted", r"etimedout", r"epipe", r"socket hang up", r"fetch failed",
+    r"connection (?:reset|refused|closed|error|lost)", r"network (?:error|is unreachable)", r"stream disconnected",
+    r"timed out", r"timeout",
+)), re.IGNORECASE)
+
+
+def lasting_cli_failure(text: str) -> bool:
+    """Whether a CLI's error output names a failure that retrying cannot help (_LASTING_CLI_FAILURE)."""
+    return bool(_LASTING_CLI_FAILURE.search(text))
+
+
+def cli_failure(tool_name: str, detail: str, evidence: str | None = None, known_temporary_only: bool = False) -> RuntimeError:
+    """The error for a CLI run that failed, showing `detail` and judged by `evidence` (default: detail).
+
+    RuntimeError when retrying cannot help (_LASTING_CLI_FAILURE); otherwise TransientError, or with
+    known_temporary_only, TransientError only for failures known to pass (_TEMPORARY_CLI_FAILURE).
+    """
+    text = detail if evidence is None else evidence
+    message = f"{tool_name}接続に失敗しました。ログイン状態・利用枠を確認してください。\n" + detail[-1800:]
+    if lasting_cli_failure(text) or (known_temporary_only and not _TEMPORARY_CLI_FAILURE.search(text)):
+        return RuntimeError(message)
+    return TransientError(message)
 
 
 def check_cancel(cancel: threading.Event) -> None:
@@ -188,8 +265,12 @@ def run_cli_process(
     tool_name: str,
     root: Path,
     output_file: Path | None = None,
+    failure: Callable[[str, str], Exception] | None = None,
 ) -> tuple[str, str]:
-    """Run a CLI and return (answer, stdout); the answer is the output file when one is given."""
+    """Run a CLI and return (answer, stdout); the answer is the output file when one is given.
+
+    failure(stderr, stdout) makes the error for a nonzero exit; by default cli_failure judged by both.
+    """
     with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         if prompt_bytes:
             stdin.write(prompt_bytes)
@@ -200,7 +281,8 @@ def run_cli_process(
             while process.poll() is None:
                 check_cancel(cancel)
                 if time.monotonic() > deadline:
-                    raise TimeoutError(f"{tool_name}の応答がタイムアウトしました。途中結果は保存されています。")
+                    raise TransientError(f"{tool_name}の応答がタイムアウトしました。途中結果は保存されています。",
+                                         timed_out=True)
                 cancel.wait(0.15)
             check_cancel(cancel)
             stdout.seek(0)
@@ -208,16 +290,19 @@ def run_cli_process(
             stderr.seek(0)
             err_text = stderr.read().decode("utf-8", "replace").strip()
             if process.returncode:
-                detail = (err_text or out_text)[-1800:]
-                raise RuntimeError(f"{tool_name}接続に失敗しました。ログイン状態・利用枠を確認してください。\n" + detail)
+                if failure is not None:
+                    raise failure(err_text, out_text)
+                # Shown: stderr, else stdout. Judged: both, as a CLI may print a warning to stderr
+                # and the reason (a plan limit, a sign-in) to stdout.
+                raise cli_failure(tool_name, (err_text or out_text)[-1800:], evidence=err_text + "\n" + out_text)
             if output_file is not None:
                 if not output_file.exists():
-                    raise RuntimeError(f"{tool_name}から回答ファイルが返りませんでした。")
+                    raise AnswerRejected(f"{tool_name}から回答ファイルが返りませんでした。")
                 result = output_file.read_text("utf-8").strip()
             else:
                 result = out_text
             if not result:
-                raise RuntimeError(f"{tool_name}の回答が空でした。")
+                raise AnswerRejected(f"{tool_name}の回答が空でした。")
             return result, out_text
         finally:
             kill_tree(process)
@@ -227,20 +312,23 @@ _SCRIPT_SUFFIXES = {".cmd", ".bat", ".ps1"}
 # The quoted program on a shim's command line, relative to the shim's folder:
 # npm writes "%dp0%\node_modules\<package>\<bin>" %*, pnpm "%~dp0\global\5\node_modules\<package>\<bin>" %*.
 _SHIM_TARGET = re.compile(r'"%(?:dp0%|~dp0)\\([^"%]+)"')
+# Comment lines of a batch file: REM (also @REM, and REM alone) and "::" labels.
+_SHIM_COMMENT = re.compile(r"^\s*@?\s*(?:rem(?:\s|$)|::)", re.IGNORECASE)
 
 
 def shim_target(shim: Path) -> Path | None:
     """The program an npm or pnpm .cmd shim starts (a JS file or an .exe), when it names an existing one.
 
-    Only lines that pass the arguments on (%*) count, so a REM line cannot name something else, and
-    the program must lie under the shim's folder, where the package manager installed it.
+    Only lines that pass the arguments on (%*) and are not comments count, so a REM or :: line cannot
+    name something else, and the program must lie under the shim's folder, where the package manager
+    installed it.
     """
     try:
         text = shim.read_text("utf-8", "replace") if shim.suffix.lower() == ".cmd" else ""
         folder = shim.parent.resolve()
     except OSError:
         return None
-    names = [name for line in text.splitlines() if "%*" in line
+    names = [name for line in text.splitlines() if "%*" in line and not _SHIM_COMMENT.match(line)
              for name in _SHIM_TARGET.findall(line) if Path(name.replace("\\", "/")).name.lower() != "node.exe"]
     if not names:
         return None

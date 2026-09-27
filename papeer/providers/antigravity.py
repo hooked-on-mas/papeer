@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 
 from papeer.providers.base import OptionField, ProviderBackend, ProviderSpec
-from papeer.providers.common import CliBackend, hidden_window, json_lines, run_cli_process, to_int, wrap_document_prompt
+from papeer.providers.common import AnswerRejected, CliBackend, cli_failure, hidden_window, json_lines, run_cli_process, to_int, wrap_document_prompt
 
 _FALLBACK_MODELS = [
     ("gemini-3.8-flash-medium", "gemini-3.8-flash-medium (Gemini 3.8 Flash)"),
@@ -93,14 +93,14 @@ class AntigravityProvider(CliBackend, ProviderBackend):
             if result is None:
                 failure = agy_failure(output)
                 if failure:
-                    raise RuntimeError(f"{self.tool_name}接続に失敗しました。ログイン状態・利用枠を確認してください。\n"
-                                       + failure[-1800:])
+                    raise cli_failure(self.tool_name, failure)
                 raise RuntimeError(f"{self.tool_name}の応答を読み取れませんでした。agy を更新してください。\n"
                                    + output[-1800:])
             if result.get("status") not in {None, "SUCCESS"} or not isinstance(result.get("response"), str):
                 detail = result.get("error") or result.get("response") or result.get("status")
-                raise RuntimeError(f"{self.tool_name}接続に失敗しました。ログイン状態・利用枠を確認してください。\n"
-                                   + str(detail)[-1800:])
+                # Sent again only for a status or error known to pass (UNAVAILABLE, DEADLINE_EXCEEDED, 503, ...).
+                raise cli_failure(self.tool_name, str(detail), f"{result.get('status')}\n{detail}",
+                                  known_temporary_only=True)
             usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
             self.usage.add(input_tokens=to_int(usage.get("input_tokens")),
                            cached_tokens=to_int(usage.get("cache_read_tokens")),
@@ -108,7 +108,7 @@ class AntigravityProvider(CliBackend, ProviderBackend):
                            reasoning_tokens=to_int(usage.get("thinking_tokens")))
             answer = result["response"].strip()
             if not answer:
-                raise RuntimeError(f"{self.tool_name}の回答が空でした。")
+                raise AnswerRejected(f"{self.tool_name}の回答が空でした。")
             return answer
 
     def list_models(self) -> list[tuple[str, str]]:

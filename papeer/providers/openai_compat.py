@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import concurrent.futures
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from http.client import HTTPException
 import json
+import ssl
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -10,20 +14,42 @@ from urllib.request import Request, urlopen
 
 from papeer.core.config import DEFAULT_BASE_URL
 from papeer.providers.base import OptionField, ProviderBackend, ProviderSpec
-from papeer.providers.common import Cancelled, check_cancel, remember_limits, to_int
+from papeer.providers.common import AnswerRejected, Cancelled, TransientError, check_cancel, remember_limits, to_int
 
-# 429 (rate limit) and 503 (overloaded) are temporary; other errors are reported at once.
-API_RETRY_STATUSES = {429, 503}
+# Rate limits (429) and server errors (5xx) are temporary: ProviderBackend.generate sends the request
+# again (up to API_RETRIES times), waiting what Retry-After asks for. Other errors are reported at once.
+API_RETRY_STATUSES = {429, 500, 502, 503, 504}
 API_RETRIES = 4
+# The shortest wait taken from Retry-After, in seconds.
+MIN_RETRY_AFTER = 1.0
 
 
-def retry_delay(error: HTTPError, attempt: int) -> float:
-    """Seconds to wait before retrying: the server's Retry-After, else 2, 4, 8, 16."""
+def retry_after(error: HTTPError) -> float | None:
+    """Seconds the server asked to wait (Retry-After, in seconds or as an HTTP date), or None."""
+    value = error.headers.get("Retry-After") if error.headers else None
+    if not value:
+        return None
     try:
-        after = float(error.headers.get("Retry-After") or 0) if error.headers else 0.0
+        seconds = float(value)
     except ValueError:
-        after = 0.0
-    return min(60.0, after if after > 0 else 2.0 * 2 ** attempt)
+        try:
+            when = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        seconds = (when - datetime.now(timezone.utc)).total_seconds()
+    # 0 or a date already past (clocks apart) would send again at once and meet the limit again.
+    return max(MIN_RETRY_AFTER, seconds)
+
+
+def quota_exhausted(error: HTTPError) -> bool:
+    """A 429 that is out of credit (OpenAI's insufficient_quota), not a rate limit that passes."""
+    try:
+        body = error.read(8192).decode("utf-8", "replace")
+    except Exception:
+        return False
+    return "insufficient_quota" in body
 
 
 class OpenAICompatProvider(ProviderBackend):
@@ -35,6 +61,7 @@ class OpenAICompatProvider(ProviderBackend):
         needs_api_key=True,
         fields=(OptionField("base_url", "API URL", DEFAULT_BASE_URL, hint="ローカル例: http://localhost:11434/v1（Ollama）"),),
     )
+    transport_retries = API_RETRIES
 
     def _generate(self, instruction: str, data: str, schema: dict | None) -> str:
         model = self.settings.model.strip()
@@ -64,30 +91,32 @@ class OpenAICompatProvider(ProviderBackend):
         if self.settings.reasoning_effort:
             payload["reasoning_effort"] = self.settings.reasoning_effort
         request = Request(endpoint, data=json.dumps(payload).encode(), headers=headers, method="POST")
-        result: dict = {}
-        for attempt in range(API_RETRIES + 1):
-            try:
-                result = json.loads(self._fetch(request))
-                break
-            except HTTPError as error:
-                if error.code in API_RETRY_STATUSES and attempt < API_RETRIES:
-                    # Parallel translation can briefly exceed a rate limit; wait it out.
-                    self.cancel.wait(retry_delay(error, attempt))
-                    check_cancel(self.cancel)
-                    continue
-                effort_hint = (" このモデル・接続先が指定effortに対応するか確認し、非対応なら「既定値」に戻してください。"
-                               if error.code == 400 and self.settings.reasoning_effort else "")
-                raise RuntimeError(f"APIエラー HTTP {error.code}。URL・モデル名・認証・利用枠を確認してください。"
-                                   + effort_hint) from error
-            except URLError as error:
-                raise RuntimeError("APIに接続できません。URLとネットワークを確認してください。") from error
+        try:
+            result = json.loads(self._fetch(request))
+        except HTTPError as error:
+            message = f"APIエラー HTTP {error.code}。URL・モデル名・認証・利用枠を確認してください。"
+            if error.code in API_RETRY_STATUSES and not (error.code == 429 and quota_exhausted(error)):
+                # Parallel translation can briefly exceed a rate limit; generate() waits it out.
+                raise TransientError(message, retry_after=retry_after(error)) from error
+            effort_hint = (" このモデル・接続先が指定effortに対応するか確認し、非対応なら「既定値」に戻してください。"
+                           if error.code == 400 and self.settings.reasoning_effort else "")
+            raise RuntimeError(message + effort_hint) from error
+        except URLError as error:
+            if isinstance(error.reason, ssl.SSLError):  # A certificate does not get better by asking again.
+                raise RuntimeError("APIとの安全な接続を確立できません。URLと証明書を確認してください。") from error
+            raise TransientError("APIに接続できません。URLとネットワークを確認してください。",
+                                 timed_out=isinstance(error.reason, TimeoutError)) from error
+        except TimeoutError as error:
+            raise TransientError("APIの応答がタイムアウトしました。", timed_out=True) from error
+        except (ConnectionError, HTTPException) as error:
+            raise TransientError("APIとの接続が途中で切れました。ネットワークを確認してください。") from error
         check_cancel(self.cancel)
         choice = result["choices"][0]
         if choice.get("finish_reason") == "length":
-            raise RuntimeError("AIの回答が出力上限で途切れました。モデル設定を変更して再試行してください。")
+            raise AnswerRejected("AIの回答が出力上限で途切れました。モデル設定を変更して再試行してください。")
         content = choice["message"].get("content")
         if not isinstance(content, str) or not content.strip():
-            raise RuntimeError("APIからテキストの回答が返りませんでした。")
+            raise AnswerRejected("APIからテキストの回答が返りませんでした。")
         usage = result.get("usage")
         if isinstance(usage, dict):
             self.usage.add(input_tokens=to_int(usage.get("prompt_tokens")),

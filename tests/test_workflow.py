@@ -245,12 +245,16 @@ class WorkflowTests(unittest.TestCase):
                          page_ready=lambda *args: notifications.append(args)).translate(self.paper_id)
         preview_path, _ = translated_page(folder, 0)
         self.assertTrue(preview_path.exists())
-        before = json.loads((folder / "translation-cache.json").read_text("utf-8"))["translations"]
+        paused = json.loads((folder / "translation-cache.json").read_text("utf-8"))
+        before = paused["translations"]
         provider = FakeProvider()
         PaperService(Library(self.library.root), provider, self.cancel).translate(self.paper_id)
         remaining = [u for u in translation_units(self.library.document(self.paper_id)) if u["id"] not in before]
         self.assertEqual({u["page"] for u in remaining}, {2})
-        self.assertEqual(provider.calls, len(remaining), "only interrupted second-page units use recovery requests")
+        # The second page's request got no answer: it is sent again as one normal request, spending no retries.
+        self.assertEqual(paused["retry_state"]["unanswered"], {u["id"]: 1 for u in remaining})
+        self.assertEqual(provider.calls, 1, "interrupted second-page units go back to a normal request")
+        self.assertEqual(json.loads((folder / "translation-cache.json").read_text("utf-8"))["retry_state"]["retry_calls"], 0)
         after = json.loads((folder / "translation-cache.json").read_text("utf-8"))["translations"]
         self.assertTrue(all(after[k] == v for k, v in before.items()))
         self.assertTrue(read_preview(folder)["complete"])
@@ -287,6 +291,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(set(cache["translations"]), provider.initial_ids - {provider.missing_id})
         self.assertEqual(cache["retry_state"]["attempts"][provider.missing_id], 2)
         self.assertEqual(cache["retry_state"]["retry_calls"], 1)
+        # The first retry went out but got no answer.
+        self.assertEqual(cache["retry_state"]["unanswered"], {provider.missing_id: 1})
         self.assertEqual((folder / "translated.pdf").read_bytes(), existing)
         self.assertEqual(self.library.paper(self.paper_id)["status"], "翻訳途中・再開可")
 
@@ -294,8 +300,8 @@ class WorkflowTests(unittest.TestCase):
             def generate(inner, instruction, data, schema=None):
                 payload = json.loads(data)
                 if inner.calls == 0:
-                    self.assertIn("context_parts", payload)
-                    self.assertIn("texts", payload)
+                    # The unanswered retry is sent again as it was.
+                    self.assertIn("source_parts", payload)
                 else:
                     self.assertFalse({u["id"] for u in payload} & set(cache["translations"]))
                 return super().generate(instruction, data, schema)

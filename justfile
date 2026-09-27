@@ -54,11 +54,14 @@ dev-frontend:
     pnpm tauri dev
 
 # Build sidecar binary and place it where Tauri's externalBin expects it
+# 同梱ソースのハッシュは PyInstaller の前に計算して build/ に置き、コピーが成功してから sidecar-sources.txt にする
+# （ビルド中にソースを編集しても、その編集を含まない sidecar が「最新」と記録されないように）
 build-sidecar:
     uv run python -m papeer.core.code_version code-version.txt
+    uv run python -m papeer.core.code_version --record-bundle build/sidecar-sources.pending
     uv run pyinstaller --noconfirm sidecar.spec
     uv run python -c "import shutil; shutil.copy2('dist/sidecar-x86_64-pc-windows-msvc.exe', 'frontend/src-tauri/')"
-    uv run python -m papeer.core.code_version --record-bundle sidecar-sources.txt
+    uv run python -c "import os; os.replace('build/sidecar-sources.pending', 'sidecar-sources.txt')"
 
 # Build everything
 build: build-sidecar build-app

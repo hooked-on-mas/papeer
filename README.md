@@ -97,9 +97,9 @@ just build
 
 次の処理を順に行います。
 
-1. `code-version.txt`（抽出・PDF 生成コードの識別値）を生成する
+1. `code-version.txt`（抽出・PDF 生成コードの識別値）と、同梱ソースと依存関係の内容ハッシュを生成する
 2. PyInstaller で `sidecar.spec` から `dist/sidecar-x86_64-pc-windows-msvc.exe` を作る
-3. その exe を `frontend/src-tauri/` へコピーし、同梱ソースと依存関係の内容ハッシュを `sidecar-sources.txt` に記録する
+3. その exe を `frontend/src-tauri/` へコピーし、成功したら 1 の内容ハッシュを `sidecar-sources.txt` に記録する
 4. `code-version.txt` と sidecar が現在のソースから作られたことを確かめ（`just check-sidecar`）、`pnpm tauri build` でインストーラーを作る
 
 インストーラーは `frontend/src-tauri/target/release/bundle/` に出力されます。
