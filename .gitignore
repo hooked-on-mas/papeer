@@ -9,6 +9,7 @@ __pycache__/
 /build/
 /dist/
 code-version.txt
+sidecar-sources.txt
 
 # Secrets
 .env

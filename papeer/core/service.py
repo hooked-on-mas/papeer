@@ -15,14 +15,14 @@ from papeer.providers import ProviderBackend, check_cancel
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library
 from papeer.layout.math_layout import restore_formula_text
-from papeer.translation.translation import RetryState, translate_batches, translation_fingerprint
-from papeer.translation.translation import translation_version, page_fingerprint
+from papeer.translation.translation import RetryState, TranslationKey, shared_translations, translate_batches, page_fingerprint
+from papeer.core.code_version import loaded_version
 from papeer.translation.translation_preview import PREVIOUS_CACHE, preview_page, remove_unused_runs, translated_page, translated_page_numbers
-from papeer.translation.translation_context import contextual_units
-from papeer.layout.reading_flow import unit_pages, expand_pages, materialize_flows
+from papeer.translation.translation_context import contextual_units, paper_context
+from papeer.layout.reading_flow import unit_pages, expand_pages, materialize_flows, translation_blocks
 from papeer.core.summary_figures import summary_figures
 from papeer.core import exports, prompts
-from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision, glossary_for_folder
+from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision, glossary_for_folder, glossary_warnings, kept_glossary_warnings
 
 
 def link_citations(answer: str, allowed: dict[str, int]) -> str:
@@ -56,22 +56,31 @@ def link_citations(answer: str, allowed: dict[str, int]) -> str:
     return re.sub(r"\[([0-9a-f]{32}:[^\[\]]+)\]", replace, answer)
 
 
-def page_translation_text(folder: Path, document: dict, page: int) -> list[str]:
-    """Translated blocks of one page with inline math as text.
+def cached_translations(folder: Path, document: dict) -> tuple[list[dict], dict[str, str]]:
+    """The paper's units (with their glossary) and the saved translations of those still current.
 
-    The translated PDF draws inline math as images, so text copied from it lacks the formulas.
+    Cached pages count only while they match the current extraction: after a re-extraction
+    the math tokens of renumbered blocks would resolve to other formulas.
     """
     units = translation_units(document)
-    glossary = glossary_for_folder(folder)
-    apply_glossary(units, glossary)
+    apply_glossary(units, glossary_for_folder(folder))
     cache = PaperFiles.read_json(PaperFiles(folder).translation_cache, {})
-    # Cached pages count only while they match the current extraction: after a re-extraction
-    # the math tokens of renumbered blocks would resolve to other formulas.
     done = {}
     for number, entry in cache.get("completed_pages", {}).items():
         page_units = [u for u in units if int(number) in unit_pages(u)]
         if page_units and entry.get("source") == page_fingerprint(page_units):
             done.update(entry.get("translations", {}))
+    return units, done
+
+
+def page_translation_text(folder: Path, document: dict, page: int,
+                          cached: tuple[list[dict], dict[str, str]] | None = None) -> list[str]:
+    """Translated blocks of one page with inline math as text.
+
+    The translated PDF draws inline math as images, so text copied from it lacks the formulas.
+    `cached` is cached_translations(folder, document), for a caller reading several pages.
+    """
+    units, done = cached or cached_translations(folder, document)
     started = {u["block"] for u in units if u["id"] in done}
     block_text = {}
     for unit in units:
@@ -119,14 +128,16 @@ class PaperService:
         if selected != requested:
             self.progress('文の続きを含むページも翻訳します：' + ', '.join(f'p.{p}' for p in sorted(selected - requested)))
         settings = self.provider.settings
+        # Read once: the prompt that keys the cache is the one sent with this run's requests.
+        instruction = prompts.load("translation")
         # Effort controls future requests, not cache identity: changing it must not
-        # discard completed translations or reset recovery attempt limits.
-        fingerprint = translation_fingerprint(settings, units)
+        # discard completed translations or reset recovery attempt limits. Neither does
+        # code: pages are redrawn from saved translations (TranslationKey).
+        key = TranslationKey.current(settings, instruction, units)
+        fingerprint, version = key.fingerprint, key.identity
         cache_path = files.translation_cache
         cache = files.read_json(cache_path, {})
-        version = translation_version()
-        compatible = (cache.get("fingerprint") == fingerprint
-                      and cache.get("translation_version") == version)
+        compatible = key.matches_cache(cache)
         done = dict(cache.get("translations", {})) if compatible else {}
         retry_state = RetryState.from_cache(cache.get("retry_state") if compatible else None)
         source_pages = {n: [u for u in units if n in unit_pages(u)]
@@ -134,31 +145,59 @@ class PaperService:
         page_keys = {n: page_fingerprint(values) for n, values in source_pages.items()}
         # Keep historical page records without treating stale entries as current.
         completed_pages = dict(cache.get("completed_pages", {}))
+        # Pages taken only to apply paragraph revisions keep the key and model they were
+        # translated with: the revision does not make them translations of the current key.
+        revised_only = set()
+        current_ids = set(done)
         for number, page_units in source_pages.items():
             entry = cache.get("completed_pages", {}).get(str(number), {})
-            if ((entry.get("version") == version or (replacements and number in selected)) and entry.get("source") == page_keys[number]
+            reusable = key.matches_page(entry)
+            if ((reusable or (replacements and number in selected)) and entry.get("source") == page_keys[number]
                     and all(u["id"] in entry.get("translations", {}) for u in page_units)):
                 done.update(entry["translations"])
                 completed_pages[str(number)] = entry
+                if reusable:
+                    current_ids.update(entry["translations"])
+                else:
+                    revised_only.add(number)
+        # Nor do their paragraphs join the current key's translations kept for unfinished pages.
+        foreign_ids = {u["id"] for n in revised_only for u in source_pages[n]} - current_ids
         if replacements:
             by_id = {unit["id"]: unit for unit in units}
             for identity, text in replacements.items():
                 if identity not in by_id or identity not in done:
                     raise ValueError("この段落の原文または辞書が変更されています。先に再翻訳してください。")
                 done[identity] = validate_revision(by_id[identity]["text"], text)
+        # A source text found more than once (a running head on every page) is translated once.
+        # A translation revised by hand (now or earlier) applies to its own paragraph only.
+        try:
+            history = files.read_json(files.translation_revisions, [])
+        except ValueError:  # A damaged history only loses this exclusion; translation goes on.
+            history = []
+        revised = set(replacements or ()) | {entry.get("unit_id") for entry in (history if isinstance(history, list) else [])
+                                            if isinstance(entry, dict)}
+        marginal_blocks = {b["id"] for b in translation_blocks(document) if b.get("reading_margin") or b.get("running_header")}
+        known = len(done)
+        copies, followers = shared_translations(units, [u for u in units if unit_pages(u) & selected], done,
+                                                foreign_ids | revised, {u["id"] for u in units if u["block"] in marginal_blocks})
+        if len(done) > known or followers:
+            self.progress(f"同じ原文の段落は訳を使い回します（AIに送らない段落：{len(done) - known + len(followers)}件）")
         already_done = {n for n in selected if source_pages[n]
                         and all(u["id"] in done for u in source_pages[n])}
         if already_done:
-            self.progress("現バージョンで翻訳済みのページをスキップします：" +
+            self.progress("保存済みの訳文を使うページ（AIには送りません）：" +
                           ", ".join(f"p.{n}" for n in sorted(already_done)))
         # Context is request-only: adding it must not invalidate translations or
-        # reset the retry budget of an otherwise unchanged document.
+        # reset the retry budget of an otherwise unchanged document. So is the paper's
+        # title and abstract sent with every request.
         units = contextual_units(document, units)
+        paper = paper_context(document)
         selected_units = [unit for unit in units if unit_pages(unit) & selected]
         by_page = {number: [u for u in units if number in unit_pages(u)]
                    for number in range(1, document["page_count"] + 1)}
         chunks = [chunk for number in sorted({u['page'] for u in selected_units})
-                  for chunk in batches([u for u in selected_units if u['page'] == number and u['id'] not in done])]
+                  for chunk in batches([u for u in selected_units if u['page'] == number
+                                        and u['id'] not in done and u['id'] not in followers])]
         preview = {"fingerprint": fingerprint, "run_id": uuid.uuid4().hex,
                    "requested_pages": sorted(requested), "pages": [], "skipped_pages": [], "page_errors": {}, "target_pages": sorted(selected),
                    "total_pages": document["page_count"], "complete": False}
@@ -197,7 +236,8 @@ class PaperService:
         self.library.update(paper_id, status="翻訳中")
         try:
             def skipped(unit):
-                return unit["id"] not in done and retry_state.exhausted(unit)
+                # A unit taking another's translation is given up with the unit sent for it.
+                return unit["id"] not in done and retry_state.exhausted(followers.get(unit["id"], unit))
 
             def publish_ready():
                 for number, page_units in by_page.items():
@@ -233,11 +273,13 @@ class PaperService:
             def save():
                 for number, page_units in source_pages.items():
                     if page_units and all(u["id"] in done for u in page_units):
+                        origin = completed_pages[str(number)] if number in revised_only else {}
                         completed_pages[str(number)] = {
-                            "version": version, "source": page_keys[number], "glossary": glossary_key,
-                            "model": settings.model,
+                            "version": origin.get("version", version), "source": page_keys[number], "glossary": glossary_key,
+                            "model": origin.get("model", settings.model),
                             "translations": {u["id"]: done[u["id"]] for u in page_units}}
-                atomic_write_json(cache_path, {"fingerprint": fingerprint, "translations": done,
+                atomic_write_json(cache_path, {"fingerprint": fingerprint,
+                                       "translations": {k: v for k, v in done.items() if k not in foreign_ids},
                                        "translation_version": version,
                                        "model": settings.model,
                                        "completed_pages": completed_pages,
@@ -245,6 +287,8 @@ class PaperService:
 
             def accept(values):
                 done.update(values)
+                for identity, text in values.items():
+                    done.update(dict.fromkeys(copies.get(identity, ()), text))
                 save()
                 publish_ready()
 
@@ -270,7 +314,7 @@ class PaperService:
             check_cancel(self.cancel)
             report_progress()
             translate_batches(self.provider, chunks, self.cancel, self.progress, accept, retry_state, save,
-                              concurrency=concurrency, finished=finished)
+                              concurrency=concurrency, finished=finished, instruction=instruction, paper=paper)
             check_cancel(self.cancel)
             # A shared sentence must not be published with half its destinations
             # missing. Retain cached translations for retry, but restore all
@@ -312,8 +356,15 @@ class PaperService:
             report["skipped_block_pages"] = sorted({page for unit in units if unit["id"] in skipped_ids for page in unit_pages(unit)})
             report["readability_warnings"] = report.get("readability_warnings", []) + [
                 item for item in previous_report.get("readability_warnings", []) if item.get("page") in retained]
+            # Paragraphs whose glossary rendering the translation lacks, for review (kept for kept pages).
+            report["glossary_warnings"] = glossary_warnings(
+                [u for u in units if unit_pages(u) & (set(preview["pages"]) - retained) and u["id"] in done], done)
+            report["glossary_warnings"] += kept_glossary_warnings(
+                previous_report.get("glossary_warnings", []), {u["id"]: u for u in units if unit_pages(u) <= retained})
             report["requested_pages"] = sorted(requested)
             report["translation_version"] = version
+            # The code that drew this run's pages; preserved pages keep their earlier drawing.
+            report["render_version"] = loaded_version()
             report["already_translated_pages"] = sorted(already_done)
             report["selected_pages"] = sorted(selected)
             report["preserved_pages"] = sorted(retained)
@@ -403,7 +454,7 @@ class PaperService:
                     # Keep each image and its evidence together across chunk boundaries.
                     page_units.append({"id": figure["id"], "page": page["number"],
                                        "text": f"{image}{caption}"})
-        chunks = list(batches(page_units, limit=18000))
+        chunks = list(batches(page_units, limit=18000, size=lambda chunk: sum(len(x["text"]) + 100 for x in chunk)))
         notes = []
         for index, chunk in enumerate(chunks):
             check_cancel(self.cancel)

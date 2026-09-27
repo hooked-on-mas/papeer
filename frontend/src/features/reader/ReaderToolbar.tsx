@@ -288,7 +288,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             <DropdownMenuGroup>
               <DropdownMenuLabel className="tabular-nums">{pageLabel}</DropdownMenuLabel>
               {version && (
-                <DropdownMenuLabel className="font-normal" title="このページを翻訳したときのコード版とモデル">
+                <DropdownMenuLabel className="font-normal" title="このページを翻訳したときの翻訳キー（接続先・モデル・プロンプトなどから計算）とモデル">
                   翻訳時SHA：{version.sha} ({version.model})
                 </DropdownMenuLabel>
               )}

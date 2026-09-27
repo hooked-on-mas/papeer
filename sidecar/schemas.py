@@ -9,7 +9,7 @@ from papeer.core.config import Settings
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str  # App release, MAJOR.MINOR.PATCH (papeer.__version__).
-    code_version: str  # Translation code identity, "code-sha256-<hex>" (papeer.core.code_version).
+    code_version: str  # Extraction and PDF drawing code identity, "code-sha256-<hex>" (papeer.core.code_version).
 
 
 _DEFAULTS = Settings()

@@ -98,11 +98,11 @@ just build
 
 次の処理を順に行います。
 
-1. `code-version.txt`（翻訳キャッシュの識別値）を生成する
+1. `code-version.txt`（抽出・PDF 生成コードの識別値）と、同梱ソースと依存関係の内容ハッシュを生成する
 2. PyInstaller で `sidecar.spec` から `dist/sidecar-x86_64-pc-windows-msvc.exe` を作る
 3. その exe を `just smoke-sidecar` と同じ手順で試す（次節）。失敗したらここで止まる
-4. 試した exe を `frontend/src-tauri/` へコピーする
-5. `pnpm tauri build` でインストーラーを作る
+4. 試した exe を `frontend/src-tauri/` へコピーし、成功したら 1 の内容ハッシュを `sidecar-sources.txt` に記録する
+5. `code-version.txt` と sidecar が現在のソースから作られたことを確かめ（`just check-sidecar`）、`pnpm tauri build` でインストーラーを作る
 
 インストーラーは `frontend/src-tauri/target/release/bundle/` に出力されます。
 
@@ -112,11 +112,11 @@ PyInstaller は依存グループ `build` にあり、`just build-sidecar` が `
 
 `just smoke-sidecar`（`tools/smoke_sidecar.py`）は、`just build-sidecar` で作った exe を Tauri と同じように乱数のトークンと空きポートで起動し、次を確かめます。PyInstaller の `hiddenimports`・`datas` の漏れ（同梱し忘れたモジュール・プロンプト・フォント）は、ここで起動や翻訳の失敗として見つかります。
 
-1. `/health` が応答し、`version` がソースの版（`MAJOR.MINOR.PATCH`）、`code_version` がソースの翻訳コードの識別値と一致する（版か翻訳処理のコードが変わった後に exe を作り直していなければ失敗する。それ以外のコードの変更はどちらの値にも表れないため、ここでは見つからない）
+1. `/health` が応答し、`version` がソースの版（`MAJOR.MINOR.PATCH`）、`code_version` がソースの抽出・PDF 生成コードの識別値（`code-version.txt` と同じ値）と一致する（版か抽出・PDF 生成のコードが変わった後に exe を作り直していなければ失敗する。それ以外のコードの変更はどちらの値にも表れないため、ここでは見つからない。同梱ソース全体の一致は `just check-sidecar` が確かめる）
 2. トークンなし・誤ったトークンは 401、正しいトークン（`Authorization` ヘッダーと `token` クエリ）は 200 になる
 3. 同梱のプロンプトが `papeer/core/prompts` と一致し、設定を保存できる
 4. `tests/fixtures/sample.pdf` を取り込み、テキストを抽出・検索できる
-5. その論文を翻訳し、同梱の日本語フォント（源ノ明朝）を埋め込んだ `translated.pdf` ができる。翻訳の依頼先は、スクリプトが `127.0.0.1` で動かす OpenAI 互換の代役サーバーで、実際の AI は呼ばず、PC の外にも通信しない
+5. その論文を翻訳し、同梱の日本語フォント（源ノ明朝）を埋め込んだ `translated.pdf` ができる。翻訳の依頼先は、スクリプトが `127.0.0.1` で動かす OpenAI 互換の代役サーバーで、実際の AI は呼ばず、PC の外にも通信しない。翻訳の指示に共通部分（`papeer/core/prompts/_*.txt`）が差し込まれていることも確かめる
 6. `/shutdown` でプロセスが終了コード 0 で終わり、`_MEI*`（onefile の展開フォルダー）が残らない
 
 データフォルダー・`LOCALAPPDATA`・`TEMP` は毎回新しい一時フォルダーに向けるため、実際のライブラリや PC ごとの設定には触れません（`_MEI*` もその中に作られ、終了後に残っていないかを正確に確かめられます）。失敗すると、失敗した確認と sidecar のログの末尾を表示して終了コード 1 で終わります。どの場合も sidecar は止め（応答しなければ強制終了）、一時フォルダーは消します。`--keep` で一時フォルダー（データとログ）を残し、`--source` で exe の代わりに `python -m sidecar` を同じ手順で試せます（`tests/test_smoke_sidecar.py` はこちらを使い、exe なしでスクリプト自体を検査します）。`just build-sidecar`（`just build` とリリースのワークフローも使う）は exe を作った直後にこのテストを実行し、通った exe だけを `frontend/src-tauri/` へコピーします。
@@ -125,7 +125,7 @@ PyInstaller は依存グループ `build` にあり、`just build-sidecar` が `
 
 ## リリース
 
-アプリの版は `MAJOR.MINOR.PATCH`（数字のみ）で、`pyproject.toml`・`papeer/__init__.py`・`frontend/package.json`・`frontend/src-tauri/tauri.conf.json`・`frontend/src-tauri/Cargo.toml` と、ロックファイル（`uv.lock`・`Cargo.lock`）の自パッケージの項目、`frontend/openapi.json` に同じ値を書きます。手で書き換えず `just bump` を使ってください（一致は `tests/test_version.py` で検査します）。`-beta` などの接尾辞は MSI が受け付けないため使えません。sidecar の `/health` は `version` にこの版を、`code_version` に翻訳キャッシュの識別値（翻訳処理のコードのハッシュ）を返し、ステータスバーには前者を表示します。
+アプリの版は `MAJOR.MINOR.PATCH`（数字のみ）で、`pyproject.toml`・`papeer/__init__.py`・`frontend/package.json`・`frontend/src-tauri/tauri.conf.json`・`frontend/src-tauri/Cargo.toml` と、ロックファイル（`uv.lock`・`Cargo.lock`）の自パッケージの項目、`frontend/openapi.json` に同じ値を書きます。手で書き換えず `just bump` を使ってください（一致は `tests/test_version.py` で検査します）。`-beta` などの接尾辞は MSI が受け付けないため使えません。sidecar の `/health` は `version` にこの版を、`code_version` に抽出・PDF 生成コードの識別値（`code-version.txt` と同じ。翻訳キャッシュの識別には使わない）を返し、ステータスバーには前者を表示します。
 
 1. 変更点を `CHANGELOG.md` の `[Unreleased]` に書く（日々の変更のたびに追記しておく。ブランチごとの追記は `.gitattributes` の `merge=union` で両方残るので、マージ後に重複と順序を確かめる）
 2. `just bump 0.3.0` で全ファイルの版を書き換え、`[Unreleased]` の内容を `[0.3.0] - 日付` の節に移す（版を下げる・`[Unreleased]` が空のときは何も変更せずに止まる）
@@ -192,7 +192,9 @@ mermaid が使う chevrotain は脆弱性のある `lodash-es` 4.17.23 に固定
 | Gemini | Antigravity CLI の `agy` コマンド |
 | OpenAI 互換 API | ベース URL と API キー |
 
-CLI は PATH と既定のインストール先から自動検出します。見つからない場合は設定画面でパスを指定してください。API キーはファイルに保存せず、起動中のセッションだけで保持します。
+CLI は PATH と既定のインストール先から自動検出します。見つからない場合は設定画面でパスを指定してください。npm・pnpm 版の `.cmd` は cmd.exe を経由するためそのまま実行せず、`.cmd` と同じフォルダー配下にある本体（npm の既定の配置、なければ `.cmd` が起動するもの）を直接起動します（JavaScript なら Node.js で、`.exe` ならそのまま）。本体が見つからない `.cmd`・`.bat`・`.ps1` は使えないので、yarn などで入れた場合は `.exe` か npm 版のパスを指定してください。API キーはファイルに保存せず、起動中のセッションだけで保持します。
+
+PDF の本文は信頼できない入力として扱い、CLI にはツールを使わせない指定で渡します。Claude Code はツール・MCP サーバー・プロジェクト設定・スキルを無効にし、Codex は読み取り専用サンドボックスでシェル・Web 検索・プラグイン・アプリと `config.toml` の MCP サーバーを無効にします。Antigravity は `--sandbox` で起動し、本文はコマンドラインではなく標準入力で渡します（Windows のコマンドライン長の上限を超える長いチャットも送れます）。CLI には Papeer 自身の環境変数（`PAPEER_*`、sidecar の認証トークンなど）を引き継ぎません。
 
 翻訳・解説・チャットを実行したときだけ、必要なテキストが選択した AI へ送られます。PDF を追加しただけでは送信しません。
 
@@ -202,11 +204,11 @@ CLI は PATH と既定のインストール先から自動検出します。見�
 
 1. `papeer/providers/base.py` の `ProviderBackend` を継承し、`spec`（表示名・説明・設定項目）と `_generate()` を実装する。CLI なら `common.CliBackend` も継承すると、パス検出・ログイン・接続確認が付く。
 2. `papeer/providers/registry.py` の `BACKENDS` に 1 行追加する。
-3. `papeer/core/code_version.py` の `TRANSLATION_SOURCES` に新しいファイルを追加する（`registry.py` は対象外なので、1 行追加だけではキャッシュは無効にならない）。
+3. `papeer/core/code_version.py` の `RENDER_EXCLUDED` に新しいファイルを追加する（`tests/test_code_version.py` が未分類のファイルを検出する）。
 
 設定画面の選択肢と入力欄は `GET /api/providers` から作られるため、フロントエンドの変更は不要です。接続先ごとの設定のうち、最後に選んだモデルと effort はライブラリの `settings.json` の `provider_options` に、CLI のパスと API URL（`config.DEVICE_OPTION_KEYS`）は PC ごとの `%LOCALAPPDATA%\PapeerSync\device-settings.json` に保存されます。後者は同期・バックアップに含めず、別の PC から届いた `settings.json` や復元したバックアップに書かれていても使いません（以前の版の `settings.json` にあった値は、初回の読み込み時に一度だけ PC ごとの保存先へ移します）。モデル名は半角英数字と `. : / @ [ ] + - _` だけ（先頭の `-` は不可）を受け付けます。保存済みのモデル名が不正な場合は、接続先の既定のモデルを使います。
 
-`papeer/providers/` のファイルは翻訳キャッシュの識別値に含まれます。編集すると、既存の論文は次回の翻訳で指定ページを訳し直します。
+翻訳キャッシュはコードではなく接続先・モデル・プロンプト・原文で区別するため、`papeer/providers/` を編集しても既存の訳文は訳し直しません。依頼の送り方や応答の検証を変えて訳し直すべきときは、`papeer/translation/translation.py` の `TRANSLATION_PROTOCOL` を上げます（[翻訳](docs/translation.md#翻訳キャッシュの識別値)）。
 
 ## データの保存場所
 

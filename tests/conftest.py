@@ -53,6 +53,8 @@ def isolated_app_data(tmp_path_factory, monkeypatch):
     # The sidecar's token or no-auth flag from the developer's shell must not decide what a test sees.
     for name in ("PAPEER_TOKEN", "PAPERDESK_TOKEN", "PAPEER_DEV_NO_AUTH"):
         monkeypatch.delenv(name, raising=False)
+    # The Codex connection reads the MCP servers in the developer's ~/.codex/config.toml.
+    monkeypatch.setenv("CODEX_HOME", str(base / "codex-home"))
     yield base
     found = take_violations()
     if found:

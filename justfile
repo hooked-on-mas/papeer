@@ -71,11 +71,15 @@ dev-frontend:
     pnpm tauri dev
 
 # Build sidecar binary, smoke-test it, and only then place it where Tauri's externalBin expects it
+# 同梱ソースのハッシュは PyInstaller の前に計算して build/ に置き、コピーが成功してから sidecar-sources.txt にする
+# （ビルド中にソースを編集しても、その編集を含まない sidecar が「最新」と記録されないように）
 build-sidecar:
     uv run python -m papeer.core.code_version code-version.txt
+    uv run python -m papeer.core.code_version --record-bundle build/sidecar-sources.pending
     uv run --group build pyinstaller --noconfirm sidecar.spec
     uv run python tools/smoke_sidecar.py
     uv run python -c "import shutil; shutil.copy2('dist/sidecar-x86_64-pc-windows-msvc.exe', 'frontend/src-tauri/')"
+    uv run python -c "import os; os.replace('build/sidecar-sources.pending', 'sidecar-sources.txt')"
 
 # Smoke-test the built sidecar exe before packaging it (tools/smoke_sidecar.py, README「ビルド」)
 # データ・LOCALAPPDATA・TEMP を一時フォルダーにして起動する。実際の AI は呼ばない（翻訳はスクリプトが 127.0.0.1 で動かす代役 API で行う）
@@ -87,8 +91,12 @@ smoke-sidecar *args:
 # Build everything
 build: build-sidecar build-app
 
+# 同梱する sidecar が現在のソースから作られたかを確かめる（code-version.txt と、ビルド時に記録した同梱ソース・依存関係の内容ハッシュの一致）
+check-sidecar:
+    uv run python -m papeer.core.code_version --check code-version.txt sidecar-sources.txt
+
 [working-directory: 'frontend']
-build-app:
+build-app: check-sidecar
     pnpm tauri build
 
 # Remove build, dist, output and tmp (repository root only)

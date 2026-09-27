@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import threading
 import unittest
@@ -38,6 +39,8 @@ class FakeProvider:
             raise Cancelled("test interruption")
         if schema:
             units = json.loads(data)
+            if isinstance(units, dict) and "blocks" in units:  # The first request of a batch.
+                units = units["blocks"]
             if isinstance(units, dict) and "source_parts" in units:
                 return json.dumps({"parts": [dict(part) if part["kind"] == "math" else
                     {"kind": "text", "text": "適応制御の検証結果。追従誤差を18%削減した。"}
@@ -235,8 +238,8 @@ class WorkflowTests(unittest.TestCase):
                     self.assertFalse((folder / "translated.pdf").exists())
                     self.assertIn((self.paper_id, 1), notifications)
                     raise Cancelled("pause after page one")
-                units = json.loads(data)
-                self.assertEqual({u["page"] for u in units}, {1})
+                units = json.loads(data)["blocks"]
+                self.assertEqual({u["id"].split("b")[0] for u in units}, {"p1"})
                 return super().generate(instruction, data, schema)
 
         with self.assertRaises(Cancelled):
@@ -244,12 +247,16 @@ class WorkflowTests(unittest.TestCase):
                          page_ready=lambda *args: notifications.append(args)).translate(self.paper_id)
         preview_path, _ = translated_page(folder, 0)
         self.assertTrue(preview_path.exists())
-        before = json.loads((folder / "translation-cache.json").read_text("utf-8"))["translations"]
+        paused = json.loads((folder / "translation-cache.json").read_text("utf-8"))
+        before = paused["translations"]
         provider = FakeProvider()
         PaperService(Library(self.library.root), provider, self.cancel).translate(self.paper_id)
         remaining = [u for u in translation_units(self.library.document(self.paper_id)) if u["id"] not in before]
         self.assertEqual({u["page"] for u in remaining}, {2})
-        self.assertEqual(provider.calls, len(remaining), "only interrupted second-page units use recovery requests")
+        # The second page's request got no answer: it is sent again as one normal request, spending no retries.
+        self.assertEqual(paused["retry_state"]["unanswered"], {u["id"]: 1 for u in remaining})
+        self.assertEqual(provider.calls, 1, "interrupted second-page units go back to a normal request")
+        self.assertEqual(json.loads((folder / "translation-cache.json").read_text("utf-8"))["retry_state"]["retry_calls"], 0)
         after = json.loads((folder / "translation-cache.json").read_text("utf-8"))["translations"]
         self.assertTrue(all(after[k] == v for k, v in before.items()))
         self.assertTrue(read_preview(folder)["complete"])
@@ -286,6 +293,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(set(cache["translations"]), provider.initial_ids - {provider.missing_id})
         self.assertEqual(cache["retry_state"]["attempts"][provider.missing_id], 2)
         self.assertEqual(cache["retry_state"]["retry_calls"], 1)
+        # The first retry went out but got no answer.
+        self.assertEqual(cache["retry_state"]["unanswered"], {provider.missing_id: 1})
         self.assertEqual((folder / "translated.pdf").read_bytes(), existing)
         self.assertEqual(self.library.paper(self.paper_id)["status"], "翻訳途中・再開可")
 
@@ -293,10 +302,10 @@ class WorkflowTests(unittest.TestCase):
             def generate(inner, instruction, data, schema=None):
                 payload = json.loads(data)
                 if inner.calls == 0:
-                    self.assertIn("context_parts", payload)
-                    self.assertIn("texts", payload)
+                    # The unanswered retry is sent again as it was.
+                    self.assertIn("source_parts", payload)
                 else:
-                    self.assertFalse({u["id"] for u in payload} & set(cache["translations"]))
+                    self.assertFalse({u["id"] for u in payload["blocks"]} & set(cache["translations"]))
                 return super().generate(instruction, data, schema)
 
         resumed = ResumeProvider()
@@ -308,7 +317,7 @@ class WorkflowTests(unittest.TestCase):
         class InvalidProvider(FakeProvider):
             def generate(inner, instruction, data, schema=None):
                 payload = json.loads(data)
-                if isinstance(payload, list):
+                if "blocks" in payload:
                     answer = json.loads(super().generate(instruction, data, schema))
                     if not hasattr(inner, "missing_id"):
                         inner.missing_id = answer["translations"].pop()["id"]
@@ -383,16 +392,28 @@ class WorkflowTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
-    @unittest.skipIf(os.name == "nt", "POSIX fixture for subprocess contract; Windows is covered by installer smoke tests")
     def test_codex_transport_does_not_shell_interpolate_documents(self):
-        fake = self.root / "fake-codex"
-        fake.write_text("#!/usr/bin/env python3\nimport sys,pathlib\ndata=sys.stdin.buffer.read().decode('utf-8')\n"
-                        "assert '日本語' in data\nassert '--sandbox' in sys.argv and 'read-only' in sys.argv\n"
-                        "out=sys.argv[sys.argv.index('--output-last-message')+1]\n"
-                        "pathlib.Path(out).write_text('回答',encoding='utf-8')\n", "utf-8")
-        fake.chmod(0o755)
-        settings = Settings(provider_options={"codex": {"cli_path": str(fake)}}, timeout_seconds=10)
-        result = create_provider(settings, self.cancel).generate("read", "日本語 & test `literal` $(literal)")
+        """A real process through the npm layout: codex.cmd is never run, its JS entry is, with "node".
+
+        Python stands in for node, so the entry is a Python script; the shim would exit with 9 if run.
+        """
+        shim = self.root / "npm" / "codex.cmd"
+        entry = shim.parent / "node_modules/@openai/codex/bin/codex.js"
+        entry.parent.mkdir(parents=True)
+        shim.write_text("@exit /b 9\n", "utf-8")
+        entry.write_text("import os,sys,pathlib\ndata=sys.stdin.buffer.read().decode('utf-8')\n"
+                         "assert '日本語 & test `literal` $(literal) %PATH% ^& |' in data\n"
+                         "assert '--sandbox' in sys.argv and 'read-only' in sys.argv\n"
+                         "assert 'features.plugins=false' in sys.argv\n"
+                         "assert 'PAPEER_TOKEN' not in os.environ and os.environ['KEEP_THIS'] == '1'\n"
+                         "out=sys.argv[sys.argv.index('--output-last-message')+1]\n"
+                         "pathlib.Path(out).write_text('回答',encoding='utf-8')\n", "utf-8")
+        settings = Settings(provider_options={"codex": {"cli_path": str(shim)}}, timeout_seconds=30)
+        node = lambda name, *args, **kwargs: sys.executable if name == "node" else None  # noqa: E731
+        with patch("shutil.which", side_effect=node), \
+                patch.dict(os.environ, {"PAPEER_TOKEN": "sidecar-token", "KEEP_THIS": "1"}):
+            result = create_provider(settings, self.cancel).generate(
+                "read", "日本語 & test `literal` $(literal) %PATH% ^& |")
         self.assertEqual(result, "回答")
 
 

@@ -20,8 +20,9 @@ router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
 @public.get("/health", response_model=HealthResponse)
 def health() -> dict[str, str]:
-    # version: the app release (MAJOR.MINOR.PATCH, `just bump`); code_version: the translation code identity
-    # that keys the translation cache (code-version.txt in a build), which changes without a release.
+    # version: the app release (MAJOR.MINOR.PATCH, `just bump`); code_version: the identity of the code that
+    # extracts and draws PDFs (code-version.txt in a build), which changes without a release. It does not key
+    # the translation cache (papeer.translation.translation.TranslationKey does).
     return {"status": "ok", "version": __version__, "code_version": application_version()}
 
 

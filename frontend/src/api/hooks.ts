@@ -39,7 +39,11 @@ export type TranslationReport = {
   skipped_blocks?: string[];
   skipped_block_pages?: number[];
   page_errors?: Record<string, string>;
+  /** Paragraphs whose translation lacks the rendering of a glossary term found in the source. */
+  glossary_warnings?: GlossaryWarning[];
 };
+
+export type GlossaryWarning = { page: number; unit: string; excerpt: string; terms: { source: string; target: string }[] };
 
 export type TranslationPreview = {
   run_id: string;

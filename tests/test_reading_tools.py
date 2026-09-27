@@ -31,6 +31,8 @@ class FakeProvider:
     def generate(self, instruction, data, schema=None):
         self.calls.append((instruction, json.loads(data)))
         units = json.loads(data)
+        if isinstance(units, dict) and "blocks" in units:  # The first request of a batch.
+            units = units["blocks"]
         if schema and "current" in units:
             return json.dumps({"text": "修正した日本語。" + " ".join(MATH_TOKEN.findall(units["source"]))})
         if schema:
@@ -232,7 +234,7 @@ def test_glossary_changes_only_retranslate_affected_pages(tmp_path):
     save_global_glossary(lib.root, [{"source": "alpha", "target": "アルファ"}])
     report = service.translate(identity)
     assert report["already_translated_pages"] == [2]
-    sent = [unit["text"] for _, values in provider.calls for unit in (values["texts"] if isinstance(values, dict) else values)]
+    sent = [unit["text"] for _, values in provider.calls for unit in values.get("texts", values.get("blocks", []))]
     assert all("beta" not in text for text in sent)
 
 

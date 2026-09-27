@@ -13,7 +13,11 @@ import threading
 from typing import ClassVar, Literal
 
 from papeer.core.config import Settings
-from papeer.providers.common import UsageMeter, check_cancel, latest_limits
+from papeer.providers.common import TransientError, UsageMeter, check_cancel, latest_limits
+
+# The longest generate() waits between sends of one request, in all. A service asking for a
+# longer wait (Retry-After) gets the error reported instead.
+TRANSPORT_WAIT_LIMIT = 120.0
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,9 @@ class ProviderSpec:
 
 class ProviderBackend(ABC):
     spec: ClassVar[ProviderSpec]
+    # Sends of a request after a TransientError (generate), and the first wait between them in seconds.
+    transport_retries: ClassVar[int] = 2
+    transport_backoff: ClassVar[float] = 2.0
 
     def __init__(self, settings: Settings, cancel: threading.Event | None = None):
         self.settings = settings
@@ -51,8 +58,28 @@ class ProviderBackend(ABC):
         return self.settings.options(self.spec.id)
 
     def generate(self, instruction: str, data: str, schema: dict | None = None) -> str:
-        check_cancel(self.cancel)
-        answer = self._generate(instruction, data, schema)
+        """The answer to one request, sent again after a TransientError.
+
+        Waits 2, 4, 8... seconds between sends, or what the service asked for (Retry-After),
+        at most `transport_retries` times and TRANSPORT_WAIT_LIMIT seconds in all; a request
+        that timed out is sent again only once, as each one can take timeout_seconds. The
+        waits end at once on cancel. These sends are separate from translation's retries of
+        answers that fail its checks (RetryState), which see one request either way.
+        """
+        retries, waited, timeouts = 0, 0.0, 0
+        while True:
+            check_cancel(self.cancel)
+            try:
+                answer = self._generate(instruction, data, schema)
+                break
+            except TransientError as error:
+                timeouts += error.timed_out
+                delay = error.retry_after if error.retry_after is not None else self.transport_backoff * 2 ** retries
+                if retries >= self.transport_retries or timeouts > 1 or waited + delay > TRANSPORT_WAIT_LIMIT:
+                    raise
+                retries += 1
+                waited += delay
+                self.cancel.wait(delay)
         self.usage.count_call()
         return answer
 

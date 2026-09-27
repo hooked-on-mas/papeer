@@ -85,6 +85,9 @@ def test_job_outcome():
 def test_stub_answers_pass_the_translation_checks():
     instruction = "translate\n" + smoke_sidecar.SCHEMA_MARKER + ": {}"
     assert validate_translations(stub_answer(instruction, json.dumps(UNITS)), UNITS)["p1-b1"].endswith("[[PD_MATH_1]]")
+    # The first request of a batch sends {"paper", "glossary", "blocks": [...]}.
+    blocks = {"paper": {"title": "A paper"}, "glossary": [], "blocks": [{"id": u["id"], "text": u["text"]} for u in UNITS]}
+    assert set(validate_translations(stub_answer(instruction, json.dumps(blocks)), UNITS)) == {"p1-b1", "p1-b2"}
     # The fallback request sends {"texts": [...]} with context around them.
     texts = [{"id": "text0", "text": "an adaptive controller"}]
     assert validate_translations(stub_answer(instruction, json.dumps({"context_parts": [], "texts": texts})), texts)
@@ -108,6 +111,11 @@ def test_stub_server_speaks_the_openai_compatible_protocol():
 def test_expected_prompts_are_the_built_in_ones():
     assert expected_prompts() == prompts.defaults()
     assert expected_prompts()  # the folder is found at all
+
+
+def test_shared_marker_matches_the_prompts_marker():
+    assert smoke_sidecar.SHARED_MARKER.search(prompts.builtin("translation"))
+    assert not smoke_sidecar.SHARED_MARKER.search(prompts.expand(prompts.builtin("translation")))
 
 
 def test_translated_pdf_without_the_bundled_font_fails():

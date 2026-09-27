@@ -16,7 +16,7 @@ from papeer.layout.math_layout import LAYOUT_VERSION, restore_formula_text
 from papeer.core.fileio import atomic_write_json, atomic_write_text, replace_file
 from papeer.core.exports import discard_interleaved
 from papeer.pdf.pdf_engine import PDF_LOCK, translation_units, bilingual_pdf
-from papeer.translation.translation import translation_fingerprint, validate_translations
+from papeer.translation.translation import legacy_translation_fingerprint, translation_fingerprint, validate_translations
 from papeer.translation.translation_preview import read_preview, translated_page, translated_page_numbers
 from papeer.layout.reading_flow import unit_pages, materialize_flows
 from papeer.core.terminology import apply_glossary, glossary_for_folder
@@ -153,7 +153,9 @@ def _publish(folder, review, manifest, entries):
     apply_glossary(units, glossary_for_folder(folder))
     fingerprint = translation_fingerprint(settings, units)
     old_cache = _read(folder/'translation-cache.json', {})
-    cache = old_cache if old_cache.get('fingerprint') == fingerprint else {'fingerprint': fingerprint, 'translations': {}}
+    # A cache from before TranslationKey is kept too: the next translation adopts its pages.
+    same = old_cache.get('fingerprint') in {fingerprint, legacy_translation_fingerprint(settings, units)}
+    cache = old_cache if same else {'fingerprint': fingerprint, 'translations': {}}
     cache = json.loads(json.dumps(cache))
     reviewed_values = {}
     for _, _, values, _ in entries:
@@ -166,6 +168,9 @@ def _publish(folder, review, manifest, entries):
     retry = cache.setdefault('retry_state', {'attempts': {}, 'retry_calls': 0})
     for key in reviewed_values:
         retry['attempts'].pop(key, None)
+        # RetryState requires every unanswered record to name a block in attempts.
+        if isinstance(retry.get('unanswered'), dict):
+            retry['unanswered'].pop(key, None)
     atomic_write_json(stage/'translation-cache.json', cache)
     atomic_write_json(stage/'document.json', document)
     report = _read(folder/'translation-report.json', {})
@@ -175,6 +180,9 @@ def _publish(folder, review, manifest, entries):
     if previous_metrics:
         report['previous_aggregate_metrics'] = previous_metrics
     report['readability_warnings'] = [w for w in report.get('readability_warnings', []) if w['page'] not in selected]
+    # The glossary check of the replaced pages no longer applies (the review brings no check of its own).
+    if 'glossary_warnings' in report:
+        report['glossary_warnings'] = [w for w in report['glossary_warnings'] if w.get('page') not in selected]
     page_reports = report.setdefault('reviewed_page_reports', {})
     for result, _, _, _ in entries:
         page_reports[str(result['page'])] = result['report']

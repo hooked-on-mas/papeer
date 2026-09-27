@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from collections import Counter
-import json
 from pathlib import Path
 import re
 import threading
+from typing import Callable
 
 import pymupdf as fitz
 
@@ -17,6 +17,7 @@ from papeer.layout.table_layout import separate_tables, table_regions
 from papeer.layout.figure_layout import figure_regions
 from papeer.layout.algorithm_layout import separate_algorithms
 from papeer.layout.reading_flow import order_page, continuation_groups, translation_blocks, materialize_flows
+from papeer.translation.translation_context import request_text
 from papeer.pdf.pdf_typography import FONT_CSS, TextStyle, body_font_size, first_line_indented, font_archive, merge_wrapped_headings, reading_space, running_headers, text_html, text_style
 
 
@@ -108,15 +109,19 @@ def translation_units(document: dict, limit: int = 6500) -> list[dict]:
     return units
 
 
-def batches(units: list[dict], limit: int = 9000):
-    batch, length = [], 0
+def batches(units: list[dict], limit: int = 9000, size: Callable[[list[dict]], int] | None = None):
+    """Split `units` into requests of at most `limit` characters, a unit larger than that alone.
+
+    `size` measures a request; by default the data of a translation request as sent (request_text),
+    so that the context and glossary a request leaves out make room for more text.
+    """
+    measure = size or (lambda batch: len(request_text(batch)))
+    batch: list[dict] = []
     for unit in units:
-        size = len(unit["text"]) + 100 + (len(json.dumps(unit["context"], ensure_ascii=False)) if unit.get("context") else 0)
-        if batch and length + size > limit:
+        if batch and measure(batch + [unit]) > limit:
             yield batch
-            batch, length = [], 0
+            batch = []
         batch.append(unit)
-        length += size
     if batch:
         yield batch
 

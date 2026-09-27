@@ -70,7 +70,7 @@ export function StatusBar() {
         {providerLabel(providers, settings?.provider)}
       </span>
       {health?.version && (
-        <span className="shrink-0 tabular-nums" title={`Papeer ${health.version}\n翻訳コード ${health.code_version.slice(12, 24)}`}>
+        <span className="shrink-0 tabular-nums" title={`Papeer ${health.version}\n描画コード ${health.code_version.slice(12, 24)}`}>
           v{health.version}
         </span>
       )}

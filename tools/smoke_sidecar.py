@@ -6,15 +6,17 @@ and TEMP all point into a new temporary folder, so the user's library and device
 read or written, and the exe's own %TEMP%\\_MEI* extraction folder can be checked exactly. Then:
 
 1. /health answers; `version` is this checkout's MAJOR.MINOR.PATCH and `code_version` matches its
-   translation code. An exe built before the version or the translation code changed fails here
-   (rebuild it); a change to any other code does not show in either value and is not noticed.
+   extraction, layout and PDF drawing code (papeer.core.code_version.RENDER_SOURCES). An exe built
+   before the version or that code changed fails here (rebuild it); a change to any other code does
+   not show in either value and is not noticed here (`just check-sidecar` compares the whole bundle).
 2. Authentication: routes refuse a missing or wrong token (401) and accept the right one, in the
    Authorization header and in the `token` query parameter.
 3. The bundled prompts are the ones in papeer/core/prompts, and settings can be saved.
 4. The sample PDF (tests/fixtures/sample.pdf) is imported and its text extracted and searchable.
 5. It is translated through a stand-in OpenAI-compatible server that this script runs on 127.0.0.1
    (never a real AI, nothing leaves the PC), so translated.pdf is typeset with the bundled Japanese
-   fonts: the check reads the fonts and text of that PDF.
+   fonts: the check reads the fonts and text of that PDF. The instructions it receives must have
+   the shared prompt sections (papeer/core/prompts/_*.txt) in place of their markers.
 6. /shutdown: the process ends by itself with exit code 0 and no _MEI* folder is left behind.
 
 Each step prints OK; the first failure prints what went wrong and the end of the sidecar's log,
@@ -67,6 +69,8 @@ EXIT_TIMEOUT = 45.0
 MATH_TOKEN = re.compile(r"\[\[PD_MATH_[A-Za-z0-9_]+\]\]")
 # What OpenAICompatProvider appends to the instruction of a structured (JSON) request.
 SCHEMA_MARKER = "Return JSON only, matching this schema"
+# A shared prompt section left unreplaced (papeer.core.prompts._SHARED).
+SHARED_MARKER = re.compile(r"\{\{[a-z_]+\}\}")
 STUB_TEXT = "スモークテストの訳文です。適応制御の追従誤差を検証した。"
 STUB_MODEL = "papeer-smoke-stub"
 
@@ -158,7 +162,8 @@ def stub_answer(instruction: str, data: str) -> str:
         parts = [part if part.get("kind") == "math" else {"kind": "text", "text": STUB_TEXT}
                  for part in payload["source_parts"]]
         return json.dumps({"parts": parts}, ensure_ascii=False)
-    units = payload.get("texts", payload) if isinstance(payload, dict) else payload
+    # The first request of a batch sends {"blocks": [...]}, the fallback {"texts": [...]}.
+    units = (payload.get("blocks", payload.get("texts", payload)) if isinstance(payload, dict) else payload)
     if not isinstance(units, list):
         return json.dumps({"translations": []})
     return json.dumps({"translations": [
@@ -167,8 +172,13 @@ def stub_answer(instruction: str, data: str) -> str:
 
 
 def expected_prompts(folder: Path = PROMPT_DIR) -> dict[str, str]:
-    """The built-in prompts as papeer.core.prompts.defaults() returns them."""
-    return {path.stem: path.read_text("utf-8").strip() for path in sorted(folder.glob("*.txt"))}
+    """The built-in prompts as papeer.core.prompts.defaults() returns them.
+
+    Files starting with "_" are sections shared by several prompts, not prompts; that they are
+    bundled shows in the translation requests (StubAI.unexpanded).
+    """
+    return {path.stem: path.read_text("utf-8").strip() for path in sorted(folder.glob("*.txt"))
+            if not path.stem.startswith("_")}
 
 
 def pdf_fonts_and_text(data: bytes) -> tuple[set[str], str]:
@@ -204,10 +214,15 @@ def log_tail(path: Path, lines: int = 40) -> str:
 # --- The stand-in OpenAI-compatible server ---
 
 class StubAI:
-    """/v1/chat/completions on 127.0.0.1 that answers every request with stub_answer."""
+    """/v1/chat/completions on 127.0.0.1 that answers every request with stub_answer.
+
+    `unexpanded` counts instructions still holding a {{name}} marker of a shared prompt section
+    (papeer.core.prompts.expand), which happens when the section's file is not bundled.
+    """
 
     def __init__(self) -> None:
         self.requests = 0
+        self.unexpanded = 0
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -223,6 +238,8 @@ class StubAI:
                     self.send_error(400, str(exc))
                     return
                 stub.requests += 1
+                if SHARED_MARKER.search(messages[0]["content"]):
+                    stub.unexpanded += 1
                 reply = json.dumps({"choices": [{"message": {"role": "assistant", "content": content},
                                                  "finish_reason": "stop"}],
                                     "usage": {"prompt_tokens": 1, "completion_tokens": 1}}).encode()
@@ -433,6 +450,9 @@ class Smoke:
         self.wait_for_job(started["job_id"])
         if not stub.requests:
             raise SmokeFailure("代役 API に翻訳のリクエストが届いていません。")
+        if stub.unexpanded:
+            raise SmokeFailure("翻訳の指示に共通部分の目印（{{...}}）が残っています。"
+                               "papeer/core/prompts/_*.txt が同梱されていない可能性があります。")
         reply = self.client.request("GET", f"/api/papers/{paper_id}/files/translated.pdf", token=self.token)
         if reply.status != 200:
             raise SmokeFailure(f"translated.pdf を取得できません（HTTP {reply.status}）。")

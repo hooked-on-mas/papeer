@@ -12,7 +12,7 @@ from papeer.pdf.pdf_engine import extract_pdf, translation_units, batches, build
 from papeer.core.fileio import atomic_write_json
 from papeer.providers import create_provider
 from papeer.translation.translation import translate_batch, RetryState
-from papeer.translation.translation_context import contextual_units
+from papeer.translation.translation_context import contextual_units, paper_context
 from papeer.layout.reading_flow import unit_pages, expand_pages
 
 
@@ -67,7 +67,7 @@ def review(papers: Path, output: Path, seed: int, count: int, cases: list[str], 
             done.update(values)
             save()
         for chunk in batches(units):
-            translate_batch(provider, chunk, cancel, lambda m: print(m, flush=True), accept, state, save)
+            translate_batch(provider, chunk, cancel, lambda m: print(m, flush=True), accept, state, save, paper=paper_context(document))
         missing = [u['id'] for u in units if u['id'] not in done]
         if missing:
             raise RuntimeError(f'Incomplete fresh translation: {missing}')

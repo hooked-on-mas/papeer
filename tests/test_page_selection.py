@@ -1,9 +1,13 @@
+from email.message import Message
+import hashlib
+import io
 import json
 from pathlib import Path
 import tempfile
 import threading
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 import pymupdf as fitz
 
@@ -11,15 +15,30 @@ from papeer.core import exports
 from papeer.core.paths import PaperFiles
 from papeer.layout.page_selection import parse_page_selection
 from papeer.core.service import PaperService
-from papeer.pdf.pdf_engine import build_translated_pdf
+from papeer.pdf.pdf_engine import build_translated_pdf, translation_units
 from papeer.core.storage import Library
+from papeer.translation.translation import (BUILTIN_PROMPT_REVISION, EARLIER_BUILTIN_PROMPTS, TRANSLATION_PROTOCOL,
+                                             TranslationKey, legacy_translation_fingerprint, prompt_identity,
+                                             translation_identity)
 from papeer.translation.translation_preview import read_preview, translated_page, translated_page_numbers
+from papeer.core import prompts
+from papeer.core.config import Settings
+from papeer.core.terminology import apply_glossary, effective_glossary
+from papeer.providers import create_provider
+from papeer.providers.openai_compat import OpenAICompatProvider, forget_refused_options
 from test_workflow import FakeProvider
+
+
+# The built-in translation.txt this test last approved (test_builtin_translation_prompt_edits_are_decided),
+# as sent: with the shared Japanese style section (_translation_style.txt) filled in.
+# 2026-09-28: the style section moved out to be shared with the recovery prompts (the same
+# instructions reordered, with small wording changes) without raising BUILTIN_PROMPT_REVISION.
+BUILTIN_TRANSLATION_PROMPT_SHA256 = 'd2220d95f79a04f2e08dbf26051f2b40bfcfe99b66c951e31e019918d25aad7c'
 
 
 class PageSelectionTests(unittest.TestCase):
     def test_partial_translation_preserves_stale_pages_during_and_after_run(self):
-        for change in ('version', 'model'):
+        for change in ('protocol', 'model'):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 source = root / 'source.pdf'
@@ -48,9 +67,8 @@ class PageSelectionTests(unittest.TestCase):
                 service.page_ready = ready
                 if change == 'model':
                     provider.settings.model = 'another-model'
-                from papeer.translation.translation import translation_version
-                version = 'new-version' if change == 'version' else translation_version()
-                with patch('papeer.core.service.translation_version', return_value=version):
+                protocol = TRANSLATION_PROTOCOL + (change == 'protocol')
+                with patch('papeer.translation.translation.TRANSLATION_PROTOCOL', protocol):
                     report = service.translate(identity, {3})
                 self.assertTrue(seen)
                 self.assertEqual(report['preserved_pages'], [1, 2])
@@ -82,7 +100,7 @@ class PageSelectionTests(unittest.TestCase):
             service = PaperService(library, provider, threading.Event())
             service.translate(identity, {1})
             provider.interrupt_after = provider.calls + 1
-            with patch('papeer.core.service.translation_version', return_value='changed'):
+            with patch('papeer.translation.translation.TRANSLATION_PROTOCOL', TRANSLATION_PROTOCOL + 1):
                 with self.assertRaises(Cancelled):
                     service.translate(identity, {2})
                 self.assertEqual(translated_page_numbers(folder, 3), [1])
@@ -110,7 +128,7 @@ class PageSelectionTests(unittest.TestCase):
             service.translate(identity)
             first_run = read_preview(folder)['run_id']
             provider.interrupt_after = provider.calls + 2
-            with patch('papeer.core.service.translation_version', return_value='changed'):
+            with patch('papeer.translation.translation.TRANSLATION_PROTOCOL', TRANSLATION_PROTOCOL + 1):
                 with self.assertRaises(Cancelled):
                     service.translate(identity)
                 # Pages not redone before the interruption still show their earlier translation.
@@ -127,7 +145,7 @@ class PageSelectionTests(unittest.TestCase):
             self.assertNotIn(first_run, runs)
             self.assertEqual(list((folder / 'translation-pages').rglob('*.pdf')), [])
 
-    def test_completed_pages_survive_model_change_and_restart_until_version_changes(self):
+    def test_completed_pages_are_reused_until_translation_inputs_change(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / 'source.pdf'
@@ -143,20 +161,297 @@ class PageSelectionTests(unittest.TestCase):
             cache = json.loads(cache_path.read_text('utf-8'))
             self.assertEqual(set(cache['completed_pages']), {'1'})
             self.assertEqual(cache['completed_pages']['1']['version'], cache['translation_version'])
+            self.assertTrue(cache['translation_version'].startswith('translation-sha256-'))
 
-            second = FakeProvider()
-            second.settings.model = 'different-model'
-            service = PaperService(Library(root / 'library'), second, threading.Event())
+            # After a restart, and with another effort, the saved page is reused.
+            provider = FakeProvider()
+            provider.settings.reasoning_effort = 'high'
+            service = PaperService(Library(root / 'library'), provider, threading.Event())
             report = service.translate(identity, {1, 2})
-            self.assertEqual(second.calls, 1)
+            self.assertEqual(provider.calls, 1)
             self.assertEqual(report['already_translated_pages'], [1])
             self.assertEqual(report['translated_pages'], [1, 2])
             service.translate(identity, {1, 2})
-            self.assertEqual(second.calls, 1)
-            with patch('papeer.core.service.translation_version', return_value='next-version'):
-                report = service.translate(identity, {1})
-            self.assertEqual(second.calls, 2)
+            self.assertEqual(provider.calls, 1)
+            # Each input of the translation asks the model again: the prompt in use (edited in
+            # the settings), the model, and the protocol raised by hand.
+            prompts.save_overrides({'translation': prompts.load('translation') + '\n訳文は簡潔に。'})
+            report = service.translate(identity, {1})
+            self.assertEqual(provider.calls, 2)
             self.assertEqual(report['already_translated_pages'], [])
+            service.translate(identity, {1})
+            self.assertEqual(provider.calls, 2)
+            prompts.save_overrides({'translation': ''})
+            provider.settings.model = 'different-model'
+            report = service.translate(identity, {1})
+            self.assertEqual(provider.calls, 3)
+            self.assertEqual(report['already_translated_pages'], [])
+            with patch('papeer.translation.translation.TRANSLATION_PROTOCOL', TRANSLATION_PROTOCOL + 1):
+                report = service.translate(identity, {1})
+            self.assertEqual(provider.calls, 4)
+            self.assertEqual(report['already_translated_pages'], [])
+
+    def test_render_code_change_redraws_from_saved_translations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            library = Library(Path(temporary))
+            identity, _ = library.import_pdf(Path(__file__).parent / 'fixtures/sample.pdf')
+            provider = FakeProvider()
+            service = PaperService(library, provider, threading.Event())
+            first = service.translate(identity)
+            calls = provider.calls
+            drawn = []
+
+            def build(*args, **kwargs):
+                drawn.append(kwargs.get('page_numbers') or kwargs.get('translate_page_numbers'))
+                return build_translated_pdf(*args, **kwargs)
+
+            changed = 'code-sha256-' + 'b' * 64
+            self.assertNotEqual(first['render_version'], changed)
+            with patch('papeer.core.service.loaded_version', return_value=changed), \
+                    patch('papeer.core.service.build_translated_pdf', side_effect=build):
+                report = service.translate(identity)
+            self.assertEqual(provider.calls, calls)
+            self.assertEqual(report['already_translated_pages'], report['selected_pages'])
+            self.assertEqual(report['translation_version'], first['translation_version'])
+            self.assertEqual(report['render_version'], changed)
+            self.assertTrue(drawn)
+            with fitz.open(library.folder(identity) / 'translated.pdf') as pdf:
+                self.assertIn('適応制御', pdf[0].get_text())
+
+    def test_translation_identity_uses_base_url_only_for_the_api(self):
+        instruction = prompts.load('translation')
+        for provider, differs in (('codex', False), ('claude', False), ('api', True)):
+            with self.subTest(provider=provider):
+                values = [translation_identity(Settings.from_values({
+                    'provider': provider, 'provider_options': {'api': {'base_url': url}}}), instruction)
+                    for url in ('https://one.example/v1', 'https://two.example/v1')]
+                self.assertEqual(values[0] != values[1], differs)
+        api = Settings.from_values({'provider': 'api', 'provider_options': {'api': {'base_url': 'https://one.example/v1/'}}})
+        same = Settings.from_values({'provider': 'api', 'provider_options': {'api': {'base_url': ' https://one.example/v1'}}})
+        self.assertEqual(translation_identity(api, instruction), translation_identity(same, instruction))
+        self.assertNotEqual(translation_identity(api, instruction), translation_identity(api, instruction + '。'))
+
+    def test_translation_identity_is_pinned(self):
+        # How requests are sent and answers read (structured output, temperature, JSON parsing, prompt
+        # wording besides the translation prompt) is not part of the key: changing it must not make
+        # saved papers translate again. Update these values only together with TRANSLATION_PROTOCOL,
+        # BUILTIN_PROMPT_REVISION or a deliberate change of what the key holds.
+        settings = Settings.from_values({'provider': 'api', 'model': 'gpt-4.1-mini',
+                                         'provider_options': {'api': {'base_url': 'https://api.example/v1'}}})
+        self.assertEqual(translation_identity(settings, '独自の翻訳指示です。'),
+                         'translation-sha256-1ab69f652d6b0c7876c60f512ce3d3b445d206818d873760a4bb6d26a45b66e7')
+        self.assertEqual(translation_identity(settings, prompts.builtin('translation')),
+                         'translation-sha256-756d024fb94ec2928745e1470c040c53d39eb6f356c350a860615d45e5026475')
+        self.assertEqual(TranslationKey.current(settings, '独自の翻訳指示です。',
+                                                [{'id': 'p1b0', 'page': 1, 'text': 'A sentence.'}]).fingerprint,
+                         '43f8f123992c0bb8f83d32def0565b9bc90ed77f94f8352addc9603a6a588046')
+
+    def test_saved_translations_do_not_depend_on_how_the_api_was_asked(self):
+        """A paper translated through a server that refused structured output is reused by one that takes it."""
+        forget_refused_options()
+        self.addCleanup(forget_refused_options)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'source.pdf'
+            with fitz.open() as pdf:
+                for n in range(1, 3):
+                    pdf.new_page().insert_text((40, 70), f'Original content on page {n}.')
+                pdf.save(source)
+            library = Library(root / 'library')
+            identity, _ = library.import_pdf(source)
+            settings = Settings(provider='api', model='local-model', translation_concurrency=1,
+                                provider_options={'api': {'base_url': 'http://localhost:1234/v1'}})
+            formats = []
+
+            def serve(refuse):
+                def fetch(request):
+                    payload = json.loads(request.data)
+                    kind = payload.get('response_format', {}).get('type')
+                    formats.append(kind)
+                    if kind in refuse:
+                        raise HTTPError('http://localhost:1234/v1', 400, 'unsupported', Message(),
+                                        io.BytesIO(b'response_format is not supported'))  # type: ignore[arg-type]
+                    units = json.loads(payload['messages'][1]['content'])['blocks']
+                    content = json.dumps({'translations': [{'id': u['id'], 'text': '適応制御の検証結果。'} for u in units]},
+                                         ensure_ascii=False)
+                    return json.dumps({'choices': [{'finish_reason': 'stop', 'message': {'content': content}}]}).encode()
+                return patch.object(OpenAICompatProvider, '_fetch', side_effect=fetch)
+
+            with serve({'json_schema', 'json_object'}):
+                first = PaperService(library, create_provider(settings, threading.Event()), threading.Event()).translate(identity)
+            self.assertEqual(first['translated_pages'], [1, 2])
+            self.assertEqual(formats[:3], ['json_schema', 'json_object', None])
+            forget_refused_options()
+            formats.clear()
+            with serve(set()):
+                again = PaperService(library, create_provider(settings, threading.Event()), threading.Event()).translate(identity)
+            self.assertEqual(formats, [])
+            self.assertEqual(again['already_translated_pages'], [1, 2])
+            self.assertEqual(again['translation_version'], first['translation_version'])
+
+    def _legacy_paper(self, root):
+        """A paper translated (pages 1 and 2) by a version before TranslationKey: code hashes in the cache."""
+        source = root / 'source.pdf'
+        with fitz.open() as pdf:
+            for n in range(1, 4):
+                pdf.new_page().insert_text((40, 70), f'Original content on page {n}.')
+            pdf.save(source)
+        library = Library(root / 'library')
+        identity, _ = library.import_pdf(source)
+        provider = FakeProvider()
+        PaperService(library, provider, threading.Event()).translate(identity, {1, 2})
+        cache_path = library.folder(identity) / 'translation-cache.json'
+        cache = json.loads(cache_path.read_text('utf-8'))
+        old = 'code-sha256-' + 'a' * 64
+        units = translation_units(library.document(identity))
+        apply_glossary(units, effective_glossary(library, identity))
+        cache['translation_version'] = old
+        cache['fingerprint'] = legacy_translation_fingerprint(provider.settings, units)
+        for entry in cache['completed_pages'].values():
+            entry['version'] = old
+        cache_path.write_text(json.dumps(cache), 'utf-8')
+        return library, identity, cache_path
+
+    def test_cache_from_before_translation_key_is_adopted_without_asking_the_model(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            library, identity, cache_path = self._legacy_paper(Path(temporary))
+            before = json.loads(cache_path.read_text('utf-8'))
+            before['retry_state'] = {'attempts': {next(iter(before['translations'])): 2}, 'retry_calls': 1}
+            cache_path.write_text(json.dumps(before), 'utf-8')
+            provider = FakeProvider()
+            service = PaperService(library, provider, threading.Event())
+            report = service.translate(identity)
+            # Only page 3, never translated, goes to the model.
+            self.assertEqual(provider.calls, 1)
+            self.assertEqual(report['already_translated_pages'], [1, 2])
+            after = json.loads(cache_path.read_text('utf-8'))
+            current = translation_identity(provider.settings, prompts.load('translation'))
+            self.assertEqual(after['translation_version'], current)
+            self.assertEqual({entry['version'] for entry in after['completed_pages'].values()}, {current})
+            for number in ('1', '2'):
+                self.assertEqual(after['completed_pages'][number]['translations'],
+                                 before['completed_pages'][number]['translations'])
+            # The retry budget of the old cache is kept, not reset.
+            self.assertEqual(after['retry_state']['retry_calls'], 1)
+            # Migrated once: from now on the records are ordinary current ones.
+            service.translate(identity)
+            self.assertEqual(provider.calls, 1)
+
+    def test_cache_from_before_translation_key_is_retranslated_when_inputs_may_differ(self):
+        cases = {
+            'model': lambda provider: setattr(provider.settings, 'model', 'another-model'),
+            'prompt': lambda provider: prompts.save_overrides({'translation': '独自の翻訳指示です。'}),
+            'protocol': lambda provider: None,
+        }
+        for name, change in cases.items():
+            with self.subTest(change=name), tempfile.TemporaryDirectory() as temporary:
+                library, identity, _ = self._legacy_paper(Path(temporary))
+                provider = FakeProvider()
+                change(provider)
+                with patch('papeer.translation.translation.TRANSLATION_PROTOCOL',
+                           TRANSLATION_PROTOCOL + (name == 'protocol')):
+                    report = PaperService(library, provider, threading.Event()).translate(identity, {1, 2})
+                self.assertEqual(report['already_translated_pages'], [])
+                self.assertEqual(provider.calls, 2)
+                prompts.save_overrides({'translation': ''})
+
+    def test_old_cache_entry_is_matched_by_model_and_new_entry_by_identity(self):
+        settings = Settings(translation_concurrency=1)
+        key = TranslationKey.current(settings, prompts.load('translation'), [])
+        old = 'code-sha256-' + 'c' * 64
+        self.assertTrue(key.matches_page({'version': key.identity}))
+        self.assertTrue(key.matches_page({'version': old, 'model': settings.model}))
+        self.assertFalse(key.matches_page({'version': old, 'model': 'other'}))
+        self.assertFalse(key.matches_page({'version': 'code-sha256-short', 'model': settings.model}))
+        self.assertFalse(key.matches_page({'model': settings.model}))
+        self.assertTrue(key.matches_cache({'translation_version': old, 'fingerprint': key.legacy_fingerprint}))
+        self.assertFalse(key.matches_cache({'translation_version': old, 'fingerprint': key.fingerprint}))
+        self.assertFalse(key.matches_cache({'translation_version': key.identity, 'fingerprint': key.legacy_fingerprint}))
+        self.assertFalse(key.matches_cache({'fingerprint': key.legacy_fingerprint}))
+        custom = TranslationKey.current(settings, '独自の翻訳指示です。', [])
+        self.assertIsNone(custom.legacy_fingerprint)
+        self.assertFalse(custom.matches_page({'version': old, 'model': settings.model}))
+
+    def test_builtin_prompt_counts_by_revision_and_overrides_by_text(self):
+        builtin = prompts.builtin('translation')
+        self.assertEqual(prompt_identity(builtin), f'builtin-{BUILTIN_PROMPT_REVISION}')
+        self.assertTrue(prompt_identity('独自の翻訳指示です。').startswith('custom-sha256-'))
+        # Editing the built-in text without raising the revision keeps saved translations
+        # (a documented trade-off); raising it translates again.
+        with patch('papeer.core.prompts.builtin', return_value=builtin + '\n訳語を統一する。'):
+            edited = prompts.builtin('translation')
+            self.assertEqual(prompt_identity(edited), f'builtin-{BUILTIN_PROMPT_REVISION}')
+            with patch('papeer.translation.translation.BUILTIN_PROMPT_REVISION', BUILTIN_PROMPT_REVISION + 1):
+                self.assertEqual(prompt_identity(edited), f'builtin-{BUILTIN_PROMPT_REVISION + 1}')
+                # An override still holding the first built-in text counts as revision 1,
+                # which caches from before TranslationKey were made with.
+                old_text = '最初の既定の翻訳指示'
+                with patch('papeer.translation.translation.LEGACY_PROMPT_SHA256',
+                           hashlib.sha256(old_text.encode()).hexdigest()):
+                    self.assertEqual(prompt_identity(old_text), 'builtin-1')
+                    settings = Settings(translation_concurrency=1)
+                    self.assertIsNotNone(TranslationKey.current(settings, old_text, []).legacy_fingerprint)
+                    self.assertIsNone(TranslationKey.current(settings, edited, []).legacy_fingerprint)
+        # The settings dialog saves an override equal to the built-in text as no override;
+        # one saved anyway still counts as the built-in prompt.
+        prompts.save_overrides({'translation': builtin})
+        self.assertEqual(prompt_identity(prompts.load('translation')), f'builtin-{BUILTIN_PROMPT_REVISION}')
+        prompts.save_overrides({'translation': ''})
+
+    def test_builtin_translation_prompt_edits_are_decided(self):
+        text = prompts.expand(prompts.builtin('translation'))
+        self.assertEqual(
+            hashlib.sha256(text.encode('utf-8')).hexdigest(), BUILTIN_TRANSLATION_PROMPT_SHA256,
+            '既定の translation.txt（または共通の訳文スタイル _translation_style.txt）が変わりました。'
+            '既存の訳文を訳し直すべき変更なら papeer/translation/translation.py の BUILTIN_PROMPT_REVISION を上げ、'
+            'そうでなければそのままにしてから、このテストの BUILTIN_TRANSLATION_PROMPT_SHA256 を更新してください。'
+            'translation.txt 自体を変えたときは、変更前の本文のハッシュを EARLIER_BUILTIN_PROMPTS に加えます'
+            '（LEGACY_PROMPT_SHA256 は変えないこと）')
+
+    def test_override_holding_an_earlier_builtin_text_keeps_its_revision(self):
+        # An override still holding an earlier built-in text (here translation.txt before its
+        # style section was shared, pinned by this test until then) was translated as that
+        # revision and keeps those translations.
+        self.assertEqual(EARLIER_BUILTIN_PROMPTS['3a67b4686483bdd0bdfd5aaaa6e48ea5ab4e4fb703575544aa01b93997831f60'], 1)
+        self.assertTrue(all(1 <= revision <= BUILTIN_PROMPT_REVISION for revision in EARLIER_BUILTIN_PROMPTS.values()))
+        old_text = '以前の既定の翻訳指示'
+        with patch.dict('papeer.translation.translation.EARLIER_BUILTIN_PROMPTS',
+                        {hashlib.sha256(old_text.encode()).hexdigest(): 1}):
+            self.assertEqual(prompt_identity(old_text), 'builtin-1')
+            settings = Settings(translation_concurrency=1)
+            self.assertEqual(translation_identity(settings, old_text),
+                             translation_identity(settings, prompts.builtin('translation')))
+        # The key holds the prompt as written: the shared section's text is not in it.
+        self.assertNotIn('Write accurate, readable Japanese', prompts.builtin('translation'))
+        # An override keeping the marker gets the section's later edits, decided with the built-in revision.
+        with_marker = prompt_identity('独自の指示。\n{{translation_style}}')
+        self.assertTrue(with_marker.startswith('custom-sha256-'))
+        self.assertTrue(with_marker.endswith(f'+builtin-{BUILTIN_PROMPT_REVISION}'))
+        with patch('papeer.translation.translation.BUILTIN_PROMPT_REVISION', BUILTIN_PROMPT_REVISION + 1):
+            self.assertNotEqual(prompt_identity('独自の指示。\n{{translation_style}}'), with_marker)
+            # Overrides without the marker (every one saved before it existed) keep their key.
+            self.assertEqual(prompt_identity('独自の指示。'), 'custom-sha256-' + hashlib.sha256('独自の指示。'.encode()).hexdigest())
+
+    def test_paragraph_revision_keeps_the_key_and_model_the_page_was_translated_with(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            library = Library(Path(temporary))
+            identity, _ = library.import_pdf(Path(__file__).parent / 'fixtures/sample.pdf')
+            PaperService(library, FakeProvider(), threading.Event()).translate(identity, {1})
+            cache_path = library.folder(identity) / 'translation-cache.json'
+            before = json.loads(cache_path.read_text('utf-8'))['completed_pages']['1']
+            unit_id, text = next(iter(before['translations'].items()))
+            provider = FakeProvider()
+            provider.settings.model = 'another-model'
+            service = PaperService(library, provider, threading.Event())
+            service.translate(identity, {1}, replacements={unit_id: text + '（修正）'})
+            self.assertEqual(provider.calls, 0)
+            after = json.loads(cache_path.read_text('utf-8'))['completed_pages']['1']
+            self.assertEqual(after['translations'][unit_id], text + '（修正）')
+            self.assertEqual((after['version'], after['model']), (before['version'], before['model']))
+            # So the revised page is not taken for a translation by the current model.
+            report = service.translate(identity, {1})
+            self.assertEqual(report['already_translated_pages'], [])
+            self.assertGreater(provider.calls, 0)
 
     def test_legacy_cache_without_code_version_is_retranslated(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -188,7 +483,7 @@ class PageSelectionTests(unittest.TestCase):
             sent = []
             class RecordingProvider(FakeProvider):
                 def generate(inner, instruction, data, schema=None):
-                    sent.extend(json.loads(data))
+                    sent.extend(json.loads(data)['blocks'])
                     return super().generate(instruction, data, schema)
             provider = RecordingProvider()
             messages = []
@@ -321,7 +616,7 @@ class PageSelectionTests(unittest.TestCase):
             class RecordingProvider(FakeProvider):
                 requested_pages = []
                 def generate(inner, instruction, data, schema=None):
-                    inner.requested_pages.append({u['page'] for u in json.loads(data)})
+                    inner.requested_pages.append({int(u['id'][1:].split('b')[0]) for u in json.loads(data)['blocks']})
                     return super().generate(instruction, data, schema)
 
             provider = RecordingProvider()

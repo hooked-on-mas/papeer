@@ -19,7 +19,7 @@ from papeer.core import prompts
 from papeer.core.paths import PaperFiles
 from papeer import __version__
 from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, newer_papeer
-from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision
+from papeer.core.terminology import effective_glossary, apply_glossary, matching_terms, validate_revision
 from papeer.core.destinations import inside_library
 from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
 from papeer.pdf.pdf_engine import translation_units
@@ -66,9 +66,9 @@ def draft_glossary(lib, paper_id, provider, cancel, progress, existing):
         progress(f"専門用語の翻訳対応表を作っています… {index + 1}/{len(chunks)}")
         answer = provider.generate(
             prompts.load("glossary_draft"),
-            json.dumps({"source": chunk, "existing_terms": [t for key, t in known.items() if key in chunk.casefold()]}, ensure_ascii=False), schema)
+            json.dumps({"source": chunk, "existing_terms": matching_terms(chunk, list(known.values()))}, ensure_ascii=False), schema)
         try:
-            value = parse_json_answer(answer)
+            value = parse_json_answer(answer, schema)
         except ValueError:
             raise ValueError("AIから有効な翻訳対応表を取得できませんでした。再試行してください。") from None
         terms = value.get("terms")
@@ -80,7 +80,8 @@ def draft_glossary(lib, paper_id, provider, cancel, progress, existing):
             term = {"source": item["source"].strip(), "target": item["target"].strip()}
             key = term["source"].casefold()
             if (term["source"] and term["target"] and max(len(term["source"]), len(term["target"])) <= 100
-                    and key not in known and key in chunk.casefold()):
+                    # In the source, as a translation finds glossary terms (plural, across lines) or as a part.
+                    and key not in known and (key in chunk.casefold() or matching_terms(chunk, [term]))):
                 result.append(term)
                 known[key] = term
     check_cancel(cancel)
@@ -306,7 +307,7 @@ def draft_revision(lib: Library, paper_id: str, paragraph: dict, instruction: st
         json.dumps({"source": paragraph["source"], "current": paragraph["text"],
                     "glossary": effective_glossary(lib, paper_id)}, ensure_ascii=False),
         REVISION_SCHEMA)
-    value = parse_json_answer(answer)
+    value = parse_json_answer(answer, REVISION_SCHEMA)
     if not isinstance(value.get("text"), str):
         raise ValueError("AIから修正案を取得できませんでした。再試行してください。")
     text = validate_revision(paragraph["source"], value["text"])

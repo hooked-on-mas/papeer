@@ -77,8 +77,9 @@ jobs:
           pnpm --dir frontend install --frozen-lockfile
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-      # code-version.txt, the PyInstaller sidecar exe, its smoke test (tools/smoke_sidecar.py: the exe started in
-      # a throwaway folder; no real AI is called), the tested exe copied next to tauri.conf.json, `pnpm tauri build`.
+      # code-version.txt and the bundle hash, the PyInstaller sidecar exe, its smoke test (tools/smoke_sidecar.py: the
+      # exe started in a throwaway folder; no real AI is called), the tested exe copied next to tauri.conf.json
+      # (then sidecar-sources.txt), `just check-sidecar`, `pnpm tauri build`.
       - name: Build
         run: just build
 

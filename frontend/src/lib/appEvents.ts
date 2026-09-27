@@ -6,8 +6,8 @@
 export type AppEvents = {
   "open-translate-dialog": void;
   "open-reader-search": void;
-  /** Opens the translation editor on the page's paragraph containing the selected text. */
-  "open-paragraph-editor": { page: number; side: "original" | "translated"; text: string };
+  /** Opens the translation editor on the page's paragraph containing the selected text (or on `unit`, a paragraph id). */
+  "open-paragraph-editor": { page: number; side: "original" | "translated"; text: string; unit?: string };
   /** Opens 翻訳の確認・修正 on its list of pages to check. */
   "open-translation-review": void;
   "open-lightbox": { src: string; alt?: string };
