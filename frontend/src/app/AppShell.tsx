@@ -184,7 +184,9 @@ function Lightbox() {
   if (!image) return null;
   return (
     <div data-lightbox className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-8 cursor-zoom-out" onClick={() => setImage(null)}>
-      <img src={image.src} alt={image.alt} className="max-w-full max-h-full bg-white rounded shadow-2xl" />
+      {/* Light paper behind images with transparency, which are usually drawn for white pages;
+          slightly dimmed under the dark theme. */}
+      <img src={image.src} alt={image.alt} className="max-w-full max-h-full bg-white dark:bg-neutral-200 rounded shadow-2xl" />
     </div>
   );
 }

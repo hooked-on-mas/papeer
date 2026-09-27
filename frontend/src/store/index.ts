@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import type { JobKind } from "@/features/jobs/jobKinds";
 import { clampZoom } from "@/features/reader/zoomLevels";
 import { EMPTY_HISTORY, type ReaderHistory } from "@/features/reader/readerHistory";
+import { mergeSavedSettings, pageFilterOf, type PageFilter } from "@/features/reader/pageAppearance";
 
 export { ZOOM_FIT_PAGE, ZOOM_LEVELS, ZOOM_PRESETS } from "@/features/reader/zoomLevels";
 
@@ -66,6 +67,8 @@ interface UiState {
   activeTab: string;
   /** Relative to the fitted page width, or ZOOM_FIT_PAGE; see features/reader/zoomLevels.ts. */
   zoom: number;
+  /** How pages look under the dark theme (設定「表示」); see features/reader/pageAppearance.ts. */
+  pageFilter: PageFilter;
   currentPage: number;
   paperPages: Record<string, number>;
   activeJobs: Job[];
@@ -102,6 +105,7 @@ interface UiState {
   setActivePaperId: (id: string | null, page?: number) => void;
   setActiveTab: (tab: string) => void;
   setZoom: (zoom: number) => void;
+  setPageFilter: (filter: PageFilter) => void;
   setCurrentPage: (page: number) => void;
   setSidebarWidth: (w: number) => void;
   setSidebarCollapsed: (c: boolean) => void;
@@ -135,6 +139,7 @@ export const useStore = create<UiState>()(
       activePaperId: null,
       activeTab: "reader",
       zoom: 1,
+      pageFilter: "normal",
       currentPage: 1,
       paperPages: {},
       activeJobs: [],
@@ -174,6 +179,7 @@ export const useStore = create<UiState>()(
         tab === "sticky-notes" ? { activeTab: tab, focusMode: false, focusPanel: null }
           : state.focusMode && tab !== "reader" ? { focusPanel: tab } : { activeTab: tab }),
       setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
+      setPageFilter: (filter) => set({ pageFilter: pageFilterOf(filter) }),
       setCurrentPage: (page) => set((state) => ({
         currentPage: page,
         paperPages: state.activePaperId ? { ...state.paperPages, [state.activePaperId]: page } : state.paperPages
@@ -224,11 +230,13 @@ export const useStore = create<UiState>()(
         }
         return persisted;
       },
+      merge: mergeSavedSettings,
       // Reading position, sort and folder expansion live in the sidecar's ui-state.json
       // (migrated from the old window.ini); see app/uiStateSync.ts.
       partialize: (state) => ({
         activeTab: state.activeTab,
         zoom: state.zoom,
+        pageFilter: state.pageFilter,
         sidebarWidth: state.sidebarWidth,
         sidebarCollapsed: state.sidebarCollapsed,
         readerSplit: state.readerSplit,

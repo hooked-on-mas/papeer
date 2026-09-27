@@ -9,6 +9,7 @@ import "react-pdf/dist/Page/TextLayer.css";
 import { authToken } from "@/api/client";
 import { shell } from "@/shell";
 import { useStore } from "@/store";
+import { useTheme } from "@/app/ThemeProvider";
 import { externalHttpUrl } from "@/lib/externalLinks";
 import { PdfContextMenu } from "./PdfContextMenu";
 import { selectInTextLayer } from "./textLayerRange";
@@ -23,6 +24,7 @@ import { openStickyNote } from "./stickyNotesStore";
 import { cappedPixelRatio, snapshotSize } from "./canvasBudget";
 import { resolveDestination, type PdfPlace } from "./pdfLinks";
 import { pageWidthFor } from "./zoomLevels";
+import { pageAppearance } from "./pageAppearance";
 
 // Bundled worker, cMaps and fonts keep PDFs (including CJK text) readable offline.
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -113,6 +115,10 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   const loadedPage = useRef<PageCallback | null>(null);
   const textContent = useRef<TextContent | null>(null);
   const [matches, setMatches] = useState<{ left: number; top: number; width: number; height: number; saved: boolean }[]>([]);
+  const appearance = pageAppearance(useStore((s) => s.pageFilter), useTheme().dark);
+  // Only the canvases are filtered: the text layer, links, highlights, sticky notes and ink above
+  // them keep their own colours.
+  const pageStyle = { "--pdf-page-filter": appearance.filter ?? "none", "--pdf-page-bg": appearance.background } as React.CSSProperties;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -318,7 +324,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
         editor.setTool("select"); setCapture(null); setPlacingNote(value => !value);
       }
     }} />}
-    {placingNote && <div role="status" className="flex items-center gap-2 border-b bg-amber-50 px-3 py-2 text-xs text-amber-950">
+    {placingNote && <div role="status" className="flex items-center gap-2 border-b bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:bg-amber-950 dark:text-amber-100">
       PDF上の貼りたい場所をクリックしてください。
       <button className="ml-auto underline" onClick={() => setPlacingNote(false)}>キャンセル</button>
     </div>}
@@ -357,7 +363,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
               className="mx-auto w-fit"
             >
               {numPages !== null && pageNumber > numPages ? message(missingPageMessage ?? "このページはありません。") : drawnWidth > 0 && (
-                <div className="relative" style={{ zoom: pageWidth === drawnWidth ? undefined : pageWidth / drawnWidth }}>
+                <div className="relative" style={{ ...pageStyle, zoom: pageWidth === drawnWidth ? undefined : pageWidth / drawnWidth }}>
                   <Page
                     pageNumber={pageNumber}
                     width={drawnWidth}
@@ -379,7 +385,10 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                     renderTextLayer
                     renderAnnotationLayer
                     loading={<PageSkeleton width={drawnWidth} />}
-                    className="shadow-sm border bg-white"
+                    // `!` because react-pdf gives the page an inline white background, which would flash
+                    // before each page is drawn. Not its canvasBackground prop: pdf.js would also paint
+                    // that colour into the canvas, where the filter would change it a second time.
+                    className="shadow-sm border bg-(--pdf-page-bg)! [&_canvas]:[filter:var(--pdf-page-filter)]"
                   />
                   {matches.map(({ saved, ...rect }, index) => <div key={index} className={`absolute pointer-events-none ${saved ? "bg-amber-400/30" : "bg-yellow-300/50"}`} style={rect} />)}
                   {savedHighlights.map(item => <StickyNoteMarker key={`sticky-${item.id}`} item={item}
@@ -398,10 +407,10 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                   <canvas
                     ref={snapshotRef}
                     hidden={!covering}
-                    className="absolute left-px top-px w-[calc(100%-2px)] h-[calc(100%-2px)] pointer-events-none"
+                    className="absolute left-px top-px w-[calc(100%-2px)] h-[calc(100%-2px)] pointer-events-none [filter:var(--pdf-page-filter)]"
                   />
                   {ink.entry && (ink.ready || editor.tool === "capture") && inkViewport?.key === inkKey && <InkOverlay key={`${inkPage?.paperId}:${inkPage?.page}:${inkKey}:${editor.tool}:${editor.locked}:${editor.visible}`}
-                    editor={editor} aspectRatio={inkViewport.ratio} onCapture={setCapture} />}
+                    editor={editor} aspectRatio={inkViewport.ratio} inkColor={appearance.inkColor} onCapture={setCapture} />}
                 </div>
               )}
             </Document>

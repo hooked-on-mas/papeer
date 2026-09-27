@@ -22,7 +22,7 @@ export function TagChip({ name, count, selected, onClick, onRemove, disabled }: 
       onClick={e => { e.stopPropagation(); onClick(); }}>{content}</button>
       : <span className="inline-flex min-w-0 items-center gap-1 px-2" title={name}>{content}</span>}
     {onRemove && <button type="button" disabled={disabled} aria-label={`「${name}」をこの論文から外す`} title="この論文からタグを外す"
-      className="mr-0.5 rounded-full p-0.5 hover:bg-black/10 focus-visible:outline-2"
+      className="mr-0.5 rounded-full p-0.5 hover:bg-black/10 dark:hover:bg-white/15 focus-visible:outline-2"
       onClick={e => { e.stopPropagation(); onRemove(); }}><X className="size-3" /></button>}
   </span>;
 }

@@ -14,15 +14,20 @@ type Gesture = {
   pointerType: string; end: Point;
 };
 
-const InkLayer = memo(function InkLayer({ strokes, ratio }: { strokes: InkStroke[]; ratio: number }) {
-  return <>{strokes.map(stroke => <g key={stroke.id} data-ink-id={stroke.id} data-ink-kind={kindOf(stroke)} style={{ pointerEvents: "none" }}><InkDrawing stroke={stroke} ratio={ratio} /></g>)}</>;
+/** How an ink colour shows over the page, e.g. lightened over a page inverted for the dark theme. */
+type InkColor = (color: string) => string;
+const asPicked: InkColor = color => color;
+
+const InkLayer = memo(function InkLayer({ strokes, ratio, inkColor }: { strokes: InkStroke[]; ratio: number; inkColor: InkColor }) {
+  return <>{strokes.map(stroke => <g key={stroke.id} data-ink-id={stroke.id} data-ink-kind={kindOf(stroke)} style={{ pointerEvents: "none" }}><InkDrawing stroke={stroke} ratio={ratio} inkColor={inkColor} /></g>)}</>;
 });
 
 const resultOf = (g: Gesture, ratio: number) => g.mode === "draw"
   ? [...g.base, ...fitInk([g.stroke!], ratio)] : g.result;
 
-export function InkDrawing({ stroke, ratio }: { stroke: InkStroke; ratio: number }) {
+export function InkDrawing({ stroke, ratio, inkColor = asPicked }: { stroke: InkStroke; ratio: number; inkColor?: InkColor }) {
   const height = 1000 * ratio;
+  const color = inkColor(stroke.color);
   if (kindOf(stroke) === "text") {
     const [a, b, , d] = stroke.points;
     const lines = (stroke.text ?? "").split("\n"), units = Math.max(1, ...lines.map(textUnits));
@@ -32,18 +37,18 @@ export function InkDrawing({ stroke, ratio }: { stroke: InkStroke; ratio: number
     const textHeight = lines.length * size * 1.3;
     if (!textWidth || !textHeight) return null;
     return <g transform={`matrix(${ux / textWidth} ${uy / textWidth} ${vx / textHeight} ${vy / textHeight} ${a[0] * 1000} ${a[1] * height})`}>
-      {lines.map((line, i) => <text key={i} x={0} y={size * (0.9 + i * 1.3)} fontFamily="sans-serif" fontSize={size} fill={stroke.color}
+      {lines.map((line, i) => <text key={i} x={0} y={size * (0.9 + i * 1.3)} fontFamily="sans-serif" fontSize={size} fill={color}
         textLength={textUnits(line) * size || undefined} lengthAdjust="spacingAndGlyphs">{line}</text>)}
     </g>;
   }
   const opacity = kindOf(stroke) === "highlighter" ? 0.3 : 1;
   return stroke.points.length === 1
-    ? <circle cx={stroke.points[0][0] * 1000} cy={stroke.points[0][1] * height} r={stroke.width * 500} fill={stroke.color} opacity={opacity} />
-    : <polyline points={stroke.points.map(([x, y]) => `${x * 1000},${y * height}`).join(" ")} fill="none" stroke={stroke.color}
+    ? <circle cx={stroke.points[0][0] * 1000} cy={stroke.points[0][1] * height} r={stroke.width * 500} fill={color} opacity={opacity} />
+    : <polyline points={stroke.points.map(([x, y]) => `${x * 1000},${y * height}`).join(" ")} fill="none" stroke={color}
       strokeWidth={stroke.width * 1000} strokeLinecap="round" strokeLinejoin="round" opacity={opacity} />;
 }
 
-export function InkOverlay({ editor, aspectRatio: ratio, onCapture }: { editor: InkEditor; aspectRatio: number; onCapture: (box: Bounds) => void }) {
+export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, onCapture }: { editor: InkEditor; aspectRatio: number; inkColor?: InkColor; onCapture: (box: Bounds) => void }) {
   const { strokes, tool, color, width, preferences, selectedIds } = editor;
   const active = useRef<Gesture | null>(null);
   const pending = useRef<{ gesture: Gesture; liftedAt: number; timer: ReturnType<typeof setTimeout> } | null>(null);
@@ -180,7 +185,7 @@ export function InkOverlay({ editor, aspectRatio: ratio, onCapture }: { editor: 
       selected: editor.selected, center, anchor, moved: false, commit: editor.change, stroke: mode === "draw" ? stroke : undefined };
     active.current = gesture;
     if (mode === "draw") {
-      live.current?.setAttribute("stroke", color);
+      live.current?.setAttribute("stroke", inkColor(color));
       live.current?.setAttribute("stroke-width", String(width * 1000));
       live.current?.setAttribute("opacity", tool === "highlighter" ? "0.3" : "1");
       paint(gesture);
@@ -278,7 +283,7 @@ export function InkOverlay({ editor, aspectRatio: ratio, onCapture }: { editor: 
         const p = point(event), item = [...strokes].reverse().find(s => kindOf(s) === "text" && hitInk(s, p, 0, ratio));
         if (item) setTextDraft({ at: item.points[0], text: item.text ?? "", previous: item });
       }}>
-      {editor.visible && <InkLayer strokes={shown} ratio={ratio} />}
+      {editor.visible && <InkLayer strokes={shown} ratio={ratio} inkColor={inkColor} />}
       <path ref={live} data-ink-preview="true" fill="none" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: "none" }} />
       {tool === "capture" && captureBounds && !path.length && <rect data-image-selection="true"
         x={captureBounds.x * 1000} y={captureBounds.y * height} width={captureBounds.width * 1000} height={captureBounds.height * height}
