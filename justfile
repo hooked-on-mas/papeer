@@ -70,11 +70,19 @@ dev-frontend:
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../tools/stop_stale_dev.ps1 -Port 1420 -ExePath frontend/src-tauri/target/debug/papeer.exe
     pnpm tauri dev
 
-# Build sidecar binary and place it where Tauri's externalBin expects it
+# Build sidecar binary, smoke-test it, and only then place it where Tauri's externalBin expects it
 build-sidecar:
     uv run python -m papeer.core.code_version code-version.txt
     uv run --group build pyinstaller --noconfirm sidecar.spec
+    uv run python tools/smoke_sidecar.py
     uv run python -c "import shutil; shutil.copy2('dist/sidecar-x86_64-pc-windows-msvc.exe', 'frontend/src-tauri/')"
+
+# Smoke-test the built sidecar exe before packaging it (tools/smoke_sidecar.py, README「ビルド」)
+# データ・LOCALAPPDATA・TEMP を一時フォルダーにして起動する。実際の AI は呼ばない（翻訳はスクリプトが 127.0.0.1 で動かす代役 API で行う）
+# `--source` は exe の代わりに python -m sidecar を試し、`--keep` は一時フォルダー（データ・ログ）を残す
+# dist の sidecar exe を試す（/health の版、認証、プロンプト、PDF の取り込みと翻訳、/shutdown と _MEI* の後始末）
+smoke-sidecar *args:
+    uv run python tools/smoke_sidecar.py {{ args }}
 
 # Build everything
 build: build-sidecar build-app

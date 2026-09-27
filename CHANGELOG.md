@@ -17,6 +17,7 @@ Papeer の主な変更を記録します。形式は [Keep a Changelog](https://
 - 開発: `just bump`（全ファイルの版の書き換え）、この変更履歴、`v*` タグで Windows インストーラーを GitHub Releases に置くワークフロー（`.github/workflows/release.yml`）を追加しました。
 - 開発: `just clean`（`build`・`dist`・`output`・`tmp` の一覧表示と削除）と、抽出結果を比べる `tools/compare_layout.py` を追加しました。
 - 開発: 依存のライセンス台帳（`docs/dependency-license-inventory.json`）を作り直す `just licenses` を追加し、台帳を最新にしました。台帳には元にしたロックファイルの sha256 を記録し、ロックファイルだけが変わるとテストが失敗します。既知の脆弱性を調べる `just audit`（pip-audit・pnpm audit・cargo audit）と、Dependabot による週次の更新（`.github/dependabot.yml`）も追加しました。
+- 開発: 配布用 sidecar の exe を一時フォルダーで起動して確かめる `just smoke-sidecar` を追加しました（`/health` の版、認証、同梱のプロンプト、PDF の取り込みと、ローカルの代役 API による翻訳と日本語フォントでの PDF 作成、`/shutdown` と `%TEMP%\_MEI*` の後始末）。`just build-sidecar`（`just build` とリリースのワークフローも使う）は exe を作った直後に実行し、通った exe だけをアプリに同梱します。
 
 ### Changed
 

@@ -100,12 +100,26 @@ just build
 
 1. `code-version.txt`（翻訳キャッシュの識別値）を生成する
 2. PyInstaller で `sidecar.spec` から `dist/sidecar-x86_64-pc-windows-msvc.exe` を作る
-3. その exe を `frontend/src-tauri/` へコピーする
-4. `pnpm tauri build` でインストーラーを作る
+3. その exe を `just smoke-sidecar` と同じ手順で試す（次節）。失敗したらここで止まる
+4. 試した exe を `frontend/src-tauri/` へコピーする
+5. `pnpm tauri build` でインストーラーを作る
 
 インストーラーは `frontend/src-tauri/target/release/bundle/` に出力されます。
 
 PyInstaller は依存グループ `build` にあり、`just build-sidecar` が `uv run --group build` で使います。
+
+### sidecar のスモークテスト
+
+`just smoke-sidecar`（`tools/smoke_sidecar.py`）は、`just build-sidecar` で作った exe を Tauri と同じように乱数のトークンと空きポートで起動し、次を確かめます。PyInstaller の `hiddenimports`・`datas` の漏れ（同梱し忘れたモジュール・プロンプト・フォント）は、ここで起動や翻訳の失敗として見つかります。
+
+1. `/health` が応答し、`version` がソースの版（`MAJOR.MINOR.PATCH`）、`code_version` がソースの翻訳コードの識別値と一致する（版か翻訳処理のコードが変わった後に exe を作り直していなければ失敗する。それ以外のコードの変更はどちらの値にも表れないため、ここでは見つからない）
+2. トークンなし・誤ったトークンは 401、正しいトークン（`Authorization` ヘッダーと `token` クエリ）は 200 になる
+3. 同梱のプロンプトが `papeer/core/prompts` と一致し、設定を保存できる
+4. `tests/fixtures/sample.pdf` を取り込み、テキストを抽出・検索できる
+5. その論文を翻訳し、同梱の日本語フォント（源ノ明朝）を埋め込んだ `translated.pdf` ができる。翻訳の依頼先は、スクリプトが `127.0.0.1` で動かす OpenAI 互換の代役サーバーで、実際の AI は呼ばず、PC の外にも通信しない
+6. `/shutdown` でプロセスが終了コード 0 で終わり、`_MEI*`（onefile の展開フォルダー）が残らない
+
+データフォルダー・`LOCALAPPDATA`・`TEMP` は毎回新しい一時フォルダーに向けるため、実際のライブラリや PC ごとの設定には触れません（`_MEI*` もその中に作られ、終了後に残っていないかを正確に確かめられます）。失敗すると、失敗した確認と sidecar のログの末尾を表示して終了コード 1 で終わります。どの場合も sidecar は止め（応答しなければ強制終了）、一時フォルダーは消します。`--keep` で一時フォルダー（データとログ）を残し、`--source` で exe の代わりに `python -m sidecar` を同じ手順で試せます（`tests/test_smoke_sidecar.py` はこちらを使い、exe なしでスクリプト自体を検査します）。`just build-sidecar`（`just build` とリリースのワークフローも使う）は exe を作った直後にこのテストを実行し、通った exe だけを `frontend/src-tauri/` へコピーします。
 
 `just clean` はリポジトリ直下の `build/`・`dist/`・`output/`・`tmp/` とその容量を一覧表示するだけで、`just clean yes` で削除します。それ以外のフォルダーは消しません。
 
