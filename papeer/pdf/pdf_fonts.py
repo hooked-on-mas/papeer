@@ -66,6 +66,10 @@ def truetype_font(font: TTFont, family: str, style: str) -> bytes:
     builder.setupNameTable(names)
     builder.setupPost()
     builder.font["head"].macStyle = font["head"].macStyle
+    # The source's dates, not the time of conversion: the same face converts to the same bytes,
+    # so a face converted again (a damaged cache, another PC) embeds exactly as before.
+    builder.font["head"].created = font["head"].created
+    builder.font["head"].modified = font["head"].modified
     for tag in ("GSUB", "GPOS", "GDEF"):
         if tag in font:
             builder.font[tag] = font[tag]

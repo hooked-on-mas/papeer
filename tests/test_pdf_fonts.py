@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 
+from fontTools import fontBuilder
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.ttLib import TTFont
@@ -91,6 +92,17 @@ def test_face_is_converted_once_and_then_read_from_the_cache(conversions, monkey
     monkeypatch.setattr(pdf_fonts, "_LOADED", {})
     assert cached_truetype(source, "TinyTest", "Regular") == data
     assert conversions == [("TinyTest", "Regular")]
+
+
+def test_conversion_does_not_depend_on_the_time_it_runs(monkeypatch, tmp_path):
+    # A face converted again (a damaged cache, another PC) must embed exactly as before.
+    source = tiny_otf(tmp_path / "tiny.otf")
+    converted = []
+    for now in (1, 10**9):
+        monkeypatch.setattr(fontBuilder, "timestampNow", lambda now=now: now)
+        with TTFont(source) as font:
+            converted.append(pdf_fonts.truetype_font(font, "TinyTest", "Regular"))
+    assert converted[0] == converted[1]
 
 
 @pytest.mark.parametrize("damage", ["truncate", "flip", "empty", "garbage"])
