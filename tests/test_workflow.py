@@ -7,10 +7,13 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 import pymupdf as fitz
 
+from papeer.core import exports
 from papeer.core.config import Settings
+from papeer.core.paths import PaperFiles
 from papeer.pdf.pdf_engine import batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, page_png, translation_units
 from papeer.providers import Cancelled, create_provider
 from papeer.core.service import PaperService, link_citations
@@ -98,18 +101,25 @@ class WorkflowTests(unittest.TestCase):
             text = "".join(p.get_text() for p in pdf)
             self.assertIn("適応制御", text)
             self.assertIn("18%", text)
+        # The interleaved PDF is no longer written by translation, only when it is asked for.
+        self.assertFalse((folder / "interleaved.pdf").exists())
+        files = PaperFiles(folder)
         with (fitz.open(folder / "original.pdf") as original,
               fitz.open(folder / "translated.pdf") as translated,
-              fitz.open(folder / "interleaved.pdf") as paired):
+              fitz.open(exports.interleaved_cache(files)) as paired):
             self.assertEqual(paired.page_count, original.page_count * 2)
             for index in range(original.page_count):
                 for offset, source in enumerate((original, translated)):
                     page = paired[2 * index + offset]
                     self.assertEqual(page.get_text(), source[index].get_text())
                     self.assertEqual(page.rect, source[index].rect)
+        with patch("papeer.core.exports.interleaved_pdf", side_effect=AssertionError("rebuilt")):
+            exports.interleaved_cache(files)  # Reused while the translation is unchanged.
         initial_calls = provider.calls
         service.translate(self.paper_id)
         self.assertEqual(provider.calls, initial_calls, "cached translation must avoid repeated AI calls")
+        # A new translated.pdf discards the paired copy built from the previous one.
+        self.assertFalse((folder / "interleaved.pdf").exists())
         self.assertTrue(page_png(folder / "translated.pdf", 0).startswith(b"\x89PNG"))
         bilingual_pdf(folder / "original.pdf", folder / "translated.pdf", self.root / "bilingual.pdf")
         with fitz.open(self.root / "bilingual.pdf") as pdf:

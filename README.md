@@ -143,7 +143,8 @@ Papeer/
     original.pdf
     document.json             抽出結果
     translated.pdf
-    interleaved.pdf
+    interleaved.pdf           原文と訳文の交互ページ（「原文・日本語訳（交互）を外部で開く」で作成し、訳文が変わるまで再利用）
+    translation-pages/        翻訳途中のページ（翻訳の完了時と起動時に不要なものを削除）
     translation.md
     translation-cache.json
     translation-report.json

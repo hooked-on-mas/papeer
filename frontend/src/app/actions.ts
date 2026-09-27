@@ -302,7 +302,7 @@ export async function openPaperFile(paperId: string, name: "original.pdf" | "tra
   try {
     const current = await paper(paperId);
     if (name === "interleaved.pdf") {
-      // Regenerated each time, which also covers papers translated before paired output existed.
+      // Built on demand beside the paper and reused while the translation is unchanged.
       await startJob(`/api/papers/${paperId}/interleaved`, {}, { kind: "interleaved", paperId });
       return;
     }

@@ -11,6 +11,8 @@ import pymupdf as fitz
 import pytest
 
 from papeer.core.config import Settings
+from papeer.core.exports import interleaved_cache
+from papeer.core.paths import PaperFiles
 from papeer.core.reading_tools import create_backup, restore_backup, library_search, translation_paragraphs
 from papeer.core.terminology import effective_glossary, validate_revision, global_glossary, save_global_glossary
 from papeer.core.service import PaperService
@@ -202,8 +204,15 @@ def test_revision_reuses_other_translations_and_updates_exports(library):
     assert "変更した日本語の段落" in (lib.folder(identity) / "translation.md").read_text("utf-8")
     with fitz.open(lib.folder(identity) / "translated.pdf") as pdf:
         assert "変更した日本語" in "".join(p.get_text() for p in pdf)
+    # The paired PDF is built from the revised translation, not from a copy made before it.
+    with fitz.open(interleaved_cache(PaperFiles(lib.folder(identity)))) as pdf:
+        assert "変更した日本語" in "".join(p.get_text() for p in pdf)
+    # Undoing reads the page records of the cache, not the page previews removed after each run.
+    assert list((lib.folder(identity) / "translation-pages").rglob("*.pdf")) == []
     service.translate(identity, set(paragraph["pages"]), replacements={paragraph["id"]: paragraph["text"]})
     assert len(provider.calls) == calls
+    assert next(p for p in translation_paragraphs(lib, identity) if p["id"] == paragraph["id"])["text"] == paragraph["text"]
+    assert not (lib.folder(identity) / "interleaved.pdf").exists()
 
 
 def test_glossary_changes_only_retranslate_affected_pages(tmp_path):

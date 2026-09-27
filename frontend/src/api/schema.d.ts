@@ -708,7 +708,7 @@ export interface paths {
         put?: never;
         /**
          * Prepare Interleaved
-         * @description Regenerate interleaved.pdf beside the paper so it can be opened in an external viewer.
+         * @description interleaved.pdf beside the paper for an external viewer, built only when missing or out of date.
          */
         post: operations["prepare_interleaved_api_papers__paper_id__interleaved_post"];
         delete?: never;

@@ -9,7 +9,7 @@ import shutil
 from typing import Callable
 
 from papeer.core.fileio import atomic_write_bytes, atomic_write_json, atomic_write_text, replace_file
-from papeer.pdf.pdf_engine import PDF_LOCK, batches, interleaved_pdf, build_translated_pdf, translation_units
+from papeer.pdf.pdf_engine import PDF_LOCK, batches, build_translated_pdf, translation_units
 import pymupdf as fitz
 from papeer.providers import ProviderBackend, check_cancel
 from papeer.core.paths import PaperFiles
@@ -17,11 +17,11 @@ from papeer.core.storage import Library
 from papeer.layout.math_layout import restore_formula_text
 from papeer.translation.translation import RetryState, translate_batches, translation_fingerprint
 from papeer.translation.translation import translation_version, page_fingerprint
-from papeer.translation.translation_preview import preview_page, translated_page, translated_page_numbers
+from papeer.translation.translation_preview import PREVIOUS_CACHE, preview_page, remove_unused_runs, translated_page, translated_page_numbers
 from papeer.translation.translation_context import contextual_units
 from papeer.layout.reading_flow import unit_pages, expand_pages, materialize_flows
 from papeer.core.summary_figures import summary_figures
-from papeer.core import prompts
+from papeer.core import exports, prompts
 from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision, glossary_for_folder
 
 
@@ -85,13 +85,6 @@ def page_translation_text(folder: Path, document: dict, page: int) -> list[str]:
         return blocks
     # Otherwise the last completed translation.
     return [text for number, _, text in PaperFiles(folder).translation_sections() if number == page and text]
-
-
-def _remove_other_runs(folder: Path, run_id: str) -> None:
-    """Delete page previews of earlier runs; the current preview no longer points into them."""
-    for run in (PaperFiles(folder).translation_pages).glob("*"):
-        if run.is_dir() and run.name != run_id:
-            shutil.rmtree(run, ignore_errors=True)
 
 
 class PaperService:
@@ -198,7 +191,7 @@ class PaperService:
         # Archive the old cache before replacing it, including legacy records
         # that predate the per-page cache format.
         if cache_path.exists():
-            archive = preview_page(folder, preview, 1).parent / "previous-translation-cache.json"
+            archive = preview_page(folder, preview, 1).parent / PREVIOUS_CACHE
             archive.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(cache_path, archive)
         self.library.update(paper_id, status="翻訳中")
@@ -310,8 +303,8 @@ class PaperService:
                     assembled.save(merged)
                 replace_file(merged, staged)
             replace_file(staged, files.translated_pdf)
-            self.progress("原文と日本語訳を交互に並べたPDFを作成しています…")
-            interleaved_pdf(files.original_pdf, files.translated_pdf, files.interleaved_pdf)
+            # The interleaved PDF is built when it is opened or exported (exports.interleaved_cache).
+            exports.discard_interleaved(files)
             report["skipped_blocks"] = [u["id"] for u in units if unit_pages(u) & (set(preview["pages"]) - retained) and skipped(u)]
             previous_skipped = set(previous_report.get("skipped_blocks", []))
             report["skipped_blocks"] += [u["id"] for u in units if u["id"] in previous_skipped and unit_pages(u) <= retained]
@@ -350,9 +343,9 @@ class PaperService:
                     lines += [f"## p.{block['page']} / {block['id']}", "", block["text"], ""]
             atomic_write_text(files.translation_md, "\n".join(lines))
             self.library.update(paper_id, status="一部翻訳済み" if report["untranslated_pages"] or report["skipped_blocks"] else "翻訳済み")
-            _remove_other_runs(folder, preview["run_id"])
-            for number in superseded:
-                previous_page(number).unlink(missing_ok=True)
+            # The reader now shows translated.pdf: the page previews, the earlier pages kept for a
+            # stop and the staging files of this run go too, and only the replaced cache stays.
+            remove_unused_runs(folder)
             return report
         except Exception:
             try:
@@ -366,7 +359,9 @@ class PaperService:
                 if restored:
                     atomic_write_json(preview_path, preview)
                     self.page_ready(paper_id, 0)
-                _remove_other_runs(folder, preview["run_id"])
+                # Keeps the run the saved preview names: this one once its preview was written, else
+                # the previous one, whose pages the reader still shows (this run's copies go instead).
+                remove_unused_runs(folder)
             except OSError:
                 pass
             self.library.update(paper_id, status="翻訳途中・再開可" if done else "翻訳未完了")

@@ -14,11 +14,19 @@ from papeer.core.config import Settings
 from papeer.core.paths import PaperFiles
 from papeer.layout.math_layout import LAYOUT_VERSION, restore_formula_text
 from papeer.core.fileio import atomic_write_json, atomic_write_text, replace_file
-from papeer.pdf.pdf_engine import PDF_LOCK, translation_units, interleaved_pdf, bilingual_pdf
+from papeer.core.exports import discard_interleaved
+from papeer.pdf.pdf_engine import PDF_LOCK, translation_units, bilingual_pdf
 from papeer.translation.translation import translation_fingerprint, validate_translations
-from papeer.translation.translation_preview import translated_page, translated_page_numbers
+from papeer.translation.translation_preview import read_preview, translated_page, translated_page_numbers
 from papeer.layout.reading_flow import unit_pages, materialize_flows
 from papeer.core.terminology import apply_glossary, glossary_for_folder
+
+
+# Each publish backs up what it replaces; the newest applied backups of a paper are kept, so the
+# last few publishes can be rolled back and tools.verify_review_publish (which checks the latest
+# receipt) always finds its backup. Older ones, and failed attempts older than the oldest kept, go.
+REVIEW_BACKUPS_KEPT = 5
+_BACKUP_NAME = re.compile(r'\d{8}T\d{6}Z-[0-9a-f]{8}')
 
 
 def _read(path, default=None):
@@ -106,13 +114,21 @@ def _publish(folder, review, manifest, entries):
     backup = folder/'review-backups'/(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+run_id[:8])
     stage = backup/'staged'
     stage.mkdir(parents=True)
-    names = ['translated.pdf', 'interleaved.pdf', 'document.json', 'translation-cache.json',
+    # interleaved.pdf is rebuilt from translated.pdf when opened, so it is discarded instead.
+    names = ['translated.pdf', 'document.json', 'translation-cache.json',
              'translation-report.json', 'translation-preview.json', 'translation.md']
     if PaperFiles(folder).bilingual_pdf.exists():
         names.append('bilingual.pdf')
     existed = {name for name in names if (folder/name).exists()}
     for name in existed:
         shutil.copy2(folder/name, backup/name)
+    # An unfinished translation's pages live in its run folder, which is removed once the published
+    # (complete) preview no longer names it; keep them with the preview that points to them.
+    previous = read_preview(folder)
+    if previous and not previous['complete']:
+        run = PaperFiles(folder).translation_pages/previous['run_id']
+        if run.is_dir():
+            shutil.copytree(run, backup/'translation-pages'/previous['run_id'])
     with fitz.open() as output, fitz.open(PaperFiles(folder).original_pdf) as original:
         for number in range(1, count+1):
             if number in replacements:
@@ -128,7 +144,6 @@ def _publish(folder, review, manifest, entries):
         output.set_metadata(dict(original.metadata, title=document['title']+' - 日本語訳', creator='Papeer'))
         output.set_toc(original.get_toc())
         output.save(PaperFiles(stage).translated_pdf, garbage=4, deflate=True)
-    interleaved_pdf(PaperFiles(folder).original_pdf, PaperFiles(stage).translated_pdf, PaperFiles(stage).interleaved_pdf)
     if 'bilingual.pdf' in names:
         bilingual_pdf(PaperFiles(folder).original_pdf, PaperFiles(stage).translated_pdf, PaperFiles(stage).bilingual_pdf)
     settings = Settings.from_values({'provider': manifest['provider'], 'model': manifest['model'],
@@ -228,7 +243,29 @@ def _publish(folder, review, manifest, entries):
     finally:
         if connection:
             connection.close()
+    discard_interleaved(PaperFiles(folder))
     receipt = dict(paper=folder.name, pages=sorted(selected), backup=str(backup), review=str(review),
                    previous_status=previous_status, applied_at=datetime.now(timezone.utc).isoformat())
     atomic_write_json(backup/'receipt.json', receipt)
+    try:
+        stage.rmdir()  # Emptied by the publish.
+    except OSError:
+        pass
+    prune_review_backups(folder, current=backup)
     return receipt
+
+
+def prune_review_backups(folder: Path, keep: int = REVIEW_BACKUPS_KEPT, current: Path | None = None) -> None:
+    """Delete a paper's review backups beyond the newest `keep` applied ones (see REVIEW_BACKUPS_KEPT)."""
+    root = folder/'review-backups'
+    if not root.is_dir():
+        return
+    # The name starts with the UTC time of the publish, so it sorts oldest first.
+    backups = sorted(p for p in root.iterdir() if p.is_dir() and _BACKUP_NAME.fullmatch(p.name))
+    applied = [p for p in backups if (p/'receipt.json').is_file()]
+    if len(applied) <= keep:
+        return
+    oldest_kept = applied[-keep].name
+    for path in backups:
+        if path.name < oldest_kept and path != current:
+            shutil.rmtree(path, ignore_errors=True)

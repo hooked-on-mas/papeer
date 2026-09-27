@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import pymupdf as fitz
 
+from papeer.core import exports
+from papeer.core.paths import PaperFiles
 from papeer.layout.page_selection import parse_page_selection
 from papeer.core.service import PaperService
 from papeer.pdf.pdf_engine import build_translated_pdf
@@ -59,8 +61,10 @@ class PageSelectionTests(unittest.TestCase):
                         self.assertEqual(pdf[n].get_pixmap().samples, before[n])
                     self.assertIn('適応制御', pdf[2].get_text())
                 self.assertEqual((folder / 'translation.md').read_text('utf-8').count('適応制御'), 3)
-                backup = folder / 'translation-pages' / read_preview(folder)['run_id'] / 'previous-translation-cache.json'
-                self.assertEqual(backup.read_bytes(), old_cache)
+                # Once complete, the run keeps only the cache it replaced: the reader shows translated.pdf.
+                run = folder / 'translation-pages' / read_preview(folder)['run_id']
+                self.assertEqual((run / 'previous-translation-cache.json').read_bytes(), old_cache)
+                self.assertEqual([p.name for p in run.iterdir()], ['previous-translation-cache.json'])
 
     def test_retained_pages_survive_interruption_and_next_run(self):
         from papeer.providers import Cancelled
@@ -121,6 +125,7 @@ class PageSelectionTests(unittest.TestCase):
             runs = {run.name for run in (folder / 'translation-pages').iterdir()}
             self.assertEqual(runs, {read_preview(folder)['run_id']})
             self.assertNotIn(first_run, runs)
+            self.assertEqual(list((folder / 'translation-pages').rglob('*.pdf')), [])
 
     def test_completed_pages_survive_model_change_and_restart_until_version_changes(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -283,7 +288,7 @@ class PageSelectionTests(unittest.TestCase):
                                              translated[number - 1].get_pixmap().samples)
                         else:
                             self.assertIn('適応制御', translated[number - 1].get_text())
-                    with fitz.open(folder / 'interleaved.pdf') as paired:
+                    with fitz.open(exports.interleaved_cache(PaperFiles(folder))) as paired:
                         self.assertEqual(paired.page_count, 6)
                         for index in range(3):
                             self.assertEqual(paired[index * 2].get_text(), original[index].get_text())

@@ -116,15 +116,13 @@ def export_paper(paper_id: str, body: ExportRequest) -> dict[str, str]:
 
 @router.post("/api/papers/{paper_id}/interleaved")
 def prepare_interleaved(paper_id: str) -> dict[str, str]:
-    """Regenerate interleaved.pdf beside the paper so it can be opened in an external viewer."""
+    """interleaved.pdf beside the paper for an external viewer, built only when missing or out of date."""
     lib = deps.get_library()
     files = PaperFiles(deps.paper_folder(lib, paper_id))
     if not files.translated_pdf.is_file():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="先に日本語訳を作成してください。")
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, str]:
-        progress("原文・日本語訳の交互PDFを作成しています…")
-        exports.build_paired_pdf(files, "interleaved", files.interleaved_pdf)
-        return {"kind": "interleaved", "path": str(files.interleaved_pdf.resolve())}
+        return {"kind": "interleaved", "path": str(exports.interleaved_cache(files, progress).resolve())}
 
     return deps.submit_job("interleaved", action, paper_id)

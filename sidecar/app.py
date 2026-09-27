@@ -14,13 +14,24 @@ from fastapi.responses import JSONResponse
 
 from papeer.core.paths import app_env
 from papeer.core.code_version import application_version
+from papeer.translation import translation_preview
 from sidecar import deps
 from sidecar.routes import ai_jobs, drive, ink, papers, reading, settings, system
+
+
+def remove_unused_translation_runs() -> None:
+    """Page previews of translations that stopped when the app was forced to close; see remove_unused_translation_runs."""
+    try:
+        translation_preview.remove_unused_translation_runs(deps.get_data_dir())
+    except Exception as exc:  # Never a reason not to start (an odd library folder included): the next launch tries again.
+        print(f"警告: 翻訳の一時ファイルを掃除できませんでした: {exc!r}", file=sys.stderr)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     deps.job_manager.set_loop(asyncio.get_running_loop())
+    # Before the first request, so no translation is writing a run folder its preview does not name yet.
+    await asyncio.to_thread(remove_unused_translation_runs)
     yield
 
 

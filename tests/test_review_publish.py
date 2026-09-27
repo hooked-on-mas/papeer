@@ -1,13 +1,16 @@
 from pathlib import Path
 from contextlib import closing
+from datetime import datetime, timedelta, timezone
 import json
 import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
 import pymupdf as fitz
-from papeer.core.review_publish import apply_review
-from papeer.translation.translation_preview import translated_page_numbers, translated_page
+from papeer.core.exports import interleaved_cache
+from papeer.core.paths import PaperFiles
+from papeer.core.review_publish import REVIEW_BACKUPS_KEPT, apply_review, prune_review_backups
+from papeer.translation.translation_preview import remove_unused_runs, translated_page_numbers, translated_page
 from papeer.pdf.pdf_engine import extract_pdf, translation_units
 from papeer.core import fileio
 from papeer.core.fileio import atomic_write_json
@@ -73,7 +76,10 @@ class ReviewPublishTests(unittest.TestCase):
                 self.assertEqual(len(pdf),3)
                 for n,pixels in untouched.items(): self.assertEqual(pdf[n].get_pixmap().samples,pixels)
                 self.assertEqual(pdf[1].get_pixmap().samples,fresh[0].get_pixmap().samples)
-            with fitz.open(folder/'interleaved.pdf') as pdf: self.assertEqual(len(pdf),6)
+            # The interleaved PDF is discarded and built again from the new translation when opened.
+            self.assertFalse((folder/'interleaved.pdf').exists())
+            with fitz.open(interleaved_cache(PaperFiles(folder))) as pdf: self.assertEqual(len(pdf),6)
+            self.assertFalse((Path(receipts[0]['backup'])/'staged').exists())
             self.assertEqual(translated_page_numbers(folder,3),[1,2,3])
             with closing(sqlite3.connect(root/'library.sqlite3')) as db:
                 self.assertEqual(db.execute('SELECT status FROM papers').fetchone()[0], '翻訳済み')
@@ -98,6 +104,58 @@ class ReviewPublishTests(unittest.TestCase):
                 apply_review(root/'papers',root/'review')
             after={p.name:p.read_bytes() for p in folder.iterdir() if p.is_file()}
             self.assertEqual(before,after)
+
+    def test_unfinished_translation_pages_are_backed_up_with_the_preview_naming_them(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); folder=self.prepare(root)
+            run='b'*32
+            (folder/'translation-pages'/run).mkdir(parents=True)
+            with fitz.open() as pdf:
+                pdf.new_page(width=400,height=400).insert_text((40,80),'Unfinished run page 1.')
+                pdf.save(folder/'translation-pages'/run/'page-1.pdf')
+            atomic_write_json(folder/'translation-preview.json',dict(run_id=run,pages=[1],target_pages=[1,2,3],
+                                                                     total_pages=3,complete=False))
+            receipts=apply_review(root/'papers',root/'review')
+            backup=Path(receipts[0]['backup'])
+            self.assertTrue((backup/'translation-pages'/run/'page-1.pdf').is_file())
+            with fitz.open(folder/'translated.pdf') as pdf:
+                self.assertIn('Unfinished run page 1.',pdf[0].get_text())
+            # The published preview is complete, so the library no longer needs the run; the backup keeps it.
+            remove_unused_runs(folder)
+            self.assertFalse((folder/'translation-pages').exists())
+            self.assertEqual(json.loads((backup/'translation-preview.json').read_text('utf8'))['run_id'],run)
+
+    def test_only_the_newest_applied_backups_are_kept(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=Path(temporary)
+            names=[]
+            for n in range(9):
+                name=f'2026090{n+1}T000000Z-{n:08x}'
+                (folder/'review-backups'/name).mkdir(parents=True)
+                # 3 and 7 failed (staging kept for diagnosis, no receipt).
+                if n not in (3,7): (folder/'review-backups'/name/'receipt.json').write_text('{}','utf8')
+                names.append(name)
+            (folder/'review-backups'/'notes').mkdir()
+            prune_review_backups(folder,keep=5)
+            kept=sorted(p.name for p in (folder/'review-backups').iterdir())
+            # Applied: 0 1 2 4 5 6 8 -> the newest five start at 2; failed 3 and 7 are newer and stay.
+            self.assertEqual(kept,sorted(names[2:]+['notes']))
+            prune_review_backups(folder,keep=5)
+            self.assertEqual(sorted(p.name for p in (folder/'review-backups').iterdir()),kept)
+
+    def test_repeated_publishes_keep_a_bounded_number_of_backups(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); folder=self.prepare(root)
+            receipts=[]
+            for _ in range(REVIEW_BACKUPS_KEPT+2):
+                with patch('papeer.core.review_publish.datetime') as clock:
+                    clock.now.return_value=datetime(2026,9,1,tzinfo=timezone.utc)+timedelta(minutes=len(receipts))
+                    receipts+=apply_review(root/'papers',root/'review')
+            backups=sorted(p.name for p in (folder/'review-backups').iterdir())
+            self.assertEqual(len(backups),REVIEW_BACKUPS_KEPT)
+            # The latest receipt's backup, which tools.verify_review_publish reads, is always kept.
+            self.assertEqual(backups[-1],Path(receipts[-1]['backup']).name)
+            self.assertEqual(backups[0],Path(receipts[2]['backup']).name)
 
     def test_changed_original_is_rejected_before_replacing_anything(self):
         with tempfile.TemporaryDirectory() as temporary:

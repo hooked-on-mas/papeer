@@ -36,7 +36,9 @@ def verify(papers, review):
                     expected,index=review/f'{identity[:4]}-p{number}.pdf',0
                 elif preview and not preview['complete']:
                     if number in preview['pages']:
-                        expected,index=folder/'translation-pages'/preview['run_id']/f'page-{number}.pdf',0
+                        # The publish copies these pages into the backup; the library removes the run later.
+                        expected,index=backup/'translation-pages'/preview['run_id']/f'page-{number}.pdf',0
+                        if not expected.exists():expected=folder/'translation-pages'/preview['run_id']/f'page-{number}.pdf'
                     else:
                         expected,index=folder/'original.pdf',number-1
                 else:

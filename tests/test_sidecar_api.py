@@ -456,12 +456,21 @@ def test_paper_metadata_reading_and_export_guards(test_env):
     assert not any(MATH_TOKEN.search(block) for block in blocks)
     assert client.get(f"/api/papers/{paper_id}/translation-text/99").json() == {"blocks": []}
 
-    # Paired PDFs run as paper jobs; interleaved.pdf is rebuilt for external viewers.
+    # Paired PDFs run as paper jobs; interleaved.pdf is built for external viewers when first opened.
     started = client.post(f"/api/papers/{paper_id}/export", json={"kind": "bilingual", "destination": str(tmp_dir / "b.pdf")})
     assert _wait(started.json()["job_id"]).status == "succeeded"
     assert (tmp_dir / "b.pdf").is_file()
+    assert not (folder / "interleaved.pdf").exists()
     prepared = _wait(client.post(f"/api/papers/{paper_id}/interleaved").json()["job_id"])
-    assert Path(prepared.result["path"]).is_file()
+    built = Path(prepared.result["path"])
+    assert built == (folder / "interleaved.pdf").resolve()
+    stamp = built.stat().st_mtime_ns
+    # Opened again with the translation unchanged, the same file is reused; the export copies it.
+    again = _wait(client.post(f"/api/papers/{paper_id}/interleaved").json()["job_id"])
+    assert Path(again.result["path"]) == built and built.stat().st_mtime_ns == stamp
+    started = client.post(f"/api/papers/{paper_id}/export", json={"kind": "interleaved", "destination": str(tmp_dir / "i.pdf")})
+    assert _wait(started.json()["job_id"]).status == "succeeded"
+    assert (tmp_dir / "i.pdf").read_bytes() == built.read_bytes()
 
 
 def test_prompts_customize_and_reset(test_env):
