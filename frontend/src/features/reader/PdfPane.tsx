@@ -2,11 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { flushSync } from "react-dom";
 import { Document, Page, pdfjs } from "react-pdf";
 import type { PageCallback } from "react-pdf/dist/shared/types.js";
-import type { TextContent, TextItem } from "pdfjs-dist/types/src/display/api";
+import type { PDFDocumentProxy, TextContent, TextItem } from "pdfjs-dist/types/src/display/api";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { authToken } from "@/api/client";
+import { shell } from "@/shell";
+import { useStore } from "@/store";
+import { externalHttpUrl } from "@/lib/externalLinks";
 import { PdfContextMenu } from "./PdfContextMenu";
 import { selectInTextLayer } from "./textLayerRange";
 import { useInkEditor } from "./useInkEditor";
@@ -18,6 +21,8 @@ import type { StickyNote } from "./stickyNotes";
 import { StickyNoteMarker } from "./StickyNoteMarker";
 import { openStickyNote } from "./stickyNotesStore";
 import { cappedPixelRatio, snapshotSize } from "./canvasBudget";
+import { resolveDestination, type PdfPlace } from "./pdfLinks";
+import { pageWidthFor } from "./zoomLevels";
 
 // Bundled worker, cMaps and fonts keep PDFs (including CJK text) readable offline.
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -26,7 +31,7 @@ interface PdfPaneProps {
   inkPage?: { paperId: string; page: number };
   url: string | null;
   pageNumber: number;
-  /** Multiplier over the width that fits the pane. */
+  /** Multiplier over the width that fits the pane, or ZOOM_FIT_PAGE to fit the whole page. */
   zoom: number;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
@@ -38,6 +43,10 @@ interface PdfPaneProps {
   searchTerm?: string;
   jumpTarget?: JumpTarget | null;
   savedHighlights?: StickyNote[];
+  /** Called with each PDF once it has loaded, e.g. to read its table of contents. */
+  onDocumentLoad?: (doc: PDFDocumentProxy) => void;
+  /** A link to another place in this PDF was clicked; `page` is the PDF's own page number. */
+  onInternalLink?: (place: PdfPlace) => void;
 }
 
 /** A place to scroll to, from a bookmark, a search result or a chat attachment. */
@@ -49,6 +58,8 @@ export interface JumpTarget {
   anchor_x?: number;
   /** A chat attachment's passage, selected once its text layer is ready. */
   passage?: { start?: number | null; end?: number | null; raw?: string };
+  /** Show the end of the page in both panes instead of an anchor, when paging back. */
+  toEnd?: boolean;
 }
 
 const PADDING = 16;
@@ -84,7 +95,7 @@ function fitTextLayer(layer: HTMLElement, content: TextContent, scale: number) {
 
 export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholder, missingPageMessage,
   translated = false, searchTerm = "", jumpTarget,
-  savedHighlights = [], inkPage }: PdfPaneProps) {
+  savedHighlights = [], inkPage, onDocumentLoad, onInternalLink }: PdfPaneProps) {
   const [inkViewport, setInkViewport] = useState<{ key: string; ratio: number } | null>(null);
   const editor = useInkEditor(url && !placeholder ? inkPage?.paperId : undefined, translated ? "translated" : "original", inkPage?.page ?? pageNumber, inkViewport?.ratio ?? 1);
   const { ink } = editor;
@@ -95,7 +106,8 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   useEffect(() => { if (editor.tool !== "select") setPlacingNote(false); }, [editor.tool]);
   const inkKey = `${url}:${pageNumber}`;
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [containerWidth, setContainerWidth] = useState(0);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const containerWidth = containerSize.width;
   const [numPages, setNumPages] = useState<number | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
   const loadedPage = useRef<PageCallback | null>(null);
@@ -106,13 +118,42 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     if (!containerRef.current) return;
     const observer = new ResizeObserver((entries) => {
       // Before the paint, so a pane that just narrowed never shows the page cut off.
-      if (entries[0]) flushSync(() => setContainerWidth(entries[0].contentRect.width));
+      const rect = entries[0]?.contentRect;
+      if (rect) flushSync(() => setContainerSize((size) =>
+        size.width === rect.width && size.height === rect.height ? size : { width: rect.width, height: rect.height }));
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
 
   useEffect(() => setNumPages(null), [url]);
+
+  const docRef = useRef<PDFDocumentProxy | null>(null);
+  const internalLinkRef = useRef(onInternalLink);
+  internalLinkRef.current = onInternalLink;
+  // react-pdf keeps the first handler it is given, so this one stays the same and reads the latest props.
+  const handleItemClick = useCallback(({ dest, pageNumber: target }: { dest?: unknown; pageNumber: number }) => {
+    const report = (place: PdfPlace) => internalLinkRef.current?.(place);
+    const doc = docRef.current;
+    if (!doc || !dest) { report({ page: target }); return; }
+    void resolveDestination(doc, dest).then((place) => report(place ?? { page: target }));
+  }, []);
+
+  // Web links in the PDF open in the default browser rather than inside the app. Links within the
+  // PDF are pdf.js's own "#" links, handled by handleItemClick.
+  const handleLinkClick = useCallback((e: React.MouseEvent) => {
+    const link = (e.target as Element | null)?.closest?.<HTMLAnchorElement>(".annotationLayer a[href]");
+    const href = link?.getAttribute("href");
+    if (!link || !href || href.startsWith("#")) return;
+    e.preventDefault();
+    if (e.type !== "click") return;
+    const safe = externalHttpUrl(link.href);
+    if (!safe) {
+      useStore.getState().setStatus("このリンクは開けません（開けるのは http・https のリンクだけです）。");
+      return;
+    }
+    shell.openUrl(safe).catch(() => useStore.getState().setStatus(`リンクを開けませんでした: ${safe}`));
+  }, []);
 
   const token = authToken();
   const options = useMemo(() => ({
@@ -122,11 +163,16 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     httpHeaders: token ? { Authorization: `Bearer ${token}` } : undefined,
   }), [token]);
 
+  // Height over width of the page, known once it has loaded. Until then, a paper's pages usually share
+  // the last page's shape (A4 before the first); but the canvas is sized for the last shape or A4,
+  // whichever is taller, so that it stays within the memory limit for any page it turns out to be.
+  const [pageShape, setPageShape] = useState<{ key: string; ratio: number } | null>(null);
+  const shapeKnown = pageShape?.key === inkKey;
+  const layoutRatio = shapeKnown ? pageShape.ratio : pageShape?.ratio ?? Math.SQRT2;
+  const canvasRatio = shapeKnown ? pageShape.ratio : Math.max(pageShape?.ratio ?? Math.SQRT2, Math.SQRT2);
   const fitWidth = Math.max(250, containerWidth - PADDING * 2);
-  const pageWidth = Math.round(fitWidth * zoom);
-  // Height over width of the page, to size its canvas before it is drawn. Until the first page loads,
-  // assume A4, which is taller than Letter and so errs toward the smaller canvas.
-  const [pageRatio, setPageRatio] = useState(Math.SQRT2);
+  // The page's 1px border sits outside its canvas.
+  const pageWidth = pageWidthFor(zoom, fitWidth, containerSize.height - PADDING * 2 - 2, layoutRatio);
 
   // react-pdf replaces the canvas whenever the width changes, leaving the page blank until it is
   // redrawn. So while a side panel opens or the pane is resized or zoomed, the current drawing is
@@ -164,7 +210,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   }, []);
   // Zoomed in on a high-DPI display, the page is drawn at a lower resolution than the display's so
   // that its canvas stays within a memory limit.
-  const pixelRatio = cappedPixelRatio(window.devicePixelRatio || 1, drawnWidth, drawnWidth * pageRatio);
+  const pixelRatio = cappedPixelRatio(window.devicePixelRatio || 1, drawnWidth, drawnWidth * canvasRatio);
 
   // Whether the text layer shows this page yet, rather than the one before it.
   const textLayerReady = useRef(false);
@@ -174,10 +220,16 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   // Each target is scrolled to once, so that zooming or resizing later doesn't pull the view back.
   const jumpedTo = useRef<JumpTarget | null>(null);
   const jumpToBookmark = useCallback(() => {
-    if (!jumpTarget || jumpedTo.current === jumpTarget || jumpTarget.side !== (translated ? "translated" : "original")) return;
+    if (!jumpTarget || jumpedTo.current === jumpTarget || (!jumpTarget.toEnd && jumpTarget.side !== (translated ? "translated" : "original"))) return;
     const page = pageRef.current;
     const scroller = containerRef.current;
     if (!page || !scroller) return;
+    if (jumpTarget.toEnd) {
+      // The browser clamps this to the end.
+      scroller.scrollTop = scroller.scrollHeight;
+      if (pageRendered.current) jumpedTo.current = jumpTarget;
+      return;
+    }
     const top = page.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
     scroller.scrollTop = Math.max(0, top + jumpTarget.anchor_y * page.clientHeight - scroller.clientHeight * 0.25);
     if (jumpTarget.anchor_x !== undefined) {
@@ -280,6 +332,8 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
           if (scrollRef) scrollRef.current = node;
         }}
         onScroll={onScroll}
+        onClickCapture={handleLinkClick}
+        onAuxClickCapture={handleLinkClick}
         // A stable gutter keeps the width from changing as the scrollbar comes and goes; otherwise a
         // page that only just overflows at "fit width" shrinks to fit, loses its scrollbar and grows back.
         className={`w-full h-full bg-reader-bg [scrollbar-gutter:stable] ${zoom > 1 ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
@@ -291,7 +345,13 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
               suspense={false}
               file={url}
               options={options}
-              onLoadSuccess={(doc) => setNumPages(doc.numPages)}
+              onLoadSuccess={(doc) => {
+                docRef.current = doc;
+                setNumPages(doc.numPages);
+                onDocumentLoad?.(doc);
+              }}
+              onItemClick={handleItemClick}
+              externalLinkTarget="_blank"
               loading={<PageSkeleton width={pageWidth} />}
               error={message("PDFを読み込めませんでした。")}
               className="mx-auto w-fit"
@@ -306,7 +366,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                     onLoadSuccess={(page) => {
                       loadedPage.current = page;
                       const viewport = page.getViewport({ scale: 1 });
-                      setPageRatio(viewport.height / viewport.width);
+                      setPageShape({ key: inkKey, ratio: viewport.height / viewport.width });
                     }}
                     onGetTextSuccess={(content) => { textContent.current = content; }}
                     onRenderSuccess={(page) => {

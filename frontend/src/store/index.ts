@@ -1,6 +1,10 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { JobKind } from "@/features/jobs/jobKinds";
+import { clampZoom } from "@/features/reader/zoomLevels";
+import { EMPTY_HISTORY, type ReaderHistory } from "@/features/reader/readerHistory";
+
+export { ZOOM_FIT_PAGE, ZOOM_LEVELS, ZOOM_PRESETS } from "@/features/reader/zoomLevels";
 
 export interface Job {
   job_id: string;
@@ -53,14 +57,14 @@ export interface PassageAttachment extends PassageLocation {
 export interface ReaderJump extends PassageLocation {
   paperId: string;
   anchor_x?: number;
+  /** Show the end of the page in both panes instead, when paging back from the next page. */
+  toEnd?: boolean;
 }
-
-/** Reader zoom relative to the fitted page width, as in the old reader. */
-export const ZOOM_PRESETS = [1, 1.25, 1.5, 2, 2.5, 3, 4];
 
 interface UiState {
   activePaperId: string | null;
   activeTab: string;
+  /** Relative to the fitted page width, or ZOOM_FIT_PAGE; see features/reader/zoomLevels.ts. */
   zoom: number;
   currentPage: number;
   paperPages: Record<string, number>;
@@ -92,6 +96,8 @@ interface UiState {
   /** Unsent chat text by paper, kept while the reader is used to attach passages. */
   chatInputs: Record<string, string>;
   readerJump: ReaderJump | null;
+  /** Places to go back to in the open paper (Alt+←); cleared when another paper opens. */
+  readerHistory: ReaderHistory;
 
   setActivePaperId: (id: string | null, page?: number) => void;
   setActiveTab: (tab: string) => void;
@@ -117,6 +123,7 @@ interface UiState {
   removeChatAttachments: (ids: string[]) => void;
   setChatInput: (paperId: string, text: string) => void;
   setReaderJump: (jump: ReaderJump | null) => void;
+  setReaderHistory: (history: ReaderHistory) => void;
 
   addJob: (job: Job) => void;
   removeJob: (job_id: string) => void;
@@ -151,6 +158,7 @@ export const useStore = create<UiState>()(
       chatAttachments: [],
       chatInputs: {},
       readerJump: null,
+      readerHistory: EMPTY_HISTORY,
 
       setActivePaperId: (id, page) => set((state) => {
         const target = page ?? (id ? (state.paperPages[id] || 1) : 1);
@@ -158,13 +166,14 @@ export const useStore = create<UiState>()(
           activePaperId: id,
           currentPage: target,
           paperPages: id ? { ...state.paperPages, [id]: target } : state.paperPages,
+          readerHistory: id === state.activePaperId ? state.readerHistory : EMPTY_HISTORY,
         };
       }),
       // Sticky notes always open as a full tab; other tools can open beside the focused reader.
       setActiveTab: (tab) => set((state) =>
         tab === "sticky-notes" ? { activeTab: tab, focusMode: false, focusPanel: null }
           : state.focusMode && tab !== "reader" ? { focusPanel: tab } : { activeTab: tab }),
-      setZoom: (zoom) => set({ zoom: Math.max(ZOOM_PRESETS[0], Math.min(ZOOM_PRESETS[ZOOM_PRESETS.length - 1], zoom)) }),
+      setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
       setCurrentPage: (page) => set((state) => ({
         currentPage: page,
         paperPages: state.activePaperId ? { ...state.paperPages, [state.activePaperId]: page } : state.paperPages
@@ -194,6 +203,7 @@ export const useStore = create<UiState>()(
       })),
       setChatInput: (paperId, text) => set((state) => ({ chatInputs: { ...state.chatInputs, [paperId]: text } })),
       setReaderJump: (readerJump) => set({ readerJump }),
+      setReaderHistory: (readerHistory) => set({ readerHistory }),
 
       addJob: (job) => set((state) => ({
         activeJobs: state.activeJobs.some((j) => j.job_id === job.job_id)

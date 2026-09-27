@@ -1,9 +1,9 @@
 import React, { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  StickyNote, ChevronLeft, ChevronRight, Copy, Languages, MoveHorizontal, NotebookPen, Paperclip, Sparkles, ZoomIn, ZoomOut,
+  StickyNote, ChevronLeft, ChevronRight, Copy, Languages, MoveHorizontal, NotebookPen, Paperclip, Sparkles, ZoomIn, ZoomOut, Scan,
 } from "lucide-react";
-import { useStore, type PassageAttachment } from "@/store";
+import { useStore, ZOOM_FIT_PAGE, type PassageAttachment } from "@/store";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
@@ -186,6 +186,9 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
             </ContextMenuItem>
             <ContextMenuItem onClick={() => useStore.getState().setZoom(1)}>
               <MoveHorizontal /> 幅に合わせる <ContextMenuShortcut>Ctrl+0</ContextMenuShortcut>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => useStore.getState().setZoom(ZOOM_FIT_PAGE)}>
+              <Scan /> ページ全体を表示
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={() => emitAppEvent("open-translate-dialog")}>

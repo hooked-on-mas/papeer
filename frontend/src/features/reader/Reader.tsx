@@ -1,14 +1,19 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FilePlus2, Languages, Loader2 } from "lucide-react";
-import { isRunning, useStore, ZOOM_PRESETS } from "@/store";
+import { isRunning, useStore } from "@/store";
 import { useReading, type ReadingData } from "@/api/hooks";
 import { backendUrl } from "@/api/client";
 import { PdfPane } from "./PdfPane";
 import { ReaderToolbar } from "./ReaderToolbar";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { importPdfs } from "@/app/actions";
-import { changeZoom } from "./navigation";
+import { bindReaderViewport, changeZoom, historyBack, historyForward, movePage, moveToEdgePage, navigateTo } from "./navigation";
+import { createWheelPager, keyTarget, paneEdges, readerKeyAction, readerOwnsKey, type KeyPlace } from "./pageTurn";
+import { loadOutline, originalPageFor, type OutlineEntry, type PdfPlace } from "./pdfLinks";
+import { pinchLevel, pinchStart } from "./zoomLevels";
+import { inkToolActive } from "./useInkEditor";
+import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 import { createScrollSync } from "./scrollSync";
 import { apiRequest } from "@/api/client";
 import { ReaderExtras } from "./ReaderExtras";
@@ -19,6 +24,17 @@ import { QK } from "@/lib/queryKeys";
 
 // Stable while the notes are loading or failed: a new array would redraw the text layer on every render.
 const NO_NOTES: StickyNote[] = [];
+
+/**
+ * Where the view is on the page in `pane`, as JumpTarget.anchor_y takes it: jumping there again
+ * brings back the same view.
+ */
+function viewAnchor(pane: HTMLElement | null): number | null {
+  const page = pane?.querySelector<HTMLElement>(".react-pdf__Page");
+  if (!pane || !page || !page.clientHeight) return null;
+  const top = page.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
+  return Math.max(0, Math.min(1, (pane.scrollTop + pane.clientHeight * 0.25 - top) / page.clientHeight));
+}
 
 /** Caption for the translation pane, following the old reader's rules. */
 function translatedCaption(reading: ReadingData | null | undefined, page: number): string {
@@ -58,6 +74,26 @@ export function Reader() {
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
   const syncScroll = useMemo(() => createScrollSync(), [activePaperId, currentPage]);
+  // The pane the pointer was last over, which the paging keys scroll.
+  const activePane = useRef<"left" | "right">("left");
+  // The pane to scroll and to judge the page's end by: `preferred`, unless it shows no page (a
+  // translation still pending, say) and the other one does.
+  const readingPane = (preferred: "left" | "right") => {
+    const [first, second] = preferred === "right" ? [rightScrollRef.current, leftScrollRef.current] : [leftScrollRef.current, rightScrollRef.current];
+    const hasPage = (pane: HTMLElement | null) => !!pane?.querySelector(".react-pdf__Page");
+    return !hasPage(first) && hasPage(second) ? second : first ?? second;
+  };
+  useEffect(() => bindReaderViewport(() => viewAnchor(leftScrollRef.current)), []);
+
+  // The original's table of contents, for the 目次 menu.
+  const [outline, setOutline] = useState<OutlineEntry[] | null>(null);
+  const outlineDoc = useRef<PDFDocumentProxy | null>(null);
+  const onOriginalLoad = useCallback((doc: PDFDocumentProxy) => {
+    if (outlineDoc.current === doc) return;
+    outlineDoc.current = doc;
+    void loadOutline(doc).then((entries) => { if (outlineDoc.current === doc) setOutline(entries); });
+  }, []);
+  useEffect(() => { outlineDoc.current = null; setOutline(null); }, [activePaperId]);
 
   const pageCount = reading?.page_count ?? 0;
   const completed = reading?.completed_pages ?? [];
@@ -69,7 +105,7 @@ export function Reader() {
     if (!jump) return;
     useStore.getState().setReaderJump(null);
     if (jump.paperId !== activePaperId) return;
-    setBookmarkTarget({ id: Date.now(), page: jump.page, side: jump.side, anchor_y: jump.anchor_y, anchor_x: jump.anchor_x, passage: jump });
+    setBookmarkTarget({ id: Date.now(), page: jump.page, side: jump.side, anchor_y: jump.anchor_y, anchor_x: jump.anchor_x, passage: jump, toEnd: jump.toEnd });
   }, [readerJump, activePaperId]);
 
   // Keep the page valid for the paper and the 翻訳済みページのみ filter.
@@ -96,6 +132,7 @@ export function Reader() {
     // Scale the pinch is heading for; the zoom snaps to the nearest preset on the way.
     let pinchTarget = 1;
     let lastPinch = 0;
+    const pager = createWheelPager();
     const onWheel = (e: WheelEvent) => {
       const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? 400 : 1;
       const dx = e.deltaX * unit;
@@ -112,25 +149,86 @@ export function Reader() {
         }
         // Pinch deltas follow scale = exp(-deltaY / 100) and are only a few pixels each.
         const { zoom, setZoom } = useStore.getState();
-        if (e.timeStamp - lastPinch > 300) pinchTarget = zoom;
+        if (e.timeStamp - lastPinch > 300) pinchTarget = pinchStart(zoom);
         lastPinch = e.timeStamp;
-        pinchTarget = Math.max(ZOOM_PRESETS[0], Math.min(pinchTarget * Math.exp(-dy / 100), ZOOM_PRESETS[ZOOM_PRESETS.length - 1]));
-        const nearest = ZOOM_PRESETS.reduce((best, value) =>
-          Math.abs(Math.log(value / pinchTarget)) < Math.abs(Math.log(best / pinchTarget)) ? value : best);
-        if (nearest !== zoom) setZoom(nearest);
+        const pinch = pinchLevel(pinchTarget * Math.exp(-dy / 100));
+        pinchTarget = pinch.scale;
+        if (pinch.level !== zoom) setZoom(pinch.level);
         return;
+      }
+
+      const pane = [leftScrollRef.current, rightScrollRef.current].find((p) => p?.contains(e.target as Node));
+      if (!pane) return;
+      activePane.current = pane === rightScrollRef.current ? "right" : "left";
+      // Scrolling on past the end of the page turns it, except while writing on the page, where a
+      // stray wheel movement should not take the page away.
+      if (!e.shiftKey && Math.abs(dy) > Math.abs(dx) && !inkToolActive()) {
+        const { turn, swallow } = pager({ dy, time: e.timeStamp, notch: mouseWheel, ...paneEdges(readingPane(activePane.current) ?? pane) });
+        if (turn) {
+          if (e.cancelable) e.preventDefault();
+          movePage(turn, { toEnd: turn < 0 });
+          return;
+        }
+        if (swallow) {
+          if (e.cancelable) e.preventDefault();
+          return;
+        }
       }
 
       // Touchpad swipes can latch onto the window rather than the PDF under the pointer,
       // so scroll that pane directly. Non-cancelable events belong to a native scroll already under way.
-      const pane = [leftScrollRef.current, rightScrollRef.current].find((p) => p?.contains(e.target as Node));
-      if (!pane || mouseWheel || !e.cancelable) return;
+      if (mouseWheel || !e.cancelable) return;
       e.preventDefault();
       pane.scrollBy(e.shiftKey && dx === 0 ? dy : dx, e.shiftKey && dx === 0 ? 0 : dy);
     };
     element.addEventListener("wheel", onWheel, { passive: false });
     return () => element.removeEventListener("wheel", onWheel);
   }, [activePaperId]);
+
+  // Whether the last click was in the reader, and in which pane, for the keys below.
+  const pointerInReader = useRef(false);
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target instanceof Node ? e.target : null;
+      pointerInReader.current = !!target && !!readerRef.current?.contains(target);
+      if (target && rightScrollRef.current?.contains(target)) activePane.current = "right";
+      else if (target && leftScrollRef.current?.contains(target)) activePane.current = "left";
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, []);
+  // Whether a key press is the reader's (see readerOwnsKey); the search's F3 follows it too.
+  const ownsKey = useCallback((e: KeyboardEvent) => {
+    const root = readerRef.current;
+    if (!root || document.querySelector("[data-lightbox]")) return false;
+    const target = e.target instanceof Element ? e.target : null;
+    const place: KeyPlace = target && root.contains(target) ? "inside" : !target || target.contains(root) ? "around" : "elsewhere";
+    const readerVisible = useStore.getState().activeTab === "reader"
+      && (typeof root.checkVisibility !== "function" || root.checkVisibility());
+    return readerOwnsKey({ place, pointerInReader: pointerInReader.current, readerVisible });
+  }, []);
+
+  // The paging keys (see readerKeyAction), never taken from a text field.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing || !ownsKey(e)) return;
+      const target = e.target instanceof Element ? e.target : null;
+      const pane = readingPane(activePane.current);
+      const action = readerKeyAction({
+        key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey,
+        target: keyTarget(target), ...(pane ? paneEdges(pane) : { atStart: true, atEnd: true }),
+      });
+      if (!action) return;
+      e.preventDefault();
+      if (action.type === "scroll") pane?.scrollBy({ top: action.direction * pane.clientHeight * 0.9 });
+      else if (action.type === "turn") movePage(action.amount, { toEnd: action.toEnd });
+      else if (action.type === "edge") moveToEdgePage(action.edge);
+      else if (action.direction === "back") historyBack();
+      else historyForward();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [ownsKey]);
 
   if (!activePaperId) {
     return (
@@ -177,8 +275,7 @@ export function Reader() {
   return (
     <div ref={readerRef} className="flex flex-col h-full w-full bg-reader-bg">
       <ReaderToolbar />
-      <ReaderExtras paperId={activePaperId} search={search} setSearch={setSearch}
-        onSearchJump={(item, index) => setBookmarkTarget({ id: -index - 1, page: item.page, side: search.side, anchor_y: item.anchor_y })} />
+      <ReaderExtras paperId={activePaperId} search={search} setSearch={setSearch} outline={outline} ownsKey={ownsKey} />
       {noTranslatedPages ? (
         <div className="flex-1 flex items-center justify-center text-muted-foreground p-8 text-[13px]">
           翻訳済みのページはまだありません。完了すると自動で表示します。
@@ -209,6 +306,8 @@ export function Reader() {
                 searchTerm={search.side === "original" ? search.query : ""}
                 jumpTarget={bookmarkTarget?.page === currentPage ? bookmarkTarget : null}
                 savedHighlights={sourceHighlights}
+                onDocumentLoad={onOriginalLoad}
+                onInternalLink={(place) => navigateTo({ ...place, side: "original" })}
               />
             </div>
           </ResizablePanel>
@@ -238,6 +337,11 @@ export function Reader() {
                 searchTerm={search.side === "translated" ? search.query : ""}
                 jumpTarget={bookmarkTarget?.page === currentPage ? bookmarkTarget : null}
                 savedHighlights={translatedHighlights}
+                onInternalLink={(place: PdfPlace) => {
+                  // The translation pane's file has its own page numbers; open the original page it shows.
+                  const page = ref && reading ? originalPageFor(reading.translated_pages, ref.file, place.page - 1) : null;
+                  if (page) navigateTo({ page, anchor_y: place.anchor_y, side: "translated" });
+                }}
               />
             </div>
           </ResizablePanel>

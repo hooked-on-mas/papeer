@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Maximize2, MessageSquare, Minimize2, NotebookPen, ScrollText, StickyNote, ZoomIn, ZoomOut } from "lucide-react";
-import { useStore, ZOOM_PRESETS } from "@/store";
+import { ChevronLeft, ChevronRight, Maximize2, MessageSquare, Minimize2, NotebookPen, ScrollText, StickyNote, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import { useStore, ZOOM_LEVELS } from "@/store";
 import { useArticle, useMessages, useReading } from "@/api/hooks";
-import { changeZoom, jumpToPage, movePage } from "./navigation";
-
-const ZOOM_LABELS: Record<number, string> = { 1: "幅に合わせる" };
+import { changeZoom, historyBack, jumpToPage, movePage } from "./navigation";
+import { zoomLabel } from "./zoomLevels";
 
 /** Tabs that focus mode can open beside the reader. */
 const FOCUS_PANELS = [
@@ -24,6 +23,7 @@ export function ReaderToolbar() {
   const setFocusMode = useStore((s) => s.setFocusMode);
   const focusPanel = useStore((s) => s.focusPanel);
   const setFocusPanel = useStore((s) => s.setFocusPanel);
+  const canGoBack = useStore((s) => s.readerHistory.back.length > 0);
   const { data: reading } = useReading(activePaperId);
   // Load what the side panels show, so opening one doesn't flash a loading state first.
   useArticle(focusMode ? activePaperId : null);
@@ -56,7 +56,7 @@ export function ReaderToolbar() {
 
   return (
     <div className="h-[40px] flex items-center px-3 gap-1 border-b shrink-0 bg-background/50 text-[13px] min-w-0">
-      <button onClick={() => movePage(-1)} disabled={!activePaperId || atStart} className={button} title="前のページ（←）">
+      <button onClick={() => movePage(-1)} disabled={!activePaperId || atStart} className={button} title="前のページ（← / PageUp / ページ先頭でホイール上）">
         <ChevronLeft className="w-4 h-4" />
       </button>
       <input
@@ -77,8 +77,12 @@ export function ReaderToolbar() {
       <button onClick={commitPage} disabled={!activePaperId} className="h-6 px-2 rounded border text-[12px] hover:bg-muted disabled:opacity-40">
         移動
       </button>
-      <button onClick={() => movePage(1)} disabled={!activePaperId || atEnd} className={button} title="次のページ（→）">
+      <button onClick={() => movePage(1)} disabled={!activePaperId || atEnd} className={button} title="次のページ（→ / PageDown / ページ末尾でホイール下）">
         <ChevronRight className="w-4 h-4" />
+      </button>
+      <button onClick={historyBack} disabled={!canGoBack} className={button} aria-label="戻る"
+        title="リンク・目次・検索で移動する前の場所に戻る（Alt+←）">
+        <Undo2 className="w-4 h-4" />
       </button>
       <span className="ml-2 text-muted-foreground tabular-nums truncate min-w-0" title={pageLabel}>{pageLabel}</span>
       {version && (
@@ -104,21 +108,21 @@ export function ReaderToolbar() {
           <option value="translated">翻訳済みページのみ</option>
         </select>
         <div className="w-px h-4 bg-border mx-2" />
-        <button onClick={() => changeZoom(-1)} disabled={zoom <= ZOOM_PRESETS[0]} className={button}
+        <button onClick={() => changeZoom(-1)} disabled={zoom <= ZOOM_LEVELS[0]} className={button}
           title="原文・日本語訳を縮小（Ctrl＋マウスホイール下 / Ctrl+-）">
           <ZoomOut className="w-4 h-4" />
         </button>
         <select
-          value={String(ZOOM_PRESETS.includes(zoom) ? zoom : 1)}
+          value={String(ZOOM_LEVELS.includes(zoom) ? zoom : 1)}
           onChange={(e) => setZoom(Number(e.target.value))}
-          title="原文・日本語訳の共通倍率（幅に合わせた表示が基準）"
+          title="原文・日本語訳の共通倍率（幅に合わせた表示が基準。「ページ全体」はページ全体が収まる大きさ）"
           className="h-6 bg-transparent border rounded text-[12px] px-1 hover:bg-muted cursor-pointer tabular-nums"
         >
-          {ZOOM_PRESETS.map((value) => (
-            <option key={value} value={String(value)}>{ZOOM_LABELS[value] ?? `${Math.round(value * 100)}%`}</option>
+          {ZOOM_LEVELS.map((value) => (
+            <option key={value} value={String(value)}>{zoomLabel(value)}</option>
           ))}
         </select>
-        <button onClick={() => changeZoom(1)} disabled={zoom >= ZOOM_PRESETS[ZOOM_PRESETS.length - 1]} className={button}
+        <button onClick={() => changeZoom(1)} disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]} className={button}
           title="原文・日本語訳を拡大（Ctrl＋マウスホイール上 / Ctrl+=）">
           <ZoomIn className="w-4 h-4" />
         </button>

@@ -42,7 +42,8 @@ export function lazyComponent<P extends object>(load: () => Promise<ComponentTyp
     );
   }
 
-  return Object.assign(Lazy, { preload: () => { loader.load().catch(() => undefined); } });
+  // A failed preload is tried again when the component is first shown (see createLoader).
+  return Object.assign(Lazy, { preload: loader.preload });
 }
 
 class LoadBoundary extends Component<{ fallback: () => ReactNode; children: ReactNode }, { failed: boolean }> {

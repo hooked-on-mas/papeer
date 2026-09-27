@@ -33,6 +33,11 @@ const useInkTools = create<{
 }));
 let activeEditor: symbol | null = null;
 
+/** Whether a writing tool is chosen (pen, eraser, range selection…), rather than text selection. */
+export function inkToolActive(): boolean {
+  return useInkTools.getState().tool !== "select";
+}
+
 export function useInkEditor(paperId: string | undefined, side: InkSide, page: number, ratio: number) {
   const owner = useRef(Symbol("ink-pane"));
   const scopeRef = useRef<HTMLDivElement>(null);
