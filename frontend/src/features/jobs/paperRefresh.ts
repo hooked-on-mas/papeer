@@ -1,6 +1,7 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { ApiError, apiRequest } from "@/api/client";
 import type { PaperData } from "@/api/hooks";
+import { requestPaperRefresh, type PaperChanges } from "@/lib/libraryRefresh";
 import { paperChangeEffects, withPaperRow } from "@/lib/paperRows";
 import { QK } from "@/lib/queryKeys";
 
@@ -38,11 +39,19 @@ export async function refreshPaper(queryClient: QueryClient, paperId: string): P
   }
 }
 
-/** A paper.changed event (sidecar/deps.py, paper_changed). */
+/**
+ * A paper.changed event (sidecar/deps.py, paper_changed): reloaded with the others that come in quick
+ * succession, and not while an action on several papers runs, which sends one per paper (libraryRefresh.ts).
+ */
 export function handlePaperChanged(queryClient: QueryClient, paperId: string, fields: string[] | undefined): void {
-  const effects = paperChangeEffects(fields);
-  if (effects.row) void refreshPaper(queryClient, paperId);
-  if (effects.collections) void queryClient.invalidateQueries({ queryKey: [QK.collections] });
-  if (effects.tags) void queryClient.invalidateQueries({ queryKey: [QK.tags] });
+  requestPaperRefresh(paperId, paperChangeEffects(fields), (changes) => refreshPapers(queryClient, changes));
+}
+
+/** Reloads the papers changed together: their rows, or with many, the lists (and each paper's own query) as a whole. */
+function refreshPapers(queryClient: QueryClient, changes: PaperChanges): void {
+  if (changes.rows === "all") void queryClient.invalidateQueries({ queryKey: [QK.papers] });
+  else for (const paperId of changes.rows) void refreshPaper(queryClient, paperId);
+  if (changes.collections) void queryClient.invalidateQueries({ queryKey: [QK.collections] });
+  if (changes.tags) void queryClient.invalidateQueries({ queryKey: [QK.tags] });
   void queryClient.invalidateQueries({ queryKey: [QK.librarySearch] });
 }
