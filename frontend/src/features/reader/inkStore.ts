@@ -120,7 +120,9 @@ export function useInkPage(paperId: string | undefined, side: InkSide, page: num
     if (!value) { value = new InkPage(paperId, side, page); pages.set(key, value); }
     return value;
   }, [paperId, side, page]);
-  const snapshot = useSyncExternalStore(entry?.subscribe ?? emptySubscribe, entry?.getSnapshot ?? emptySnapshot);
+  // The same snapshot on the server, so that the reader can be rendered there in tests (renderSmoke).
+  const getSnapshot = entry?.getSnapshot ?? emptySnapshot;
+  const snapshot = useSyncExternalStore(entry?.subscribe ?? emptySubscribe, getSnapshot, getSnapshot);
   useEffect(() => { void entry?.load(); }, [entry]);
   return { entry, ...snapshot };
 }

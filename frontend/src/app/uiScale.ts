@@ -24,7 +24,8 @@ export const useUiScale = create<{ scale: number; setScale: (scale: number) => v
 );
 
 function applyUiScale(scale: number): void {
-  document.documentElement.style.fontSize = rootFontSize(scale);
+  // No document when a component is rendered on the server side (tests/renderSmoke.test.mjs).
+  if (typeof document !== "undefined") document.documentElement.style.fontSize = rootFontSize(scale);
 }
 
 applyUiScale(useUiScale.getState().scale);

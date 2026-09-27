@@ -1552,6 +1552,10 @@ export interface components {
             reading_pages?: {
                 [key: string]: number;
             };
+            /** Reading Anchors */
+            reading_anchors?: {
+                [key: string]: number;
+            };
             /**
              * Last Paper
              * @default

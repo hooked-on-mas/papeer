@@ -7509,6 +7509,13 @@
             "type": "object",
             "title": "Reading Pages"
           },
+          "reading_anchors": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Reading Anchors"
+          },
           "last_paper": {
             "type": "string",
             "title": "Last Paper",

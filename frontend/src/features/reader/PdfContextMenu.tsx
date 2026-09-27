@@ -1,9 +1,9 @@
 import React, { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  StickyNote, ChevronLeft, ChevronRight, Copy, Languages, MoveHorizontal, NotebookPen, Paperclip, Sparkles, ZoomIn, ZoomOut,
+  StickyNote, ChevronLeft, ChevronRight, Copy, Languages, MoveHorizontal, NotebookPen, Paperclip, Sparkles, ZoomIn, ZoomOut, Scan,
 } from "lucide-react";
-import { useStore, type PassageAttachment } from "@/store";
+import { useStore, ZOOM_FIT_PAGE, type PassageAttachment } from "@/store";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
@@ -88,7 +88,7 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
     const store = useStore.getState();
     if (store.activePaperId !== paperId) return;
     store.setNoteInsert({ paperId, text });
-    store.setActiveTab("notes");
+    store.openSidePanel("notes");
   };
 
   const explain = async () => {
@@ -96,18 +96,18 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
     const store = useStore.getState();
     if (!item || store.activePaperId !== item.paperId) return;
     store.setChatDraft({ paperId: item.paperId, text: "この箇所をわかりやすく説明してください。", send: true, attachments: [item] });
-    store.setActiveTab("chat");
+    store.openSidePanel("chat");
   };
 
-  // Stays in the reader so that more passages can be attached; focus mode opens the chat beside it.
+  // Opens the chat beside the reader, which stays on screen so that more passages can be attached.
   const attach = async () => {
     const item = await attachment();
     const store = useStore.getState();
     if (!item || store.activePaperId !== item.paperId) return;
     store.addChatAttachment(item);
-    if (store.focusMode) store.setActiveTab("chat");
+    store.openSidePanel("chat");
     const count = useStore.getState().chatAttachments.filter((x) => x.paperId === item.paperId).length;
-    store.setStatus(`チャットに添付しました（${count}件）。「チャット」タブで送信できます。`);
+    store.setStatus(`チャットに添付しました（${count}件）。右のチャットで送信できます。`);
   };
 
   const copy = withPassage((text) => {
@@ -188,6 +188,9 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
             </ContextMenuItem>
             <ContextMenuItem onClick={() => useStore.getState().setZoom(1)}>
               <MoveHorizontal /> 幅に合わせる <ContextMenuShortcut>Ctrl+0</ContextMenuShortcut>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => useStore.getState().setZoom(ZOOM_FIT_PAGE)}>
+              <Scan /> ページ全体を表示
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={() => emitAppEvent("open-translate-dialog")}>
