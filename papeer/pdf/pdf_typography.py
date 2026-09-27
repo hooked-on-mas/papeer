@@ -101,7 +101,7 @@ def text_style(block: dict, body_size: float, page_height: float) -> TextStyle:
     # Its position and length distinguish it from author names and running heads.
     if (block.get("page") == 1 and rect.y0 < page_height * .3
             and rect.width > 200 and len(text.split()) >= 8 and len(text) < 240
-            and text.isupper() and not block.get("formulas")):
+            and text.isupper() and not numbered and not block.get("formulas")):
         return TextStyle("title", 17, 1.25)
     if (rect.y0 > page_height * 0.93
             or (rect.y1 < page_height * 0.045 and len(text) < 180)
@@ -120,6 +120,64 @@ def text_style(block: dict, body_size: float, page_height: float) -> TextStyle:
     if short and block["font_size"] >= body_size * 1.5:
         return TextStyle("title", min(26, max(17, block["font_size"])), 1.25)
     return TextStyle("body", body_size, 1.4)
+
+
+def merge_wrapped_headings(blocks: list[dict], page_heights: dict[int, float] | None = None) -> list[dict]:
+    """Join nearby heading fragments, including centered continuation lines."""
+    result = []
+    page_heights = page_heights or {}
+    body_sizes = {page: body_font_size([b for b in blocks if b["page"] == page])
+                  for page in {b["page"] for b in blocks}}
+    for block in sorted(blocks, key=lambda b: (b["page"], b["bbox"][1], b["bbox"][0])):
+        target = None
+        text = " ".join(block["text"].split())
+        words = re.findall(r"[A-Za-z]+", text)
+        heading_case = words and all(w[0].isupper() or w.lower() in {
+            "and", "or", "of", "on", "in", "the", "a", "an", "to", "for", "with", "by"
+        } for w in words)
+        if (block.get("kind", "text") == "text" and not block.get("formulas")
+                and heading_case and not _NUMBERED.match(text)
+                and not re.search(r"[.!?:;]$", text)):
+            box = fitz.Rect(block["bbox"])
+            for previous in reversed(result):
+                a = fitz.Rect(previous["bbox"])
+                size = min(previous["font_size"], block["font_size"])
+                combined = previous["text"] + " " + text
+                is_title = text_style(previous, body_sizes[previous["page"]],
+                                      page_heights.get(previous["page"], 792)).role == "title"
+                if (previous["page"] == block["page"]
+                        and previous.get("kind", "text") == "text"
+                        and not previous.get("formulas") and (is_title or _NUMBERED.match(previous["text"]))
+                        and not re.search(r"[.!?:;]$", previous["text"])
+                        and len(combined) < (300 if is_title else 160)
+                        and len(combined.split()) <= (40 if is_title else 15)
+                        and abs(previous["font_size"] - block["font_size"]) <= size * .12
+                        and (-size * .25 if is_title else 0) <= box.y0 - a.y1 <= size * .6
+                        and (abs(a.x0 - box.x0) < 3 or abs((a.x0 + a.x1 - box.x0 - box.x1) / 2) < 3)):
+                    # Any intervening content in this column is a barrier.
+                    if any(other is not previous and other["page"] == block["page"]
+                           and other["bbox"][3] > a.y1 and other["bbox"][1] < box.y0
+                           and other["bbox"][2] > min(a.x0, box.x0)
+                           and other["bbox"][0] < max(a.x1, box.x1) for other in result):
+                        continue
+                    target = previous
+                    break
+        if target is None:
+            result.append(dict(block))
+            continue
+        target["bbox"] = list(fitz.Rect(target["bbox"]) | fitz.Rect(block["bbox"]))
+        target["heading_parts"] = target.get("heading_parts", [target["id"]]) + [block["id"]]
+        for key in ("translation_text", "text"):
+            target[key] = target.get(key, target["text"]) + "\n" + block.get(key, block["text"])
+        target["regions"] = target.get("regions", []) + block.get("regions", [])
+    for block in result:
+        if text_style(block, body_sizes[block["page"]], page_heights.get(block["page"], 792)).role in {
+                "title", "section", "subsection"}:
+            # Wrapping is page geometry, not a subtitle or semantic boundary.
+            # Preserve lexical hyphens such as "Chance-Constrained".
+            block["translation_text"] = " ".join(block.get("translation_text", block["text"]).split())
+    positions = {block["id"]: index for index, block in enumerate(blocks)}
+    return sorted(result, key=lambda block: positions[block["id"]])
 
 
 def heading_space(block: dict, style: TextStyle, blocks: list[dict], bounds: fitz.Rect) -> fitz.Rect:
@@ -273,4 +331,3 @@ def text_html(text: str, style: TextStyle, images: dict[str, str], *,
         paragraphs.append(f'<p style="margin:{gap} 0 0;padding:0;text-indent:{indent}">{content}</p>')
     return (f'<div lang="ja" style="font-family:{family};font-weight:{weight};font-size:{style.size}pt;'
             f'line-height:{style.leading};color:{color};margin:0;padding:0">' + "".join(paragraphs) + "</div>")
-

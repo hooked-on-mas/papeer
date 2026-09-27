@@ -27,7 +27,7 @@ from papeer.layout.table_layout import separate_tables, table_regions
 from papeer.layout.figure_layout import figure_regions
 from papeer.layout.algorithm_layout import separate_algorithms
 from papeer.layout.reading_flow import order_page, continuation_groups, translation_blocks, materialize_flows
-from papeer.pdf.pdf_typography import FONT_CSS, TextStyle, body_font_size, first_line_indented, font_archive, reading_space, running_headers, text_html, text_style
+from papeer.pdf.pdf_typography import FONT_CSS, TextStyle, body_font_size, first_line_indented, font_archive, merge_wrapped_headings, reading_space, running_headers, text_html, text_style
 
 
 # MuPDF must not be called concurrently from the UI and background jobs.
@@ -64,6 +64,7 @@ def extract_pdf(path: Path) -> dict:
                 block_seq += len(new_blocks)
                 page_blocks.extend(new_blocks)
             page_blocks.extend(tables + figures)
+            page_blocks = merge_wrapped_headings(page_blocks, {number + 1: page.cropbox.height})
             if tables or figures or algorithms:
                 page_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
             if not page_blocks:
@@ -183,6 +184,21 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
     # math) from its continuation. Lay out overlapping translated fragments
     # together, without changing persisted IDs or invalidating the cache.
     translations = dict(translations)
+    heading_blocks = merge_wrapped_headings(document["blocks"], {p["number"]: p["height"] for p in document["pages"]})
+    original_blocks = {b["id"]: b for b in document["blocks"]}
+    restored = []
+    for block in heading_blocks:
+        parts = block.get("heading_parts", [])
+        # Fresh extraction already translated the complete heading under one ID.
+        # Legacy caches may still have a separate translation for every line.
+        if len(parts) > 1 and all(part in original_blocks for part in parts):
+            if all(part in translations for part in parts):
+                translations[block["id"]] = " ".join(translations[part] for part in parts)
+            else:
+                restored.extend(original_blocks[part] for part in parts)
+                continue
+        restored.append(block)
+    document = dict(document, blocks=restored)
     merged = []
     for block in document["blocks"]:
         box = fitz.Rect(block["bbox"])
@@ -437,4 +453,3 @@ def save_json(path: Path, value: object) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), "utf-8")
     safe_replace(temporary, path)
-

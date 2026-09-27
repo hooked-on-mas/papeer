@@ -4,11 +4,95 @@ import unittest
 
 import pymupdf as fitz
 
-from papeer.pdf.pdf_engine import build_translated_pdf, extract_pdf
-from papeer.pdf.pdf_typography import FONT_DIRECTORY, TextStyle, first_line_indented, heading_space, reading_space, running_headers, text_style, text_html
+from papeer.pdf.pdf_engine import build_translated_pdf, extract_pdf, translation_units
+from papeer.pdf.pdf_typography import FONT_DIRECTORY, TextStyle, first_line_indented, heading_space, merge_wrapped_headings, reading_space, running_headers, text_style, text_html
 
 
 class TypographyTests(unittest.TestCase):
+    def test_wrapped_paper_title_is_sent_as_one_phrase(self):
+        lines = ['Uncertainty Partitioning with Probabilistic',
+                 'Feasibility and Performance Guarantees for',
+                 'Chance-Constrained Optimization']
+        blocks = [dict(id=f't{i}', page=1, kind='text', font_size=18,
+                       text=line, bbox=[60 if i < 2 else 110, 80 + i*24,
+                                        540 if i < 2 else 490, 105 + i*24])
+                  for i, line in enumerate(lines)]
+        author = dict(id='author', page=1, kind='text', font_size=11,
+                      text='Alice Smith and Bob Jones', bbox=[200, 164, 400, 180])
+        merged = merge_wrapped_headings(blocks + [author], {1: 792})
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(merged[0]['translation_text'], ' '.join(lines))
+        self.assertEqual(merged[0]['heading_parts'], ['t0', 't1', 't2'])
+        document = dict(blocks=merged)
+        self.assertEqual(translation_units(document)[0]['text'], ' '.join(lines))
+        self.assertEqual(merged[1], author)
+        # PDF extractors can also put all three lines in a single block.
+        single = dict(blocks[0], text='\n'.join(lines), bbox=[60, 80, 540, 153])
+        normalized = merge_wrapped_headings([single], {1: 792})[0]
+        self.assertEqual(normalized['translation_text'], ' '.join(lines))
+        self.assertEqual(normalized['text'], '\n'.join(lines))
+        self.assertNotIn('translation_text', single)
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / 'title.pdf'
+            with fitz.open() as pdf:
+                page = pdf.new_page(width=600, height=792)
+                for i, line in enumerate(lines):
+                    width = fitz.get_text_length(line, fontsize=18)
+                    page.insert_text(((600-width)/2, 100+i*27), line, fontsize=18)
+                page.insert_text((200, 190), author['text'], fontsize=11)
+                pdf.save(source)
+            extracted = extract_pdf(source)
+            units = translation_units(extracted)
+            self.assertEqual(len(units), 2)
+            self.assertEqual(units[0]['text'], ' '.join(lines))
+            self.assertEqual(units[1]['text'], author['text'])
+
+    def test_centered_heading_continuation_is_one_translation_unit(self):
+        first = dict(id='h', page=1, kind='text', bbox=[40, 100, 300, 110],
+                     text='V. DISCUSSION ON THE RESULTS AND PRACTICAL', font_size=10)
+        tail = dict(id='t', page=1, kind='text', bbox=[120, 114, 220, 124],
+                    text='IMPLEMENTATION', font_size=10)
+        merged = merge_wrapped_headings([first, tail])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]['translation_text'], first['text'] + ' ' + tail['text'])
+        self.assertEqual(merged[0]['bbox'], [40, 100, 300, 124])
+        self.assertEqual(text_style(merged[0], 10, 700).role, 'section')
+        self.assertNotIn('heading_parts', first)
+        for changes in (dict(text='The results are discussed below.'), dict(page=2),
+                        dict(font_size=8), dict(bbox=[330, 114, 430, 124]),
+                        dict(bbox=[120, 130, 220, 140]), dict(text='VI. CONCLUSIONS'),
+                        dict(kind='figure')):
+            with self.subTest(changes=changes):
+                self.assertEqual(len(merge_wrapped_headings([first, dict(tail, **changes)])), 2)
+
+    def test_split_heading_extraction_and_legacy_render(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'source.pdf'
+            lines = ['V. DISCUSSION ON THE RESULTS AND PRACTICAL', 'IMPLEMENTATION']
+            with fitz.open() as pdf:
+                page = pdf.new_page(width=400, height=500)
+                blocks = []
+                for index, text in enumerate(lines):
+                    width = fitz.get_text_length(text, fontname='helv', fontsize=10)
+                    x, y = (400 - width) / 2, 100 + index * 17
+                    page.insert_text((x, y), text, fontsize=10)
+                    blocks.append(dict(id=f'h{index}', page=1, kind='text', font_size=10,
+                                       text=text, bbox=[x, y-10.75, x+width, y+2.99]))
+                pdf.save(source)
+            extracted = extract_pdf(source)
+            self.assertEqual(len(extracted['blocks']), 1)
+            self.assertIn('IMPLEMENTATION', extracted['blocks'][0]['translation_text'])
+            document = dict(title='Wrapped heading', page_count=1, pages=[dict(number=1, height=500)], blocks=blocks)
+            destination = root / 'out.pdf'
+            build_translated_pdf(source, document, {'h0': 'V. 結果と実際の', 'h1': '実装に関する考察'}, destination)
+            with fitz.open(destination) as pdf:
+                spans = [s for b in pdf[0].get_text('dict')['blocks'] if b['type'] == 0
+                         for line in b['lines'] for s in line['spans']]
+                self.assertIn('実装に関する考察', ''.join(s['text'] for s in spans))
+                self.assertTrue(all('PapeerHeading' in s['font'] for s in spans))
+                self.assertEqual(len({round(s['size'], 2) for s in spans}), 1)
+
     def test_indent_uses_source_first_line_not_block_or_sentence_start(self):
         source = dict(bbox=[40, 50, 280, 90], font_size=10,
                       regions=[[50, 50, 280, 62], [40, 65, 280, 77]])
