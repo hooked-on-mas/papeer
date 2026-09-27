@@ -10,6 +10,7 @@ export type FileDropEvent =
   | { type: "leave" };
 
 export interface ShellAdapter {
+  openFolder(): Promise<string | null>;
   openFiles(filters: { name: string, extensions: string[] }[]): Promise<string[]>;
   saveFile(defaultName: string, filters: { name: string, extensions: string[] }[]): Promise<string | null>;
   openPath(path: string): Promise<void>;
@@ -23,6 +24,10 @@ export interface ShellAdapter {
 let notificationAllowed: boolean | null = null;
 
 export const tauriShell: ShellAdapter = {
+  async openFolder() {
+    const result = await openDialog({ directory: true, multiple: false });
+    return typeof result === "string" ? result : null;
+  },
   async openFiles(filters) {
     const result = await openDialog({
       multiple: true,
@@ -101,6 +106,7 @@ export const tauriShell: ShellAdapter = {
 // Use a mock if not running in Tauri (e.g. browser)
 // @ts-ignore window.__TAURI__ is injected by Tauri
 export const shell = (window.__TAURI_INTERNALS__ !== undefined || window.__TAURI__ !== undefined) ? tauriShell : {
+  openFolder: async () => null,
   openFiles: async () => [],
   saveFile: async () => null,
   openPath: async () => {},

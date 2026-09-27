@@ -15,6 +15,7 @@ import { PromptsSection, usePromptsForm } from "./PromptsSection";
 import { ShortcutsSection } from "./ShortcutsSection";
 import { TagManager } from "./TagsSection";
 import { BackupSection } from "./BackupSection";
+import { DriveSection } from "./DriveSection";
 import { NoteTemplates, type TemplateLeaveGuard } from "../notes/NoteTemplates";
 import { useSettingsNavigation, type SettingsSection } from "./settingsNavigation";
 import { QK } from "@/lib/queryKeys";
@@ -34,6 +35,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon; descript
   { id: "prompts", label: "プロンプト", icon: FileText, description: "AI へ渡す指示文のカスタマイズ" },
   { id: "shortcuts", label: "ショートカット", icon: Keyboard, description: "キーボード操作の一覧" },
   { id: "backup", label: "バックアップ", icon: FileText, description: "ライブラリ全体の保存と復元" },
+  { id: "drive", label: "保存先・同期", icon: FileText, description: "Google DriveでほかのPCと同期" },
 ];
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
@@ -137,6 +139,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   {section === "sticky-labels" && <TagManager key="sticky" kind="sticky" />}
                   {open && section === "note-templates" && <NoteTemplates embedded leaveRef={templateGuard} note={templateNote ?? paper?.note ?? ""} onInsert={() => undefined} />}
                   {section === "backup" && <BackupSection />}
+                  {section === "drive" && <DriveSection />}
                 </>
               )}
             </div>

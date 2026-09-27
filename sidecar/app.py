@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from papeer.core.paths import app_env
 from papeer.core.code_version import application_version
 from sidecar import deps
-from sidecar.routes import ai_jobs, ink, papers, reading, settings, system
+from sidecar.routes import ai_jobs, drive, ink, papers, reading, settings, system
 
 
 @asynccontextmanager
@@ -32,9 +32,16 @@ app = FastAPI(
 @app.middleware("http")
 async def protect_library_snapshot(request: Request, call_next):
     """While a backup or restore copies the library, answer everything else with 409."""
-    if request.method != "OPTIONS" and request.url.path not in {"/health", "/api/jobs"} and deps.snapshot_running():
-        return JSONResponse(status_code=409, content={"detail": "バックアップ・復元が終わるまでお待ちください。"})
-    return await call_next(request)
+    guarded = request.method != "OPTIONS" and request.url.path not in {"/health", "/api/jobs", "/api/drive"}
+    if not guarded and request.method not in {"GET", "OPTIONS"}:
+        guarded = True
+    if guarded and not deps.begin_library_request():
+        return JSONResponse(status_code=409, content={"detail": "同期・バックアップ・復元が終わるまでお待ちください。"})
+    try:
+        return await call_next(request)
+    finally:
+        if guarded:
+            deps.end_library_request()
 
 
 app.add_middleware(
@@ -53,7 +60,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for module in (system, settings, papers, ai_jobs, reading, ink):
+for module in (system, settings, papers, ai_jobs, reading, ink, drive):
     app.include_router(module.router)
 app.include_router(system.public)
 

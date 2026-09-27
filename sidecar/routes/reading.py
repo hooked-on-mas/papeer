@@ -255,6 +255,7 @@ def citation_excerpts(paper_id: str, page: int):
 def backup(body: BackupRequest):
     lib = deps.get_library()
     def action(cancel, progress, _page_ready):
+        deps.wait_for_library_requests()
         check_cancel(cancel)
         progress("ライブラリ全体をバックアップしています…")
         tools.create_backup(lib, Path(body.path))
@@ -265,6 +266,7 @@ def backup(body: BackupRequest):
 def restore(body: BackupRequest):
     lib = deps.get_library()
     def action(cancel, progress, _page_ready):
+        deps.wait_for_library_requests()
         check_cancel(cancel)
         progress("バックアップを検証して復元しています…")
         try:

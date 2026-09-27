@@ -27,7 +27,32 @@ job_manager = JobManager()
 _runtime_api_key: str = api_key_from_env()
 
 # While these run, the library folder is being copied or replaced.
-SNAPSHOT_JOBS = {"backup", "restore"}
+SNAPSHOT_JOBS = {"backup", "restore", "drive-sync"}
+
+# A snapshot starts only after already-admitted HTTP handlers have finished.
+_requests_condition = threading.Condition()
+_library_requests = 0
+
+
+def begin_library_request() -> bool:
+    global _library_requests
+    with _requests_condition:
+        if snapshot_running():
+            return False
+        _library_requests += 1
+        return True
+
+
+def end_library_request() -> None:
+    global _library_requests
+    with _requests_condition:
+        _library_requests -= 1
+        _requests_condition.notify_all()
+
+
+def wait_for_library_requests() -> None:
+    with _requests_condition:
+        _requests_condition.wait_for(lambda: _library_requests == 0)
 
 
 # --- Access ---

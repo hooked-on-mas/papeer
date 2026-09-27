@@ -19,6 +19,7 @@ import { SummaryPane } from "../features/summary/SummaryPane";
 import { ChatPane } from "../features/chat/ChatPane";
 import { NotesPane } from "../features/notes/NotesPane";
 import { SettingsDialog } from "../features/settings/SettingsDialog";
+import { DriveSyncHost, syncDrive } from "../features/settings/DriveSection";
 import { useJobEvents } from "../features/jobs/jobEvents";
 import { bindReaderQueryClient, changeZoom, focusPageInput, movePage } from "../features/reader/navigation";
 import { bindQueryClient, createFolder, importPdfs, normalizeCollection, renameFolder, renamePaperFile } from "./actions";
@@ -57,7 +58,7 @@ function useCloseHandling(): void {
       if (closing) return;
       const running = useStore.getState().activeJobs.filter(isRunning);
       if (running.some(job => isJobKind(job.kind, SNAPSHOT_JOBS))) {
-        useStore.getState().setStatus("バックアップ・復元が完了してから終了してください。");
+        useStore.getState().setStatus("同期・バックアップ・復元が完了してから終了してください。");
         return;
       }
       if (running.length) {
@@ -80,6 +81,18 @@ function useCloseHandling(): void {
         return;
       }
       await flushUiState();
+      try {
+        const drive = await apiRequest<{ connected: boolean; auto_sync: boolean }>("GET", "/api/drive");
+        if (drive.connected && drive.auto_sync && await syncDrive()) {
+          closing = false;
+          return;
+        }
+      } catch {
+        if (!await askConfirm("同期フォルダーを更新できませんでした", "変更はこのPCに保存されています。同期せずに終了しますか？", "同期せず終了")) {
+          closing = false;
+          return;
+        }
+      }
       try {
         await apiRequest("POST", "/shutdown");
       } catch {
@@ -389,6 +402,7 @@ export function AppShell() {
 
       {(!focusMode || anyRunning) && <StatusBar />}
       <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
+      <DriveSyncHost />
       <StickyNoteDialog />
       <AppDialogs />
       <Lightbox />
