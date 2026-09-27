@@ -4,12 +4,15 @@ import type { PaperData, ReadingData } from "@/api/hooks";
 import { askConfirm, askText, showMessage } from "@/components/AppDialogs";
 import { showStartedJob, startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
+import { clearJobFailure } from "@/features/jobs/jobFailures";
 import { joinPath, shell } from "@/shell";
 import { useStore } from "@/store";
 import { paperExportFilename } from "@/lib/exportFilename";
 import { addPendingImports, removePendingImports, usePendingImports } from "./pendingImports";
+import { showSaved } from "./savedNotice";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
+import { summaryQuestionKey, summaryStartQuestion } from "@/features/summary/summaryStart";
 
 let queryClient: QueryClient | null = null;
 
@@ -282,6 +285,7 @@ export async function deletePaper(paperId: string): Promise<void> {
   }
   const s = useStore.getState();
   if (s.activePaperId === paperId) s.setActivePaperId(null);
+  clearJobFailure(paperId);
   useStore.setState({ moveHistory: s.moveHistory.filter((m) => "kind" in m || m.paperId !== paperId) });
   refreshLibrary();
   s.setStatus(`「${current.title}」を削除しました。`);
@@ -319,7 +323,7 @@ export async function saveOriginal(paperId: string): Promise<void> {
     const destination = await shell.saveFile(paperExportFilename(current, "original"), [{ name: "PDF", extensions: ["pdf"] }]);
     if (!destination) return;
     await apiRequest("POST", `/api/papers/${paperId}/export`, { kind: "original", destination });
-    useStore.getState().setStatus(`原文PDFを保存しました：${destination}`);
+    showSaved("原文PDFを保存しました", destination);
   } catch (error) {
     showError(error, "保存できませんでした");
   }
@@ -341,11 +345,11 @@ export async function exportPdf(paperId: string, kind: PdfExportKind): Promise<v
     const current = await paper(paperId);
     const destination = await shell.saveFile(paperExportFilename(current, kind), [{ name: "PDF", extensions: ["pdf"] }]);
     if (!destination) return;
-    const result = await apiRequest<{ job_id?: string }>("POST", `/api/papers/${paperId}/export`, { kind, destination });
+    const result = await apiRequest<{ job_id?: string; destination?: string }>("POST", `/api/papers/${paperId}/export`, { kind, destination });
     if (result.job_id) {
       showStartedJob(result.job_id, { kind: "export", paperId });
     } else {
-      useStore.getState().setStatus("日本語訳PDFを保存しました。");
+      showSaved("日本語訳PDFを保存しました", result.destination ?? destination);
     }
   } catch (error) {
     showError(error, "PDFを書き出せませんでした");
@@ -363,13 +367,17 @@ export async function exportMarkdown(paperId: string): Promise<void> {
     const destination = await shell.saveFile(paperExportFilename(current, "markdown"), [{ name: "Markdown", extensions: ["md"] }]);
     if (!destination) return;
     await apiRequest("POST", `/api/papers/${paperId}/export`, { kind: "markdown", destination });
-    useStore.getState().setStatus(`サマリーを保存しました：${destination}`);
+    showSaved("サマリーを保存しました", destination);
   } catch (error) {
     showError(error, "Markdownを保存できませんでした");
   }
 }
 
+/** Make the paper's サマリー; one that exists is replaced only after a confirmation (features/summary/summaryStart.ts). */
 export async function generateArticle(paperId: string): Promise<void> {
+  const hasSummary = await paper(paperId).then((target) => !!target.has_article, () => null);
+  const question = summaryStartQuestion(hasSummary);
+  if (question && !await askConfirm(question.title, question.message, question.okLabel, false, { key: summaryQuestionKey(paperId) })) return;
   try {
     await startJob(`/api/papers/${paperId}/article`, {}, { kind: "article", paperId });
   } catch (error) {

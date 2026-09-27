@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from papeer.core import exports
 from papeer.core.paths import PaperFiles
 from papeer.core.service import PaperService
+from papeer.core.translation_plan import translation_plan as plan_translation
 from papeer.layout.page_selection import parse_page_selection
 from sidecar import deps
 from sidecar.schemas import AskRequest, ExportRequest, TranslateRequest
@@ -42,6 +43,18 @@ def translate_paper(paper_id: str, body: TranslateRequest) -> dict[str, str]:
         return result
 
     return deps.submit_job("translate", action, paper_id)
+
+
+@router.get("/api/papers/{paper_id}/translation-plan")
+def translation_plan(paper_id: str, pages: str = "", model: str | None = None) -> dict[str, Any]:
+    """What POST .../translate with the same pages and model would send to the model; nothing runs."""
+    lib = deps.get_library()
+    deps.paper_folder(lib, paper_id)
+    try:
+        selected_pages = parse_page_selection(pages, lib.document(paper_id)["page_count"]) if pages else None
+        return plan_translation(lib, paper_id, deps.settings_for_run(model, None), selected_pages)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @router.post("/api/papers/{paper_id}/article")

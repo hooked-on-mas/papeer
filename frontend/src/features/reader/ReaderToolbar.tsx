@@ -4,6 +4,7 @@ import {
   ScrollText, Search, StickyNote, Undo2, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { useStore, ZOOM_LEVELS } from "@/store";
+import { useUiScale } from "@/app/uiScale";
 import { useArticle, useMessages, useReading } from "@/api/hooks";
 import {
   DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
@@ -92,16 +93,19 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   // What fits: measured before the first paint, and again whenever the row changes width.
   const rowRef = useRef<HTMLDivElement>(null);
   const [rowWidth, setRowWidth] = useState(0);
+  const uiScale = useUiScale((s) => s.scale);
   useLayoutEffect(() => {
     const row = rowRef.current;
     if (!row) return;
-    const measure = () => setRowWidth(row.clientWidth - 24);
+    const measure = () => setRowWidth(row.clientWidth);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(row);
     return () => observer.disconnect();
   }, []);
-  const fit = fitReaderToolbar(rowWidth, { focusMode, hasOutline: !!outline?.length, reviewCount });
+  // The widths in readerBars.ts are at 100%, less the row's padding (px-3); the UI size (lib/uiScale.ts)
+  // scales everything drawn in the row.
+  const fit = fitReaderToolbar(Math.max(0, rowWidth / uiScale - 24), { focusMode, hasOutline: !!outline?.length, reviewCount });
   const shown = (id: string) => (fit[id] ?? -1) >= 0;
   const full = (id: string) => (fit[id] ?? -1) >= 1;
   // Whether the menu holds anything besides the page information.
@@ -125,7 +129,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   };
   const outlineItems = (outline ?? []).map((entry, index) => (
     <DropdownMenuItem key={index} disabled={entry.page === undefined}
-      className={`gap-3 text-[12px] ${index === outlineIndex ? "font-medium text-primary" : ""}`}
+      className={`gap-3 text-[0.75rem] ${index === outlineIndex ? "font-medium text-primary" : ""}`}
       style={{ paddingLeft: 8 + Math.min(entry.depth, 6) * 14 }}
       onClick={() => entry.page !== undefined && navigateTo({ page: entry.page, anchor_y: entry.anchor_y, side: "original" })}>
       <span className="min-w-0 flex-1 truncate" title={entry.title}>{entry.title}</span>
@@ -136,13 +140,13 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
 
   const button = "p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:pointer-events-none shrink-0";
   // An icon with a label beside it when there is room (see readerToolbarItems for the widths).
-  const labeled = "inline-flex items-center gap-1 h-6 px-1.5 rounded text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground shrink-0 whitespace-nowrap aria-pressed:bg-primary/10 aria-pressed:text-primary";
-  const chip = (active: boolean) => `flex items-center gap-1 h-6 px-2 rounded text-[12px] border transition-colors shrink-0 whitespace-nowrap ${active ? "text-primary bg-primary/10 border-primary/40" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`;
+  const labeled = "inline-flex items-center gap-1 h-6 px-1.5 rounded text-[0.75rem] text-muted-foreground hover:bg-muted hover:text-foreground shrink-0 whitespace-nowrap aria-pressed:bg-primary/10 aria-pressed:text-primary";
+  const chip = (active: boolean) => `flex items-center gap-1 h-6 px-2 rounded text-[0.75rem] border transition-colors shrink-0 whitespace-nowrap ${active ? "text-primary bg-primary/10 border-primary/40" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`;
   const reviewLabel = `翻訳の確認・修正${reviewCount ? `（要確認 ${reviewCount} ページ）` : ""}`;
 
   return (
     <div className="shrink-0 border-b bg-background/50">
-      <div ref={rowRef} className="h-[39px] flex items-center px-3 gap-1 text-[13px] min-w-0" role="toolbar" aria-label="PDFの表示">
+      <div ref={rowRef} className="h-[2.4375rem] flex items-center px-3 gap-1 text-[0.8125rem] min-w-0" role="toolbar" aria-label="PDFの表示">
         {/* Clips anything the width estimates got wrong; the 「…」 button stays outside, always reachable. */}
         <div className="flex-1 min-w-0 flex items-center gap-1 overflow-hidden">
         <button onClick={() => movePage(-1)} disabled={atStart} className={button} aria-label="前のページ" title="前のページ（← / PageUp / ページ先頭でホイール上）">
@@ -164,7 +168,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
           className="w-11 h-6 shrink-0 text-center border rounded bg-background focus:ring-2 focus:ring-ring focus:outline-none tabular-nums"
         />
         {shown("go") && (
-          <button onClick={commitPage} className="h-6 px-2 shrink-0 rounded border text-[12px] hover:bg-muted">
+          <button onClick={commitPage} className="h-6 px-2 shrink-0 rounded border text-[0.75rem] hover:bg-muted">
             移動
           </button>
         )}
@@ -213,7 +217,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             onChange={(e) => setPageFilter(e.target.value)}
             aria-label="表示するページ"
             title="表示するページ"
-            className="ml-1.5 h-6 shrink-0 bg-transparent border rounded text-[12px] px-1 hover:bg-muted cursor-pointer"
+            className="ml-1.5 h-6 shrink-0 bg-transparent border rounded text-[0.75rem] px-1 hover:bg-muted cursor-pointer"
           >
             <option value="all">全ページ</option>
             <option value="translated">翻訳済みページのみ</option>
@@ -231,7 +235,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             onChange={(e) => setZoom(Number(e.target.value))}
             aria-label="表示倍率"
             title="原文・日本語訳の共通倍率（幅に合わせた表示が基準。「ページ全体」はページ全体が収まる大きさ）"
-            className="h-6 bg-transparent border rounded text-[12px] px-1 hover:bg-muted cursor-pointer tabular-nums"
+            className="h-6 bg-transparent border rounded text-[0.75rem] px-1 hover:bg-muted cursor-pointer tabular-nums"
           >
             {ZOOM_LEVELS.map((value) => (
               <option key={value} value={String(value)}>{zoomLabel(value)}</option>

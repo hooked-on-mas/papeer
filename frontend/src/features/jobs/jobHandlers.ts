@@ -16,6 +16,18 @@ export type JobContext = {
   visible: boolean;
   /** Show a message in the status bar (only when visible), with the AI usage appended. */
   status: (message: string) => void;
+  /**
+   * Tell of an outcome that must not be missed (a translation, an export) in a toast instead of the
+   * status bar, whichever paper is on screen: titled with the paper's name when it is not the one on
+   * screen, with the AI usage appended to `message`.
+   */
+  done: (message: string, options?: {
+    title?: string;
+    /** "info" for an outcome with something to look at (pages left in the original), shown longer. */
+    tone?: "success" | "info";
+    /** Left out for a paper removed meanwhile. */
+    action?: { label: string; run: () => void };
+  }) => void;
 };
 
 /**
@@ -26,6 +38,8 @@ export type JobHandler = {
   succeeded?: (event: JobFinished, context: JobContext) => void;
   /** Queries to refresh when the job ends, whatever the outcome. */
   refresh?: (event: JobFinished) => QueryKey[];
+  /** How the error dialog's 再開 starts a failed job's work again (none: the dialog offers no 再開). */
+  resume?: { label: string; run: (event: JobFinished) => void };
 };
 
 export type JobHandlers = Partial<Record<JobKind, JobHandler>>;

@@ -1,4 +1,4 @@
-"""Freehand ink on PDF pages: strokes per page, region capture, and PDFs with the ink painted in."""
+"""Freehand ink on PDF pages: strokes per page, region capture, and PDFs with the ink (and highlights) painted in."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -140,7 +140,8 @@ def export_ink(paper_id: str, body: InkExportRequest):
     if destination and (inside_library(destination, lib.root) or destination.suffix.lower() != ".pdf"):
         raise HTTPException(400, "ライブラリの外に、拡張子 .pdf の保存先を選んでください。")
     try:
-        data = annotated_pdf(source, lib.ink_by_page(paper_id, body.side))
+        # Highlights of selected text travel with the ink: both are marks the reader made on the page.
+        data = annotated_pdf(source, lib.ink_by_page(paper_id, body.side), lib.highlights_by_page(paper_id, body.side))
         if destination:
             destination.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_bytes(destination, data)

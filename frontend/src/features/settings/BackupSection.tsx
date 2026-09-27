@@ -10,6 +10,7 @@ import { showError } from "@/components/errorDialog";
 import { describeFailure, flushPendingSaves } from "@/lib/pendingSaves";
 import { flushUiState, suspendUiStateSync } from "@/app/uiStateSync";
 import { reloadUnlessClosing } from "@/app/appClosing";
+import { showSaved } from "@/app/savedNotice";
 import { describeSideBackup, type SideBackup } from "./conflictSummary";
 
 export function BackupSection() {
@@ -48,7 +49,7 @@ export function BackupSection() {
           await showMessage("復元しました", `復元前のデータは次の場所に残しています：\n${event.result.previous_path}\n\n画面を読み込み直します。`);
           useStore.setState({ uiStateLoaded: false, activePaperId: null, paperPages: {}, currentPage: 1, librarySearch: "", currentCollection: "", selectedFolder: null, expandedCollections: null, moveHistory: [], chatAttachments: [], chatInputs: {} });
           reloadUnlessClosing(() => window.location.reload());
-        } else { suspendUiStateSync(false); useStore.getState().setStatus(`バックアップを保存しました：${path}`); }
+        } else { suspendUiStateSync(false); showSaved("バックアップを保存しました", path); }
       });
     } catch (error) { suspendUiStateSync(false); setPending(false); showError(error, "バックアップ・復元を実行できませんでした"); }
   };

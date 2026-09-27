@@ -57,7 +57,7 @@ export function AppearanceSection() {
             </button>
           ))}
         </div>
-        <p className="text-[12px] text-muted-foreground leading-relaxed">
+        <p className="text-[0.75rem] text-muted-foreground leading-relaxed">
           {"白いページがまぶしいときに、原文・翻訳のPDFの見た目だけを変えます。"}
           {"「反転」は紙を暗く、文字を明るくします。図や写真も明るさが反転します（色合いはおおむね保たれます）。書き込みは色合いを保ち、黒いペンは明るく表示します。"}
           {"「セピア」は紙を暗めの生成り色にします。"}
@@ -66,7 +66,7 @@ export function AppearanceSection() {
         </p>
       </div>
 
-      <p className="text-[12px] text-muted-foreground">どちらの設定もすぐに反映され、保存ボタンを押す必要はありません。</p>
+      <p className="text-[0.75rem] text-muted-foreground">どちらの設定もすぐに反映され、保存ボタンを押す必要はありません。</p>
     </div>
   );
 }

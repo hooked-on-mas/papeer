@@ -108,7 +108,7 @@ export function ReaderSearch({ paperId, search, setSearch, ownsKey, open, setOpe
   const iconButton = "rounded p-1 hover:bg-muted disabled:opacity-40 disabled:pointer-events-none";
 
   if (!open) return null;
-  return <div className="border-t bg-background text-[12px] p-2">
+  return <div className="border-t bg-background text-[0.75rem] p-2">
     <div className="flex gap-2">
       <input ref={inputRef} aria-label="論文内を検索" autoFocus className="flex-1 rounded border px-2 py-1 bg-background" value={input}
         onChange={e => setInput(e.target.value)}

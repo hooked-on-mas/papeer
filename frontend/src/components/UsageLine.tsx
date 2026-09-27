@@ -7,7 +7,7 @@ export function UsageLine({ usage, className }: { usage: Usage | null | undefine
   if (!usage) return null;
   return (
     <div
-      className={cn("flex items-center gap-1 text-[11px] text-muted-foreground tabular-nums", className)}
+      className={cn("flex items-center gap-1 text-[0.75rem] text-muted-foreground tabular-nums", className)}
       title={usageDetails(usage)}
     >
       <Gauge className="w-3 h-3 shrink-0" />

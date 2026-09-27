@@ -25,6 +25,7 @@ export const QK = {
   inkPages: "ink-pages",
   stickyNotes: "sticky-notes",
   effectiveGlossary: "effective-glossary",
+  translationPlan: "translation-plan",
   citationExcerpts: "citation-excerpts",
   readingStatuses: "reading-statuses",
   stickyLabels: "sticky-labels",

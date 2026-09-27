@@ -14,7 +14,7 @@ export function TagChip({ name, count, selected, onClick, onRemove, disabled }: 
   const hash = Array.from(name).reduce((value, char) => (value * 31 + char.codePointAt(0)!) >>> 0, 0);
   const content = <><Hash className="size-3 shrink-0 opacity-60" /><span className="truncate">{name}</span>
     {count !== undefined && <span className="ml-0.5 tabular-nums opacity-65">{count}</span>}</>;
-  return <span className={cn("inline-flex max-w-full items-center rounded-full border text-[11px] font-medium leading-5", tones[hash % tones.length],
+  return <span className={cn("inline-flex max-w-full items-center rounded-full border text-[0.75rem] font-medium leading-5", tones[hash % tones.length],
     selected && "ring-1 ring-current", disabled && "opacity-50")}
     onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
     {onClick ? <button type="button" disabled={disabled} aria-pressed={selected} title={`${name}で絞り込み`}

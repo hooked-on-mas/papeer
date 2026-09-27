@@ -47,12 +47,17 @@ export interface PageAppearance {
   background: string;
   /** How to show an ink colour over the page, or undefined to show it as picked. */
   inkColor?: (color: string) => string;
+  /**
+   * How highlights of selected text blend with the page, "multiply" when undefined: they sit above the
+   * canvas and keep their colours, but multiplying a colour into a dark page would hide it.
+   */
+  highlightBlend?: "screen";
 }
 
 const NORMAL: PageAppearance = { background: "#ffffff" };
 const APPEARANCES: Record<Exclude<PageFilter, "normal">, PageAppearance> = {
   // Ink is drawn above the canvas, so it is not filtered; a black pen would vanish into the dark page.
-  invert: { filter: INVERT_FILTER, background: "#1f1f1f", inkColor: invertInkColor },
+  invert: { filter: INVERT_FILTER, background: "#1f1f1f", inkColor: invertInkColor, highlightBlend: "screen" },
   // Ink stays as picked: every pen colour still reads on the dimmed paper.
   sepia: { filter: SEPIA_FILTER, background: "#e5cfaa" },
 };

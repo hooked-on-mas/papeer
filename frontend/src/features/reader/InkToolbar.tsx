@@ -7,6 +7,7 @@ import { paperExportFilename } from "@/lib/exportFilename";
 import { shell, tauriShell } from "@/shell";
 import { useStore } from "@/store";
 import { showError } from "@/components/errorDialog";
+import { showSaved } from "@/app/savedNotice";
 import { flushInkSaves, type InkSide } from "./inkStore";
 import { useInkPanes, type InkEditor } from "./useInkEditor";
 import { inkToolbarOpen } from "./readerBars";
@@ -30,8 +31,9 @@ type Props = {
 const colors = [["#dc2626", "赤"], ["#2563eb", "青"], ["#16a34a", "緑"], ["#18181b", "黒"], ["#facc15", "黄"]];
 const SIDES = [["original", "原文"], ["translated", "訳文"]] as const;
 // Tool labels show only when the bar is wide enough for all of them on one row (about 780px with
-// them, 440px without); the buttons keep their aria-label and title either way.
-const toolLabel = "hidden @min-[800px]:inline";
+// them, 440px without, at 100%; in rem so that it follows the UI size, lib/uiScale.ts); the buttons
+// keep their aria-label and title either way.
+const toolLabel = "hidden @min-[50rem]:inline";
 
 export function InkToolbar({ editor, disabled, onStickyNote, side, errorsOnly = false, slot }: Props) {
   const { ink, tool, setTool, lastPen, lastRange, color, width, preferences, selected, visible, locked } = editor;
@@ -72,7 +74,7 @@ export function InkToolbar({ editor, disabled, onStickyNote, side, errorsOnly = 
         link.href = url; link.download = name; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 60000);
       }
-      useStore.getState().setStatus(`書き込み付きPDFを保存しました${destination ? `：${destination}` : "。"}`);
+      showSaved("書き込み付きPDFを保存しました", destination);
     } catch (error) { showError(error, "書き込み付きPDFを保存できませんでした"); }
     finally { setExporting(false); }
   };
@@ -131,7 +133,7 @@ export function InkToolbar({ editor, disabled, onStickyNote, side, errorsOnly = 
           <DropdownMenuItem onClick={() => editor.setListOpen(!editor.listOpen)}>書き込み一覧</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled={ink.saving} onClick={() => void saveAll()}>保存を再試行</DropdownMenuItem>
-          <DropdownMenuItem disabled={disabled || !ink.ready || exporting} onClick={() => void exportPdf()}><Download />{exporting ? "出力中…" : "書き込み付きPDFを保存"}</DropdownMenuItem>
+          <DropdownMenuItem disabled={disabled || !ink.ready || exporting} title="ペンの書き込みと文章のハイライトを描き込んだPDFを保存します" onClick={() => void exportPdf()}><Download />{exporting ? "出力中…" : "書き込み付きPDFを保存"}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <button aria-label="書き込みツールを閉じる" title="書き込みツールを閉じて本文選択に戻る" className={button} onClick={close}><X className="size-4" /></button>
@@ -166,7 +168,7 @@ export function InkToolbar({ editor, disabled, onStickyNote, side, errorsOnly = 
     </div>}
     {editable && selecting && <div className="flex flex-wrap items-center gap-1.5 border-t mt-1 pt-1 text-xs text-foreground" role="toolbar" aria-label="書き込みの選択操作">
       <select aria-label="書き込みの選び方" className="h-7 border rounded bg-background" value={tool} onChange={e => setTool(e.target.value as InkTool)}><option value="region">四角で選択</option><option value="lasso">投げ縄</option></select>
-      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground whitespace-nowrap select-none">{selected.length ? `${selected.length}件選択` : "書き込みを囲んで選択"}</span>
+      <span className="rounded-full bg-muted px-2 py-0.5 text-[0.75rem] text-muted-foreground whitespace-nowrap select-none">{selected.length ? `${selected.length}件選択` : "書き込みを囲んで選択"}</span>
       {selected.length > 0 && <>
         <button className={selectionButton} onClick={editor.copy} title="書き込みをコピー（Ctrl+C）"><Copy aria-hidden="true" className="size-3.5" />コピー</button>
         <button className={selectionButton} onClick={editor.cut} title="書き込みを切り取り（Ctrl+X）"><Scissors aria-hidden="true" className="size-3.5" />切り取り</button>

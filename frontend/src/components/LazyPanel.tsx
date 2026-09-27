@@ -60,7 +60,7 @@ class LoadBoundary extends Component<{ fallback: () => ReactNode; children: Reac
 
 function PaneMessage({ children }: { children: ReactNode }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 h-full text-center text-[13px] text-muted-foreground">
+    <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 h-full text-center text-[0.8125rem] text-muted-foreground">
       {children}
     </div>
   );

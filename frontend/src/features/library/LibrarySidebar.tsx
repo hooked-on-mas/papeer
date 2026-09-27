@@ -7,7 +7,7 @@ import {
   type DragEndEvent, type DragOverEvent, type DragStartEvent,
 } from "@dnd-kit/core";
 import {
-  ArrowUpDown, ChevronDown, ChevronRight, Edit2, ExternalLink, FilePlus2, FileText, Folder, FolderOpen,
+  ArrowUpDown, ChevronDown, ChevronRight, CircleAlert, Edit2, ExternalLink, FilePlus2, FileText, Folder, FolderOpen,
   FolderPlus, Loader2, Save, Search, Trash2, Undo2, X,
 } from "lucide-react";
 import { paperDisplayName, useCollections, usePaperList, type PaperData } from "@/api/hooks";
@@ -30,6 +30,7 @@ import { TagChip } from "@/components/ui/TagChip";
 import { PaperStatusBadge } from "@/components/ui/PaperStatusBadge";
 import { paperTranslationStatus } from "@/lib/paperStatus";
 import { isJobKind, TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
+import { showJobFailure, useJobFailures } from "@/features/jobs/jobFailures";
 import { onAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 
@@ -188,7 +189,7 @@ export function LibrarySidebar() {
   };
 
   return (
-    <div className="flex flex-col h-full text-[13px] select-none" onKeyDown={(event) => {
+    <div className="flex flex-col h-full text-[0.8125rem] select-none" onKeyDown={(event) => {
       const target = event.target as HTMLElement;
       if (target.closest("input, textarea, [contenteditable=true], [role=dialog]")) return;
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "z" && lastUndo) {
@@ -200,12 +201,12 @@ export function LibrarySidebar() {
         <button
           onClick={importPdfs}
           title={`追加するPDFを「${currentCollection || "未分類"}」へ入れます。（Ctrl+O）`}
-          className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground h-[32px] rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+          className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground h-8 rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
         >
           <FilePlus2 className="w-4 h-4" />
           PDF を追加
         </button>
-        <div className="text-[12px] text-muted-foreground truncate px-0.5" title={currentCollection || "未分類"}>
+        <div className="text-[0.75rem] text-muted-foreground truncate px-0.5" title={currentCollection || "未分類"}>
           追加先：{currentCollection || "未分類"}
         </div>
         <button onClick={undoMove} disabled={!lastUndo} title={`${undoLabel}（ライブラリ内で Ctrl+Z）`}
@@ -220,7 +221,7 @@ export function LibrarySidebar() {
               type="text"
               placeholder="タイトル・本文・メモを検索"
               title="タイトル・ファイル名・本文・メモ・フォルダー名を検索（Ctrl+F）"
-              className="w-full h-[32px] pl-8 pr-7 rounded-md bg-background border text-[13px] focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full h-8 pl-8 pr-7 rounded-md bg-background border text-[0.8125rem] focus:outline-none focus:ring-2 focus:ring-ring"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Escape") clearFilters(); }}
@@ -237,7 +238,7 @@ export function LibrarySidebar() {
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger
-              className="w-[32px] h-[32px] flex items-center justify-center border rounded-md hover:bg-muted shrink-0"
+              className="w-8 h-8 flex items-center justify-center border rounded-md hover:bg-muted shrink-0"
               title={`並べ替え：${SORT_LABELS[sortOrder]}`}
             >
               <ArrowUpDown className="w-4 h-4 text-muted-foreground" />
@@ -252,7 +253,7 @@ export function LibrarySidebar() {
           </DropdownMenu>
           <button
             onClick={() => createFolder(null)}
-            className="w-[32px] h-[32px] flex items-center justify-center border rounded-md hover:bg-muted shrink-0"
+            className="w-8 h-8 flex items-center justify-center border rounded-md hover:bg-muted shrink-0"
             title="フォルダーを作成"
           >
             <FolderPlus className="w-4 h-4 text-muted-foreground" />
@@ -293,7 +294,7 @@ export function LibrarySidebar() {
               isExpanded={isExpanded} setExpanded={setExpanded} dragOver={dragOver} onTagSelect={setTagFilter} />
           ))}
           {papers.length === 0 && pending.length === 0 && (
-            <div className="px-4 py-6 text-center text-muted-foreground text-[12px] leading-relaxed">
+            <div className="px-4 py-6 text-center text-muted-foreground text-[0.75rem] leading-relaxed">
               {filtered
                 ? "見つかりませんでした。検索語や絞り込みを変更してください。"
                 : "PDFを追加するか、フォルダーへドロップして読み始めましょう。"}
@@ -301,7 +302,7 @@ export function LibrarySidebar() {
           )}
           {filtered && (
             <div className="px-2 py-1">
-              <button onClick={clearFilters} className="w-full h-7 rounded-md border text-[12px] hover:bg-muted">
+              <button onClick={clearFilters} className="w-full h-7 rounded-md border text-[0.75rem] hover:bg-muted">
                 検索・絞り込みを解除
               </button>
             </div>
@@ -309,14 +310,14 @@ export function LibrarySidebar() {
         </div>
         <DragOverlay dropAnimation={null}>
           {dragging && (
-            <div className="px-3 py-1.5 rounded-md bg-card border shadow-md text-[13px] max-w-[260px] truncate">
+            <div className="px-3 py-1.5 rounded-md bg-card border shadow-md text-[0.8125rem] max-w-[16.25rem] truncate">
               {paperDisplayName(dragging)}
             </div>
           )}
         </DragOverlay>
       </DndContext>
 
-      <div className="px-3 py-1.5 text-[12px] text-muted-foreground border-t shrink-0 tabular-nums">
+      <div className="px-3 py-1.5 text-[0.75rem] text-muted-foreground border-t shrink-0 tabular-nums">
         {papers.length} 件の論文
       </div>
     </div>
@@ -356,7 +357,7 @@ function FolderRow({ node, depth, ...rest }: { node: FolderNode; depth: number }
           <div
             ref={setNodeRef}
             data-drop-collection={node.path}
-            className={`flex items-center h-[30px] cursor-pointer group border-l-2 outline-none ${
+            className={`flex items-center h-[1.875rem] cursor-pointer group border-l-2 outline-none ${
               selected ? "bg-accent border-primary" : "border-transparent hover:bg-muted/60"
             } ${highlighted ? "outline-2 outline-primary -outline-offset-2 rounded-sm" : ""}`}
             style={{ paddingLeft: `${depth * 16 + 6}px`, paddingRight: "8px" }}
@@ -376,7 +377,7 @@ function FolderRow({ node, depth, ...rest }: { node: FolderNode; depth: number }
             {expanded ? <FolderOpen className="mr-2 h-4 w-4 text-muted-foreground shrink-0" />
               : <Folder className="mr-2 h-4 w-4 text-muted-foreground shrink-0" />}
             <span className="flex-1 truncate">{node.name}</span>
-            <span className="text-[11px] text-muted-foreground tabular-nums ml-2">{node.count}</span>
+            <span className="text-[0.75rem] text-muted-foreground tabular-nums ml-2">{node.count}</span>
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
@@ -427,7 +428,7 @@ function PendingRow({ item, depth }: { item: PendingImport; depth: number }) {
       <Loader2 className="h-4 w-4 mr-2 mt-0.5 animate-spin text-primary shrink-0" />
       <div className="flex-1 min-w-0">
         <div className="truncate leading-5">{item.name}</div>
-        <div className="mt-0.5 text-[10px] leading-4 truncate tabular-nums">
+        <div className="mt-0.5 text-[0.75rem] leading-4 truncate tabular-nums">
           {item.pages ? `${item.pages}ページ · ` : ""}追加中…
         </div>
       </div>
@@ -443,6 +444,7 @@ function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData
   const jobs = useStore((s) => s.activeJobs);
   const running = jobs.some((j) => isRunning(j) && j.paper_id === paper.id);
   const translating = jobs.some(j => isRunning(j) && j.paper_id === paper.id && isJobKind(j.kind, TRANSLATION_JOBS));
+  const failure = useJobFailures((s) => s.failures[paper.id]);
   const isActive = paper.id === activePaperId && selectedFolder === null;
   const collection = normalizeCollection(paper.collection_name || "");
 
@@ -476,7 +478,7 @@ function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData
           <FileText className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="truncate leading-5">{paperDisplayName(paper)}</div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] leading-4 text-muted-foreground tabular-nums">
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.75rem] leading-4 text-muted-foreground tabular-nums">
               <PaperStatusBadge status={translation.status} text={translation.text} description={translation.description}
                 hasSummary={!!paper.has_article} className="gap-1 [&>span:first-child]:py-0" />
               <span title={translation.description}>{translation.count}</span>
@@ -491,12 +493,17 @@ function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData
             </div>
             {!!paper.tags?.length && <div className="mt-1 flex flex-wrap items-center gap-1 [&>span]:leading-4">
               {(allTags ? paper.tags : paper.tags.slice(0, 2)).map(name => <TagChip key={name} name={name} onClick={() => onTagSelect(name)} />)}
-              {paper.tags.length > 2 && <button className="rounded px-1 text-[10px] text-muted-foreground hover:bg-muted" title={paper.tags.join("、")}
+              {paper.tags.length > 2 && <button className="rounded px-1 text-[0.75rem] text-muted-foreground hover:bg-muted" title={paper.tags.join("、")}
                 onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setAllTags(!allTags); }}>
                 {allTags ? "閉じる" : `+${paper.tags.length - 2}`}</button>}
             </div>}
           </div>
           {running && !translating && <Loader2 className="w-3.5 h-3.5 ml-1 mt-0.5 animate-spin text-primary shrink-0" />}
+          {failure && <button type="button" className="ml-1 mt-0.5 shrink-0 rounded text-destructive hover:bg-destructive/10"
+            title={`${failure.title}（クリックで詳細）`} aria-label={`${failure.title}。詳細を表示`}
+            onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); showJobFailure(paper.id); }}>
+            <CircleAlert className="w-3.5 h-3.5" aria-hidden="true" /></button>}
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-56">

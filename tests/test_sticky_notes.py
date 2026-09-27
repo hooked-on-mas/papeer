@@ -2,6 +2,7 @@ import pymupdf
 import pytest
 from fastapi.testclient import TestClient
 
+from _legacy_library import mark_unversioned
 from papeer.core.storage import Library
 from sidecar import app as runtime
 
@@ -28,7 +29,7 @@ def test_legacy_notes_migrate_and_new_positions_survive_reopen(notes_env):
     old = lib.add_bookmark(alpha, 1, "original", "old quote", "疑問", "old note", .42)
     with lib.connection() as db:
         db.execute("ALTER TABLE bookmarks DROP COLUMN anchor_x")
-        db.execute("PRAGMA user_version=0")  # as saved by a version before schema versioning
+        mark_unversioned(db)  # as saved by a version before schema versioning
     reopened = Library(lib.root)
     assert reopened.bookmarks(alpha)[0] == {**old, "anchor_x": 0}
     with TestClient(runtime.app) as client:
@@ -74,3 +75,73 @@ def test_note_edit_delete_restore_and_authorization(notes_env, monkeypatch):
         assert client.get("/api/sticky-notes").status_code == 401
         assert client.get(base).status_code == 401
         assert client.get("/api/sticky-notes", headers={"Authorization": "Bearer test-secret"}).status_code == 200
+
+
+def test_highlights_are_saved_listed_recoloured_and_restored_with_their_rectangles(notes_env):
+    lib, (alpha, beta) = notes_env
+    rects = [[.1, .2, .5, .02], [.1, .225, .3, .02]]
+    with TestClient(runtime.app) as client:
+        base = f"/api/papers/{alpha}/sticky-notes"
+        saved = client.post(base, json={"page": 1, "side": "original", "quote": "Alpha passage", "label": "",
+                                        "kind": "highlight", "color": "yellow", "rects": rects,
+                                        "anchor_x": .1, "anchor_y": .2})
+        assert saved.status_code == 200
+        item = saved.json()
+        assert (item["kind"], item["color"], item["rects"], item["label"]) == ("highlight", "yellow", rects, "")
+        listed = client.get("/api/sticky-notes").json()
+        assert listed[0]["rects"] == rects and listed[0]["paper_title"] == "Alpha"
+        # Recoloured and given a memo, it keeps having no label (a note falls back to 重要).
+        edited = client.patch(f"{base}/{item['id']}", json={"label": "", "note": "要確認", "color": "blue"}).json()
+        assert (edited["color"], edited["note"], edited["label"], edited["rects"]) == ("blue", "要確認", "", rects)
+        assert client.patch(f"{base}/{item['id']}", json={"color": "red"}).status_code == 422
+        # The colour alone: the label and memo stay (a note's too, which never takes a colour).
+        labelled = client.patch(f"{base}/{item['id']}", json={"label": "疑問", "note": "要確認"}).json()
+        recoloured = client.patch(f"{base}/{item['id']}", json={"color": "pink"}).json()
+        assert (recoloured["color"], recoloured["label"], recoloured["note"]) == ("pink", "疑問", "要確認")
+        assert labelled["label"] == "疑問"
+        edited = client.patch(f"{base}/{item['id']}", json={"label": "", "note": "要確認", "color": "blue"}).json()
+        # A sticky note never takes a colour or rectangles.
+        note = client.post(base, json={"page": 1, "side": "original", "quote": "q", "color": "pink", "rects": rects}).json()
+        assert (note["kind"], note["color"], note["rects"]) == ("note", "", [])
+        assert client.patch(f"{base}/{note['id']}", json={"label": "", "color": "green"}).json()["label"] == "重要"
+        assert client.patch(f"{base}/{note['id']}", json={"label": "", "color": "green"}).json()["color"] == ""
+        moved = client.patch(f"{base}/{note['id']}", json={"label": "引用", "note": "n"}).json()
+        assert client.patch(f"{base}/{note['id']}", json={"anchor_x": .3}).json()["label"] == moved["label"] == "引用"
+        # Deleted and restored from the list's undo, which posts the item back as it was.
+        assert client.delete(f"{base}/{item['id']}").json()["deleted"]
+        restored = client.post(base, json=edited).json()
+        assert (restored["kind"], restored["color"], restored["rects"], restored["note"]) == ("highlight", "blue", rects, "要確認")
+        assert lib.highlights_by_page(alpha, "original") == {1: [{"color": "#60a5fa", "rects": rects}]}
+        assert lib.highlights_by_page(alpha, "translated") == {} and lib.highlights_by_page(beta, "original") == {}
+    # A rectangle ending at the page's edge by a rounding error is kept, rounded onto the page.
+    edge = lib.add_bookmark(beta, 1, "original", "Beta", "", kind="highlight", color="pink", rects=[[0.123456789, .5, 0.87655, .01]])
+    [[x, _, width, _]] = edge["rects"]
+    assert (x, width) == (0.12346, 0.87654) and x + width <= 1 + 1e-9
+
+
+@pytest.mark.parametrize("change", [
+    {"rects": []},                                   # nothing to highlight
+    {"color": ""},                                   # no colour
+    {"color": "red"},                                # not one of the colours
+    {"quote": "  "},                                 # no text: it could not be found or quoted
+    {"rects": [[.8, .2, .3, .02]]},                  # past the page's right edge
+    {"rects": [[.1, .2, 0, .02]]},                   # empty
+    {"rects": [[.1, .2, .3]]},                       # not a rectangle
+    {"rects": [[.1, .2, .3, .02]] * 401},            # too many
+    {"kind": "ink"},
+])
+def test_invalid_highlights_are_refused(notes_env, change):
+    _, (alpha, _) = notes_env
+    body = {"page": 1, "side": "original", "quote": "Alpha", "kind": "highlight", "color": "yellow",
+            "rects": [[.1, .2, .3, .02]], **change}
+    with TestClient(runtime.app) as client:
+        response = client.post(f"/api/papers/{alpha}/sticky-notes", json=body)
+        assert response.status_code in (400, 422)
+        assert client.get("/api/sticky-notes").json() == []
+
+
+def test_highlight_colours_match_the_request_schema():
+    from typing import get_args
+    from papeer.core.storage import HIGHLIGHT_COLORS
+    from sidecar.schemas import HighlightColor
+    assert set(get_args(HighlightColor)) == set(HIGHLIGHT_COLORS)

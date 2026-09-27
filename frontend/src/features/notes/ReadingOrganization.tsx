@@ -33,8 +33,8 @@ export function ReadingOrganization({ paper }: { paper: PaperData }) {
     finally { saveInFlight.current = false; setSaving(false); }
   };
   return <section className="space-y-3">
-    <h3 className="text-[13px] font-semibold">読書状態・タグ</h3>
-    <div className="grid grid-cols-[64px_minmax(0,1fr)] items-center gap-2 text-[13px]">
+    <h3 className="text-[0.8125rem] font-semibold">読書状態・タグ</h3>
+    <div className="grid grid-cols-[64px_minmax(0,1fr)] items-center gap-2 text-[0.8125rem]">
       <span id="reading-status-label">読書状態</span>
       <DropdownMenu>
         <DropdownMenuTrigger aria-labelledby="reading-status-label reading-status-value"

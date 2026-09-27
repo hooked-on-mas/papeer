@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
-import { markdownUrlTransform, mediaRequestPath } from "../src/lib/markdownUrl.ts";
+import { CITATION_URL, citationLink, markdownUrlTransform, mediaRequestPath } from "../src/lib/markdownUrl.ts";
 
 const ID = "0123456789abcdef0123456789abcdef";
 const MEDIA = `file:///C:/Users/me/AppData/Local/Papeer/papers/${ID}/media/fig1.png`;
@@ -64,4 +64,12 @@ test("only media paths are requested from the sidecar", () => {
     `/api/papers/${ID}/note`, "https://example.com/a.png", ""]) {
     assert.equal(mediaRequestPath(src, ID), null, src);
   }
+});
+
+test("a citation link written by the app is one the memo keeps and opens", () => {
+  const link = citationLink(ID, 12);
+  assert.equal(link, `[p.12](papeer://${ID}/12)`);
+  const url = link.slice(link.indexOf("(") + 1, -1);
+  assert.match(url, CITATION_URL);
+  assert.equal(markdownUrlTransform(url, "href"), url);
 });

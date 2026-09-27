@@ -24,8 +24,10 @@ export function StickyNoteDialog() {
   const client = useQueryClient();
   const { data: paper } = usePaper(draft?.paperId ?? null);
   useEffect(() => setError(""), [draft]);
+  // A highlight needs no label ("" is 分類なし); a sticky note always has one.
+  const highlight = draft?.kind === "highlight";
   const selectedLabel = draft?.label ?? labels[0] ?? "未分類";
-  const choices = Array.from(new Set([...labels, selectedLabel]));
+  const choices = Array.from(new Set([...(highlight ? [""] : []), ...labels, selectedLabel]));
   const close = () => { void openStickyNote(null); };
   const save = async () => {
     const { draft: item, busy: saving } = useStickyNotes.getState();
@@ -48,7 +50,7 @@ export function StickyNoteDialog() {
   return <Dialog open={!!draft && !settingsOpen} onOpenChange={open => { if (!open && !useSettingsNavigation.getState().open) close(); }}>
     <DialogContent className="min-w-0 grid-cols-1 max-h-[85vh] overflow-y-auto sm:max-w-xs gap-3" showCloseButton={false}>
       {draft && <>
-        <DialogTitle className="text-sm">{draft.id ? "付箋を編集" : "付箋を貼る"}</DialogTitle>
+        <DialogTitle className="text-sm">{highlight ? "ハイライトのメモ" : draft.id ? "付箋を編集" : "付箋を貼る"}</DialogTitle>
         <DialogDescription className="min-w-0 text-xs">
           <span className="block truncate">{paper ? paperDisplayName(paper) : "論文"}</span>
           p.{draft.page}・{draft.side === "original" ? "原文" : "訳文"}
@@ -62,7 +64,7 @@ export function StickyNoteDialog() {
           onSave={() => void save()} onCancel={close} controls={<>
             <select aria-label="付箋の分類" disabled={busy} className="min-w-0 max-w-full rounded border bg-background px-2 py-1" value={`label:${choices.indexOf(selectedLabel)}`}
               onChange={e => { if (e.target.value === "add") openSettings("sticky-labels"); else useStickyNotes.setState({ draft: { ...draft, label: choices[Number(e.target.value.slice(6))] }, dirty: true }); }}>
-              {choices.map((label, index) => <option key={label} value={`label:${index}`}>{label}</option>)}
+              {choices.map((label, index) => <option key={label} value={`label:${index}`}>{label || "分類なし"}</option>)}
               <option value="add">＋ 分類を追加…</option>
             </select>
             <span className="ml-auto text-muted-foreground">メモは任意</span>

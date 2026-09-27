@@ -269,8 +269,8 @@ export function Reader() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8">
         <FilePlus2 className="w-16 h-16 mb-4 opacity-20" />
-        <p className="text-[15px] font-medium mb-1 text-foreground">論文を追加して、読み始めよう</p>
-        <p className="text-[13px] mb-6">左のライブラリから論文を選ぶか、PDF を追加してください（ドロップでも追加できます）</p>
+        <p className="text-[0.9375rem] font-medium mb-1 text-foreground">論文を追加して、読み始めよう</p>
+        <p className="text-[0.8125rem] mb-6">左のライブラリから論文を選ぶか、PDF を追加してください（ドロップでも追加できます）</p>
         <button onClick={importPdfs} className="bg-primary text-primary-foreground px-4 py-2 rounded-md font-medium hover:opacity-90 transition-opacity">
           PDF を追加
         </button>
@@ -298,7 +298,7 @@ export function Reader() {
         まだ翻訳していません。「翻訳する」で訳文を作成します。
         <button
           onClick={() => emitAppEvent("open-translate-dialog")}
-          className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90"
+          className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[0.8125rem] font-medium hover:opacity-90"
         >
           <Languages className="w-4 h-4" /> 翻訳する
         </button>
@@ -314,7 +314,7 @@ export function Reader() {
       {/* data-ink-toolbar-slot: INK_TOOLBAR_SLOT, which lets the toolbar's keys through to its pane. */}
       <div ref={setInkToolbarSlot} data-ink-toolbar-slot="" className="flex flex-col shrink-0 max-h-[40%]" />
       {noTranslatedPages ? (
-        <div className="flex-1 flex items-center justify-center text-muted-foreground p-8 text-[13px]">
+        <div className="flex-1 flex items-center justify-center text-muted-foreground p-8 text-[0.8125rem]">
           翻訳済みのページはまだありません。完了すると自動で表示します。
         </div>
       ) : (
@@ -373,7 +373,7 @@ export function Reader() {
                 caption={caption}
                 badge={translating && (
                   // Announced by the status line under the toolbar, which is there before the translation starts.
-                  <span aria-hidden="true" className="flex items-center gap-1 pr-1 text-[11px] leading-none text-primary">
+                  <span aria-hidden="true" className="flex items-center gap-1 pr-1 text-[0.75rem] leading-none text-primary">
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />翻訳中
                   </span>
                 )}

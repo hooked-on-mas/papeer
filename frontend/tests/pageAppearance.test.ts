@@ -92,3 +92,9 @@ test("saved settings are laid over the defaults, with an unknown page filter fal
   // Nothing saved yet, or something that is not an object.
   for (const saved of [undefined, null, "x", 3]) assert.deepEqual(mergeSavedSettings(saved, defaults), defaults);
 });
+
+test("highlights are multiplied into the page, and screened over an inverted one so that they still show", () => {
+  assert.equal(pageAppearance("invert", true).highlightBlend, "screen");
+  assert.equal(pageAppearance("sepia", true).highlightBlend, undefined);
+  assert.equal(pageAppearance("invert", false).highlightBlend, undefined);
+});

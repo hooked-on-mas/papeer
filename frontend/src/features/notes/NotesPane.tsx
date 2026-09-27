@@ -27,8 +27,8 @@ export function NotesPane({ compact = false }: { compact?: boolean }) {
   if (!activePaperId) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8 h-full">
-        <p className="text-[15px] font-medium mb-1 text-foreground">論文が選択されていません</p>
-        <p className="text-[13px]">左のライブラリから論文を選ぶか、PDF を追加してください</p>
+        <p className="text-[0.9375rem] font-medium mb-1 text-foreground">論文が選択されていません</p>
+        <p className="text-[0.8125rem]">左のライブラリから論文を選ぶか、PDF を追加してください</p>
       </div>
     );
   }
@@ -185,19 +185,19 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
 
   return (
     <div className="flex h-full w-full bg-background overflow-hidden">
-      {!compact && <div className="w-[340px] shrink-0 border-r overflow-y-auto p-4 space-y-5">
+      {!compact && <div className="w-[21.25rem] shrink-0 border-r overflow-y-auto p-4 space-y-5">
         {paper && <ReadingOrganization paper={paper} />}
         <section className="space-y-3 border-t pt-4">
-          <h3 className="text-[13px] font-semibold">論文情報</h3>
+          <h3 className="text-[0.8125rem] font-semibold">論文情報</h3>
           {paper && (
-            <div className="text-[12px] text-muted-foreground space-y-0.5">
+            <div className="text-[0.75rem] text-muted-foreground space-y-0.5">
               {metaLines(paper, reading).map((line) => (
                 <div key={line.text} title={line.title}>{line.text}</div>
               ))}
             </div>
           )}
           <form
-            className="grid grid-cols-[72px_1fr] items-center gap-x-2 gap-y-2 text-[13px]"
+            className="grid grid-cols-[72px_1fr] items-center gap-x-2 gap-y-2 text-[0.8125rem]"
             onSubmit={(e) => { e.preventDefault(); saveMetadata(); }}
           >
             <label htmlFor="meta-title">タイトル</label>
@@ -211,7 +211,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
             <datalist id="collection-options">
               {collections.map((c) => <option key={c} value={c} />)}
             </datalist>
-            <p className="col-span-2 text-[12px] text-muted-foreground">
+            <p className="col-span-2 text-[0.75rem] text-muted-foreground">
               「/」で区切るとサブフォルダーになります。例：制御工学 / 読書会
             </p>
             <button
@@ -225,15 +225,15 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
         </section>
 
         <section className="space-y-2 border-t pt-4">
-          <h3 className="text-[13px] font-semibold">ファイル</h3>
-          <div className="text-[12px] text-muted-foreground space-y-0.5">
+          <h3 className="text-[0.8125rem] font-semibold">ファイル</h3>
+          <div className="text-[0.75rem] text-muted-foreground space-y-0.5">
             <div>{paper?.original_name ?? "original.pdf"}（原文）</div>
             <div>日本語訳：{reading?.has_translated ? (reading.in_progress ? "翻訳途中" : "あり") : "未作成"}</div>
             <div>サマリー：{reading?.has_article ? "あり" : "未作成"}</div>
           </div>
           <button
             onClick={() => openPaperFolder(paperId)}
-            className="flex items-center gap-1.5 h-8 px-3 rounded-md border text-[13px] hover:bg-muted"
+            className="flex items-center gap-1.5 h-8 px-3 rounded-md border text-[0.8125rem] hover:bg-muted"
           >
             <FolderOpen className="w-4 h-4" /> 保存フォルダーを開く
           </button>
@@ -241,19 +241,19 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
       </div>}
 
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="h-[44px] flex items-center justify-between px-4 border-b shrink-0">
-          <h3 className="text-[13px] font-semibold flex items-center gap-2">
+        <div className="h-11 flex items-center justify-between px-4 border-b shrink-0">
+          <h3 className="text-[0.8125rem] font-semibold flex items-center gap-2">
             <NotebookPen className="w-4 h-4 text-muted-foreground" />
             メモ
-            {!compact && <span className="font-normal text-muted-foreground text-[12px]">Markdownで記入できます。入力後に自動保存します。</span>}
+            {!compact && <span className="font-normal text-muted-foreground text-[0.75rem]">Markdownで記入できます。入力後に自動保存します。</span>}
           </h3>
           <div className="flex items-center gap-3">
-            <span className="text-[12px] text-muted-foreground">
+            <span className="text-[0.75rem] text-muted-foreground">
               {noteState === "saving" ? "保存中…" : noteState === "dirty" ? "未保存" : "自動保存済み ✓"}
             </span>
             <button
               onClick={() => setPreview(!preview)}
-              className="flex items-center gap-1 h-7 px-2 rounded border text-[12px] hover:bg-muted"
+              className="flex items-center gap-1 h-7 px-2 rounded border text-[0.75rem] hover:bg-muted"
             >
               {preview ? <><Pencil className="w-3.5 h-3.5" /> 編集</> : <><Eye className="w-3.5 h-3.5" /> プレビュー</>}
             </button>
@@ -273,7 +273,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
               onChange={(e) => setNote(e.target.value)}
               onBlur={() => void saveNote().catch(() => undefined)}
               placeholder="論文に関するメモを自由に記述できます…"
-              className="flex-1 w-full p-4 text-[14px] leading-relaxed resize-none border rounded-lg focus:outline-none focus:ring-1 focus:ring-ring bg-transparent font-mono"
+              className="flex-1 w-full p-4 text-[0.875rem] leading-relaxed resize-none border rounded-lg focus:outline-none focus:ring-1 focus:ring-ring bg-transparent font-mono"
             />
           )}
         </div>

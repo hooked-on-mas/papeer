@@ -56,6 +56,8 @@ before(async () => {
     PdfPane: (await load("/src/features/reader/PdfPane.tsx")).PdfPane,
     useStore: (await load("/src/store/index.ts")).useStore,
     useInkPanes: (await load("/src/features/reader/useInkEditor.ts")).useInkPanes,
+    SelectionToolbarView: (await load("/src/features/reader/SelectionToolbar.tsx")).SelectionToolbarView,
+    StickyNotesTab: (await load("/src/features/reader/StickyNotesTab.tsx")).StickyNotesTab,
   };
 });
 
@@ -72,14 +74,16 @@ const reading = {
 /**
  * Renders `element` with the store's state, and the writing panes' (`inkPanes`), set as given. Server
  * rendering reads a store's initial state, which is put back afterwards so that no test sees another's.
+ * `queries` are [key, data] pairs put in the query cache besides the paper's reading data.
  */
-function render(element, state, inkPanes = {}) {
+function render(element, state, inkPanes = {}, queries = []) {
   const { React, server: { renderToString }, query: { QueryClient, QueryClientProvider }, useStore, useInkPanes } = modules;
   const saved = [[useStore.getInitialState(), { ...useStore.getInitialState() }], [useInkPanes.getInitialState(), { ...useInkPanes.getInitialState() }]];
   Object.assign(useStore.getInitialState(), { activePaperId: "p1", currentPage: 1, focusMode: false, inkBarOpen: false, ...state });
   Object.assign(useInkPanes.getInitialState(), inkPanes);
   const client = new QueryClient();
   client.setQueryData(["reading", "p1"], reading);
+  for (const [key, data] of queries) client.setQueryData(key, data);
   try {
     return renderToString(React.createElement(QueryClientProvider, { client }, element));
   } finally {
@@ -168,4 +172,34 @@ test("the reader tab stays laid out, invisible and inert, while another tab is s
   const shown = inTabs("reader");
   assert.doesNotMatch(shown, /<div[^>]*role="tabpanel"[^>]*\s(inert|hidden)=""/);
   assert.doesNotMatch(shown, /\binvisible\b/);
+});
+
+test("the toolbar over a selection offers the highlight colours, 説明, メモへ and 付箋", () => {
+  const { React, SelectionToolbarView } = modules;
+  const handlers = { onColor() {}, onExplain() {}, onQuote() {}, onSticky() {} };
+  const html = render(React.createElement(SelectionToolbarView, { mode: "selection", color: "yellow", ...handlers }));
+  assert.match(html, /role="toolbar" aria-label="選択した文章"/);
+  for (const label of ["黄", "緑", "青", "ピンク", "紫"]) assert.match(html, new RegExp(`aria-label="ハイライト：${label}"`));
+  assert.match(html, />説明</);
+  assert.match(html, />メモへ</);
+  assert.match(html, />付箋</);
+  assert.doesNotMatch(html, /ハイライトを削除/);
+  // Over a highlight: its colour is shown pressed, and it can be deleted.
+  const over = render(React.createElement(SelectionToolbarView, { mode: "highlight", color: "blue", onDelete() {}, ...handlers }));
+  assert.match(over, /aria-label="ハイライト"/);
+  assert.match(over, /aria-label="色を青にする"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*aria-label="色を青にする"/);
+  assert.match(over, /aria-label="ハイライトを削除"/);
+});
+
+test("the sticky-notes tab lists a highlight by its colour and offers to write the paper's notes to its memo", () => {
+  const { React, StickyNotesTab } = modules;
+  const note = { id: 1, paper_id: "p1", paper_title: "Alpha", page: 2, side: "original", quote: "q", label: "重要", note: "memo",
+    anchor_x: 0, anchor_y: 0.5, created_at: "", kind: "note", color: "", rects: [] };
+  const highlight = { ...note, id: 2, page: 1, quote: "the energy term", label: "", note: "", kind: "highlight", color: "green",
+    rects: [[0.1, 0.2, 0.5, 0.02]] };
+  const html = render(React.createElement(StickyNotesTab), {}, {}, [[["sticky-notes", "all"], [note, highlight]]]);
+  assert.match(html, /ハイライト（緑）/);
+  assert.match(html, /<mark[^>]*>the energy term<\/mark>/);
+  assert.match(html, /メモに書き出す/);
+  assert.match(html, /aria-label="付箋・ハイライトで絞り込み"/);
 });

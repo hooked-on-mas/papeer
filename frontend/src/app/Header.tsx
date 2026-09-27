@@ -11,11 +11,11 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent,
   DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
-import { apiRequest } from "@/api/client";
 import {
   deletePaper, exportMarkdown, exportPdf, generateArticle, openPaperFile, openPaperFolder, renamePaperFile, saveOriginal,
 } from "./actions";
 import { isJobKind, TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
+import { cancelJob } from "@/features/jobs/jobEvents";
 import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
 
 export function Header() {
@@ -39,11 +39,11 @@ export function Header() {
 
   if (!activePaperId) {
     return (
-      <header className="h-[52px] border-b flex items-center px-3 shrink-0 bg-background/50">
+      <header className="h-13 border-b flex items-center px-3 shrink-0 bg-background/50">
         {toggleSidebar}
         <div className="flex flex-col">
-          <h1 className="text-[15px] font-semibold">論文を追加して、読み始めよう</h1>
-          <span className="text-[12px] text-muted-foreground">PDFを追加 → AI接続を設定 → 翻訳・解説・チャット</span>
+          <h1 className="text-[0.9375rem] font-semibold">論文を追加して、読み始めよう</h1>
+          <span className="text-[0.75rem] text-muted-foreground">PDFを追加 → AI接続を設定 → 翻訳・解説・チャット</span>
         </div>
       </header>
     );
@@ -56,8 +56,7 @@ export function Header() {
 
   const handleCancel = async () => {
     if (translateJob) {
-      await apiRequest("POST", `/api/jobs/${translateJob.job_id}/cancel`).catch(() => undefined);
-      useStore.getState().setStatus("中止しています… API通信中の場合は応答またはタイムアウトまで待ちます。");
+      await cancelJob(translateJob.job_id);
     }
   };
 
@@ -70,17 +69,17 @@ export function Header() {
   ].filter(Boolean).join(" · ");
 
   return (
-    <header className="h-[52px] border-b flex items-center pl-3 pr-4 justify-between shrink-0 bg-background/50">
+    <header className="h-13 border-b flex items-center pl-3 pr-4 justify-between shrink-0 bg-background/50">
       {toggleSidebar}
       <div className="flex flex-col min-w-0 flex-1 pr-4">
         <h1
-          className="text-[15px] font-semibold truncate cursor-pointer hover:underline"
+          className="text-[0.9375rem] font-semibold truncate cursor-pointer hover:underline"
           title={paper ? `${paperDisplayName(paper)}\nクリックで論文情報・メモを開く` : ""}
           onClick={() => useStore.getState().setActiveTab("notes")}
         >
           {paper ? paperDisplayName(paper) : "読み込み中…"}
         </h1>
-        <div className="flex items-center gap-2 text-[12px] text-muted-foreground mt-0.5 min-w-0">
+        <div className="flex items-center gap-2 text-[0.75rem] text-muted-foreground mt-0.5 min-w-0">
           <span className="truncate" title={meta}>{meta}</span>
           <span className="text-border">|</span>
           <PaperStatusBadge status={status} text={`${translation.text} · ${translation.count}`} description={translation.description} hasSummary={!!paper?.has_article} className="shrink-0" />
@@ -89,7 +88,7 @@ export function Header() {
 
       <div className="flex items-center gap-2 shrink-0">
         {translateJob ? (
-          <button onClick={handleCancel} className="flex items-center gap-1.5 bg-destructive text-white px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90 transition-opacity">
+          <button onClick={handleCancel} className="flex items-center gap-1.5 bg-destructive text-white px-3 py-1.5 rounded-md text-[0.8125rem] font-medium hover:opacity-90 transition-opacity">
             <Square className="w-3.5 h-3.5" /> 中止
           </button>
         ) : (
@@ -97,7 +96,7 @@ export function Header() {
             onClick={() => emitAppEvent("open-translate-dialog")}
             disabled={busy}
             title="翻訳するページとモデルを選んで開始します（Ctrl+T）。保存済みの訳文は再利用します。"
-            className="flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+            className="flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[0.8125rem] font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
           >
             <Languages className="w-4 h-4" />
             {["partial", "paused", "review", "failed"].includes(status) ? "翻訳 / 再開…" : status === "translated" ? "再翻訳…" : "翻訳する…"}
@@ -105,7 +104,7 @@ export function Header() {
         )}
 
         <DropdownMenu>
-          <DropdownMenuTrigger className="p-1.5 hover:bg-muted rounded-md text-muted-foreground transition-colors inline-flex items-center gap-1 text-[13px]" title="その他">
+          <DropdownMenuTrigger className="p-1.5 hover:bg-muted rounded-md text-muted-foreground transition-colors inline-flex items-center gap-1 text-[0.8125rem]" title="その他">
             <MoreVertical className="w-4 h-4" /> その他
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-64">

@@ -4,15 +4,19 @@ import { apiRequest } from "@/api/client";
 import { askConfirm } from "@/components/AppDialogs";
 import { QK } from "@/lib/queryKeys";
 import type { StickyDraft, StickyFilters, StickyNote } from "./stickyNotes";
+import type { HighlightColor, PageRect } from "./highlights";
 
 type State = {
   draft: StickyDraft | null; dirty: boolean; busy: boolean; selectedId: number | null;
   filters: StickyFilters; scrollTop: number; deleted: StickyNote[];
+  /** The colour last used to highlight, offered first next time (this session). */
+  highlightColor: HighlightColor;
 };
 // Session state survives paper/page/tab changes, including an unfinished note.
 export const useStickyNotes = create<State>(() => ({
   draft: null, dirty: false, busy: false, selectedId: null,
-  filters: { scope: "paper", query: "", label: "", side: "", sort: "page" }, scrollTop: 0, deleted: [],
+  filters: { scope: "paper", query: "", label: "", side: "", sort: "page", kind: "" }, scrollTop: 0, deleted: [],
+  highlightColor: "yellow",
 }));
 let switching = false;
 export async function openStickyNote(draft: StickyDraft | null): Promise<void> {
@@ -39,4 +43,27 @@ export async function deleteStickyNote(item: StickyNote, client: QueryClient): P
     await refreshStickyNotes(client);
     return true;
   } finally { useStickyNotes.setState({ busy: false }); }
+}
+
+/** A passage highlighted from a selection; see highlights.ts. */
+export interface HighlightPassage {
+  paperId: string; page: number; side: "original" | "translated"; text: string; rects: PageRect[];
+}
+/** Saves a highlight right away, without a dialog (it can be given a memo later). */
+export async function addHighlight(passage: HighlightPassage, color: HighlightColor, client: QueryClient): Promise<StickyNote> {
+  const [x, y] = passage.rects[0];
+  const saved = await apiRequest<StickyNote>("POST", `/api/papers/${passage.paperId}/sticky-notes`, {
+    page: passage.page, side: passage.side, quote: passage.text, label: "", note: "",
+    kind: "highlight", color, rects: passage.rects, anchor_x: x, anchor_y: y,
+  });
+  useStickyNotes.setState({ highlightColor: color, selectedId: saved.id });
+  await refreshStickyNotes(client);
+  return saved;
+}
+export async function recolorHighlight(item: StickyNote, color: HighlightColor, client: QueryClient): Promise<void> {
+  // The colour alone: the label and memo stay as they are on the sidecar.
+  const saved = await apiRequest<StickyNote>("PATCH", `/api/papers/${item.paper_id}/sticky-notes/${item.id}`, { color });
+  useStickyNotes.setState({ highlightColor: color });
+  client.setQueriesData<StickyNote[]>({ queryKey: [QK.stickyNotes] }, notes => notes?.map(note => note.id === saved.id ? { ...note, ...saved } : note));
+  await refreshStickyNotes(client);
 }

@@ -1,4 +1,6 @@
 import "./lib/migrateStorage";
+// Sets the root font size (設定「表示」の文字の大きさ) before the first render.
+import "./app/uiScale";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";

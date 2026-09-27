@@ -17,6 +17,7 @@ from papeer.core.reading_tools import create_backup, restore_backup, library_sea
 from papeer.core.terminology import effective_glossary, validate_revision, global_glossary, save_global_glossary
 from papeer.core.service import PaperService
 from papeer.core.storage import Library
+from _legacy_library import mark_unversioned
 from papeer.layout.math_layout import MATH_TOKEN
 from sidecar.jobs import JobManager, ConcurrencyConflict
 
@@ -54,7 +55,7 @@ def test_tags_read_status_and_old_database_migration(library):
     with lib.connection() as db:
         db.execute("ALTER TABLE papers DROP COLUMN tags")
         db.execute("ALTER TABLE papers DROP COLUMN read_status")
-        db.execute("PRAGMA user_version=0")  # as saved by a version before schema versioning
+        mark_unversioned(db)  # as saved by a version before schema versioning
     lib = Library(lib.root)
     assert lib.paper(identity)["read_status"] == "未読"
     lib.update(identity, tags=[" 実装したい ", "研究/制御", "実装したい"], read_status="読書中")

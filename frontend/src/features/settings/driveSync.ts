@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { ApiError, apiRequest } from "@/api/client";
 import { showError } from "@/components/errorDialog";
+import { closeToast, showToast } from "@/components/toast";
 import { isRunning, useStore } from "@/store";
 import { startJob } from "@/features/jobs/jobEvents";
 import { flushPendingSaves, describeFailure, openEditLabels } from "@/lib/pendingSaves";
@@ -8,6 +9,8 @@ import { askConfirm } from "@/components/AppDialogs";
 import { flushUiState, suspendUiStateSync } from "@/app/uiStateSync";
 import { reloadUnlessClosing } from "@/app/appClosing";
 import { setLibraryBusyWaiter } from "@/lib/libraryBusy";
+import { openSettings } from "./settingsNavigation";
+import { nextSyncWarning, SYNC_WARNINGS, type SyncWarning } from "./syncWarnings";
 
 /** background: the automatic sync that runs without the waiting screen (it never replaces the library). */
 export const useSyncState = create<{ busy: boolean; jobId: string | null; cancelling: boolean; background: boolean }>(
@@ -59,6 +62,29 @@ export async function confirmOpenEdits(): Promise<boolean> {
     "同期する", true);
 }
 
+let shownWarning: SyncWarning | null = null;
+
+/**
+ * Tell a sync state the user has to act on (syncWarnings.ts) in a toast that stays until closed,
+ * once while it lasts; null after a sync that went through, which also closes a stale warning.
+ */
+export function reportSyncOutcome(outcome: SyncWarning | null): void {
+  const next = nextSyncWarning(shownWarning, outcome);
+  shownWarning = next.shown;
+  if (!outcome) {
+    closeToast("sync-warning");
+    return;
+  }
+  if (!next.tell) return;
+  showToast({
+    id: "sync-warning",
+    ...SYNC_WARNINGS[outcome],
+    tone: "error",
+    timeout: 0,
+    action: { label: "確認する", run: () => openSettings("drive") },
+  });
+}
+
 /**
  * confirm: 「このまま同期する」 on a sync that stopped for review (a library that lost many items,
  * or one restored from a backup); the sidecar applies it only if nothing changed since.
@@ -92,11 +118,13 @@ export async function runDriveSync(choice?: string, heads?: string[], confirm = 
         status = event.result?.status;
         // A background sync found another PC's library to take in; the caller takes it in with the waiting screen.
         if (status === "deferred") { resolve(); return; }
-        if (event.result?.status === "conflict") {
-          useStore.getState().setStatus("Google Driveとの変更が競合しています。設定 → 保存先・同期で確認してください。");
-        } else if (event.result?.status === "review") {
-          useStore.getState().setStatus("同期を一時停止しました。データが大きく減っているか、復元した直後です。設定 → 保存先・同期で確認してください。");
-        } else if (event.result?.reloaded) {
+        if (status === "conflict" || status === "review") {
+          reportSyncOutcome(status);
+          resolve();
+          return;
+        }
+        reportSyncOutcome(null);
+        if (event.result?.reloaded) {
           reloading = true;
           useStore.setState({ uiStateLoaded: false, activePaperId: null, paperPages: {}, currentPage: 1,
             librarySearch: "", currentCollection: "", selectedFolder: null, expandedCollections: null,
@@ -104,10 +132,15 @@ export async function runDriveSync(choice?: string, heads?: string[], confirm = 
           // While the app is closing, the close goes on and the next launch opens the new library.
           reloadUnlessClosing(() => window.location.reload());
         } else if (event.result?.not_set_aside?.length) {
-          useStore.getState().setStatus("選んだデータで同期しました。選ばなかった同期データの一部は退避できませんでした（設定 → 保存先・同期）。");
+          showToast({ title: "選んだデータで同期しました", description: "選ばなかった同期データの一部は退避できませんでした（設定 → 保存先・同期）。", tone: "error" });
         } else if (event.result?.set_aside?.length) {
-          useStore.getState().setStatus("選んだデータで同期しました。選ばなかったデータは退避しています（設定 → バックアップ → 退避データから復元）。");
-        } else useStore.getState().setStatus("同期フォルダーに保存しました。PC間の転送状況はGoogle Driveで確認してください。");
+          showToast({ title: "選んだデータで同期しました", description: "選ばなかったデータは退避しています（設定 → バックアップ → 退避データから復元）。", tone: "success" });
+        } else if (background) {
+          // The automatic sync every minute: the status bar only, which clears itself.
+          useStore.getState().setStatus("同期フォルダーに保存しました。PC間の転送状況はGoogle Driveで確認してください。");
+        } else {
+          showToast({ id: "drive-synced", title: "同期フォルダーに保存しました", description: "PC間の転送状況はGoogle Driveで確認してください。", tone: "success" });
+        }
         resolve();
       }).then(jobId => {
         // A job that ended at once has already cleared the state (finally below); do not bring its id back.

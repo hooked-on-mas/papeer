@@ -11,7 +11,7 @@ import zipfile
 from fastapi import HTTPException
 import pytest
 
-from _legacy_library import STAGES, legacy_backup, legacy_library
+from _legacy_library import LATER_COLUMNS, STAGES, legacy_backup, legacy_library
 from papeer import __version__
 from papeer.core import storage
 from papeer.core.drive_sync import fingerprint
@@ -72,19 +72,58 @@ def test_libraries_from_before_versioning_reach_the_current_schema(tmp_path, sta
     assert dump(root) == before
 
 
-def test_last_library_before_versioning_upgrades_without_changing_its_contents(tmp_path):
-    # Such a library already has every table and column; only the version number is new.
+def at_first_version(monkeypatch) -> None:
+    """Libraries opened from here on stop at version 1 (the baseline), as the first versioned Papeer made them."""
+    monkeypatch.setattr(storage, "MIGRATIONS", storage.MIGRATIONS[:1])
+    monkeypatch.setattr(storage, "SCHEMA_VERSION", 1)
+
+
+def test_last_library_before_versioning_upgrades_without_changing_its_contents(tmp_path, monkeypatch):
+    # Such a library already has every table and column of the baseline; only the version number is new.
     # Its sync fingerprint must not change, or every PC would publish a revision after updating.
+    # (A later step that changes the schema does change it, once: see the comment above MIGRATIONS.)
+    at_first_version(monkeypatch)
     lib = Library(tmp_path / "library")
     identity, _ = lib.import_pdf(SAMPLE_PDF)
-    lib.add_bookmark(identity, 1, "original", "quote", anchor_x=.5)
+    with lib.connection() as db:
+        db.execute("INSERT INTO bookmarks(paper_id,page,side,quote,anchor_x) VALUES(?,1,'original','quote',.5)", (identity,))
     lib.create_collection("A / B")
     lib.delete_collection("A", undo_token="undo")
     set_version(lib.root, 0)
     before = fingerprint(lib.root)
     Library(lib.root)
-    assert database_version(lib.root / "library.sqlite3") == SCHEMA_VERSION
+    assert database_version(lib.root / "library.sqlite3") == 1
     assert fingerprint(lib.root) == before
+
+
+def test_later_columns_lists_what_the_steps_after_the_baseline_add(tmp_path, monkeypatch):
+    # Tests that make a current database look unversioned drop these (_legacy_library.mark_unversioned).
+    latest = columns(Library(tmp_path / "latest").root)
+    at_first_version(monkeypatch)
+    first = columns(Library(tmp_path / "first").root)
+    added = {table: names - first.get(table, set()) for table, names in latest.items()}
+    expected = {table: set(names) for table, names in LATER_COLUMNS.items()}
+    assert {table: names for table, names in added.items() if names} == expected
+
+
+def test_sticky_notes_of_the_first_version_become_notes_beside_highlights(tmp_path, monkeypatch):
+    at_first_version(monkeypatch)
+    lib = Library(tmp_path / "library")
+    identity, _ = lib.import_pdf(SAMPLE_PDF)
+    with lib.connection() as db:
+        db.execute("INSERT INTO bookmarks(paper_id,page,side,quote,label,note) VALUES(?,1,'original','quote','引用','memo')",
+                   (identity,))
+    assert "kind" not in columns(lib.root)["bookmarks"]
+    monkeypatch.undo()
+    reopened = Library(lib.root)
+    assert database_version(lib.root / "library.sqlite3") == SCHEMA_VERSION
+    assert columns(lib.root) == columns(Library(tmp_path / "fresh").root)
+    [note] = reopened.bookmarks(identity)
+    assert (note["kind"], note["color"], note["rects"], note["label"], note["note"]) == ("note", "", [], "引用", "memo")
+    highlight = reopened.add_bookmark(identity, 1, "original", "passage", "", kind="highlight", color="green",
+                                      rects=[[.1, .2, .3, .02]])
+    assert [item["kind"] for item in reopened.bookmarks(identity)] == ["note", "highlight"]
+    assert highlight["rects"] == [[.1, .2, .3, .02]]
 
 
 def test_a_failed_step_leaves_the_database_as_it_was(tmp_path, monkeypatch):

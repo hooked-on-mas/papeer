@@ -3,6 +3,11 @@ import { defaultUrlTransform } from "react-markdown";
 /** A citation link as the sidecar writes it (service.py) and the reader opens it: papeer://<paper id>/<page>. */
 export const CITATION_URL = /^(?:papeer|paperdesk):\/\/([^/\s?#]+)\/(\d+)$/;
 
+/** A Markdown link to a page of a paper, as the sidecar writes citations: [p.N](papeer://<paper id>/<N>). */
+export function citationLink(paperId: string, page: number): string {
+  return `[p.${page}](papeer://${paperId}/${page})`;
+}
+
 /** An image name the sidecar's media route serves (papers.py get_paper_media). */
 const MEDIA_NAME = "[A-Za-z0-9_.-]+\\.png";
 /** papers/<id>/media/<name> at the end of an image path: older article.md files embed it as an absolute file:// URI. */
