@@ -56,7 +56,7 @@ dev-frontend:
 # Build sidecar binary and place it where Tauri's externalBin expects it
 build-sidecar:
     uv run python -m papeer.core.code_version code-version.txt
-    uv run pyinstaller --noconfirm sidecar.spec
+    uv run --group build pyinstaller --noconfirm sidecar.spec
     uv run python -c "import shutil; shutil.copy2('dist/sidecar-x86_64-pc-windows-msvc.exe', 'frontend/src-tauri/')"
 
 # Build everything
@@ -65,3 +65,8 @@ build: build-sidecar build-app
 [working-directory: 'frontend']
 build-app:
     pnpm tauri build
+
+# Remove build, dist, output and tmp (repository root only)
+# `just clean` は対象と容量の一覧を表示するだけ。`just clean yes` で削除する
+clean confirm="":
+    uv run python tools/clean.py {{ if confirm == "yes" { "--yes" } else { "" } }}

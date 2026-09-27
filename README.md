@@ -44,7 +44,7 @@ frontend/         デスクトップ UI (Tauri 2 + React 19 + Tailwind v4)
   tests/          node:test によるフロントエンドのテスト
   src-tauri/      Tauri (Rust)。本番では sidecar を子プロセスとして起動
 tests/            pytest によるバックエンドのテスト
-tools/            翻訳レイアウトの検証用スクリプト (開発用)
+tools/            開発用スクリプト (翻訳レイアウトの検証・比較、掃除など)
 docs/             仕様ドキュメント
 ```
 
@@ -103,6 +103,10 @@ just build
 4. `pnpm tauri build` でインストーラーを作る
 
 インストーラーは `frontend/src-tauri/target/release/bundle/` に出力されます。
+
+PyInstaller は依存グループ `build` にあり、`just build-sidecar` が `uv run --group build` で使います。
+
+`just clean` はリポジトリ直下の `build/`・`dist/`・`output/`・`tmp/` とその容量を一覧表示するだけで、`just clean yes` で削除します。それ以外のフォルダーは消しません。
 
 ## AI 接続
 

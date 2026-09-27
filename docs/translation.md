@@ -88,7 +88,7 @@ PDF を日本語に翻訳し、原文と同じレイアウトの `translated.pdf
 
 ## レイアウト検証ツール
 
-`tools/` には翻訳レイアウトを目視検証するための開発用スクリプトがあります。いずれも通常の翻訳と同じ接続設定を使うため、モデルの利用枠を消費します。
+`tools/` には翻訳レイアウトを検証するための開発用スクリプトがあります。次の 2 つは通常の翻訳と同じ接続設定を使うため、モデルの利用枠を消費します（最後の抽出結果の比較は AI を呼び出しません）。
 
 **新規翻訳による検証**：既存の `translated.pdf`・抽出情報・キャッシュを読まずに、選んだページを現在のコードで新規翻訳します。
 
@@ -105,3 +105,14 @@ uv run python -m tools.apply_layout_review --papers <論文フォルダー> --re
 ```
 
 `--case` を省略すると、その検証で完了した全ページを反映します。変更前のファイルは論文フォルダー内の `review-backups` に保存し、論文ごとに反映済みの新しい 5 件を残します（それより古いものと、それより前の失敗した反映の作業フォルダーは削除します）。共通の文を含むページは同時に反映する必要があり、片方だけの差し替えは拒否します。反映中はアプリから同じ論文の翻訳を実行しないでください。
+
+**抽出結果の比較**：レイアウト処理の変更前後で、全 PDF のブロック・書式判定・読み順・段落の継続・翻訳単位・ページごとの文字の増減を比べます。AI は呼び出さず、ライブラリは読むだけです。
+
+```bash
+git worktree add ../papeer-base <比較元のコミット>
+uv run python -m tools.compare_layout snapshot output/layout/before --code ../papeer-base
+uv run python -m tools.compare_layout snapshot output/layout/after
+uv run python -m tools.compare_layout diff output/layout/before output/layout/after
+```
+
+`snapshot` の対象は既定で現在のライブラリの `papers/*/original.pdf` で、PDF ファイルや PDF のフォルダーも指定できます。出力先が指定したライブラリ（PDF だけを指定した場合はその論文のライブラリ、ライブラリ外の PDF はそのフォルダー）や既定のライブラリの中なら拒否します。`--code` は現在と同じパッケージ構成（`papeer.pdf.pdf_engine`）のチェックアウトに限ります。`diff` は文書ごとの差分の表を表示し、詳細を `output/layout/before-vs-after.json` に保存します。

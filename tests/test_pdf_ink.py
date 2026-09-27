@@ -191,7 +191,7 @@ def test_export_japanese_text_rotated_box_and_transparent_highlighter(ink_env, t
     assert red > 240 and green > 220 and 150 < blue < 210  # 30% opacity on white
     # Every red text pixel remains inside the expected transformed text box (with font overshoot tolerance).
     red_pixels = [(i % image.width / image.width, i // image.width / image.height)
-                  for i, (r, g, b) in enumerate(image.getdata()) if r > 130 and g < 100 and b < 100]
+                  for i, (r, g, b) in enumerate(image.get_flattened_data()) if r > 130 and g < 100 and b < 100]
     assert len(red_pixels) > 100
     assert min(x for x, _ in red_pixels) >= min(x for x, _ in rotated) - 0.015
     assert max(x for x, _ in red_pixels) <= max(x for x, _ in rotated) + 0.015
