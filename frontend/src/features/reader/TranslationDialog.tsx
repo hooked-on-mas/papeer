@@ -213,7 +213,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
             {`全${pageCount}ページ。PDFの先頭を1ページとして指定します。\n`
               + "文が前後のページへ続く場合は、つながるページも翻訳対象に含めます。\n"
               + "同じモデルでは保存済みの訳文を再利用します（effortの変更は次のAI処理から適用）。\n"
-              + "モデルを変更すると指定ページを再翻訳し、指定外の訳文は引き継がれません。"}
+              + "モデルを変更すると指定ページを再翻訳します。指定外のページは以前の訳文のまま残ります。"}
           </p>
           <div className="grid gap-2">
             <NativeSelect value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}>

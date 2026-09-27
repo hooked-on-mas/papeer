@@ -12,7 +12,6 @@ import unicodedata
 from papeer.layout.math_layout import MATH_TOKEN
 from papeer.providers import check_cancel, parse_json_answer
 from papeer.translation.translation_context import recovery_context
-from papeer.core.code_version import application_version
 
 
 TRANSLATION_SCHEMA = {
@@ -28,13 +27,52 @@ _RESERVED = re.compile(r"PD[\s_]*MATH", re.I)
 _LOOSE_TOKEN = re.compile(r"[\[［]\s*[\[［]([^\[\]［］]+)[\]］]\s*[\]］]")
 
 MAX_BLOCK_RETRIES = 3
-# Snapshot once per process: edited code takes effect after restarting the app.
-_CODE_VERSION = application_version()
+# A saved translation is reused while what the model receives stays the same: the source
+# units (with their glossary), the translation prompt in use (prompt_identity), the provider
+# and model, the response schema, and this number. Editing code does not retranslate anything
+# by itself, so raise this by hand when a change to how translations are requested or checked
+# should make existing papers translate again (drawing changes only redraw from saved translations).
+TRANSLATION_PROTOCOL = 1
+# The built-in translation.txt counts by this number, not by its text: raise it only when an
+# edit of the built-in prompt should retranslate existing papers. Editing the text without
+# raising it keeps translations made with the earlier text (tests/test_page_selection.py pins
+# the text's hash so that every edit makes this decision).
+BUILTIN_PROMPT_REVISION = 1
+# Cache entries written before TranslationKey carry the hash of the pipeline source
+# ("code-sha256-...") instead, and no prompt or provider. They are adopted as protocol 1
+# made with built-in prompt revision 1. This is the text of revision 1 (translation.txt when
+# TranslationKey was added), so that a user override still holding that text counts as
+# revision 1 after the built-in prompt changes. Never update it.
+_LEGACY_PROTOCOL = 1
+LEGACY_PROMPT_SHA256 = "ba81d7adc7ad4747c848d34313425193809a93595f312ba0142e54289dbfb450"
+_LEGACY_PROMPT = "builtin-1"
+_LEGACY_VERSION = re.compile(r"code-sha256-[0-9a-f]{64}")
 
 
-def translation_version():
-    """Identify the application source loaded for this session."""
-    return _CODE_VERSION
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def prompt_identity(instruction: str) -> str:
+    """The translation prompt as cache identity: a built-in revision, or the hash of the user's own text."""
+    # The settings dialog drops an override equal to the built-in text, but one saved otherwise
+    # (or an older built-in text kept as an override) must not count as the user's own prompt.
+    if instruction == prompts.builtin("translation"):
+        return f"builtin-{BUILTIN_PROMPT_REVISION}"
+    if _sha256(instruction) == LEGACY_PROMPT_SHA256:
+        return _LEGACY_PROMPT
+    return "custom-sha256-" + _sha256(instruction)
+
+
+def translation_identity(settings, instruction: str) -> str:
+    """Everything besides the source units that decides a translation's content."""
+    return "translation-sha256-" + _sha256(json.dumps({
+        "protocol": TRANSLATION_PROTOCOL, "provider": settings.provider, "model": settings.model,
+        # Only the OpenAI-compatible API sends requests to base_url. It is kept per PC,
+        # so the CLI connections must not depend on whatever value a PC has stored.
+        "base_url": settings.base_url.strip().rstrip("/") if settings.provider == "api" else None,
+        "prompt": prompt_identity(instruction), "schema": TRANSLATION_SCHEMA,
+    }, ensure_ascii=False, sort_keys=True))
 
 
 def page_fingerprint(units):
@@ -44,9 +82,54 @@ def page_fingerprint(units):
 
 def translation_fingerprint(settings, units):
     return hashlib.sha256(json.dumps({
+        "version": 3, "provider": settings.provider, "model": settings.model,
+        "base_url": settings.base_url.strip().rstrip("/") if settings.provider == "api" else None,
+        "units": units,
+    }, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def legacy_translation_fingerprint(settings, units):
+    # translation_fingerprint as written by caches from before TranslationKey.
+    return hashlib.sha256(json.dumps({
         "version": 2, "provider": settings.provider, "model": settings.model,
         "base_url": settings.base_url, "units": units,
     }, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class TranslationKey:
+    """What saved translations must match to be reused instead of asking the model again.
+
+    `identity` is stored as the cache's "translation_version" and each completed page's
+    "version"; `fingerprint` also covers every unit of the paper, for the translations of
+    unfinished pages and the retry budget kept at the top of translation-cache.json.
+    """
+    identity: str
+    fingerprint: str
+    model: str
+    legacy_fingerprint: str | None
+
+    @classmethod
+    def current(cls, settings, instruction: str, units: list[dict]) -> "TranslationKey":
+        legacy = TRANSLATION_PROTOCOL == _LEGACY_PROTOCOL and prompt_identity(instruction) == _LEGACY_PROMPT
+        return cls(translation_identity(settings, instruction), translation_fingerprint(settings, units),
+                   settings.model, legacy_translation_fingerprint(settings, units) if legacy else None)
+
+    def _legacy(self, version) -> bool:
+        return self.legacy_fingerprint is not None and isinstance(version, str) and bool(_LEGACY_VERSION.fullmatch(version))
+
+    def matches_cache(self, cache: dict) -> bool:
+        if cache.get("translation_version") == self.identity:
+            return cache.get("fingerprint") == self.fingerprint
+        # The fingerprint written then holds the provider, model and endpoint of that run.
+        return self._legacy(cache.get("translation_version")) and cache.get("fingerprint") == self.legacy_fingerprint
+
+    def matches_page(self, entry: dict) -> bool:
+        """Whether a completed page's record was translated with this key (its source is checked separately)."""
+        if entry.get("version") == self.identity:
+            return True
+        # Old page records name their model but not the provider; the model decides.
+        return self._legacy(entry.get("version")) and entry.get("model") == self.model
 
 
 class RetryLimitExceeded(ValueError):
@@ -261,17 +344,19 @@ def translate_batch(provider, units, cancel, progress, accept, state=None, save=
 
 
 def translate_batches(provider, batches, cancel, progress, accept, state=None, save=lambda: None,
-                      concurrency=1, finished=lambda index: None):
+                      concurrency=1, finished=lambda index: None, instruction=None):
     """Translate `batches`, keeping up to `concurrency` first requests in flight.
 
     Only each batch's first request runs on a worker thread. Retry records, recovery
     requests and all callbacks stay on the calling thread, so the retry budget is
     saved before every request just as in serial translation. `finished(index)` runs
     once a batch is done; with concurrency, batches may finish out of order.
+    `instruction` is the translation prompt the caller keyed its cache with (TranslationKey).
     """
     state = state if state is not None else RetryState()
     # Read at the start of each run, so a prompt edited in the settings applies to the next translation.
-    instruction = prompts.load("translation")
+    if instruction is None:
+        instruction = prompts.load("translation")
 
     def recover(unit):
         check_cancel(cancel)

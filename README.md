@@ -97,10 +97,10 @@ just build
 
 次の処理を順に行います。
 
-1. `code-version.txt`（翻訳キャッシュの識別値）を生成する
+1. `code-version.txt`（抽出・PDF 生成コードの識別値）を生成する
 2. PyInstaller で `sidecar.spec` から `dist/sidecar-x86_64-pc-windows-msvc.exe` を作る
-3. その exe を `frontend/src-tauri/` へコピーする
-4. `pnpm tauri build` でインストーラーを作る
+3. その exe を `frontend/src-tauri/` へコピーし、同梱ソースと依存関係の内容ハッシュを `sidecar-sources.txt` に記録する
+4. `code-version.txt` と sidecar が現在のソースから作られたことを確かめ（`just check-sidecar`）、`pnpm tauri build` でインストーラーを作る
 
 インストーラーは `frontend/src-tauri/target/release/bundle/` に出力されます。
 
@@ -127,11 +127,11 @@ PDF の本文は信頼できない入力として扱い、CLI にはツールを
 
 1. `papeer/providers/base.py` の `ProviderBackend` を継承し、`spec`（表示名・説明・設定項目）と `_generate()` を実装する。CLI なら `common.CliBackend` も継承すると、パス検出・ログイン・接続確認が付く。
 2. `papeer/providers/registry.py` の `BACKENDS` に 1 行追加する。
-3. `papeer/core/code_version.py` の `TRANSLATION_SOURCES` に新しいファイルを追加する（`registry.py` は対象外なので、1 行追加だけではキャッシュは無効にならない）。
+3. `papeer/core/code_version.py` の `RENDER_EXCLUDED` に新しいファイルを追加する（`tests/test_code_version.py` が未分類のファイルを検出する）。
 
 設定画面の選択肢と入力欄は `GET /api/providers` から作られるため、フロントエンドの変更は不要です。接続先ごとの設定のうち、最後に選んだモデルと effort はライブラリの `settings.json` の `provider_options` に、CLI のパスと API URL（`config.DEVICE_OPTION_KEYS`）は PC ごとの `%LOCALAPPDATA%\PapeerSync\device-settings.json` に保存されます。後者は同期・バックアップに含めず、別の PC から届いた `settings.json` や復元したバックアップに書かれていても使いません（以前の版の `settings.json` にあった値は、初回の読み込み時に一度だけ PC ごとの保存先へ移します）。モデル名は半角英数字と `. : / @ [ ] + - _` だけ（先頭の `-` は不可）を受け付けます。保存済みのモデル名が不正な場合は、接続先の既定のモデルを使います。
 
-`papeer/providers/` のファイルは翻訳キャッシュの識別値に含まれます。編集すると、既存の論文は次回の翻訳で指定ページを訳し直します。
+翻訳キャッシュはコードではなく接続先・モデル・プロンプト・原文で区別するため、`papeer/providers/` を編集しても既存の訳文は訳し直しません。依頼の送り方や応答の検証を変えて訳し直すべきときは、`papeer/translation/translation.py` の `TRANSLATION_PROTOCOL` を上げます（[翻訳](docs/translation.md#翻訳キャッシュの識別値)）。
 
 ## データの保存場所
 

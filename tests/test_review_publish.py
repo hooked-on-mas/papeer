@@ -87,7 +87,7 @@ class ReviewPublishTests(unittest.TestCase):
             md=(folder/'translation.md').read_text('utf8')
             self.assertIn('Keep first',md); self.assertIn('Keep last',md); self.assertNotIn('Remove old',md)
             cache=json.loads((folder/'translation-cache.json').read_text('utf8'))
-            self.assertEqual(cache['fingerprint'], 'cb477b19d1fd3dcf59deb5122c48533c2cb469d052fcb226db32c641592447b8')
+            self.assertEqual(cache['fingerprint'], '6c63a22da018705247a85b8e6f4ef3c1a44bd22333ac8a21a8a87757e1996838')
             self.assertEqual(cache['fingerprint'],translation_fingerprint(Settings(),translation_units(extract_pdf(folder/'original.pdf'))))
             self.assertTrue(cache['translations'])
             self.assertEqual(json.loads((folder/'translation-report.json').read_text('utf8'))['readability_warnings'],[])

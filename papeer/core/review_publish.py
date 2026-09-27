@@ -16,7 +16,7 @@ from papeer.layout.math_layout import LAYOUT_VERSION, restore_formula_text
 from papeer.core.fileio import atomic_write_json, atomic_write_text, replace_file
 from papeer.core.exports import discard_interleaved
 from papeer.pdf.pdf_engine import PDF_LOCK, translation_units, bilingual_pdf
-from papeer.translation.translation import translation_fingerprint, validate_translations
+from papeer.translation.translation import legacy_translation_fingerprint, translation_fingerprint, validate_translations
 from papeer.translation.translation_preview import read_preview, translated_page, translated_page_numbers
 from papeer.layout.reading_flow import unit_pages, materialize_flows
 from papeer.core.terminology import apply_glossary, glossary_for_folder
@@ -153,7 +153,9 @@ def _publish(folder, review, manifest, entries):
     apply_glossary(units, glossary_for_folder(folder))
     fingerprint = translation_fingerprint(settings, units)
     old_cache = _read(folder/'translation-cache.json', {})
-    cache = old_cache if old_cache.get('fingerprint') == fingerprint else {'fingerprint': fingerprint, 'translations': {}}
+    # A cache from before TranslationKey is kept too: the next translation adopts its pages.
+    same = old_cache.get('fingerprint') in {fingerprint, legacy_translation_fingerprint(settings, units)}
+    cache = old_cache if same else {'fingerprint': fingerprint, 'translations': {}}
     cache = json.loads(json.dumps(cache))
     reviewed_values = {}
     for _, _, values, _ in entries:

@@ -58,10 +58,15 @@ build-sidecar:
     uv run python -m papeer.core.code_version code-version.txt
     uv run pyinstaller --noconfirm sidecar.spec
     uv run python -c "import shutil; shutil.copy2('dist/sidecar-x86_64-pc-windows-msvc.exe', 'frontend/src-tauri/')"
+    uv run python -m papeer.core.code_version --record-bundle sidecar-sources.txt
 
 # Build everything
 build: build-sidecar build-app
 
+# 同梱する sidecar が現在のソースから作られたかを確かめる（code-version.txt と、ビルド時に記録した同梱ソース・依存関係の内容ハッシュの一致）
+check-sidecar:
+    uv run python -m papeer.core.code_version --check code-version.txt sidecar-sources.txt
+
 [working-directory: 'frontend']
-build-app:
+build-app: check-sidecar
     pnpm tauri build

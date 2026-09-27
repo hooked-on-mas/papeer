@@ -64,13 +64,14 @@ def reading_state(lib: Library, paper_id: str, last_page: int = 0) -> dict[str, 
                 "mtime": int(path.stat().st_mtime),
             }
 
-    # The code revision and model that produced each page, as the old reader showed.
+    # The translation key (TranslationKey.identity, or the code revision of older records)
+    # and model that produced each page, as the old reader showed.
     page_versions: dict[str, dict[str, str]] = {}
     try:
         cache = files.read_json(files.translation_cache, {})
         for number, entry in (cache.get("completed_pages") or {}).items():
             version = entry.get("version", "")
-            sha = version.split("code-sha256-")[1][:7] if "code-sha256-" in version else "不明"
+            sha = version.rsplit("sha256-", 1)[1][:7] if "sha256-" in version else "不明"
             page_versions[number] = {"sha": sha, "model": entry.get("model") or "不明"}
     except (OSError, ValueError, AttributeError):
         pass

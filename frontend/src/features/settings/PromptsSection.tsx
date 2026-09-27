@@ -94,6 +94,7 @@ export function PromptsSection({ form }: { form: PromptsForm }) {
       />
       <p className="text-[12px] text-muted-foreground">
         AI への指示文です。変更は新しく実行する翻訳・サマリー・チャットから使われます。
+        {name === "translation" && "翻訳の指示文を変えると、翻訳済みのページも次に翻訳を実行したときに訳し直します（AIの利用枠を使います）。"}
       </p>
     </div>
   );

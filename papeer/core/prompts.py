@@ -15,6 +15,11 @@ def load(name: str) -> str:
     custom_path = _custom_dir() / f"{name}.txt"
     if custom_path.exists():
         return custom_path.read_text(encoding="utf-8").strip()
+    return builtin(name)
+
+
+def builtin(name: str) -> str:
+    """The text shipped with the app, whether or not the user overrides it."""
     return (_BUILTIN_DIR / f"{name}.txt").read_text(encoding="utf-8").strip()
 
 

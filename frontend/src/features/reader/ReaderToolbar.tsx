@@ -82,7 +82,7 @@ export function ReaderToolbar() {
       </button>
       <span className="ml-2 text-muted-foreground tabular-nums truncate min-w-0" title={pageLabel}>{pageLabel}</span>
       {version && (
-        <span className="ml-2 text-[11px] text-muted-foreground/80 truncate hidden lg:inline" title="このページを翻訳したときのコード版とモデル">
+        <span className="ml-2 text-[11px] text-muted-foreground/80 truncate hidden lg:inline" title="このページを翻訳したときの翻訳キー（接続先・モデル・プロンプトなどから計算）とモデル">
           翻訳時SHA：{version.sha} ({version.model})
         </span>
       )}
