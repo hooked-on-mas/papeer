@@ -8,6 +8,8 @@ export type AppEvents = {
   "open-reader-search": void;
   /** Opens the translation editor on the page's paragraph containing the selected text. */
   "open-paragraph-editor": { page: number; side: "original" | "translated"; text: string };
+  /** Opens 翻訳の確認・修正 on its list of pages to check. */
+  "open-translation-review": void;
   "open-lightbox": { src: string; alt?: string };
   /** Show the paper in the library tree; focus moves the keyboard focus to its row. */
   "reveal-paper": { paperId: string; focus: boolean };

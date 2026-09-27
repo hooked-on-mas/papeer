@@ -10,13 +10,32 @@ type ThemeProviderProps = {
 
 type ThemeProviderState = {
   theme: Theme;
+  /** Whether the dark theme is showing: chosen, or followed from the system. */
+  dark: boolean;
   setTheme: (theme: Theme) => void;
 };
 
 const initialState: ThemeProviderState = {
   theme: "system",
+  dark: false,
   setTheme: () => null,
 };
+
+const DARK_QUERY = "(prefers-color-scheme: dark)";
+
+/** The system's own theme, followed as it changes (index.css does the same for the colours). */
+function useSystemDark(): boolean {
+  const [dark, setDark] = useState(() => window.matchMedia?.(DARK_QUERY).matches ?? false);
+  useEffect(() => {
+    const query = window.matchMedia?.(DARK_QUERY);
+    if (!query) return;
+    const update = () => setDark(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return dark;
+}
 
 const ThemeProviderContext = createContext<ThemeProviderState>(initialState);
 
@@ -29,6 +48,7 @@ export function ThemeProvider({
   const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem(storageKey) as Theme) || defaultTheme
   );
+  const systemDark = useSystemDark();
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -48,6 +68,7 @@ export function ThemeProvider({
 
   const value = {
     theme,
+    dark: theme === "dark" || (theme !== "light" && systemDark),
     setTheme: (theme: Theme) => {
       localStorage.setItem(storageKey, theme);
       setTheme(theme);
