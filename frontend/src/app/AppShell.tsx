@@ -287,14 +287,14 @@ export function AppShell() {
   }, { preventDefault: true, enableOnFormTags: true });
   useHotkeys("ctrl+shift+f, meta+shift+f", focusSearch, { preventDefault: true, enableOnFormTags: true });
   useHotkeys("ctrl+l, meta+l", () => {
-    // Reveal the open paper in the library, clearing any search that hides it.
-    focusSearch();
+    // Move the keys to the library tree: the row they were on, or else the open paper (revealed in its
+    // folder). The search's results replace the tree, so the search is cleared.
     const store = useStore.getState();
-    if (!store.activePaperId) return;
+    const hidden = store.focusMode || store.sidebarCollapsed;
+    showSidebar();
     store.setLibrarySearch("");
-    store.setSelectedFolder(null);
-    const paperId = store.activePaperId;
-    setTimeout(() => emitAppEvent("reveal-paper", { paperId, focus: true }), 300);
+    // A sidebar being shown again needs a moment to mount and listen.
+    setTimeout(() => emitAppEvent("focus-library"), hidden ? 300 : 0);
   }, { preventDefault: true, enableOnFormTags: true });
   useHotkeys("ctrl+g, meta+g", focusPageInput, { preventDefault: true, enableOnFormTags: true });
   useHotkeys("ctrl+b, meta+b", () => {
@@ -311,8 +311,10 @@ export function AppShell() {
     const store = useStore.getState();
     createFolder(store.selectedFolder ?? store.currentCollection);
   }, hotkeyOptions);
-  useHotkeys("left", () => { if (useStore.getState().activeTab === "reader") movePage(-1); }, hotkeyOptions);
-  useHotkeys("right", () => { if (useStore.getState().activeTab === "reader") movePage(1); }, hotkeyOptions);
+  // Not in the library tree, whose ←→ open and close folders, and move a paper dragged with the keyboard.
+  const pageKeyOptions = { ...hotkeyOptions, ignoreEventWhen: (e: KeyboardEvent) => e.target instanceof Element && !!e.target.closest("[role=tree]") };
+  useHotkeys("left", () => { if (useStore.getState().activeTab === "reader") movePage(-1); }, pageKeyOptions);
+  useHotkeys("right", () => { if (useStore.getState().activeTab === "reader") movePage(1); }, pageKeyOptions);
   // Key names follow KeyboardEvent.code; Ctrl+; / Ctrl+Shift+; is "+" on Japanese keyboards.
   useHotkeys("ctrl+equal, meta+equal, ctrl+add, ctrl+semicolon, ctrl+shift+semicolon, ctrl+shift+equal", () => changeZoom(1), hotkeyOptions);
   useHotkeys("ctrl+minus, meta+minus, ctrl+subtract", () => changeZoom(-1), hotkeyOptions);

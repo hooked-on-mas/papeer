@@ -57,6 +57,7 @@ before(async () => {
     useStore: (await load("/src/store/index.ts")).useStore,
     useInkPanes: (await load("/src/features/reader/useInkEditor.ts")).useInkPanes,
     LibrarySidebar: (await load("/src/features/library/LibrarySidebar.tsx")).LibrarySidebar,
+    useTreeFocus: (await load("/src/features/library/treeFocus.ts")).useTreeFocus,
   };
 });
 
@@ -173,25 +174,28 @@ test("the reader tab stays laid out, invisible and inert, while another tab is s
   assert.doesNotMatch(shown, /\binvisible\b/);
 });
 
+const libraryPapers = [
+  { id: "p1", title: "Attention Is All You Need", collection_name: "ML / NLP", pages: 10, translated_count: 4, tags: ["重要"], read_status: "読書中" },
+  { id: "p2", title: "Deep Residual Learning", collection_name: "ML", pages: 12, translated_count: 0 },
+  { id: "p3", title: "Unfiled Paper", collection_name: "", pages: 3, translated_count: 3 },
+];
+const libraryQueries = [
+  [["papers", "list", "", 0], libraryPapers],
+  [["collections"], ["ML", "ML / NLP", "Empty"]],
+];
+const libraryState = { selectedFolder: null, expandedCollections: null, librarySearch: "", sortOrder: 0 };
+
 test("the library renders its folder tree, with the open paper and its translation's progress", () => {
-  const papers = [
-    { id: "p1", title: "Attention Is All You Need", collection_name: "ML / NLP", pages: 10, translated_count: 4, tags: ["重要"], read_status: "読書中" },
-    { id: "p2", title: "Deep Residual Learning", collection_name: "ML", pages: 12, translated_count: 0 },
-    { id: "p3", title: "Unfiled Paper", collection_name: "", pages: 3, translated_count: 3 },
-  ];
   const html = render(modules.React.createElement(modules.LibrarySidebar), {
-    selectedFolder: null, expandedCollections: null, librarySearch: "", sortOrder: 0,
+    ...libraryState,
     activeJobs: [
       { job_id: "t1", paper_id: "p1", kind: "translate", status: "running" },
       { job_id: "a1", paper_id: "p2", kind: "article", status: "running" },
     ],
-  }, {}, [
-    [["papers", "list", "", 0], papers],
-    [["collections"], ["ML", "ML / NLP", "Empty"]],
-  ]);
+  }, {}, libraryQueries);
   // Folders, each with its count including subfolders, and 未分類 last.
-  const folders = [...html.matchAll(/data-drop-collection="([^"]*)"[^>]*title="([^"]*)"/g)].map((m) => m[2]);
-  assert.deepEqual(folders.filter((title) => !title.includes("ファイル名")), ["Empty", "ML", "ML / NLP", "フォルダー未指定のPDF"]);
+  const folders = [...html.matchAll(/data-tree-key="folder:([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(folders, ["Empty", "ML", "ML / NLP", ""]);
   assert.match(html, /<span class="flex-1 truncate">ML<\/span><span[^>]*>2<\/span>/);
   assert.match(html, /id="paper-row-p1"[^>]*class="[^"]*bg-accent /);
   assert.doesNotMatch(html, /id="paper-row-p2"[^>]*class="[^"]*bg-accent /);
@@ -199,4 +203,64 @@ test("the library renders its folder tree, with the open paper and its translati
   assert.match(html, /role="progressbar" aria-label="訳文を保存済みのページ"[^>]*aria-valuenow="4"/);
   assert.match(html, /· AI処理中/);
   assert.match(html, />3(<!-- -->)? 件の論文</);
+});
+
+/** The opening tag of the element whose attributes match `pattern`. */
+function openingTag(html, pattern) {
+  const tag = html.match(new RegExp(`<[a-z]+\\s[^>]*${pattern}[^>]*>`))?.[0];
+  assert.ok(tag, `no tag with ${pattern}`);
+  return tag;
+}
+
+test("the library tree is a tree of treeitems for assistive technology, and one row takes the Tab key", () => {
+  const { React, LibrarySidebar, useTreeFocus } = modules;
+  // Set by an effect in the app, which the server doesn't run; it reads the store's initial state.
+  const initial = useTreeFocus.getInitialState();
+  const saved = initial.tabStop;
+  initial.tabStop = "paper:p2";
+  let html;
+  try {
+    html = render(React.createElement(LibrarySidebar), libraryState, {}, libraryQueries);
+  } finally {
+    initial.tabStop = saved;
+  }
+  assert.match(html, /<div role="tree" aria-label="ライブラリ">/);
+  const ml = openingTag(html, 'data-tree-key="folder:ML"');
+  assert.match(ml, /role="treeitem"/);
+  assert.match(ml, /aria-level="1"/);
+  assert.match(ml, /aria-expanded="true"/);
+  assert.match(ml, /aria-selected="false"/);
+  assert.match(ml, /aria-label="ML（2件）"/);
+  assert.match(openingTag(html, 'data-tree-key="folder:ML / NLP"'), /aria-level="2"/);
+  // A folder's contents are its group, which the row owns since it is the row's sibling in the page.
+  const group = ml.match(/aria-owns="([^"]+)"/)?.[1];
+  assert.ok(group);
+  assert.ok(html.includes(`<div role="group" id="${group}">`));
+  // A folder with nothing in it is neither open nor closed.
+  const empty = openingTag(html, 'data-tree-key="folder:Empty"');
+  assert.doesNotMatch(empty, /aria-expanded|aria-owns/);
+  // Titles give a subfolder's full path, but not a top folder's name again.
+  assert.doesNotMatch(ml, /title=/);
+  assert.match(openingTag(html, 'data-tree-key="folder:ML / NLP"'), /title="ML \/ NLP"/);
+  assert.match(openingTag(html, 'data-tree-key="folder:"'), /title="フォルダー未指定のPDF"/);
+
+  const open = openingTag(html, 'id="paper-row-p1"');
+  assert.match(open, /role="treeitem"/);
+  assert.match(open, /aria-level="3"/);
+  assert.match(open, /aria-selected="true"/);
+  assert.doesNotMatch(open, /aria-roledescription|aria-pressed/);
+  // Roving tabindex: only the row that takes the Tab key is in the Tab order, and no button in a row is.
+  assert.match(openingTag(html, 'id="paper-row-p2"'), /tabindex="0"/);
+  assert.match(open, /tabindex="-1"/);
+  assert.match(ml, /tabindex="-1"/);
+  const tree = html.slice(html.indexOf('<div role="tree"'));
+  assert.equal(tree.match(/tabindex="0"/g)?.length, 1);
+  // Buttons are in the Tab order unless taken out: the folders' ▸, the tags.
+  const buttons = tree.match(/<button[^>]*>/g) ?? [];
+  assert.ok(buttons.length >= 5);
+  for (const button of buttons) assert.match(button, /tabindex="-1"/);
+  assert.match(openingTag(tree, 'title="重要で絞り込み"'), /tabindex="-1"/);
+  // The rows show a ring when focused from the keyboard.
+  assert.match(open, /focus-visible:outline-2/);
+  assert.match(ml, /focus-visible:outline-ring/);
 });

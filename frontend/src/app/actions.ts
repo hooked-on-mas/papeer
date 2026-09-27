@@ -10,7 +10,7 @@ import { paperExportFilename } from "@/lib/exportFilename";
 import { addPendingImports, removePendingImports, usePendingImports } from "./pendingImports";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
-import { normalizeCollection } from "@/features/library/libraryTree";
+import { countInFolder, isInsideFolder, normalizeCollection } from "@/features/library/libraryTree";
 
 let queryClient: QueryClient | null = null;
 
@@ -18,9 +18,12 @@ export function bindQueryClient(client: QueryClient): void {
   queryClient = client;
 }
 
-function refreshLibrary(): void {
-  queryClient?.invalidateQueries({ queryKey: [QK.papers] });
-  queryClient?.invalidateQueries({ queryKey: [QK.collections] });
+/** Reloads the library; the promise settles once the lists shown have been fetched again. */
+function refreshLibrary(): Promise<unknown> {
+  return Promise.all([
+    queryClient?.invalidateQueries({ queryKey: [QK.papers] }),
+    queryClient?.invalidateQueries({ queryKey: [QK.collections] }),
+  ]);
 }
 
 async function paper(id: string): Promise<PaperData> {
@@ -28,11 +31,6 @@ async function paper(id: string): Promise<PaperData> {
 }
 
 export { normalizeCollection };
-
-function isInside(value: string, path: string): boolean {
-  const name = normalizeCollection(value);
-  return name === path || name.startsWith(path + " / ");
-}
 
 // --- Import ---------------------------------------------------------------------------
 
@@ -189,17 +187,18 @@ export async function createFolder(parent: string | null): Promise<void> {
   }
 }
 
-export async function renameFolder(path: string): Promise<void> {
+/** Asks for a new name; the folder's new path once renamed, else null. */
+export async function renameFolder(path: string): Promise<string | null> {
   const name = await askText("フォルダー名を変更", "新しい名前", path.split(" / ").pop() ?? "");
-  if (name === null) return;
+  if (name === null) return null;
   let destination: string;
   try {
     destination = (await apiRequest<{ name: string }>("PATCH", "/api/collections/rename", { old_name: path, new_name: name })).name;
   } catch (error) {
     showError(error, "名前を変更できませんでした");
-    return;
+    return null;
   }
-  const mapped = (value: string) => isInside(value, path) ? destination + normalizeCollection(value).slice(path.length) : value;
+  const mapped = (value: string) => isInsideFolder(value, path) ? destination + normalizeCollection(value).slice(path.length) : value;
   const s = useStore.getState();
   useStore.setState({
     currentCollection: mapped(s.currentCollection),
@@ -210,15 +209,22 @@ export async function renameFolder(path: string): Promise<void> {
   refreshLibrary();
   queryClient?.invalidateQueries({ queryKey: [QK.papers] });
   s.setStatus(`「${path}」を「${destination}」に変更しました。`);
+  return destination;
 }
 
-export async function deleteFolder(path: string, papers: PaperData[]): Promise<void> {
-  const count = papers.filter((p) => isInside(p.collection_name || "", path)).length;
-  if (count) {
-    const ok = await askConfirm("フォルダーを削除",
-      `「${path}」には、子フォルダーを含めて${count}件の論文が入っています。\nフォルダーを削除しますか？\n論文はすべて未分類へ移動します。`,
+/**
+ * Deletes the folder, asking first when it holds papers; `papers` is the whole library, or null while
+ * the list has not loaded, when the folder may hold papers that cannot be counted. Whether it was
+ * deleted, once the library shows it gone.
+ */
+export async function deleteFolder(path: string, papers: PaperData[] | null): Promise<boolean> {
+  const count = countInFolder(papers, path);
+  if (count !== 0) {
+    const ok = await askConfirm("フォルダーを削除", count === null
+      ? `論文の一覧を読み込めていないため、「${path}」に入っている論文の数を確かめられません。\nフォルダーを削除しますか？\n入っている論文はすべて未分類へ移動します。`
+      : `「${path}」には、子フォルダーを含めて${count}件の論文が入っています。\nフォルダーを削除しますか？\n論文はすべて未分類へ移動します。`,
       "削除", true);
-    if (!ok) return;
+    if (!ok) return false;
   }
   let moved: string[] = [];
   let token: string;
@@ -228,17 +234,18 @@ export async function deleteFolder(path: string, papers: PaperData[]): Promise<v
     token = result.undo_token;
   } catch (error) {
     showError(error, "フォルダーを削除できませんでした");
-    return;
+    return false;
   }
   const s = useStore.getState();
   useStore.setState({
-    currentCollection: isInside(s.currentCollection, path) ? "" : s.currentCollection,
-    selectedFolder: s.selectedFolder !== null && isInside(s.selectedFolder, path) ? null : s.selectedFolder,
+    currentCollection: isInsideFolder(s.currentCollection, path) ? "" : s.currentCollection,
+    selectedFolder: s.selectedFolder !== null && isInsideFolder(s.selectedFolder, path) ? null : s.selectedFolder,
     moveHistory: [...s.moveHistory, { kind: "delete-folder", path, token }],
-    expandedCollections: s.expandedCollections?.filter((e) => !isInside(e, path)) ?? null,
+    expandedCollections: s.expandedCollections?.filter((e) => !isInsideFolder(e, path)) ?? null,
   });
-  refreshLibrary();
   s.setStatus(`「${path}」を削除しました。` + (moved.length ? `${moved.length}件の論文を未分類へ移動しました。` : ""));
+  await refreshLibrary();
+  return true;
 }
 
 // --- Papers ---------------------------------------------------------------------------------
@@ -262,28 +269,30 @@ export async function renamePaperFile(paperId: string): Promise<void> {
   }
 }
 
-export async function deletePaper(paperId: string): Promise<void> {
+/** Whether the paper was deleted, once the library shows it gone. */
+export async function deletePaper(paperId: string): Promise<boolean> {
   let current: PaperData;
   try {
     current = await paper(paperId);
   } catch (error) {
     showError(error);
-    return;
+    return false;
   }
   const ok = await askConfirm("論文を削除",
     `「${current.title}」をライブラリから削除しますか？\n訳文・サマリー・チャット履歴・メモも削除され、元に戻せません。`, "削除", true);
-  if (!ok) return;
+  if (!ok) return false;
   try {
     await apiRequest("DELETE", `/api/papers/${paperId}`);
   } catch (error) {
     showError(error, "削除できませんでした");
-    return;
+    return false;
   }
   const s = useStore.getState();
   if (s.activePaperId === paperId) s.setActivePaperId(null);
   useStore.setState({ moveHistory: s.moveHistory.filter((m) => "kind" in m || m.paperId !== paperId) });
-  refreshLibrary();
   s.setStatus(`「${current.title}」を削除しました。`);
+  await refreshLibrary();
+  return true;
 }
 
 export async function openPaperFolder(paperId: string | null): Promise<void> {

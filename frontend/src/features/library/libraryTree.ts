@@ -24,6 +24,20 @@ export function normalizeCollection(value: string): string {
   return value.split(/[\\/]/).map((part) => part.trim()).filter(Boolean).join(" / ");
 }
 
+/** Whether the folder `value` is `path` or one of its subfolders. */
+export function isInsideFolder(value: string, path: string): boolean {
+  const name = normalizeCollection(value);
+  return name === path || name.startsWith(path + " / ");
+}
+
+/**
+ * The papers in the folder `path` and its subfolders, which deleting it moves to 未分類; null while the
+ * paper list is not known (still loading, or it failed to load), so that deleting asks all the same.
+ */
+export function countInFolder(papers: PaperData[] | null, path: string): number | null {
+  return papers && papers.filter((p) => isInsideFolder(p.collection_name || "", path)).length;
+}
+
 export type PaperFilter = {
   tag: string;
   readStatus: string;

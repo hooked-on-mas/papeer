@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allFolderPaths, buildTree, filterPapers, normalizeCollection, type FolderNode } from "../src/features/library/libraryTree.ts";
+import { allFolderPaths, buildTree, countInFolder, filterPapers, isInsideFolder, normalizeCollection, type FolderNode } from "../src/features/library/libraryTree.ts";
 import type { PaperData } from "../src/api/hooks.ts";
 import type { PendingImport } from "../src/app/pendingImports.ts";
 
@@ -79,4 +79,18 @@ test("filterPapers keeps the papers that every filter lets through", () => {
 test("folder paths are normalized from either slash, without empty parts", () => {
   assert.equal(normalizeCollection(" ML \\ Vision/ 3D /"), "ML / Vision / 3D");
   assert.equal(normalizeCollection(""), "");
+});
+
+test("a folder counts the papers in it and its subfolders, but not in folders whose names only start alike", () => {
+  const papers = [paper("a", "ML"), paper("b", "ML\\Vision"), paper("c", "MLOps"), paper("d", "")];
+  assert.equal(countInFolder(papers, "ML"), 2);
+  assert.equal(countInFolder(papers, "ML / Vision"), 1);
+  assert.equal(countInFolder(papers, "Bio"), 0);
+  assert.equal(isInsideFolder("ML / Vision", "ML"), true);
+  assert.equal(isInsideFolder("MLOps", "ML"), false);
+});
+
+test("a folder's papers are not counted while the paper list has not loaded, so that deleting it still asks", () => {
+  assert.equal(countInFolder(null, "ML"), null);
+  assert.equal(countInFolder([], "ML"), 0);
 });
