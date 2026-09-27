@@ -1,6 +1,7 @@
 import { notifyIfAway } from "@/shell";
 import { QK } from "@/lib/queryKeys";
 import type { JobFinished, JobHandlers } from "@/features/jobs/jobHandlers";
+import { finishGlossaryDraft, isGlossaryDialogOpen } from "./glossaryDraft";
 
 function translateMessage(report: any): string {
   let message = `指定した${report.selected_pages?.length ?? 0}ページの翻訳処理が終了しました。`
@@ -15,7 +16,7 @@ function translateMessage(report: any): string {
 function translationQueries(event: JobFinished) {
   if (!event.paper_id) return [];
   return [[QK.paperSearch, event.paper_id], [QK.paragraphs, event.paper_id], [QK.revisions, event.paper_id],
-    [QK.librarySearch]];
+    [QK.librarySearch], [QK.translationPlan, event.paper_id]];
 }
 
 export const translationJobHandlers: JobHandlers = {
@@ -28,4 +29,16 @@ export const translationJobHandlers: JobHandlers = {
     refresh: translationQueries,
   },
   revision: { refresh: translationQueries },
+  "glossary-draft": {
+    // The translation dialog shows the candidates itself; closed, it may be long forgotten.
+    succeeded: (event, { status }) => {
+      // Only a check whose candidates now wait for the dialog (not a stale or superseded job).
+      if (!finishGlossaryDraft(event) || isGlossaryDialogOpen(event.paper_id)) return;
+      const count = (event.result?.terms ?? []).length;
+      const message = (count ? `未登録の専門用語を${count}件抽出しました。` : "未登録の専門用語の確認が終わりました（候補はありません）。")
+        + "翻訳の設定を開くと、確認して翻訳を開始できます。";
+      status(message);
+      notifyIfAway("用語の確認が終わりました", message);
+    },
+  },
 };

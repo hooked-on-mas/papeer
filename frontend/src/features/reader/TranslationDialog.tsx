@@ -12,6 +12,12 @@ import { askConfirm } from "@/components/AppDialogs";
 import { GlossaryTransfer } from "./GlossaryTransfer";
 import { QK } from "@/lib/queryKeys";
 import { useOpenEdit } from "@/lib/pendingSaves";
+import { setGlossaryDialogPaper, startGlossaryDraft, takeGlossaryDraft, useGlossaryDrafts } from "./glossaryDraft";
+import {
+  draftResultMessage, glossaryKey, glossaryReviewSkip, isResuming, mergeDraftTerms, normalizeTerms, readReviewedGlossary,
+  recordReviewedGlossary, retranslationWarning, reviewSkipMessage, startButtonLabel, translationTargetText, type Term,
+  type TranslationPlan,
+} from "./translationStart";
 
 interface TranslationDialogProps {
   open: boolean;
@@ -46,38 +52,68 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
   const [starting, setStarting] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [draftJobId, setDraftJobId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [draftMessage, setDraftMessage] = useState("");
-  const draftSession = useRef(0);
+  // The AI's check for unregistered terms runs as a job that outlives the dialog (glossaryDraft).
+  const draft = useGlossaryDrafts((s) => s.drafts[paperId]);
+  const generating = draft?.status === "running";
   useEffect(() => {
-    draftSession.current++;
-    setGenerating(false);
-    setDraftMessage("");
-    return () => { draftSession.current++; };
+    if (!open) return;
+    setGlossaryDialogPaper(paperId);
+    return () => setGlossaryDialogPaper(null);
   }, [open, paperId]);
-  const busy = starting || generating || saving;
-  const [glossary, setGlossary] = useState<{ source: string; target: string }[]>([]);
+  useEffect(() => { setDraftMessage(""); }, [open, paperId]);
+  // Closing stays possible while the AI checks the terms; only saving and starting hold the dialog.
+  const holding = starting || saving;
+  const busy = holding || generating;
+  const [glossary, setGlossary] = useState<Term[]>([]);
   const [glossaryDirty, setGlossaryDirty] = useState(false);
+  // The terms were checked in this dialog: starting applies the candidates and records the check.
   const [glossaryReviewed, setGlossaryReviewed] = useState(false);
+  const [reviewedKey, setReviewedKey] = useState<string | null>(null);
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
   const [newSources, setNewSources] = useState<Set<string>>(new Set());
   const [glossarySearch, setGlossarySearch] = useState("");
   const [glossaryView, setGlossaryView] = useState<"all" | "new" | "existing">("all");
-  const savedSnapshot = useRef<{ source: string; target: string }[]>([]);
+  const savedSnapshot = useRef<Term[]>([]);
   useEffect(() => {
     setGlossaryReviewed(false); setNewSources(new Set()); setGlossarySearch(""); setGlossaryView("all");
+    setGlossaryOpen(false);
+    if (open) setReviewedKey(readReviewedGlossary(() => globalThis.localStorage, paperId));
   }, [open, paperId]);
 
   const { data: settings } = useSettings();
   const { data: reading } = useReading(open ? paperId : null);
   const { data: savedGlossary } = useQuery({
     queryKey: [QK.glossary],
-    queryFn: () => apiRequest<{ source: string; target: string }[]>("GET", "/api/glossary"),
+    queryFn: () => apiRequest<Term[]>("GET", "/api/glossary"),
     enabled: open,
   });
-  useEffect(() => { if (open) { setGlossaryDirty(false); setGlossary(savedGlossary ?? []); } }, [open, paperId]);
+  // The paper whose glossary list has been reset since the dialog opened: until then the list
+  // may still hold the previous opening's edits.
+  const [listReadyFor, setListReadyFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (open) { setGlossaryDirty(false); setGlossary(savedGlossary ?? []); }
+    setListReadyFor(open ? paperId : null);
+  }, [open, paperId]);
   useEffect(() => { if (savedGlossary && !glossaryDirty) { setGlossary(savedGlossary); savedSnapshot.current = savedGlossary; } }, [savedGlossary, glossaryDirty, paperId]);
+  // Show a finished check here, also one that finished while the dialog was closed. After the
+  // effect above: without unsaved edits the list is (being set to) the saved glossary.
+  useEffect(() => {
+    if (!open || listReadyFor !== paperId || !savedGlossary || draft?.status !== "done") return;
+    const terms = takeGlossaryDraft(paperId);
+    if (!terms) return;
+    setGlossaryReviewed(true);
+    // Only candidates the list does not have yet (the user may have added some meanwhile) count as new.
+    const { glossary: merged, added } = mergeDraftTerms(glossaryDirty ? glossary : savedGlossary, terms);
+    if (added.length) {
+      setGlossary(merged);
+      setNewSources(values => new Set([...values, ...added.map(t => t.source)]));
+      setGlossaryDirty(true);
+      setGlossaryView("new"); setGlossarySearch(""); setGlossaryOpen(true);
+    }
+    setDraftMessage(draftResultMessage(added.length));
+  }, [open, paperId, listReadyFor, draft, savedGlossary]);
   const provider = settings?.provider ?? "";
   const pageCount = reading?.source_page_count ?? reading?.page_count ?? 0;
 
@@ -115,9 +151,25 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     }
   }, [scope, customRange, currentPage, pageCount]);
 
+  // What starting would do with these pages and this model: which pages come from saved
+  // translations, and which translated pages the model would redo.
+  const pagesParam = scope === "all" ? "" : (selection.pages?.join(",") ?? "");
+  const { data: plan, isFetching: planFetching } = useQuery({
+    queryKey: [QK.translationPlan, paperId, pagesParam, model],
+    queryFn: () => apiRequest<TranslationPlan>("GET",
+      `/api/papers/${paperId}/translation-plan?${new URLSearchParams({ pages: pagesParam, ...(model ? { model } : {}) })}`),
+    enabled: open && !!selection.pages?.length,
+    retry: false,
+  });
+  const currentKey = glossaryKey(glossaryDirty ? glossary : savedGlossary ?? []);
+  // A plan being refetched (after a glossary save or a finished run) may be out of date.
+  const skip = glossaryReviewSkip({
+    plan: planFetching ? undefined : plan, glossaryDirty, resuming: isResuming(reading?.preview, selection.pages), reviewedKey, currentKey,
+  });
+  const warning = retranslationWarning(planFetching ? undefined : plan);
+
   const handleStart = async () => {
     if (!selection.pages?.length || busy || !savedGlossary) return;
-    if (!glossaryReviewed) { await generateGlossary(); return; }
     const pages = scope === "all" ? "" : selection.pages.join(",");
     setStarting(true);
     try {
@@ -125,6 +177,8 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
       await startJob(`/api/papers/${paperId}/translate`,
         { pages, model: model || undefined, effort: effort || undefined },
         { kind: "translate", paperId });
+      // The next start skips the check while the glossary stays as it is now.
+      if (glossaryReviewed) recordReviewedGlossary(() => globalThis.localStorage, paperId, currentKey);
       onOpenChange(false);
     } catch (error) {
       showError(error, "翻訳を開始できませんでした");
@@ -134,42 +188,25 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   };
 
   const saveGlossary = async () => {
-    const terms = glossary.filter(item => item.source.trim() || item.target.trim()).map(t => ({ source: t.source.trim(), target: t.target.trim() }));
+    const terms = normalizeTerms(glossary);
     await apiRequest("PUT", "/api/glossary", { terms, expected_terms: savedSnapshot.current });
     savedSnapshot.current = terms;
     await queryClient.invalidateQueries({ queryKey: [QK.glossary] });
     await queryClient.invalidateQueries({ queryKey: [QK.effectiveGlossary] });
+    // A term changes the source of the pages that contain it, so their saved translations.
+    await queryClient.invalidateQueries({ queryKey: [QK.translationPlan, paperId] });
     setGlossaryDirty(false);
   };
 
   const generateGlossary = async () => {
     if (busy || !savedGlossary) return;
-    const session = draftSession.current;
-    setGenerating(true);
-    setDraftJobId(null);
     setDraftMessage("");
     try {
-      const jobId = await startJob(`/api/papers/${paperId}/glossary-draft`, {
-        terms: glossary.filter(t => t.source.trim() || t.target.trim()),
+      await startGlossaryDraft(paperId, {
+        terms: normalizeTerms(glossary),
         model: model || undefined, effort: effort || undefined,
-      }, { kind: "glossary-draft", paperId }, event => {
-        if (session !== draftSession.current) return;
-        setGenerating(false);
-        if (event.status !== "succeeded") return;
-        setGlossaryReviewed(true);
-        const terms = event.result.terms as { source: string; target: string }[];
-        if (terms.length) {
-          setGlossary(values => [...values, ...terms]);
-          setNewSources(values => new Set([...values, ...terms.map(t => t.source)]));
-          setGlossaryDirty(true);
-          setGlossaryView("new"); setGlossarySearch("");
-        }
-        setDraftMessage(terms.length ? `訳語の判断が必要な未登録語を${terms.length}件抽出しました。確認・修正して共通辞書に追加し、翻訳を開始できます。` : "訳語の判断が必要な未登録語はありません。既存の共通辞書を使って翻訳できます。");
       });
-      if (session === draftSession.current) setDraftJobId(jobId);
     } catch (error) {
-      if (session !== draftSession.current) return;
-      setGenerating(false);
       showError(error, "翻訳対応表を作成できませんでした");
     }
   };
@@ -179,7 +216,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
 
   return (
     <Dialog open={open} onOpenChange={async next => {
-      if (!next && busy) return;
+      if (!next && holding) return;
       if (!next && glossaryDirty && !await askConfirm("辞書の変更を破棄", "保存していない辞書の変更を破棄しますか？", "破棄")) return;
       onOpenChange(next);
     }}>
@@ -229,17 +266,17 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
               onKeyDown={(e) => { if (e.key === "Enter") handleStart(); }}
             />
             <p className={`text-[12px] ${selection.error ? "text-destructive" : "text-muted-foreground"}`}>
-              {selection.error ?? (selection.pages ? `翻訳対象: ${selection.pages.length}ページ` : "")}
+              {selection.error ?? (selection.pages ? translationTargetText(selection.pages.length, planFetching ? undefined : plan) : "")}
             </p>
           </div>
-          <details className="border rounded p-2 text-[12px]">
+          <details className="border rounded p-2 text-[12px]" open={glossaryOpen} onToggle={e => setGlossaryOpen(e.currentTarget.open)}>
             <summary className="cursor-pointer font-medium">全論文共通の専門用語辞書（{glossary.length}件）</summary>
-            <p className="text-muted-foreground my-2">翻訳前に、AIがこの論文から共通辞書にない専門用語のうち、訳語が定まっていない語や訳し方に迷う語だけを日本語訳の案と一緒に抽出します。「モデル予測制御」のように訳語が一つに決まる語は候補に含めません。候補を確認・修正して追加すると、今後のすべての論文で使えます。過去の登録語もここで確認・修正できます。辞書の変更は各論文を次に翻訳するときに反映されます。</p>
+            <p className="text-muted-foreground my-2">用語を確認すると、翻訳前にAIがこの論文から共通辞書にない専門用語のうち、訳語が定まっていない語や訳し方に迷う語だけを日本語訳の案と一緒に抽出します。「モデル予測制御」のように訳語が一つに決まる語は候補に含めません。候補を確認・修正して追加すると、今後のすべての論文で使えます。過去の登録語もここで確認・修正できます。辞書の変更は各論文を次に翻訳するときに反映されます。</p>
             <fieldset disabled={busy} className="min-w-0">
             <Button onClick={generateGlossary} disabled={!savedGlossary || !settings}>
               {generating ? "AIが対応表を作成中…" : "AIで未登録の専門用語を確認"}
             </Button>
-            <p role="status" className="text-muted-foreground my-2">{draftMessage || (glossary.length ? "過去の登録語を含む共通辞書です。今回の追加候補には「新規」と表示します。" : "上で選択したモデルを使用します。生成した対応表は保存するまで翻訳に適用されません。")}</p>
+            <p className="text-muted-foreground my-2">{glossary.length ? "過去の登録語を含む共通辞書です。今回の追加候補には「新規」と表示します。" : "上で選択したモデルを使用します。生成した対応表は保存するまで翻訳に適用されません。"}</p>
             <div className="flex gap-1 my-2">
               <Button variant={glossaryView === "new" ? "default" : "outline"} onClick={() => setGlossaryView("new")}>今回の追加候補</Button>
               <Button variant={glossaryView === "existing" ? "default" : "outline"} onClick={() => setGlossaryView("existing")}>過去の登録語</Button>
@@ -268,17 +305,29 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
                 setNewSources(values => new Set([...values, ...added.map(t => t.source)]));
                 setGlossaryView("new"); setGlossarySearch("");
               }} />
-            {generating && draftJobId && <Button variant="outline" className="mt-2" onClick={() => {
-              apiRequest("POST", `/api/jobs/${draftJobId}/cancel`).catch(error => showError(error, "作成を中止できませんでした"));
-            }}>対応表の作成を中止</Button>}
           </details>
+          <div role="status" className="grid gap-1 text-[12px]">
+            {generating ? <div className="flex items-center gap-2">
+              <p className="text-muted-foreground flex-1">AIが未登録の専門用語を抽出しています。閉じても抽出は続き、終わったらお知らせします。</p>
+              {draft.jobId && <Button variant="outline" onClick={() => {
+                apiRequest("POST", `/api/jobs/${draft.jobId}/cancel`).catch(error => showError(error, "抽出を中止できませんでした"));
+              }}>抽出を中止</Button>}
+            </div> : <p className="text-muted-foreground">{glossaryReviewed ? draftMessage : reviewSkipMessage(skip)}</p>}
+            {warning && <p className="text-amber-700 dark:text-amber-400">{warning}</p>}
+          </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" disabled={busy} onClick={async () => {
+          <Button variant="outline" disabled={holding} onClick={async () => {
             if (glossaryDirty && !await askConfirm("辞書の変更を破棄", "保存していない辞書の変更を破棄しますか？", "破棄")) return;
             onOpenChange(false);
-          }}>キャンセル</Button>
-          <Button onClick={handleStart} disabled={!selection.pages?.length || busy || !savedGlossary}>{glossaryReviewed ? "辞書を適用して翻訳を開始" : "未登録語を確認して翻訳へ"}</Button>
+          }}>{generating ? "閉じる" : "キャンセル"}</Button>
+          {!glossaryReviewed && !skip && <Button variant="outline" onClick={generateGlossary}
+            disabled={!selection.pages?.length || busy || !savedGlossary || !settings}>
+            {generating ? "用語を抽出中…" : "用語を確認してから翻訳"}
+          </Button>}
+          <Button onClick={handleStart} disabled={!selection.pages?.length || busy || !savedGlossary}>
+            {startButtonLabel({ reviewed: glossaryReviewed, skip })}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

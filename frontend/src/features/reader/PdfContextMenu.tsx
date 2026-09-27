@@ -146,6 +146,8 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
                 queryClient.invalidateQueries({ queryKey: [QK.glossary] });
                 queryClient.invalidateQueries({ queryKey: [QK.effectiveGlossary] });
                 queryClient.invalidateQueries({ queryKey: [QK.paragraphs] });
+                // A new term changes which saved translations the translation dialog can reuse.
+                queryClient.invalidateQueries({ queryKey: [QK.translationPlan] });
                 useStore.getState().setStatus("共通辞書に登録しました。すべての論文の次の翻訳から適用します。");
               } catch (error) { showError(error, "用語を登録できませんでした"); }
             })}>
