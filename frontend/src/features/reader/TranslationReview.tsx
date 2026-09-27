@@ -13,6 +13,7 @@ import { onAppEvent, type AppEvents } from "@/lib/appEvents";
 import { paragraphOfSelection } from "@/lib/pdfSelection";
 import { QK } from "@/lib/queryKeys";
 import { useOpenEdit } from "@/lib/pendingSaves";
+import { translationIssues } from "@/lib/translationIssues";
 
 type Paragraph = { id: string; page: number; pages: number[]; source: string; text: string };
 type Revision = { id: string; unit_id: string; before: string; after: string; created_at: string };
@@ -37,20 +38,9 @@ function PaperReview({ paperId }: { paperId: string }) {
   const [target, setTarget] = useState<AppEvents["open-paragraph-editor"] | null>(null);
   const [unmatched, setUnmatched] = useState(false);
   const dirty = !!selected && text !== selected.text;
-  const issues = new Map<number, Set<string>>();
-  const add = (page: number, message: string) => { if (!issues.has(page)) issues.set(page, new Set()); issues.get(page)!.add(message); };
-  if (reading) {
-    for (let page = 1; page <= reading.page_count; page++) {
-      if ((reading.translation_required_pages?.includes(page) ?? true)
-          && !reading.completed_pages.includes(page) && !reading.empty_pages.includes(page)) add(page, "未翻訳");
-    }
-    reading.empty_pages.forEach(page => add(page, "抽出できる文字がありません"));
-    reading.report?.skipped_block_pages?.forEach(page => add(page, "翻訳をスキップした段落があります"));
-    [...(reading.report?.skipped_pages ?? []), ...(reading.preview?.skipped_pages ?? [])].forEach(page => add(page,
-      reading.preview?.page_errors?.[String(page)] ?? reading.report?.page_errors?.[String(page)] ?? "PDF生成をスキップしました"));
-  }
+  const issues = translationIssues(reading);
   // The issues tab only appears when there is something to check.
-  const view = issues.size ? tab : "edit";
+  const view = issues.length ? tab : "edit";
   const { data: paragraphs = [], isFetching, isError } = useQuery({ queryKey: [QK.paragraphs, paperId],
     queryFn: () => apiRequest<Paragraph[]>("GET", `/api/papers/${paperId}/paragraphs`), enabled: open && view === "edit" });
   const { data: history = [] } = useQuery({ queryKey: [QK.revisions, paperId],
@@ -91,7 +81,7 @@ function PaperReview({ paperId }: { paperId: string }) {
     } catch (error) { setPending(false); showError(error, "翻訳の修正を実行できませんでした"); }
   };
   return <>
-    <button className="rounded px-2 py-1 hover:bg-muted" onClick={() => { setOpen(true); setTab("issues"); }}>翻訳の確認・修正{issues.size ? ` (${issues.size})` : ""}</button>
+    <button className="rounded px-2 py-1 hover:bg-muted" onClick={() => { setOpen(true); setTab("issues"); }}>翻訳の確認・修正{issues.length ? ` (${issues.length})` : ""}</button>
     <Dialog open={open} onOpenChange={async next => {
       if (!next && (pending || busy)) return;
       if (!next && dirty && !await askConfirm("修正案を破棄", "保存していない修正案を破棄しますか？", "破棄")) return;
@@ -99,13 +89,14 @@ function PaperReview({ paperId }: { paperId: string }) {
       setOpen(next);
     }}>
       <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-y-auto">
-        <DialogTitle>{issues.size ? "翻訳の確認・修正" : "翻訳を修正"}</DialogTitle>
-        <DialogDescription>{issues.size ? "要確認箇所へ移動したり、訳文を修正してPDFに反映できます。" : "訳文を段落ごとに修正してPDFに反映できます。"}</DialogDescription>
-        {!!issues.size && <div className="flex gap-2"><Button variant={view === "issues" ? "default" : "outline"} onClick={() => setTab("issues")}>要確認箇所</Button>
+        <DialogTitle>{issues.length ? "翻訳の確認・修正" : "翻訳を修正"}</DialogTitle>
+        <DialogDescription>{issues.length ? "要確認箇所へ移動したり、訳文を修正してPDFに反映できます。" : "訳文を段落ごとに修正してPDFに反映できます。"}</DialogDescription>
+        {!!issues.length && <div className="flex gap-2"><Button variant={view === "issues" ? "default" : "outline"} onClick={() => setTab("issues")}>要確認箇所</Button>
           <Button variant={view === "edit" ? "default" : "outline"} onClick={() => setTab("edit")}>翻訳を修正</Button></div>}
         {view === "issues" ? <div className="space-y-2 text-sm">
-          {[...issues].sort(([a], [b]) => a - b).map(([page, messages]) => <button key={page} className="block w-full text-left border rounded p-3 hover:bg-muted"
-            onClick={() => { jumpToPage(page); setOpen(false); }}>p.{page} — {[...messages].join(" / ")}</button>)}
+          {issues.map(([page, messages]) => <button key={page} className="block w-full text-left border rounded p-3 hover:bg-muted"
+            onClick={() => { jumpToPage(page); setOpen(false); }}>p.{page} — {messages.join(" / ")}</button>)}
+          {!!reading?.ocr_pages?.length && <p className="text-muted-foreground">要OCRのページは原文のまま表示します。OCR済みのPDFを追加し直すと翻訳できます。</p>}
           {!!reading?.report?.skipped_blocks?.length && <p className="text-destructive">翻訳をスキップした段落が{reading.report.skipped_blocks.length}箇所あります。原文と照合してください。</p>}
         </div> : <div className="space-y-3 text-sm">
           {isFetching && <p>段落を読み込み中…</p>}{isError && <p className="text-destructive">段落を読み込めませんでした。</p>}

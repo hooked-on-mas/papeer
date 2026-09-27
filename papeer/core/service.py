@@ -15,6 +15,7 @@ from papeer.providers import ProviderBackend, check_cancel
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library
 from papeer.layout.math_layout import restore_formula_text
+from papeer.layout.ocr_pages import needs_ocr_message, ocr_markdown_note
 from papeer.translation.translation import RetryState, translate_batches, translation_fingerprint
 from papeer.translation.translation import translation_version, page_fingerprint
 from papeer.translation.translation_preview import PREVIOUS_CACHE, preview_page, remove_unused_runs, translated_page, translated_page_numbers
@@ -113,7 +114,7 @@ class PaperService:
         glossary_key = json.dumps(glossary, ensure_ascii=False, sort_keys=True)
         apply_glossary(units, glossary)
         if not units:
-            raise ValueError("翻訳対象の文字が見つかりませんでした。")
+            raise ValueError(needs_ocr_message(document) or "翻訳対象の文字が見つかりませんでした。")
         requested = set(selected)
         selected = expand_pages(units, selected)
         if selected != requested:
@@ -327,7 +328,7 @@ class PaperService:
             preview["complete"] = True
             atomic_write_json(preview_path, preview)
             self.page_ready(paper_id, document["page_count"])
-            lines = [f"# {document['title']} — 日本語訳", ""]
+            lines = [f"# {document['title']} — 日本語訳", "", *ocr_markdown_note(document)]
             for section in re.split(r"(?=^## p\.\d+ / )", previous_markdown, flags=re.M):
                 match = re.match(r"## p\.(\d+) / ", section)
                 if match and int(match[1]) in retained:

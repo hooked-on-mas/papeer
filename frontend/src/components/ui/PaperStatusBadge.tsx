@@ -19,9 +19,10 @@ export function PaperStatusBadge({ status, text, className, hasSummary, descript
     translated: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
     review: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
     failed: "bg-destructive/10 text-destructive",
+    ocr: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
   }[status];
   const Icon = { untranslated: Circle, translating: Loader2, partial: CircleDashed, paused: Pause,
-    translated: CircleCheck, review: CircleAlert, failed: CircleAlert }[status];
+    translated: CircleCheck, review: CircleAlert, failed: CircleAlert, ocr: CircleAlert }[status];
 
   return (
     <div className={cn("inline-flex items-center gap-1.5", className)}>

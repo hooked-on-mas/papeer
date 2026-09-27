@@ -14,7 +14,8 @@ _HEADING = re.compile(r'^(?:\d+(?:\.\d+)*\.?|[IVX]+\.|[A-Z]\.)\s+\S')
 
 def _prose(b):
     text = b.get('text','').strip()
-    return (b.get('kind','text') == 'text' and not b.get('running_header')
+    # A page needing OCR is kept as the original, so its blocks never join a flow.
+    return (b.get('kind','text') == 'text' and not b.get('running_header') and not b.get('needs_ocr')
             and not b.get('reading_margin') and not b.get('reading_ambiguous') and not formula_only_block(b)
             and not _CAPTION.match(text) and len(text.split()) >= 5
             and not (_HEADING.match(text) and len(text.split()) < 16))

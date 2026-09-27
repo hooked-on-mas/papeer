@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { paperTranslationStatus } from "../src/lib/paperStatus.ts";
-import type { PaperData, ReadingData } from "../src/api/hooks.ts";
+import type { OcrPage, PaperData, ReadingData } from "../src/api/hooks.ts";
 
 const paper: PaperData = { id: "paper", title: "Paper", pages: 12, translated_count: 0 };
 
@@ -51,3 +51,28 @@ test("library and reader count translation targets rather than preserved referen
   assert.equal(paperTranslationStatus(complete, false, { ...reading, completed_pages: [1, 12, 13] }).completed, 1);
   assert.equal(paperTranslationStatus(complete, false, { ...reading, report: { skipped_blocks: ["body"] } }).status, "review");
 });
+
+test("a paper whose pages all need OCR says so instead of an unknown page count", () => {
+  const scanned = { ...paper, pages: 3, translation_required_count: 0, translation_completed_required_count: 0, translation_ocr_count: 3 };
+  const result = paperTranslationStatus(scanned, false);
+  assert.equal(result.status, "ocr");
+  assert.equal(result.text, "要OCR");
+  assert.equal(result.count, "3/3ページ");
+  assert.match(result.description, /OCR済みのPDF/);
+  const ocr: OcrPage[] = [{ page: 1, reason: "garbled" }, { page: 2, reason: "image" }, { page: 3, reason: "garbled" }];
+  const reading = { page_count: 3, completed_pages: [] as number[], translation_required_pages: [] as number[],
+    in_progress: false, report: null, ocr_pages: ocr } as ReadingData;
+  assert.equal(paperTranslationStatus(scanned, false, reading).status, "ocr");
+  // Partly garbled pages are translated: they neither count as OCR pages nor block completion.
+  const partial = { ...reading, translation_required_pages: [1, 2, 3], completed_pages: [1, 2, 3],
+    ocr_pages: [{ page: 2, reason: "partial" as const }] } as ReadingData;
+  assert.equal(paperTranslationStatus(scanned, false, partial).status, "translated");
+  const some = paperTranslationStatus({ ...complete(), translation_ocr_count: 2 }, false);
+  assert.equal(some.status, "translated");
+  assert.match(some.description, /2ページは要OCRのため原文のまま/);
+});
+
+function complete(): PaperData {
+  return { ...paper, pages: 13, translated_count: 11, translation_required_count: 11,
+    translation_completed_required_count: 11, translation_has_issues: false };
+}

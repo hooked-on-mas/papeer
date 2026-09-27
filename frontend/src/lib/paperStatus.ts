@@ -1,6 +1,7 @@
 import type { PaperData, ReadingData } from "../api/hooks";
+import { wholeOcrPages } from "./translationIssues.ts";
 
-export type PaperStatus = "untranslated" | "translating" | "partial" | "paused" | "translated" | "review" | "failed";
+export type PaperStatus = "untranslated" | "translating" | "partial" | "paused" | "translated" | "review" | "failed" | "ocr";
 
 /** Counts are translated pages, never a job's paragraph-level progress counters. */
 export function paperTranslationStatus(paper: PaperData | null | undefined, translating: boolean, reading?: ReadingData | null) {
@@ -11,6 +12,8 @@ export function paperTranslationStatus(paper: PaperData | null | undefined, tran
     ? required.filter(page => reading!.completed_pages.includes(page)).length
     : reading?.completed_pages.length ?? paper?.translation_completed_required_count ?? paper?.translated_count ?? 0);
   const paused = reading?.in_progress ?? paper?.translation_in_progress;
+  // Pages kept as the original because their text is garbled or they are scanned images.
+  const ocrPages = reading?.ocr_pages ? wholeOcrPages(reading).length : paper?.translation_ocr_count ?? 0;
   const needsReview = reading?.report
     ? !!(reading.report.skipped_blocks?.length || reading.report.skipped_pages?.length)
     : paper?.translation_has_issues ?? (pages === totalPages && paper?.status === "一部翻訳済み");
@@ -20,10 +23,13 @@ export function paperTranslationStatus(paper: PaperData | null | undefined, tran
   else if (pages > 0 && completed >= pages) status = needsReview ? "review" : "translated";
   else if (completed > 0) status = "partial";
   else if (paper?.status === "翻訳未完了") status = "failed";
+  else if (pages === 0 && ocrPages > 0) status = "ocr";
   else status = "untranslated";
-  const text = { untranslated: "未翻訳", translating: "翻訳中", partial: "一部翻訳", paused: "中断・再開可", translated: "翻訳完了", review: "訳文に未翻訳あり", failed: "翻訳未完了" }[status];
+  const text = { untranslated: "未翻訳", translating: "翻訳中", partial: "一部翻訳", paused: "中断・再開可", translated: "翻訳完了", review: "訳文に未翻訳あり", failed: "翻訳未完了", ocr: "要OCR" }[status];
   const scope = pages !== totalPages ? "翻訳対象" : "全";
-  const count = pages > 0 ? `${completed}/${pages}ページ` : "ページ数不明";
-  const description = `${text} · ${pages > 0 ? `${scope}${pages}ページ中${completed}ページの訳文を保存済み` : count}${status === "review" ? "。未翻訳の段落は「翻訳の確認・修正」で確認できます" : ""}`;
+  const count = status === "ocr" ? `${ocrPages}/${totalPages}ページ` : pages > 0 ? `${completed}/${pages}ページ` : "ページ数不明";
+  const ocrNote = status === "ocr" ? "文字化け・画像だけのページしかないため翻訳できません。OCR済みのPDFを追加してください"
+    : ocrPages > 0 ? `${ocrPages}ページは要OCRのため原文のまま` : "";
+  const description = `${text} · ${status === "ocr" ? `全${totalPages}ページ中${ocrPages}ページが要OCR` : pages > 0 ? `${scope}${pages}ページ中${completed}ページの訳文を保存済み` : count}${status === "review" ? "。未翻訳の段落は「翻訳の確認・修正」で確認できます" : ""}${ocrNote ? `。${ocrNote}` : ""}`;
   return { status, text, pages, completed, count, description, progress: pages > 0 ? completed / pages * 100 : 0 };
 }

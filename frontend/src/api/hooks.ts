@@ -20,6 +20,8 @@ export type PaperData = {
   translated_count?: number;
   translation_required_count?: number;
   translation_completed_required_count?: number;
+  /** Pages kept as the original because they need OCR. */
+  translation_ocr_count?: number;
   translation_has_issues?: boolean | null;
   translation_in_progress?: boolean;
   pages?: number;
@@ -51,11 +53,19 @@ export type TranslationPreview = {
   page_errors?: Record<string, string>;
 };
 
+/** A page needing OCR: kept as the original when its text layer is garbled or it is a scanned image,
+ * or translated except for its garbled paragraphs ("partial"). */
+export type OcrPage = { page: number; reason: "garbled" | "image" | "partial"; garbled_ratio?: number;
+  /** "partial" only: paragraphs kept as the original (0 when the garbled text is in formulas or tables). */
+  garbled_paragraphs?: number };
+
 export type ReadingData = {
   page_count: number;
   source_page_count: number;
   empty_pages: number[];
   translation_required_pages?: number[];
+  /** Listed in the translation review; not translated unless "partial". */
+  ocr_pages?: OcrPage[];
   completed_pages: number[];
   preview: TranslationPreview | null;
   in_progress: boolean;

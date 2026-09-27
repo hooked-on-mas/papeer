@@ -8,7 +8,7 @@ from typing import Any
 from papeer.core.paths import PaperFiles
 from papeer.core.service import page_translation_text
 from papeer.core.storage import Library
-from papeer.core.translation_review import cached_required_translation_pages
+from papeer.core.translation_review import cached_review_pages
 from papeer.translation.translation_preview import read_preview, translated_page, translated_page_numbers
 
 
@@ -20,7 +20,8 @@ def translation_state(folder: Path, page_count: int) -> dict[str, Any]:
         preview = read_preview(folder)
     except (OSError, ValueError, json.JSONDecodeError):
         completed, preview = [], None
-    required = set(cached_required_translation_pages(folder, page_count))
+    review = cached_review_pages(folder, page_count)
+    required = set(review["required"])
     try:
         report = json.loads(files.translation_report.read_text("utf-8"))
         has_issues = bool(report.get("skipped_blocks") or report.get("skipped_pages"))
@@ -30,6 +31,8 @@ def translation_state(folder: Path, page_count: int) -> dict[str, Any]:
         "translated_count": len(completed),
         "translation_required_count": len(required),
         "translation_completed_required_count": len(required.intersection(completed)),
+        # Pages kept as the original because they need OCR (partly garbled pages are translated).
+        "translation_ocr_count": sum(1 for entry in review["ocr"] if entry.get("reason") != "partial"),
         "translation_has_issues": has_issues,
         "has_translated": files.translated_pdf.is_file(),
         "translation_in_progress": bool(preview and not preview["complete"]),
@@ -80,6 +83,7 @@ def reading_state(lib: Library, paper_id: str, last_page: int = 0) -> dict[str, 
         "source_page_count": info["page_count"],
         "empty_pages": info["empty_pages"],
         "translation_required_pages": info["translation_required_pages"],
+        "ocr_pages": info["ocr_pages"],
         "completed_pages": completed,
         "preview": preview,
         "in_progress": in_progress,

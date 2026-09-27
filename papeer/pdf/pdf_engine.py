@@ -16,6 +16,7 @@ from papeer.pdf.pdf_math_crops import formula_crop, page_glyph_bounds
 from papeer.layout.table_layout import separate_tables, table_regions
 from papeer.layout.figure_layout import figure_regions
 from papeer.layout.algorithm_layout import separate_algorithms
+from papeer.layout.ocr_pages import ocr_check
 from papeer.layout.reading_flow import order_page, continuation_groups, translation_blocks, materialize_flows
 from papeer.pdf.pdf_typography import FONT_CSS, TextStyle, body_font_size, first_line_indented, font_archive, merge_wrapped_headings, reading_space, running_headers, text_html, text_style
 
@@ -30,12 +31,13 @@ def extract_pdf(path: Path) -> dict:
             raise ValueError("パスワード付きPDFです。解除したコピーを追加してください。")
         if not document.page_count:
             raise ValueError("PDFにページがありません。")
-        blocks, pages, empty_pages = [], [], []
+        blocks, pages, empty_pages, ocr_pages = [], [], [], []
         for number, page in enumerate(document):
             page_blocks = []
             block_seq = 1
             items = page.get_text("rawdict", sort=True, flags=fitz.TEXTFLAGS_RAWDICT & ~fitz.TEXT_PRESERVE_IMAGES)["blocks"]
             annotate_math_fonts(items)
+            page_items = items
             items, algorithms, algorithm_regions = separate_algorithms(page, items)
             figures = figure_regions(page)
             tables = [r for r in table_regions(page) if not any(r.intersects(f) for f in figures + algorithm_regions)]
@@ -59,6 +61,9 @@ def extract_pdf(path: Path) -> dict:
                 page_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
             if not page_blocks:
                 empty_pages.append(number + 1)
+            # A garbled or scanned page (or paragraph) keeps its original and is listed for review.
+            if ocr := ocr_check(page, page_items, page_blocks):
+                ocr_pages.append({"page": number + 1, **ocr})
             blocks.extend(page_blocks)
             pages.append({"number": number + 1, "text": "\n\n".join(b["text"] for b in page_blocks),
                           "width": page.cropbox.width, "height": page.cropbox.height,
@@ -67,7 +72,7 @@ def extract_pdf(path: Path) -> dict:
         if not title or len(title) > 240:
             title = path.stem
         result = {**extract_bibliography(document), "layout_version": LAYOUT_VERSION, "title": title, "pages": pages, "blocks": blocks,
-                "empty_pages": empty_pages, "page_count": len(pages)}
+                "empty_pages": empty_pages, "ocr_pages": ocr_pages, "page_count": len(pages)}
         ordered = []
         headers = running_headers(result)
         for info in pages:
@@ -139,7 +144,8 @@ def translation_units(document: dict, limit: int | None = None) -> list[dict]:
         raise ValueError("翻訳単位の文字数上限は正の数にしてください。")
     units = []
     for block in translation_blocks(document):
-        if block.get("kind") in {"formula", "table", "reference", "figure", "algorithm"} or formula_only_block(block):
+        if (block.get("kind") in {"formula", "table", "reference", "figure", "algorithm"} or block.get("needs_ocr")
+                or formula_only_block(block)):
             continue
         text = block.get("translation_text", block["text"])
         # Pure page numbers and symbol-only blocks are retained verbatim.
