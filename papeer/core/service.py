@@ -234,22 +234,34 @@ class PaperService:
             archive.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(cache_path, archive)
         self.library.update(paper_id, status="翻訳中")
+        # With parallel translation, the workers of translate_batches change done and retry_state and
+        # write translation-cache.json (accept, save) holding this lock; this thread reads them holding it.
+        lock = threading.RLock()
         try:
             def skipped(unit):
                 # A unit taking another's translation is given up with the unit sent for it.
                 return unit["id"] not in done and retry_state.exhausted(followers.get(unit["id"], unit))
 
+            def ready_pages():
+                """The pages whose paragraphs are all translated or given up, not made yet, with their text."""
+                with lock:
+                    pages = {}
+                    for number, page_units in by_page.items():
+                        if not page_units and number not in selected:
+                            continue
+                        if (number in preview["pages"] or number in preview["skipped_pages"]
+                                or any(u["id"] not in done and not skipped(u) for u in page_units)):
+                            continue
+                        block_text = {}
+                        for unit in page_units:
+                            block_text.setdefault(unit["block"], []).append(done.get(unit["id"], unit["text"]))
+                        pages[number] = block_text
+                    return pages
+
             def publish_ready():
-                for number, page_units in by_page.items():
-                    if not page_units and number not in selected:
-                        continue
-                    if (number in preview["pages"] or number in preview["skipped_pages"]
-                            or any(u["id"] not in done and not skipped(u) for u in page_units)):
-                        continue
+                # On this thread only: while pages are made, the translation workers go on (accept only saves).
+                for number, block_text in ready_pages().items():
                     check_cancel(self.cancel)
-                    block_text = {}
-                    for unit in page_units:
-                        block_text.setdefault(unit["block"], []).append(done.get(unit["id"], unit["text"]))
                     self.progress(f"p.{number} の日本語PDFを作成しています…")
                     try:
                         build_translated_pdf(files.original_pdf, document,
@@ -286,11 +298,12 @@ class PaperService:
                                        "retry_state": retry_state.to_cache()})
 
             def accept(values):
+                # Holding `lock`, from translate_batches' workers when translating in parallel. The
+                # pages are made once their batch is done (finished), on this thread.
                 done.update(values)
                 for identity, text in values.items():
                     done.update(dict.fromkeys(copies.get(identity, ()), text))
                 save()
-                publish_ready()
 
             save()
             atomic_write_json(preview_path, preview)
@@ -300,7 +313,8 @@ class PaperService:
             finished_chunks = 0
 
             def report_progress():
-                completed_units = sum(u["id"] in done for u in selected_units)
+                with lock:
+                    completed_units = sum(u["id"] in done for u in selected_units)
                 parallel = f"（同時{concurrency}件）" if concurrency > 1 else ""
                 self.progress(f"翻訳 {finished_chunks}/{len(chunks)}{parallel} — "
                               f"指定ページの完了 {completed_units}/{len(selected_units)} ブロック")
@@ -313,8 +327,19 @@ class PaperService:
 
             check_cancel(self.cancel)
             report_progress()
-            translate_batches(self.provider, chunks, self.cancel, self.progress, accept, retry_state, save,
-                              concurrency=concurrency, finished=finished, instruction=instruction, paper=paper)
+            try:
+                translate_batches(self.provider, chunks, self.cancel, self.progress, accept, retry_state, save,
+                                  concurrency=concurrency, finished=finished, instruction=instruction, paper=paper,
+                                  lock=lock)
+            except Exception:
+                # Stopped by an error: batches answered while the run was stopping are saved but not
+                # finished, so their pages are made now (not after a cancel, which should end at once).
+                if not self.cancel.is_set():
+                    try:
+                        publish_ready()
+                    except Exception:
+                        pass  # The error that stopped the run is the one to report.
+                raise
             check_cancel(self.cancel)
             # A shared sentence must not be published with half its destinations
             # missing. Retain cached translations for retry, but restore all
@@ -334,6 +359,10 @@ class PaperService:
                 block_text.setdefault(unit["block"], []).append(done.get(unit["id"], unit["text"]))
             translated = {key: "\n".join(parts) for key, parts in block_text.items()}
             self.progress("日本語PDFを作成しています…")
+            # Drawn again in one pass rather than joined from the page PDFs made above: joining takes
+            # almost no time, but every page PDF embeds its own subset of the Japanese font, and the
+            # joined file came out about 1.5 times as large (12 pages: 2.1 MB drawn, 3.2 MB joined,
+            # the same text); this pass also gives the report (readability warnings and so on).
             staged = preview_page(folder, preview, 1).parent / "assembled.pdf"
             report = build_translated_pdf(files.original_pdf, document, translated, staged,
                                           translate_page_numbers=set(preview["pages"]) - retained)

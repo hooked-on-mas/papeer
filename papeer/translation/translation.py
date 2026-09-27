@@ -1,12 +1,13 @@
 """Validated translations with bounded recovery for damaged formula markers."""
 from __future__ import annotations
 
-from collections import Counter, deque
+from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 import json
 import hashlib
 import re
+import threading
 import unicodedata
 
 from papeer.layout.math_layout import MATH_TOKEN
@@ -471,7 +472,7 @@ def _locked_translation(answer: str, fragments: list[dict], parts: list[dict], t
     return "".join(result).strip()
 
 
-def _received(state, save, units, send):
+def _received(state, save, units, send, guard):
     """send() the request of `units` and record them as answered.
 
     An answer that came back unusable (AnswerRejected: cut off, empty) was answered too: it is
@@ -479,20 +480,24 @@ def _received(state, save, units, send):
     (translate_batches takes a first request on to recovery at once; a retry stops the run, and
     resuming moves on to the next one). Any other error leaves the request unanswered
     (RetryState.unanswered); a timeout waiting for the answer, unanswered up to the limit
-    (RetryState.timed_out).
+    (RetryState.timed_out). The request goes out without holding `guard`; the records are made
+    holding it.
     """
     try:
         answer = send()
     except AnswerRejected:
-        state.answered(units)
-        save()
+        with guard:
+            state.answered(units)
+            save()
         raise
     except TransientError as error:
         if error.after_sending:
-            state.timed_out(units)
-            save()
+            with guard:
+                state.timed_out(units)
+                save()
         raise
-    state.answered(units)
+    with guard:
+        state.answered(units)
     return answer
 
 
@@ -500,7 +505,7 @@ def _checked(unit: dict, text: str) -> dict:
     return validate_translations(json.dumps({"translations": [{"id": unit["id"], "text": text}]}), [unit])
 
 
-def _recover_unit(provider, unit, cancel, progress, state, save, paper=None):
+def _recover_unit(provider, unit, cancel, progress, state, save, guard, paper=None):
     """Retry `unit` until a translation passes the final check; raise RetryLimitExceeded once out of retries.
 
     Only an answer failing the checks moves on to the next retry. An error of the request itself
@@ -509,31 +514,37 @@ def _recover_unit(provider, unit, cancel, progress, state, save, paper=None):
     or a timeout counts as answered, and resuming goes on to the next retry (_received). An
     unusable answer here stops the run rather than moving on at once, so that a service that
     keeps cutting answers off is not asked again for every paragraph of the paper.
+    Records and saves are made holding `guard`, the requests without it (translate_batches).
     """
     parts, tokens = _source_parts(unit)
     instruction = sent_instruction(prompts.load("translation_recovery"), paper)
     if state.answered_level(unit) < 2:
-        check_cancel(cancel)
-        state.reserve(unit, save)
-        progress(f"本文と数式番号を分けて再翻訳 p.{unit['page']} / {unit['id']}"
-                 f"（追加1/{MAX_BLOCK_RETRIES}回）")
+        with guard:
+            # Checked holding the lock, just before the record: a stop made meanwhile sends nothing.
+            check_cancel(cancel)
+            state.reserve(unit, save)
+            progress(f"本文と数式番号を分けて再翻訳 p.{unit['page']} / {unit['id']}"
+                     f"（追加1/{MAX_BLOCK_RETRIES}回）")
         payload = json.dumps(_with_paper({"source_parts": parts, "required_math_indices": list(range(len(tokens))),
                                           "glossary": unit.get("glossary", []), **recovery_context(unit)}, paper),
                              ensure_ascii=False)
-        answer = _received(state, save, [unit], lambda: provider.generate(instruction, payload, _parts_schema(len(tokens))))
+        answer = _received(state, save, [unit], lambda: provider.generate(instruction, payload, _parts_schema(len(tokens))),
+                           guard)
         # A translation failing the final check falls through to the fixed-position retries.
         try:
             return _checked(unit, _assemble_parts(answer, tokens))
         except ValueError:
             pass
     while not state.exhausted(unit):
-        if cancel.is_set():
-            save()  # The answer just checked stays on record; the next retry's record would have carried it.
-        check_cancel(cancel)
-        state.reserve(unit, save)
-        progress(f"数式の位置を固定して本文を翻訳 p.{unit['page']} / {unit['id']}"
-                 f"（追加{state.attempts[unit['id']] - 1}/{MAX_BLOCK_RETRIES}回）")
-        fragments, answer = _received(state, save, [unit], lambda: _locked_request(provider, unit, parts, cancel, paper))
+        with guard:
+            if cancel.is_set():
+                save()  # The answer just checked stays on record; the next retry's record would have carried it.
+            check_cancel(cancel)
+            state.reserve(unit, save)
+            progress(f"数式の位置を固定して本文を翻訳 p.{unit['page']} / {unit['id']}"
+                     f"（追加{state.attempts[unit['id']] - 1}/{MAX_BLOCK_RETRIES}回）")
+        fragments, answer = _received(state, save, [unit], lambda: _locked_request(provider, unit, parts, cancel, paper),
+                                      guard)
         try:
             return _checked(unit, _locked_translation(answer, fragments, parts, tokens))
         except ValueError:
@@ -545,42 +556,83 @@ def translate_batch(provider, units, cancel, progress, accept, state=None, save=
     translate_batches(provider, [units], cancel, progress, accept, state, save, paper=paper)
 
 
-def translate_batches(provider, batches, cancel, progress, accept, state=None, save=lambda: None,
-                      concurrency=1, finished=lambda index: None, instruction=None, paper=None):
-    """Translate `batches`, keeping up to `concurrency` first requests in flight.
+class _Stop(threading.Event):
+    """Set when a parallel run ends early (a batch failed, or `finished` raised): the other batches
+    send no further request. It also reads as set on a cancel, so check_cancel stops them for both."""
 
-    Only each batch's first request runs on a worker thread. Retry records, recovery
-    requests and all callbacks stay on the calling thread, so the retry budget is
-    saved before every request just as in serial translation. `finished(index)` runs
-    once a batch is done; with concurrency, batches may finish out of order.
+    def __init__(self, cancel):
+        super().__init__()
+        self.cancel = cancel
+        # The error that stopped the run, raised to the caller in place of what the other batches
+        # end with (the Cancelled of check_cancel as the stop reaches them, or a later error).
+        self.error: BaseException | None = None
+        self._lock = threading.Lock()
+
+    def is_set(self) -> bool:
+        return self.cancel.is_set() or super().is_set()
+
+    def stop(self, error: BaseException) -> None:
+        """Stop the run for `error`, unless it is stopping already (then `error` is not its cause)."""
+        with self._lock:
+            if not super().is_set():
+                self.error = error
+                self.set()
+
+
+def translate_batches(provider, batches, cancel, progress, accept, state=None, save=lambda: None,
+                      concurrency=1, finished=lambda index: None, instruction=None, paper=None, lock=None):
+    """Translate `batches`, keeping up to `concurrency` of them in progress at once.
+
+    With concurrency, each batch runs on a worker thread from its first request through the
+    recovery of its paragraphs, and every batch is queued at once: a batch recovering paragraph by
+    paragraph, or the caller making the pages of a finished batch, does not hold back the next
+    one, and no more than `concurrency` requests (first requests and retries alike) are in flight.
+    Retry records, `save`, `accept` and `progress` run holding `lock` (a new one by default), never
+    two at a time, and the retry budget is saved before every request just as in serial
+    translation; the requests go out without it. `finished(index)` runs on the calling thread,
+    without the lock, once a batch is done (with concurrency, batches may finish out of order);
+    what it reads of the state `accept` changes, it reads holding `lock`.
     `instruction` is the translation prompt the caller keyed its cache with (TranslationKey), as
     written; `paper` is the paper's title and abstract (paper_context), sent with every request.
 
     A first request answered unusably (AnswerRejected: cut off at the output limit, empty) goes on
     to recovery paragraph by paragraph at once, like an answer failing the checks, so that one
-    batch cut off does not stop the whole paper.
+    batch cut off does not stop the whole paper. Any other error of a batch (or of `finished`)
+    stops the run: batches not begun are dropped, and a batch with a request in flight waits for
+    it, records it as serial translation would (an answer accepted where valid, an unusable answer
+    or a timeout as answered, no answer as unanswered) and sends nothing more; recovery of its
+    paragraphs waits for the next run. Then the error that stopped the run is raised, not what
+    the other batches end with as the stop reaches them. A cancel stops them the same way, without
+    waiting for the service beyond what the provider does on a cancel.
     """
     state = state if state is not None else RetryState()
     # Read at the start of each run, so a prompt edited in the settings applies to the next translation.
     if instruction is None:
         instruction = prompts.load("translation")
     sent = sent_instruction(instruction, paper)
+    guard = lock if lock is not None else threading.RLock()
+    halt = _Stop(cancel)
 
     def recover(unit):
-        check_cancel(cancel)
+        check_cancel(halt)
         # Skip only a paragraph out of retries; the rest of the paper goes on.
         try:
             state.check(unit)
         except RetryLimitExceeded as error:
-            progress(str(error))
+            with guard:
+                progress(str(error))
             return
         try:
-            accept(_recover_unit(provider, unit, cancel, progress, state, save, paper))
+            translated = _recover_unit(provider, unit, halt, progress, state, save, guard, paper)
         except RetryLimitExceeded as error:
             # Saved so that the last retry's answer is on record; resuming would otherwise
             # take that retry as unanswered and send it again.
-            save()
-            progress(str(error))
+            with guard:
+                save()
+                progress(str(error))
+            return
+        with guard:
+            accept(translated)
 
     def start(units):
         """Recover blocks answered in an earlier run; return the rest, recorded as sent.
@@ -588,100 +640,75 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
         Blocks whose first request went out but got no answer (RetryState.unanswered) are
         sent with the batch again instead of spending a retry.
         """
-        check_cancel(cancel)
+        check_cancel(halt)
         previous = [unit for unit in units if state.answered_level(unit)]
         for unit in previous:
             recover(unit)
         fresh = [unit for unit in units if unit not in previous]
         if fresh:
-            check_cancel(cancel)
-            state.send_first(fresh, save)
+            with guard:
+                check_cancel(halt)
+                state.send_first(fresh, save)
         return fresh
 
-    def request(fresh):
-        return provider.generate(sent, request_text(fresh, paper), TRANSLATION_SCHEMA)
-
-    def first_answer(fresh, send):
+    def first_answer(fresh):
         """The answer to the first request of `fresh`, or None when it came back unusable."""
         try:
-            return _received(state, save, fresh, send)
+            return _received(state, save, fresh, lambda: provider.generate(sent, request_text(fresh, paper),
+                                                                           TRANSLATION_SCHEMA), guard)
         except AnswerRejected as error:
             pages = "・".join(f"p.{page}" for page in dict.fromkeys(unit["page"] for unit in fresh))
-            progress(f"{pages}：{error} 段落ごとに翻訳し直します。")
+            with guard:
+                progress(f"{pages}：{error} 段落ごとに翻訳し直します。")
             return None
 
     def finish(fresh, answer):
         accepted = _valid_items(answer, fresh) if answer is not None else {}
-        if accepted:
-            accept(accepted)
-        else:
-            # accept() saves the answered record otherwise; a cancel before the first retry's
-            # record must not leave these blocks looking unanswered.
-            save()
+        with guard:
+            if accepted:
+                accept(accepted)
+            else:
+                # accept() saves the answered record otherwise; a cancel before the first retry's
+                # record must not leave these blocks looking unanswered.
+                save()
         for unit in fresh:
             if unit["id"] not in accepted:
                 recover(unit)
 
-    if concurrency <= 1:
-        for index, units in enumerate(batches):
+    def run(units):
+        try:
             fresh = start(units)
             if fresh:
-                finish(fresh, first_answer(fresh, lambda: request(fresh)))
+                finish(fresh, first_answer(fresh))
+        except BaseException as error:
+            # Before this worker takes the next batch waiting.
+            halt.stop(error)
+            raise
+
+    if concurrency <= 1:
+        for index, units in enumerate(batches):
+            run(units)
             finished(index)
         return
 
-    waiting = deque(enumerate(batches))
-    running = {}
     pool = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="translate")
+    futures = {pool.submit(run, units): index for index, units in enumerate(batches)}
     try:
-        while waiting or running:
-            while waiting and len(running) < concurrency:
-                index, units = waiting.popleft()
-                fresh = start(units)
-                if fresh:
-                    running[pool.submit(request, fresh)] = (index, fresh)
-                else:
-                    finished(index)
-            completed, _ = wait(running, return_when=FIRST_COMPLETED)
-            for future in completed:
-                index, fresh = running.pop(future)
-                finish(fresh, first_answer(fresh, future.result))
-                finished(index)
-    except BaseException:
-        # Keep answers that were already on their way; after a cancel, only those already here,
-        # without waiting for the rest. Blocks with an answer (also one that fails the checks or
-        # is unusable) or a timeout go to recovery when translation resumes; blocks whose request
-        # got no answer stay unanswered and are sent with a batch again. One save records them all.
-        answered = False
-        for future, (index, fresh) in running.items():
-            if cancel.is_set() and not future.done():
-                continue
-            try:
-                answer = future.result()
-            except AnswerRejected:
-                state.answered(fresh)
-                answered = True
-                continue
-            except TransientError as error:
-                if error.after_sending:
-                    state.timed_out(fresh)
-                    answered = True
-                continue
-            except Exception:
-                continue
-            state.answered(fresh)
-            answered = True
-            try:
-                accepted = _valid_items(answer, fresh)
-                if accepted:
-                    accept(accepted)
-            except Exception:
-                continue
-        if answered:
-            try:
-                save()
-            except Exception:
-                pass
-        raise
-    finally:
-        pool.shutdown(wait=True)
+        pending = set(futures)
+        while pending:
+            completed, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in sorted(completed, key=futures.__getitem__):
+                future.result()
+                finished(futures[future])
+    except BaseException as error:
+        # A batch's error comes here once its worker has stopped the run with it; the first one
+        # to come may be another batch's Cancelled as the stop reached it, so the cause is raised.
+        halt.stop(error)
+        # Waits for the batches with a request in flight: their records are complete (and saved)
+        # before the caller goes on.
+        pool.shutdown(wait=True, cancel_futures=True)
+        cause = halt.error or error
+        if cause is error:
+            raise
+        raise cause from None
+    pool.shutdown(wait=True)
