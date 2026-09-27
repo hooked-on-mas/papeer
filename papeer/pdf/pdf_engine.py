@@ -81,7 +81,60 @@ def extract_pdf(path: Path) -> dict:
         return result
 
 
-def translation_units(document: dict, limit: int = 6500) -> list[dict]:
+# Longest source text sent as one translation unit; longer blocks are split (tests lower it).
+UNIT_LIMIT = 6500
+# ". " followed by a capital: a sentence end unless the word before the period is an
+# abbreviation. A decimal ("3.5") has no space after the point. Group 1 is the word before
+# the mark, matched from its start so that checking it stays linear in the block length.
+_SENTENCE_MARK = r"""(\S*?)[.!?]["'”’)\]]*(\s+)(?=["“‘(\[]?[A-Z])"""
+_SENTENCE_END = re.compile(r"(?<!\S)" + _SENTENCE_MARK)
+# A unit that starts inside a word (after a cut at a math marker): the rest of that word.
+_SENTENCE_END_AT = re.compile(_SENTENCE_MARK)
+_ABBREVIATIONS = {
+    "al", "app", "approx", "art", "ca", "cf", "ch", "chap", "co", "col", "cor", "corp", "def", "dept",
+    "dr", "ed", "eds", "eq", "eqs", "est", "etc", "ex", "fig", "figs", "inc", "jr", "lem", "ltd",
+    "mr", "mrs", "ms", "no", "nos", "p", "pp", "prof", "prop", "ref", "refs", "resp", "sec", "secs",
+    "sect", "sr", "st", "sup", "suppl", "tab", "thm", "viz", "vol", "vols", "vs"}
+
+
+def _sentence_end(text: str, match: re.Match) -> bool:
+    if text[match.end(1)] != ".":
+        return True
+    word = match[1]
+    if match.start(1) and not text[match.start(1) - 1].isspace():
+        word = re.search(r"\S*$", text[:match.end(1)])[0]
+    word = word.lstrip("([{\"'“‘")
+    # "e.g.", "i.e.", "U.S." and initials ("J. Smith") are not sentence ends.
+    if "." in word or re.fullmatch(r"[A-Z]", word):
+        return False
+    return word.casefold() not in _ABBREVIATIONS
+
+
+def _unit_end(text: str, start: int, limit: int) -> int:
+    """End of the unit starting at start: the last sentence end within the limit, else the
+    last space, else the limit itself (never inside a math marker)."""
+    end = start + limit
+    if end >= len(text):
+        return len(text)
+    matches = list(_SENTENCE_END.finditer(text, start, end + 1))
+    if start and not text[start - 1].isspace() and (first := _SENTENCE_END_AT.match(text, start, end + 1)):
+        matches.insert(0, first)
+    sentences = [m.end() for m in matches if start < m.end() <= end and _sentence_end(text, m)]
+    if sentences:
+        return sentences[-1]
+    spaces = [m.end() for m in re.finditer(r"\s+", text[start:end])]
+    if spaces:
+        return start + spaces[-1]
+    for token in MATH_TOKEN.finditer(text, start):
+        if token.start() >= end:
+            break
+        if token.start() < end < token.end():
+            return token.start() if token.start() > start else token.end()
+    return end
+
+
+def translation_units(document: dict, limit: int | None = None) -> list[dict]:
+    limit = UNIT_LIMIT if limit is None else limit
     if limit <= 0:
         raise ValueError("翻訳単位の文字数上限は正の数にしてください。")
     units = []
@@ -94,13 +147,7 @@ def translation_units(document: dict, limit: int = 6500) -> list[dict]:
             continue
         start, index = 0, 0
         while start < len(text):
-            end = min(start + limit, len(text))
-            for token in MATH_TOKEN.finditer(text, start):
-                if token.start() >= end:
-                    break
-                if token.start() < end < token.end():
-                    end = token.start() if token.start() > start else token.end()
-                    break
+            end = _unit_end(text, start, limit)
             units.append({"id": f"{block['id']}_{index}", "block": block["id"],
                           "page": block["page"], "text": text[start:end],
                           **({k: block[k] for k in ("flow_pages", "flow_blocks")} if "flow_pages" in block else {})})

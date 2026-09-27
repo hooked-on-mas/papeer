@@ -19,7 +19,7 @@ from papeer.translation.translation import RetryState, translate_batches, transl
 from papeer.translation.translation import translation_version, page_fingerprint
 from papeer.translation.translation_preview import PREVIOUS_CACHE, preview_page, remove_unused_runs, translated_page, translated_page_numbers
 from papeer.translation.translation_context import contextual_units
-from papeer.layout.reading_flow import unit_pages, expand_pages, materialize_flows
+from papeer.layout.reading_flow import unit_pages, expand_pages, materialize_flows, join_unit_translations, resolve_unit_joins
 from papeer.core.summary_figures import summary_figures
 from papeer.core import exports, prompts
 from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision, glossary_for_folder
@@ -78,8 +78,8 @@ def page_translation_text(folder: Path, document: dict, page: int) -> list[str]:
         if unit["block"] in started:
             block_text.setdefault(unit["block"], []).append(done.get(unit["id"], unit["text"]))
     rendered_document, rendered_text = materialize_flows(
-        document, {key: "\n".join(parts) for key, parts in block_text.items()})
-    blocks = [restore_formula_text(rendered_text[b["id"]], b) for b in rendered_document["blocks"]
+        document, {key: join_unit_translations(parts) for key, parts in block_text.items()})
+    blocks = [restore_formula_text(resolve_unit_joins(rendered_text[b["id"]]), b) for b in rendered_document["blocks"]
               if b["page"] == page and b["id"] in rendered_text]
     if blocks:
         return blocks
@@ -213,7 +213,7 @@ class PaperService:
                     self.progress(f"p.{number} の日本語PDFを作成しています…")
                     try:
                         build_translated_pdf(files.original_pdf, document,
-                            {key: "\n".join(parts) for key, parts in block_text.items()},
+                            {key: join_unit_translations(parts) for key, parts in block_text.items()},
                             preview_page(folder, preview, number), page_numbers={number})
                     except Exception as error:
                         if isinstance(error, OSError):
@@ -288,7 +288,7 @@ class PaperService:
                 if not unit_pages(unit) & (set(preview["pages"]) - retained):
                     continue
                 block_text.setdefault(unit["block"], []).append(done.get(unit["id"], unit["text"]))
-            translated = {key: "\n".join(parts) for key, parts in block_text.items()}
+            translated = {key: join_unit_translations(parts) for key, parts in block_text.items()}
             self.progress("日本語PDFを作成しています…")
             staged = preview_page(folder, preview, 1).parent / "assembled.pdf"
             report = build_translated_pdf(files.original_pdf, document, translated, staged,
@@ -338,7 +338,7 @@ class PaperService:
                     continue
                 if block["id"] in rendered_text:
                     lines += [f"## p.{block['page']} / {block['id']}", "",
-                              restore_formula_text(rendered_text[block["id"]], block), ""]
+                              restore_formula_text(resolve_unit_joins(rendered_text[block["id"]]), block), ""]
                 elif block.get("kind") in {"formula", "table", "reference", "figure", "algorithm"} and block["page"] in preview["pages"]:
                     lines += [f"## p.{block['page']} / {block['id']}", "", block["text"], ""]
             atomic_write_text(files.translation_md, "\n".join(lines))

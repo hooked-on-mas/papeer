@@ -13,6 +13,7 @@ from fontTools import subset
 from fontTools.ttLib import TTFont
 
 from papeer.layout.math_layout import MATH_TOKEN
+from papeer.layout.reading_flow import resolve_unit_joins
 from papeer.pdf.pdf_fonts import truetype_subset
 
 
@@ -313,7 +314,8 @@ def text_html(text: str, style: TextStyle, images: dict[str, str], *,
     weight = "bold" if heading else "normal"
     color = "#161c24"
     paragraphs = []
-    for index, line in enumerate(text.splitlines()):
+    # A block split into several translation units continues the same paragraph.
+    for index, line in enumerate(resolve_unit_joins(text).splitlines()):
         if not line.strip():
             continue
         content = _content(line.strip(), images)
@@ -324,7 +326,6 @@ def text_html(text: str, style: TextStyle, images: dict[str, str], *,
             if match:
                 content = ('<span style="font-family:PapeerHeading;font-weight:bold">'
                            + _content(match[1], images) + "</span>　" + _content(match[2], images))
-        # A newline can be a translation-unit split, not a new paragraph.
         # Only the source first-line geometry authorizes automatic indentation.
         indent = "1em" if style.role == "body" and not paragraphs and first_indent else "0"
         gap = ".35em" if paragraphs and style.role == "body" else "0"

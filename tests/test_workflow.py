@@ -197,6 +197,46 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(all(len(x["text"]) <= 6500 for x in units))
         self.assertTrue(all(sum(len(x["text"]) + 100 for x in b) <= 9000 for b in batches(units)))
 
+    def test_split_block_marker_stays_inside_the_pdf_layout(self):
+        from papeer.core.reading_tools import library_search, translation_paragraphs
+        from papeer.core.search import search_paper
+        from papeer.core.service import page_translation_text
+        from papeer.layout.reading_flow import UNIT_JOINER
+        # A low limit splits the fixture's longer paragraphs into several units.
+        with patch("papeer.pdf.pdf_engine.UNIT_LIMIT", 120):
+            document = self.library.document(self.paper_id)
+            units = translation_units(document)
+            split = {u["block"] for u in units if not u["id"].endswith("_0")}
+            self.assertTrue(split)
+            PaperService(self.library, FakeProvider(), self.cancel).translate(self.paper_id)
+            folder = self.library.folder(self.paper_id)
+            files = PaperFiles(folder)
+            cache = json.loads(files.translation_cache.read_text("utf-8"))
+            self.assertTrue(cache["translations"])
+            self.assertNotIn(UNIT_JOINER, json.dumps(cache, ensure_ascii=False))
+            # translation.md: one paragraph per block, the parts joined like one text.
+            markdown = files.translation_md.read_text("utf-8")
+            self.assertNotIn(UNIT_JOINER, markdown)
+            sections = {block_id: text for _, block_id, text in files.translation_sections()}
+            for block_id in split:
+                self.assertNotIn("\n", sections[block_id])
+                self.assertIn("削減した。適応制御", sections[block_id])
+            # 「翻訳の確認・修正」 lists the units themselves.
+            paragraphs = translation_paragraphs(self.library, self.paper_id)
+            self.assertEqual(len(paragraphs), len(units))
+            self.assertFalse(any(UNIT_JOINER in p["text"] for p in paragraphs))
+            pages = {u["page"] for u in units if u["block"] in split}
+            for page in pages:
+                self.assertFalse(any(UNIT_JOINER in text for text in page_translation_text(folder, document, page)))
+            found = search_paper(self.library, self.paper_id, "削減した。適応制御", side="translated")
+            self.assertTrue(found["results"])
+            self.assertNotIn(UNIT_JOINER, json.dumps(found, ensure_ascii=False))
+            everywhere = library_search(self.library, "削減した。適応制御")
+            self.assertTrue(everywhere["results"])
+            self.assertNotIn(UNIT_JOINER, json.dumps(everywhere, ensure_ascii=False))
+            with fitz.open(folder / "translated.pdf") as pdf:
+                self.assertNotIn(UNIT_JOINER, "".join(p.get_text() for p in pdf))
+
     def test_cancel_keeps_completed_translation_for_next_run(self):
         folder = self.library.folder(self.paper_id)
         document = self.library.document(self.paper_id)

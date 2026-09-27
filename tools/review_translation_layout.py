@@ -13,7 +13,7 @@ from pathlib import Path
 
 from papeer.pdf.pdf_engine import build_translated_pdf, translation_units
 from papeer.layout.math_layout import MATH_TOKEN
-from papeer.layout.reading_flow import unit_pages
+from papeer.layout.reading_flow import join_unit_translations, unit_pages
 
 
 def rebuild(papers: Path, output: Path) -> dict:
@@ -39,7 +39,7 @@ def rebuild(papers: Path, output: Path) -> dict:
         for unit in units:
             if unit_pages(unit) & pages:
                 grouped.setdefault(unit["block"], []).append(unit)
-        translations = {key: "\n".join(cache[u["id"]] for u in units)
+        translations = {key: join_unit_translations([cache[u["id"]] for u in units])
                         for key, units in grouped.items() if all(u["id"] in cache for u in units)}
         invalid = [u["id"] for u in units if u["id"] in cache and
                    Counter(MATH_TOKEN.findall(u["text"])) != Counter(MATH_TOKEN.findall(cache[u["id"]]))]

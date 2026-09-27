@@ -150,6 +150,30 @@ def unit_pages(unit):
     return set(unit.get('flow_pages',[unit['page']]))
 
 
+# Where one block was split into several translation units (pdf_engine.translation_units).
+# The translations are joined with this marker instead of a newline, so the split is not
+# typeset as a paragraph break; resolve_unit_joins removes it before text leaves the
+# PDF layout (translation.md, page text, search). Never stored in the translation cache.
+UNIT_JOINER = '\u2063'
+_UNIT_JOIN = re.compile(r'\s*' + UNIT_JOINER + r'\s*')
+
+
+def join_unit_translations(parts):
+    return UNIT_JOINER.join(parts)
+
+
+def resolve_unit_joins(text):
+    """Join the parts of a split block: a space only between two ASCII words (e.g. an
+    untranslated source fallback), nothing between Japanese sentences."""
+    def join(match):
+        left = text[match.start() - 1] if match.start() else ''
+        right = text[match.end()] if match.end() < len(text) else ''
+        spaced = (left.isascii() and right.isascii() and not left.isspace() and not right.isspace()
+                  and left not in '([{"\'' and right not in ')]}.,;:!?"\'')
+        return ' ' if left and right and spaced else ''
+    return _UNIT_JOIN.sub(join, text)
+
+
 def split_flow_text(text, members, formulas):
     """Split Japanese at punctuation, keeping formula markers atomic and exact."""
     weights=[max(1,(b['bbox'][2]-b['bbox'][0])*(b['bbox'][3]-b['bbox'][1])) for b in members]
