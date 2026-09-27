@@ -33,8 +33,8 @@ import { isJobKind, TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
 import { showJobFailure, useJobFailures } from "@/features/jobs/jobFailures";
 import { onAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
+import { SORT_LABELS } from "@/lib/librarySort";
 
-export const SORT_LABELS = ["追加が新しい順", "追加が古い順", "名前順（昇順）", "名前順（降順）"];
 type LibraryHit = { paper_id: string; title: string; side: "metadata" | "note" | "original" | "translated"; page: number | null; snippet: string };
 
 type FolderNode = {

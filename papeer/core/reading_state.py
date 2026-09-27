@@ -1,42 +1,12 @@
-"""What the reader and the library list show about a paper's translation."""
+"""What the reader shows about a paper's translation (the library list: library_list)."""
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 from papeer.core.paths import PaperFiles
 from papeer.core.service import page_translation_text
 from papeer.core.storage import Library
-from papeer.core.translation_review import cached_review_pages
 from papeer.translation.translation_preview import read_preview, translated_page, translated_page_numbers
-
-
-def translation_state(folder: Path, page_count: int) -> dict[str, Any]:
-    """How much of a paper has a Japanese translation, as the library list shows it."""
-    files = PaperFiles(folder)
-    try:
-        completed = translated_page_numbers(folder, page_count)
-        preview = read_preview(folder)
-    except (OSError, ValueError, json.JSONDecodeError):
-        completed, preview = [], None
-    review = cached_review_pages(folder, page_count)
-    required = set(review["required"])
-    try:
-        report = json.loads(files.translation_report.read_text("utf-8"))
-        has_issues = bool(report.get("skipped_blocks") or report.get("skipped_pages"))
-    except (OSError, ValueError):
-        has_issues = None
-    return {
-        "translated_count": len(completed),
-        "translation_required_count": len(required),
-        "translation_completed_required_count": len(required.intersection(completed)),
-        # Pages kept as the original because they need OCR (partly garbled pages are translated).
-        "translation_ocr_count": sum(1 for entry in review["ocr"] if entry.get("reason") != "partial"),
-        "translation_has_issues": has_issues,
-        "has_translated": files.translated_pdf.is_file(),
-        "translation_in_progress": bool(preview and not preview["complete"]),
-    }
 
 
 def reading_state(lib: Library, paper_id: str, last_page: int = 0) -> dict[str, Any]:

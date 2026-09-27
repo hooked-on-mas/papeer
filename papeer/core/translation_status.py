@@ -1,7 +1,7 @@
 """The translation state a paper's row keeps (papers.status), stored as a code.
 
 The frontend turns a code into its label (frontend/src/lib/paperStatus.ts). What the library list and
-the reader show is mostly worked out from the saved pages (reading_state.translation_state); the stored
+the reader show is mostly worked out from the saved pages (library_list.translation_state); the stored
 state tells what the pages cannot: a translation stopped before any page was saved (INCOMPLETE), and
 one that finished with paragraphs or pages left untranslated (PARTIAL).
 """

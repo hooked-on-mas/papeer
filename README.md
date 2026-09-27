@@ -241,6 +241,7 @@ Papeer-sync-backups/          フォルダー同期の選択で選ばなかっ�
 PapeerSync/                   このPCだけの設定（同期・バックアップの対象外）
   device-settings.json        CLI のパスと API URL
   <ハッシュ>.json             同期フォルダーの保存先と最終同期の基準
+  <ハッシュ>.review-pages.json  論文ごとの翻訳が必要なページ（ライブラリ一覧と閲覧画面用。document.json とコードが変わると作り直す）
 ```
 
 ## 環境変数

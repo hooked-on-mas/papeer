@@ -12,6 +12,7 @@ export type PaperData = {
   first_author?: string;
   publication_year?: string;
   collection_name?: string;
+  /** Only in GET /api/papers/{id}: the list rows leave the memo out. */
   note?: string;
   tags?: string[];
   read_status?: string;
@@ -217,6 +218,8 @@ export function useUsageLimits(provider: string | undefined) {
     queryFn: () => apiRequest<UsageLimits | null>("GET", "/api/usage/limits"),
     enabled: !!provider,
     staleTime: 5 * 60_000,
+    // Unlike the rest (App.tsx): usage goes on in other apps and devices. At most every staleTime.
+    refetchOnWindowFocus: true,
     retry: false,
   });
 }
