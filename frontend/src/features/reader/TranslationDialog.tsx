@@ -162,7 +162,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
           setGlossaryDirty(true);
           setGlossaryView("new"); setGlossarySearch("");
         }
-        setDraftMessage(terms.length ? `${terms.length}件の未登録語を抽出しました。確認・修正して共通辞書に追加し、翻訳を開始できます。` : "未登録の専門用語はありません。既存の共通辞書を使って翻訳できます。");
+        setDraftMessage(terms.length ? `訳語の判断が必要な未登録語を${terms.length}件抽出しました。確認・修正して共通辞書に追加し、翻訳を開始できます。` : "訳語の判断が必要な未登録語はありません。既存の共通辞書を使って翻訳できます。");
       });
       if (session === draftSession.current) setDraftJobId(jobId);
     } catch (error) {
@@ -232,7 +232,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
           </div>
           <details open className="border rounded p-2 text-[12px]">
             <summary className="cursor-pointer font-medium">全論文共通の専門用語辞書（{glossary.length}件）</summary>
-            <p className="text-muted-foreground my-2">翻訳前に、AIがこの論文から共通辞書にない専門用語と日本語訳を抽出します。候補を確認・修正して追加すると、今後のすべての論文で使えます。過去の登録語もここで確認・修正できます。辞書の変更は各論文を次に翻訳するときに反映されます。</p>
+            <p className="text-muted-foreground my-2">翻訳前に、AIがこの論文から共通辞書にない専門用語のうち、訳語が定まっていない語や訳し方に迷う語だけを日本語訳の案と一緒に抽出します。「モデル予測制御」のように訳語が一つに決まる語は候補に含めません。候補を確認・修正して追加すると、今後のすべての論文で使えます。過去の登録語もここで確認・修正できます。辞書の変更は各論文を次に翻訳するときに反映されます。</p>
             <fieldset disabled={busy} className="min-w-0">
             <Button onClick={generateGlossary} disabled={!savedGlossary || !settings}>
               {generating ? "AIが対応表を作成中…" : "AIで未登録の専門用語を確認"}
