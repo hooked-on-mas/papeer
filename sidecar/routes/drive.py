@@ -83,6 +83,12 @@ def options(body: OptionsRequest):
     return drive_sync.status(root)
 
 
+@router.get("/api/drive/side-backups")
+def side_backups():
+    """The libraries a choice between two left out (drive_sync.side_backups), restored through POST /api/restore."""
+    return {"items": drive_sync.side_backups(deps.get_data_dir()), "limit": drive_sync.SIDE_BACKUP_LIMIT}
+
+
 @router.get("/api/drive/check")
 def check():
     """Whether the automatic sync has anything to do, and whether it would reload the page (drive_sync.check).

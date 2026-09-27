@@ -156,6 +156,8 @@ Papeer/
     article.md                解説
     note.md                   メモ
 
+Papeer-sync-backups/          フォルダー同期の選択で選ばなかったライブラリ（バックアップ形式のZIP、最新3件。同期・バックアップの対象外）
+
 PapeerSync/                   このPCだけの設定（同期・バックアップの対象外）
   device-settings.json        CLI のパスと API URL
   <ハッシュ>.json             同期フォルダーの保存先と最終同期の基準

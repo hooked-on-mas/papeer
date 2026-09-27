@@ -13,9 +13,10 @@ import { openSettings, useSettingsNavigation } from "./settingsNavigation";
 import { openEditLabels } from "@/lib/pendingSaves";
 import { isAppClosing } from "@/app/appClosing";
 import { PublishSchedule, type SyncCheck } from "./autoSyncSchedule";
+import { describeDifference, type Counts, type LibraryDifference } from "./conflictSummary";
 
-type Revision = { id: string; device: string; created: string };
-type Counts = Partial<Record<"papers" | "notes" | "stickies" | "ink", number>>;
+/** diff: what differs from this PC's library; null when it could not be read (absent before it was recorded). */
+type Revision = { id: string; device: string; created: string; diff?: LibraryDifference | null };
 /** A sync that stopped to ask first (papeer/core/drive_sync.py: shrunk_kinds, mark_restored). */
 type SyncReview = {
   reason: "shrunk" | "remote_shrunk" | "restored"; message: string;
@@ -26,6 +27,8 @@ type DriveStatus = {
   connected: boolean; folder: string; auto_sync: boolean; last_sync: string | null;
   error: string | null; conflicts: Revision[]; previous_path: string | null;
   review: SyncReview | null; restored: boolean; library_missing: boolean;
+  /** Revisions the last choice left out but could not keep as backups (unreadable or damaged). */
+  not_set_aside: Revision[];
 };
 const COUNT_LABELS: [keyof Counts, string][] = [["papers", "論文"], ["notes", "メモ"], ["stickies", "付箋"], ["ink", "書き込み（ページ）"]];
 // Told once per launch; the settings keep showing it.
@@ -146,7 +149,9 @@ export function DriveSection() {
     finally { setPending(false); void refresh(); }
   };
   const sync = async (choice?: string, confirm = false, heads = data?.conflicts.map(item => item.id)) => {
-    if (choice && !await askConfirm("同期するデータを選択", "選んだライブラリ全体を使います。項目ごとの自動結合は行いません。このPCのデータを置き換える場合、元のデータは別フォルダーに残します。", "このデータを使う")) return;
+    if (choice && !await askConfirm("同期するデータを選択",
+      "選んだライブラリ全体を使います。項目ごとの自動結合は行いません。選ばなかった側のデータはこのPCに退避し、設定 → バックアップの「退避データから復元」で戻せます。",
+      "このデータを使う")) return;
     if (!await confirmOpenEdits()) return;
     try { await syncDrive(choice, heads, confirm); }
     catch (e) { showError(e, "同期できませんでした"); }
@@ -207,12 +212,22 @@ export function DriveSection() {
         onChoose={choice => void sync(choice, false, data.review?.heads)} />}
       <div className="flex gap-2"><Button disabled={busy} onClick={() => void sync()}>今すぐ同期</Button>
         <Button variant="outline" disabled={busy} onClick={() => void disconnect()}>ローカル保存に戻す</Button></div>
-      {!!data.conflicts.length && <div className="space-y-2 rounded border p-3">
-        <p>使用するライブラリを選んでください。初回接続時も、既存のデータを確認してから取り込みます。</p>
+      {!!data.conflicts.length && <div className="space-y-3 rounded border p-3">
+        <p>使用するライブラリを選んでください。初回接続時も、既存のデータを確認してから取り込みます。選ばなかった側のデータはこのPCに退避し、設定 → バックアップの「退避データから復元」で戻せます。</p>
         <Button variant="outline" disabled={busy} onClick={() => void sync("local")}>このPCのデータを使う</Button>
-        {data.conflicts.map(item => <div key={item.id}><Button variant="outline" disabled={busy} onClick={() => void sync(item.id)}>
-          {item.device} — {new Date(item.created).toLocaleString()} のデータを使う
-        </Button></div>)}
+        {data.conflicts.map(item => <div key={item.id} className="space-y-1">
+          <Button variant="outline" disabled={busy} onClick={() => void sync(item.id)}>
+            {item.device} — {new Date(item.created).toLocaleString()} のデータを使う
+          </Button>
+          {item.diff !== undefined && <ul aria-label="このPCとの違い" className="list-disc space-y-0.5 pl-5 text-xs break-all">
+            {describeDifference(item.diff).map(line => <li key={line}>{line}</li>)}
+          </ul>}
+        </div>)}
+      </div>}
+      {!!data.not_set_aside?.length && <div role="alert" className="text-amber-700 dark:text-amber-400">
+        <p>選ばなかった次の同期データは、読み取れないか破損していたため退避できませんでした（同期フォルダーの履歴には残っています）。</p>
+        <ul className="list-disc pl-5">{data.not_set_aside.map(item =>
+          <li key={item.id}>{item.device} — {new Date(item.created).toLocaleString()}</li>)}</ul>
       </div>}
       {data.previous_path && <p className="break-all text-xs">取り込み前のデータ：{data.previous_path}</p>}
     </>}

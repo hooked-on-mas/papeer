@@ -143,3 +143,49 @@ def test_malformed_version_fields_are_rejected(tmp_path, field, value):
         archive.writestr("library.zip", b"")
     with pytest.raises(ValueError, match="形式が不正"):
         sync.FolderDrive(folder).revisions()
+
+
+def test_conflict_reads_what_differs_in_place_and_keeps_the_side_left_out(tmp_path, monkeypatch):
+    from papeer.core.reading_tools import restore_backup
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    a, b = Library(tmp_path / "a"), Library(tmp_path / "b")
+    folder = tmp_path / "drive"
+    sync.connect(a.root, str(folder))
+    sync.connect(b.root, str(folder))
+    sample = Path(__file__).parent / "fixtures/sample.pdf"
+    first, _ = a.import_pdf(sample)
+    another = tmp_path / "another.pdf"
+    another.write_bytes(sample.read_bytes() + b"\n% another paper\n")
+    second, _ = b.import_pdf(another)
+    run(a)
+    remote = sync.FolderDrive(folder)
+    head = remote.revisions()[0]
+    # Only the database is read from the revision, where it lies in the sync folder.
+    with remote.open_library(head["id"]) as stream, zipfile.ZipFile(stream) as archive:
+        assert "library.sqlite3" in archive.namelist() and f"papers/{first}/original.pdf" in archive.namelist()
+    result = run(b)
+    assert result["status"] == "conflict"
+    diff = result["conflicts"][0]["diff"]
+    assert (diff["local_only"], diff["remote_only"]) == (1, 1)
+    assert (diff["local_titles"], diff["remote_titles"]) == ([b.paper(second)["title"]], [a.paper(first)["title"]])
+
+    sync.sync(b, remote, threading.Event(), lambda _: None, choice="local", expected_heads=[head["id"]])
+    kept = sync.side_backups(b.root)
+    assert [item["side"] for item in kept] == ["remote"]
+    restore_backup(Library(b.root), Path(kept[0]["path"]))
+    assert [paper["id"] for paper in Library(b.root).papers()] == [first]
+
+
+def test_open_library_refuses_a_malformed_revision(tmp_path):
+    folder = tmp_path / "drive"
+    folder.mkdir()
+    identity = "0" * 32
+    with zipfile.ZipFile(folder / (identity + ".papeer-sync"), "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("library.zip", b"x" * 1000)  # Compressed: not readable in place.
+    with pytest.raises(ValueError, match="形式が不正"):
+        with sync.FolderDrive(folder).open_library(identity):
+            pass
+    with pytest.raises(ValueError, match="ID"):
+        with sync.FolderDrive(folder).open_library("../x"):
+            pass

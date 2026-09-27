@@ -103,6 +103,10 @@ export async function runDriveSync(choice?: string, heads?: string[], confirm = 
             moveHistory: [], chatAttachments: [], chatInputs: {} });
           // While the app is closing, the close goes on and the next launch opens the new library.
           reloadUnlessClosing(() => window.location.reload());
+        } else if (event.result?.not_set_aside?.length) {
+          useStore.getState().setStatus("選んだデータで同期しました。選ばなかった同期データの一部は退避できませんでした（設定 → 保存先・同期）。");
+        } else if (event.result?.set_aside?.length) {
+          useStore.getState().setStatus("選んだデータで同期しました。選ばなかったデータは退避しています（設定 → バックアップ → 退避データから復元）。");
         } else useStore.getState().setStatus("同期フォルダーに保存しました。PC間の転送状況はGoogle Driveで確認してください。");
         resolve();
       }).then(jobId => {
