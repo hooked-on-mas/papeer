@@ -70,8 +70,11 @@ function errorMessage(body: any, status: number): string {
 /**
  * Untyped request for endpoints the generated schema does not describe yet.
  * One refused while the automatic sync runs in the background waits for it and is sent again (libraryBusy.ts).
+ * `signal` stops it (a query's, when its key changes: a search typed further); the promise then rejects
+ * with the AbortError itself, which React Query takes for a cancellation rather than a failure.
  */
-export async function apiRequest<T = any>(method: string, path: string, body?: unknown): Promise<T> {
+export async function apiRequest<T = any>(method: string, path: string, body?: unknown,
+  { signal }: { signal?: AbortSignal } = {}): Promise<T> {
   const headers: Record<string, string> = {};
   const token = authToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -83,8 +86,10 @@ export async function apiRequest<T = any>(method: string, path: string, body?: u
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
+        signal,
       });
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) throw error;
       throw new ApiError("バックエンドに接続できませんでした。", 0);
     }
     const text = await response.text();

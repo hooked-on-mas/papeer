@@ -56,6 +56,11 @@ def review_cache_path(root: Path) -> Path:
     return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".review-pages.json")
 
 
+def search_index_path(root: Path) -> Path:
+    """This PC's full-text index of the library at `root` (see search_index)."""
+    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".search.sqlite3")
+
+
 def _has_papers(root: Path) -> bool:
     papers = root / "papers"
     return papers.is_dir() and any(papers.iterdir())

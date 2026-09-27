@@ -635,14 +635,23 @@ class Library:
                      paper_ids: set[str] | None = None) -> list[dict]:
         import re
         terms = re.findall(r"[a-zA-Z0-9_-]{2,}|[\u3040-\u30ff\u3400-\u9fff]{2,}", question.lower())
+        # Only the pages of the papers asked for are read (a folder or a selection, not the whole library):
+        # one paper, the papers of paper_ids, or with both that paper only if paper_ids has it.
+        chosen = sorted(paper_ids) if paper_ids is not None else None
+        if paper_id:
+            chosen = [paper_id] if chosen is None or paper_id in chosen else []
         with self.connection() as db:
             sql = "SELECT x.*, p.title FROM pages x JOIN papers p ON p.id=x.paper_id"
-            rows = db.execute(sql + (" WHERE x.paper_id=?" if paper_id else ""), (paper_id,) if paper_id else ()).fetchall()
+            if chosen is None:
+                rows = db.execute(sql).fetchall()
+            else:
+                rows = []
+                for start in range(0, len(chosen), 500):
+                    part = chosen[start:start + 500]
+                    rows += db.execute(sql + f" WHERE x.paper_id IN ({','.join('?' * len(part))})", part).fetchall()
         scored = []
         for row in rows:
             data = dict(row)
-            if paper_ids is not None and data["paper_id"] not in paper_ids:
-                continue
             data["score"] = sum(data["text"].lower().count(term) for term in terms)
             scored.append(data)
         scored.sort(key=lambda x: (-x["score"], x["paper_id"], x["number"]))

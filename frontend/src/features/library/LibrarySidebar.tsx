@@ -180,7 +180,9 @@ export function LibrarySidebar() {
   }, [allPapers, papersLoaded, tagFilter]);
   const { data: searchResults, isFetching: searching, isError: searchError } = useQuery({
     queryKey: [QK.librarySearch, librarySearch],
-    queryFn: () => apiRequest<{ results: LibraryHit[]; limited: boolean }>("GET", `/api/library-search?q=${encodeURIComponent(librarySearch)}`),
+    // Typing on stops the request of the previous words (their results would only be thrown away).
+    queryFn: ({ signal }) => apiRequest<{ results: LibraryHit[]; limited: boolean }>(
+      "GET", `/api/library-search?q=${encodeURIComponent(librarySearch)}`, undefined, { signal }),
     enabled: !!librarySearch.trim(),
   });
   // Memoized, as is the tree built from it: a new list each render would render every row again.
