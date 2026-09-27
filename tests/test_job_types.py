@@ -15,8 +15,8 @@ import pytest
 from sidecar import deps, jobs
 from sidecar.app import app
 from sidecar.job_types import (
-    RESULT_TYPES, SNAPSHOT_KINDS, BackupResult, GlossaryTerm, ImportResult, JobKind, ServerEvent, TranslateResult,
-    Usage,
+    RESULT_TYPES, SNAPSHOT_KINDS, ArticleResult, BackupResult, GlossaryTerm, ImportResult, JobKind, ServerEvent,
+    TranslateResult, Usage, job_result,
 )
 from sidecar.jobs import JobManager
 
@@ -81,6 +81,24 @@ def test_a_result_becomes_its_kinds_model(manager):
     translated = _run(manager, "translate", report, paper_id="p")
     assert isinstance(translated.result, TranslateResult)
     assert translated.result.model_dump() == report
+
+
+def test_the_reports_a_translation_really_gives_are_translate_results(tmp_path):
+    # The report as PaperService.translate writes it now (parallel translation, status codes), not one
+    # written by hand: part of the paper first, then the rest with the first page kept.
+    from papeer.core.service import PaperService
+    from test_large_json import make_paper
+    from test_workflow import FakeProvider
+
+    library, identity = make_paper(tmp_path, [["Original content on page one."], ["Original content on page two."]])
+    service = PaperService(library, FakeProvider(), threading.Event())
+    for pages in ({1}, None):
+        report = service.translate(identity, pages)
+        result = job_result(JobKind.TRANSLATE, report)
+        assert isinstance(result, TranslateResult) and result.model_dump() == report
+    assert result.translated_pages == [1, 2] and result.untranslated_pages == []
+    assert isinstance(job_result(JobKind.ARTICLE, {"content": service.article(identity), "usage": service.usage()}),
+                      ArticleResult)
 
 
 def test_a_result_of_another_shape_fails_the_job_as_a_bug(manager, caplog):

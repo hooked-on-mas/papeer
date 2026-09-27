@@ -48,8 +48,8 @@ import { paperJobState } from "@/features/jobs/jobSelectors";
 import { showJobFailure, useJobFailures } from "@/features/jobs/jobFailures";
 import { onAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
+import { SORT_LABELS } from "@/lib/librarySort";
 
-export const SORT_LABELS = ["追加が新しい順", "追加が古い順", "名前順（昇順）", "名前順（降順）"];
 type LibraryHit = { paper_id: string; title: string; side: "metadata" | "note" | "original" | "translated"; page: number | null; snippet: string };
 
 // Defaults that keep their identity from one render to the next, so that the memoized list and tree hold while loading.
@@ -180,7 +180,9 @@ export function LibrarySidebar() {
   }, [allPapers, papersLoaded, tagFilter]);
   const { data: searchResults, isFetching: searching, isError: searchError } = useQuery({
     queryKey: [QK.librarySearch, librarySearch],
-    queryFn: () => apiRequest<{ results: LibraryHit[]; limited: boolean }>("GET", `/api/library-search?q=${encodeURIComponent(librarySearch)}`),
+    // Typing on stops the request of the previous words (their results would only be thrown away).
+    queryFn: ({ signal }) => apiRequest<{ results: LibraryHit[]; limited: boolean }>(
+      "GET", `/api/library-search?q=${encodeURIComponent(librarySearch)}`, undefined, { signal }),
     enabled: !!librarySearch.trim(),
   });
   // Memoized, as is the tree built from it: a new list each render would render every row again.

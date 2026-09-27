@@ -527,6 +527,30 @@ class TransportRetryTests(unittest.TestCase):
             provider.generate("i", "d")
         self.assertEqual(provider.sends, 2)
 
+    def test_retry_after_holds_back_the_other_requests_of_the_connection(self):
+        # Parallel translation: a request starting while another waits out a Retry-After waits
+        # for the rest of it too, instead of meeting the same rate limit and using up its sends.
+        provider = FlakyProvider(TransientError("429", retry_after=30.0))
+        self.assertEqual(provider.generate("i", "d"), "answer")
+        self.assertEqual(provider.generate("i", "d"), "answer")
+        first, rest = provider.cancel.waits
+        self.assertEqual(first, 30.0)
+        self.assertAlmostEqual(rest, 30.0, delta=5)  # RecordingEvent does not wait: the pause is still ahead.
+        self.assertEqual(provider.sends, 3)
+        # Waits the service did not ask for (backoff) are the request's own.
+        provider = FlakyProvider(TransientError("offline"))
+        provider.generate("i", "d")
+        provider.generate("i", "d")
+        self.assertEqual(provider.cancel.waits, [2.0])
+
+    def test_waiting_for_another_request_does_not_count_toward_the_limits(self):
+        provider = FlakyProvider(TransientError("429", retry_after=TRANSPORT_WAIT_LIMIT - 1))
+        provider.generate("i", "d")
+        # The next request waits out the pause, then still gets its own sends after a Retry-After.
+        provider.errors = [TransientError("429", retry_after=TRANSPORT_WAIT_LIMIT - 1)]
+        self.assertEqual(provider.generate("i", "d"), "answer")
+        self.assertEqual(provider.sends, 4)
+
     def test_timeout_is_sent_again_only_once(self):
         provider = FlakyProvider(*[TransientError("timeout", timed_out=True)] * 3)
         with self.assertRaisesRegex(TransientError, "timeout"):

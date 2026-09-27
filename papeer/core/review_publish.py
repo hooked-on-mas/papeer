@@ -20,6 +20,7 @@ from papeer.translation.translation import legacy_translation_fingerprint, trans
 from papeer.translation.translation_preview import read_preview, translated_page, translated_page_numbers
 from papeer.layout.reading_flow import unit_pages, materialize_flows, join_unit_translations, resolve_unit_joins
 from papeer.core.terminology import apply_glossary, glossary_for_folder
+from papeer.core.translation_status import translation_status
 
 
 # Each publish backs up what it replaces; the newest applied backups of a paper are kept, so the
@@ -171,8 +172,8 @@ def _publish(folder, review, manifest, entries):
         # RetryState requires every unanswered record to name a block in attempts.
         if isinstance(retry.get('unanswered'), dict):
             retry['unanswered'].pop(key, None)
-    atomic_write_json(stage/'translation-cache.json', cache)
-    atomic_write_json(stage/'document.json', document)
+    atomic_write_json(stage/'translation-cache.json', cache, indent=None)
+    atomic_write_json(stage/'document.json', document, indent=None)
     report = _read(folder/'translation-report.json', {})
     # Old whole-document counters cannot be subtracted reliably by page.
     aggregate_keys = ('scaled_blocks', 'inline_formulas', 'preserved_table_blocks', 'preserved_figure_blocks', 'preserved_formula_blocks')
@@ -236,8 +237,8 @@ def _publish(folder, review, manifest, entries):
             replace_file(stage/name, folder/name)
             replaced.append(name)
         if connection:
-            status = '翻訳済み' if len(completed) == count and not report.get('skipped_blocks') else '一部翻訳済み'
-            connection.execute('UPDATE papers SET status=? WHERE id=?', (status, folder.name))
+            status = translation_status(report=report)
+            connection.execute('UPDATE papers SET status=? WHERE id=?', (status.value, folder.name))
             connection.commit()
     except Exception:
         if connection:

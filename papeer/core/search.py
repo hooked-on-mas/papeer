@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from papeer.core.paths import PaperFiles
-from papeer.core.service import cached_translations, page_translation_text
+from papeer.core.service import cached_page_texts
 from papeer.core.storage import Library
 
 MAX_RESULTS = 200
@@ -28,19 +28,22 @@ def search_paper(lib: Library, paper_id: str, query: str, side: str = "original"
         for number, block_id, text in files.translation_sections():
             translated_pages.setdefault(number, []).append((block_id, text))
     source_by_id = {block["id"]: block for block in document["blocks"]}
-    cached = None  # cached_translations, made once for all pages that need it.
+    source_by_page: dict[int, list[dict[str, Any]]] = {}
+    for block in document["blocks"]:
+        source_by_page.setdefault(block["page"], []).append(block)
+    cached = None  # cached_page_texts, made once for all pages that need it.
     for info in document["pages"]:
         if len(results) >= MAX_RESULTS:
             break
         number = info["number"]
-        sections = ([block for block in document["blocks"] if block["page"] == number]
-                    if side == "original" else
+        sections = (source_by_page.get(number, []) if side == "original" else
                     [{"text": body, "bbox": source_by_id.get(block_id, {}).get("bbox", [0, 0, 0, 0])}
                      for block_id, body in translated_pages.get(number, [])])
         content = info["text"] if side == "original" else "\n".join(body for _, body in translated_pages.get(number, []))
         if side == "translated" and not content:
-            cached = cached or cached_translations(files.folder, document)
-            content = "\n".join(page_translation_text(files.folder, document, number, cached))
+            # A page without sections in translation.md (an unfinished translation) takes the saved translations.
+            cached = cached if cached is not None else cached_page_texts(files.folder, document)
+            content = "\n".join(cached.get(number, []))
         anchors = [max(0.0, min(1.0, block["bbox"][1] / info["height"]))
                    for block in sections for _ in range(block["text"].casefold().count(term))]
         folded = content.casefold()

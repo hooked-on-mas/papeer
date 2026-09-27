@@ -32,8 +32,8 @@ export function ReaderSearch({ paperId, search, setSearch, ownsKey, open, setOpe
   const listRef = useRef<HTMLDivElement>(null);
   const { data: found } = useQuery({
     queryKey: [QK.paperSearch, paperId, search.query, search.side],
-    queryFn: () => apiRequest<{ results: SearchResult[]; total: number; limited: boolean }>(
-      "GET", `/api/papers/${paperId}/search?q=${encodeURIComponent(search.query)}&side=${search.side}`),
+    queryFn: ({ signal }) => apiRequest<{ results: SearchResult[]; total: number; limited: boolean }>(
+      "GET", `/api/papers/${paperId}/search?q=${encodeURIComponent(search.query)}&side=${search.side}`, undefined, { signal }),
     enabled: !!search.query.trim(),
   });
   useEffect(() => setInput(search.query), [search.query, paperId]);

@@ -9,7 +9,7 @@ import pymupdf as fitz
 
 from papeer.core import prompts
 from papeer.core.config import Settings
-from papeer.core.service import PaperService
+from papeer.core.service import PaperService, stored_translations
 from papeer.core.storage import Library
 from papeer.core.terminology import apply_glossary, save_global_glossary
 from papeer.layout.math_layout import MATH_TOKEN
@@ -166,7 +166,7 @@ def test_revised_translations_apply_to_their_own_paragraph_only(tmp_path):
     save_revision_history(folder, heads[0], f"訳{heads[0]}。", "修正した柱。")
 
     def cached():
-        return json.loads((folder / "translation-cache.json").read_text("utf-8"))["translations"]
+        return stored_translations(json.loads((folder / "translation-cache.json").read_text("utf-8")))
 
     # With no other translation of the head, the next page asks for one instead of copying the revision.
     provider = RecordingProvider()
@@ -228,7 +228,7 @@ def test_running_head_is_translated_once_per_paper_and_saved_for_every_page(tmp_
     heads = [u["id"] for u in units if u["text"] == HEADER]
     assert len(heads) == 3
     cache = json.loads((library.folder(identity) / "translation-cache.json").read_text("utf-8"))
-    assert len({cache["translations"][h] for h in heads}) == 1
+    assert len({stored_translations(cache)[h] for h in heads}) == 1
     # The cache keeps its format: every page is keyed by its units as before and holds its own ids.
     for number, entry in cache["completed_pages"].items():
         page_units = [u for u in units if int(number) in unit_pages(u)]

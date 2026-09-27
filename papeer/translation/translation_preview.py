@@ -44,12 +44,22 @@ def translated_page(folder: Path, index: int, preview: dict | None | object = _U
 
 def translated_page_numbers(folder: Path, page_count: int) -> list[int]:
     preview = read_preview(folder)
+    files = PaperFiles(folder)
+    has_translated = preview is None and files.translated_pdf.is_file()
+    report = files.read_json(files.translation_report, {}) if has_translated else None
+    return completed_page_numbers(preview, report, has_translated, page_count)
+
+
+def completed_page_numbers(preview: dict | None, report: dict | None, has_translated: bool, page_count: int) -> list[int]:
+    """The pages with a translation, from what translated_page_numbers reads (the library list reads them itself).
+
+    An unfinished or finished run's preview names them; without one, translated.pdf holds the pages the
+    report lists (all of them when it does not say, or there is no report). `report` may be None then.
+    """
     if preview is not None:
         numbers = preview["pages"]
-    elif PaperFiles(folder).translated_pdf.is_file():
-        report_path = PaperFiles(folder).translation_report
-        report = json.loads(report_path.read_text("utf-8")) if report_path.exists() else {}
-        numbers = report.get("translated_pages", range(1, page_count + 1))
+    elif has_translated:
+        numbers = (report or {}).get("translated_pages", range(1, page_count + 1))
     else:
         numbers = []
     return sorted({n for n in numbers if type(n) is int and 1 <= n <= page_count})

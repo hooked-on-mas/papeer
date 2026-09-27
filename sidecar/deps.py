@@ -15,7 +15,7 @@ from pathlib import Path
 import sys
 import threading
 import time
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 from fastapi import Header, HTTPException, Query, status
 
@@ -24,7 +24,7 @@ from papeer.core.errors import Conflict, NotFound
 from papeer.core.paths import app_env, data_directory
 from papeer.core.storage import Library, LibraryMissingError, NewerSchemaError, library_missing, missing_library_message
 from papeer.providers import ProviderBackend, check_cancel, create_provider
-from sidecar.job_types import SNAPSHOT_KINDS, JobKind, LibraryChangedEvent
+from sidecar.job_types import SNAPSHOT_KINDS, JobKind, LibraryChangedEvent, PaperChangedEvent
 from sidecar.jobs import JobManager
 from sidecar.schemas import ProviderActionRequest
 
@@ -234,6 +234,15 @@ def submit_job(kind: JobKind, action: Callable[..., Any], paper_id: str | None =
 def library_changed() -> None:
     """Tell the frontend to reload the library list."""
     job_manager.broadcast(LibraryChangedEvent())
+
+
+def paper_changed(paper_id: str, fields: Iterable[str] | None = None) -> None:
+    """Tell the frontend that one paper changed, so it reloads only that paper's row (jobEvents.ts).
+
+    `fields`: the papers columns written (Library.update); None when anything about the paper may have
+    changed, such as its translation.
+    """
+    job_manager.broadcast(PaperChangedEvent(paper_id=paper_id, fields=sorted(fields) if fields is not None else None))
 
 
 # --- Settings and AI connections ---

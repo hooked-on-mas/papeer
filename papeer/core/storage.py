@@ -12,12 +12,14 @@ import uuid
 
 from papeer.core.errors import NotFound
 from papeer.core.fileio import atomic_write_json, atomic_write_text
+from papeer.core.shared_json import read_shared_json, remember
 from papeer.pdf.pdf_engine import PDF_LOCK, extract_pdf
 from papeer.core.translation_review import cached_review_pages
 from papeer.core.bibliography import clean_arxiv_id, extract_bibliography, extract_identifiers, typed_doi
 import pymupdf as fitz
 from papeer.layout.math_layout import LAYOUT_VERSION
 from papeer.core.paths import PaperFiles, sync_state_path
+from papeer.core.translation_status import TranslationStatus, stored_status
 
 
 def normalize_collection_name(value: str) -> str:
@@ -214,6 +216,21 @@ def _bibliographic_ids(db: sqlite3.Connection, _root: Path) -> None:
                        (found["doi"], found["arxiv_id"], found["venue"], paper_id))
 
 
+def _status_codes(db: sqlite3.Connection, _root: Path) -> None:
+    """Version 4: papers.status holds a TranslationStatus code instead of the Japanese label shown then.
+
+    Converted as translation_status.stored_status reads them, so a value that is neither (hand-edited)
+    becomes NOT_TRANSLATED. Rows are read through stored_status afterwards too: Papeer up to 0.2.0 opens
+    this database without checking its version and may still write a label. The column's default stays
+    the old label, as a column default cannot change in place; import_pdf states the code instead. The
+    same database always converts the same way, so PCs that synced it before updating publish the same
+    contents afterwards (drive_sync.sync: no conflict).
+    """
+    for (value,) in db.execute("SELECT DISTINCT status FROM papers").fetchall():
+        if (code := stored_status(value).value) != value:
+            db.execute("UPDATE papers SET status=? WHERE status=?", (code, value))
+
+
 # Schema migrations. PRAGMA user_version counts the steps a library database has been through.
 # To change the schema or convert stored values (a column, a table, an FTS index, status codes, ...),
 # append a function taking (db, library root) to MIGRATIONS. It runs once, on a database at exactly
@@ -227,7 +244,7 @@ def _bibliographic_ids(db: sqlite3.Connection, _root: Path) -> None:
 # step that touches them must check whether they exist first (sqlite_master), unlike other tables.
 # Add a test in tests/test_schema_migration.py, and list any new columns in LATER_COLUMNS in
 # tests/_legacy_library.py (tests that make a current database look unversioned drop them).
-MIGRATIONS = [_baseline, _highlights, _bibliographic_ids]
+MIGRATIONS = [_baseline, _highlights, _bibliographic_ids, _status_codes]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 # The sidecar opens a Library per request; concurrent first requests after an upgrade wait here
@@ -261,6 +278,16 @@ def migrate_database(root: Path) -> None:
         except BaseException:
             db.execute("ROLLBACK")
             raise
+
+
+def write_document(path: Path, document: dict) -> None:
+    """Save an extraction as document.json, kept in memory for the next read (Library.document).
+
+    Without indentation: only the app reads it, and a long paper's is a third smaller and written
+    in less than half the time (198 pages: 4.2 MB in 0.15 s instead of 6.5 MB in 0.4 s).
+    """
+    atomic_write_json(path, document, indent=None)
+    remember(path, document)
 
 
 class Library:
@@ -314,12 +341,13 @@ class Library:
         folder.mkdir()
         try:
             shutil.copyfile(source, PaperFiles(folder).original_pdf)
-            atomic_write_json(PaperFiles(folder).document_json, info)
+            write_document(PaperFiles(folder).document_json, info)
             with self.connection() as db:
-                db.execute("""INSERT INTO papers(id,sha256,title,original_name,pages,collection_name,first_author,publication_year,
-                           doi,arxiv_id,venue,bibliography_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)""",
+                db.execute("""INSERT INTO papers(id,sha256,title,original_name,pages,status,collection_name,first_author,
+                           publication_year,doi,arxiv_id,venue,bibliography_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)""",
                            (paper_id, digest, info["title"], original_name or source.name, info["page_count"],
-                            normalize_collection_name(collection_name), info["first_author"], info["publication_year"],
+                            TranslationStatus.NOT_TRANSLATED.value, normalize_collection_name(collection_name),
+                            info["first_author"], info["publication_year"],
                             info.get("doi", ""), info.get("arxiv_id", ""), info.get("venue", "")))
                 if not db.execute("SELECT 1 FROM reading_status_choices WHERE name='未読'").fetchone():
                     db.execute("UPDATE papers SET read_status='' WHERE id=?", (paper_id,))
@@ -342,14 +370,14 @@ class Library:
             arguments += [query.strip()] * 8
         sql += " ORDER BY created_at DESC, id"
         with self.connection() as db:
-            return [dict(row, tags=json.loads(row["tags"])) for row in db.execute(sql, arguments)]
+            return [self._paper(row) for row in db.execute(sql, arguments)]
 
     @staticmethod
     def _oldest_first(rows: list[sqlite3.Row]) -> list[dict]:
         """Papers in the order they were added (as BibTeX keys are told apart): created_at counts whole
         seconds, so papers added within one second keep the order they were inserted in (rowid)."""
         rows = sorted(rows, key=lambda row: (row["created_at"], row["insert_order"]))
-        return [{**{k: row[k] for k in row.keys() if k != "insert_order"}, "tags": json.loads(row["tags"])} for row in rows]
+        return [Library._paper({k: row[k] for k in row.keys() if k != "insert_order"}) for row in rows]
 
     def papers_by_id(self, paper_ids: list[str]) -> list[dict]:
         """The papers `paper_ids`, oldest first (_oldest_first); raises NotFound (a KeyError) for a missing one."""
@@ -381,7 +409,12 @@ class Library:
             row = db.execute("SELECT * FROM papers WHERE id=?", (paper_id,)).fetchone()
         if not row:
             raise NotFound("論文が見つかりません。")
-        return dict(row, tags=json.loads(row["tags"]))
+        return self._paper(row)
+
+    @staticmethod
+    def _paper(row: sqlite3.Row | dict) -> dict:
+        """A papers row as the API returns it, its translation state always a code (see _status_codes)."""
+        return dict(row, tags=json.loads(row["tags"]), status=stored_status(row["status"]).value)
 
     def collections(self) -> list[str]:
         with self.connection() as db:
@@ -446,6 +479,9 @@ class Library:
                 raise ValueError("掲載誌は300文字以内で入力してください。")
         if "collection_name" in values:
             values["collection_name"] = normalize_collection_name(values["collection_name"])
+        if "status" in values:
+            # Raises ValueError for anything but a code (translation_status.translation_status decides it).
+            values["status"] = TranslationStatus(values["status"]).value
         with self.connection() as db:
             if values.get("read_status") and not db.execute(
                 "SELECT 1 FROM reading_status_choices WHERE name=?", (values["read_status"],)
@@ -574,13 +610,18 @@ class Library:
                 "ocr_pages": review["ocr"]}
 
     def document(self, paper_id: str) -> dict:
+        """The paper's extraction (document.json), extracted again when made by an older LAYOUT_VERSION.
+
+        Shared with every caller until the file changes (shared_json): read it, never modify it in
+        place; code that adjusts blocks works on its own copies (materialize_flows and the like).
+        """
         folder = self.folder(paper_id)
         path = PaperFiles(folder).document_json
-        document = json.loads(path.read_text("utf-8"))
+        document = read_shared_json(path)
         if document.get("layout_version") != LAYOUT_VERSION:
             refreshed = extract_pdf(PaperFiles(folder).original_pdf)
             refreshed["title"] = document["title"]
-            atomic_write_json(path, refreshed)
+            write_document(path, refreshed)
             document = refreshed
         return document
 
@@ -611,14 +652,23 @@ class Library:
                      paper_ids: set[str] | None = None) -> list[dict]:
         import re
         terms = re.findall(r"[a-zA-Z0-9_-]{2,}|[\u3040-\u30ff\u3400-\u9fff]{2,}", question.lower())
+        # Only the pages of the papers asked for are read (a folder or a selection, not the whole library):
+        # one paper, the papers of paper_ids, or with both that paper only if paper_ids has it.
+        chosen = sorted(paper_ids) if paper_ids is not None else None
+        if paper_id:
+            chosen = [paper_id] if chosen is None or paper_id in chosen else []
         with self.connection() as db:
             sql = "SELECT x.*, p.title FROM pages x JOIN papers p ON p.id=x.paper_id"
-            rows = db.execute(sql + (" WHERE x.paper_id=?" if paper_id else ""), (paper_id,) if paper_id else ()).fetchall()
+            if chosen is None:
+                rows = db.execute(sql).fetchall()
+            else:
+                rows = []
+                for start in range(0, len(chosen), 500):
+                    part = chosen[start:start + 500]
+                    rows += db.execute(sql + f" WHERE x.paper_id IN ({','.join('?' * len(part))})", part).fetchall()
         scored = []
         for row in rows:
             data = dict(row)
-            if paper_ids is not None and data["paper_id"] not in paper_ids:
-                continue
             data["score"] = sum(data["text"].lower().count(term) for term in terms)
             scored.append(data)
         scored.sort(key=lambda x: (-x["score"], x["paper_id"], x["number"]))

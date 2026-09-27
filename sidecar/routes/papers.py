@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from papeer.core import reading_state, search
 from papeer.core.bibtex import bibtex, export_bibtex
 from papeer.core.errors import Invalid, NotFound
+from papeer.core.library_list import LibrarySort, library_rows, paper_row
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import normalize_collection_name
 from papeer.pdf.pdf_viewer import pdf_page_count
@@ -36,32 +37,17 @@ from sidecar.ui_state import load_ui_state
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
 
-def _with_state(lib, paper: dict[str, Any]) -> dict[str, Any]:
-    """A paper row with its folder and translation progress, as the library list shows it."""
-    files = PaperFiles(lib.folder(paper["id"]))
-    paper["folder_path"] = str(files.folder.resolve())
-    paper["has_article"] = files.article_md.is_file()
-    paper.update(reading_state.translation_state(files.folder, paper["pages"]))
-    return paper
-
-
 # --- Papers ---
 
 
 @router.get("/api/papers")
 def list_papers(query: str = "", sort: int = 0) -> list[dict[str, Any]]:
-    lib = deps.get_library()
-    papers = []
-    for paper in lib.papers(query=query):
-        try:
-            papers.append(_with_state(lib, paper))
-        except ValueError:
-            papers.append(paper)
-    if sort == 1:
-        papers.reverse()
-    elif sort in (2, 3):
-        papers.sort(key=lambda p: (p.get("title") or "").casefold(), reverse=(sort == 3))
-    return papers
+    """Every paper's row (without the memo); `sort` is a LibrarySort."""
+    try:
+        order = LibrarySort(sort)
+    except ValueError:
+        raise Invalid("並べ替えの指定が不正です。") from None
+    return library_rows(deps.get_library(), query, order)
 
 
 # Imports run one after another in request order, so PDFs dropped while others are still
@@ -127,7 +113,8 @@ def import_papers(body: ImportRequest) -> dict[str, str]:
 def get_paper(paper_id: str) -> dict[str, Any]:
     lib = deps.get_library()
     deps.paper_folder(lib, paper_id)
-    return _with_state(lib, lib.paper(paper_id))
+    paper = lib.paper(paper_id)
+    return {**paper_row(lib, paper), "note": paper["note"]}
 
 
 @router.patch("/api/papers/{paper_id}")
@@ -143,7 +130,8 @@ def update_paper(paper_id: str, body: UpdatePaperRequest) -> dict[str, str]:
     updates = {key: value for key, value in fields.items() if value is not None}
     if updates:
         lib.update(paper_id, **updates)
-    deps.library_changed()
+        # A memo saved as it is typed then reloads no list at all.
+        deps.paper_changed(paper_id, updates)
     return {"status": "updated"}
 
 
@@ -151,7 +139,7 @@ def update_paper(paper_id: str, body: UpdatePaperRequest) -> dict[str, str]:
 def rename_paper(paper_id: str, body: RenamePaperRequest) -> dict[str, str]:
     lib = deps.get_library()
     name = lib.rename_paper(paper_id, body.new_title)
-    deps.library_changed()
+    deps.paper_changed(paper_id, ["original_name", "title"])
     return {"status": "renamed", "name": name}
 
 
