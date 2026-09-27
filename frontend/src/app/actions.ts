@@ -5,12 +5,16 @@ import { askConfirm, askText, showMessage } from "@/components/AppDialogs";
 import { showStartedJob, startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { joinPath, shell } from "@/shell";
-import { useStore } from "@/store";
+import { useStore, type MovePapersRecord, type MoveRecord } from "@/store";
 import { paperExportFilename } from "@/lib/exportFilename";
 import { addPendingImports, removePendingImports, usePendingImports } from "./pendingImports";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 import { countInFolder, isInsideFolder, normalizeCollection } from "@/features/library/libraryTree";
+import { bulkReport, runBulk } from "@/features/library/bulkOutcome";
+import { forgetPapers, movesRecord, undoLabel } from "@/features/library/undoHistory";
+import { LIBRARY_BUSY } from "@/lib/libraryBusy";
+import { BULK_BUSY_MESSAGE, beginBulk } from "./bulkState";
 
 let queryClient: QueryClient | null = null;
 
@@ -18,16 +22,52 @@ export function bindQueryClient(client: QueryClient): void {
   queryClient = client;
 }
 
-/** Reloads the library; the promise settles once the lists shown have been fetched again. */
-function refreshLibrary(): Promise<unknown> {
+/** Reloads the library (each paper's own query too); the promise settles once the lists shown have been fetched again. */
+export function refreshLibrary(): Promise<unknown> {
   return Promise.all([
     queryClient?.invalidateQueries({ queryKey: [QK.papers] }),
     queryClient?.invalidateQueries({ queryKey: [QK.collections] }),
   ]);
 }
 
-async function paper(id: string): Promise<PaperData> {
+export async function paper(id: string): Promise<PaperData> {
   return apiRequest<PaperData>("GET", `/api/papers/${id}`);
+}
+
+/**
+ * Reloads what the library.changed event reloads (jobEvents.ts): the lists, the library's search and the
+ * tag choices. For actions on several papers, which hold that event's reloads until they are done.
+ */
+export function refreshAfterChanges(): Promise<unknown> {
+  return Promise.all([refreshLibrary(), ...[QK.librarySearch, QK.tags].map((key) => queryClient?.invalidateQueries({ queryKey: [key] }))]);
+}
+
+/** The paper's name as the library last listed it, for messages about papers that may be gone. */
+export function listedTitle(paperId: string): string {
+  for (const [, data] of queryClient?.getQueriesData<PaperData[]>({ queryKey: [QK.papers, "list"] }) ?? []) {
+    const found = data?.find((p) => p.id === paperId);
+    if (found) return found.title || found.original_name || paperId;
+  }
+  return paperId;
+}
+
+/**
+ * A failure after which the requests that follow would fail too, so that an action on several papers
+ * stops sending them: the sidecar not answering, or the library held by a sync, backup or restore
+ * that the request did not wait out (libraryBusy.ts).
+ */
+export function stopsAllRequests(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 0 || error.code === LIBRARY_BUSY);
+}
+
+// --- The undo history -------------------------------------------------------------------
+
+export { forgetPapers, undoLabel };
+
+/** Records papers moved together: a single move as before, several as one record undone together. */
+export function recordMoves(moves: MoveRecord[]): void {
+  const record = movesRecord(moves);
+  if (record) useStore.getState().setMoveHistory([...useStore.getState().moveHistory, record]);
 }
 
 export { normalizeCollection };
@@ -84,7 +124,7 @@ export async function movePaper(paperId: string, collection: string, record = tr
     const previous = normalizeCollection((await paper(paperId)).collection_name || "");
     if (previous === destination) return false;
     await apiRequest("PATCH", `/api/papers/${paperId}`, { collection: destination });
-    if (record) store.setMoveHistory([...useStore.getState().moveHistory, { paperId, from: previous, to: destination }]);
+    if (record) recordMoves([{ paperId, from: previous, to: destination }]);
   } catch (error) {
     showError(error, "分類を変更できませんでした");
     return false;
@@ -117,6 +157,10 @@ async function undoLastMove(): Promise<void> {
   if (!last) return;
   const { setMoveHistory, setStatus } = useStore.getState();
   const removeRecord = () => setMoveHistory(useStore.getState().moveHistory.filter((entry) => entry !== last));
+  if ("kind" in last && last.kind === "move-papers") {
+    await undoMovedPapers(last);
+    return;
+  }
   if ("kind" in last) {
     try {
       const result = await apiRequest<{ name: string }>("POST", `/api/collections/restore/${last.token}`);
@@ -152,6 +196,56 @@ async function undoLastMove(): Promise<void> {
     removeRecord();
     setStatus(`移動を取り消しました：${last.from || "未分類"}`);
   }
+}
+
+/**
+ * Undoes papers moved together, each that is still where it was moved to; one moved again since, or
+ * deleted, stays. Moves that fail stay in the history, to be undone again.
+ */
+async function undoMovedPapers(record: MovePapersRecord): Promise<void> {
+  // One action on several papers at a time, as for the others (bulkState.ts).
+  const run = beginBulk("移動を取り消し中", record.moves.length);
+  if (!run) {
+    useStore.getState().setStatus(BULK_BUSY_MESSAGE);
+    return;
+  }
+  try {
+    await undoMovesOf(record, run);
+  } finally {
+    run.end();
+  }
+}
+
+async function undoMovesOf(record: MovePapersRecord, run: { signal: AbortSignal; progress: (ran: number, total: number) => void }) {
+  const outcome = await runBulk([...record.moves].reverse(), async (move) => {
+    try {
+      // Do not overwrite a later edit, as undoing a single move does not.
+      if (normalizeCollection((await paper(move.paperId)).collection_name || "") !== move.to) return "unchanged";
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return "unchanged";
+      throw error;
+    }
+    await apiRequest("PATCH", `/api/papers/${move.paperId}`, { collection: move.from });
+    return "done";
+  }, { stopsAll: stopsAllRequests, progress: run.progress, signal: run.signal });
+  const left = new Set([...outcome.failed.map((f) => f.item), ...outcome.notRun]);
+  const { moveHistory, setMoveHistory, setStatus } = useStore.getState();
+  setMoveHistory(left.size
+    ? moveHistory.map((entry) => entry === record ? { ...record, moves: record.moves.filter((m) => left.has(m)) } : entry)
+    : moveHistory.filter((entry) => entry !== record));
+  const current = useStore.getState();
+  for (const move of outcome.done) {
+    expandToCollection(move.from);
+    if (move.paperId === current.activePaperId && current.selectedFolder === null) current.setCurrentCollection(move.from);
+  }
+  const report = bulkReport(outcome, (move) => listedTitle(move.paperId), {
+    done: (n) => `${n}件の論文の移動を取り消しました。`,
+    unchanged: (n) => `${n}件は別の操作で分類が変わったか削除されたため、取り消していません。`,
+    failed: (n) => `${n}件の論文の移動を取り消せませんでした`,
+  });
+  await refreshAfterChanges();
+  setStatus(report.status);
+  if (report.error) showError(report.error.message, report.error.title);
 }
 
 export async function chooseNewCollection(paperId: string, current: string): Promise<void> {
@@ -203,7 +297,11 @@ export async function renameFolder(path: string): Promise<string | null> {
   useStore.setState({
     currentCollection: mapped(s.currentCollection),
     selectedFolder: s.selectedFolder === null ? null : mapped(s.selectedFolder),
-    moveHistory: s.moveHistory.map((m) => "kind" in m ? m : ({ ...m, from: mapped(m.from), to: mapped(m.to) })),
+    moveHistory: s.moveHistory.map((m) => {
+      const move = (r: MoveRecord): MoveRecord => ({ ...r, from: mapped(r.from), to: mapped(r.to) });
+      if (!("kind" in m)) return move(m);
+      return m.kind === "move-papers" ? { ...m, moves: m.moves.map(move) } : m;
+    }),
     expandedCollections: s.expandedCollections?.map(mapped) ?? null,
   });
   refreshLibrary();
@@ -289,7 +387,7 @@ export async function deletePaper(paperId: string): Promise<boolean> {
   }
   const s = useStore.getState();
   if (s.activePaperId === paperId) s.setActivePaperId(null);
-  useStore.setState({ moveHistory: s.moveHistory.filter((m) => "kind" in m || m.paperId !== paperId) });
+  useStore.setState({ moveHistory: forgetPapers(s.moveHistory, new Set([paperId])) });
   s.setStatus(`「${current.title}」を削除しました。`);
   await refreshLibrary();
   return true;

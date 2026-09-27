@@ -58,6 +58,8 @@ before(async () => {
     useInkPanes: (await load("/src/features/reader/useInkEditor.ts")).useInkPanes,
     LibrarySidebar: (await load("/src/features/library/LibrarySidebar.tsx")).LibrarySidebar,
     useTreeFocus: (await load("/src/features/library/treeFocus.ts")).useTreeFocus,
+    usePaperSelection: (await load("/src/features/library/selectionStore.ts")).usePaperSelection,
+    useBulkProgress: (await load("/src/app/bulkState.ts")).useBulkProgress,
   };
 });
 
@@ -224,7 +226,7 @@ test("the library tree is a tree of treeitems for assistive technology, and one 
   } finally {
     initial.tabStop = saved;
   }
-  assert.match(html, /<div role="tree" aria-label="ライブラリ">/);
+  assert.match(html, /<div role="tree" aria-label="ライブラリ" aria-multiselectable="true">/);
   const ml = openingTag(html, 'data-tree-key="folder:ML"');
   assert.match(ml, /role="treeitem"/);
   assert.match(ml, /aria-level="1"/);
@@ -263,4 +265,60 @@ test("the library tree is a tree of treeitems for assistive technology, and one 
   // The rows show a ring when focused from the keyboard.
   assert.match(open, /focus-visible:outline-2/);
   assert.match(ml, /focus-visible:outline-ring/);
+});
+
+test("the library shows the papers selected together apart from the open one, and how many", () => {
+  const { React, LibrarySidebar, usePaperSelection } = modules;
+  // Selected with Ctrl or Shift in the app; the server reads the store's initial state.
+  const initial = usePaperSelection.getInitialState();
+  const saved = { ...initial };
+  Object.assign(initial, { ids: new Set(["p2", "p3"]), anchor: "paper:p2" });
+  let html;
+  try {
+    html = render(React.createElement(LibrarySidebar), { ...libraryState, selectedFolder: null }, {}, libraryQueries);
+  } finally {
+    Object.assign(initial, saved);
+  }
+  assert.match(html, /<div role="tree" aria-label="ライブラリ" aria-multiselectable="true">/);
+  for (const id of ["p2", "p3"]) {
+    const row = openingTag(html, `id="paper-row-${id}"`);
+    assert.match(row, /aria-selected="true"/);
+    assert.match(row, /class="[^"]*\bbg-accent\b/);
+  }
+  // The open paper, not among them, is not selected but keeps its mark.
+  const open = openingTag(html, 'id="paper-row-p1"');
+  assert.match(open, /aria-selected="false"/);
+  assert.doesNotMatch(open, /\bbg-accent\b/);
+  assert.match(open, /\bborder-primary\b/);
+  assert.match(open, /aria-current="true"/);
+  assert.doesNotMatch(openingTag(html, 'id="paper-row-p2"'), /aria-current/);
+  // Folders are not selected with papers.
+  for (const tag of html.match(/<div[^>]*data-tree-key="folder:[^"]*"[^>]*>/g) ?? []) assert.match(tag, /aria-selected="false"/);
+  assert.match(html, /· (<!-- -->)?2(<!-- -->)? 件を選択中/);
+  assert.match(html, /title="複数選択を解除します（一覧で Esc）"/);
+  // Put back for the next render.
+  assert.equal(usePaperSelection.getInitialState().ids, null);
+});
+
+test("without papers selected together, the open paper is the selected row and nothing is counted", () => {
+  const html = render(modules.React.createElement(modules.LibrarySidebar), libraryState, {}, libraryQueries);
+  assert.match(openingTag(html, 'id="paper-row-p1"'), /aria-selected="true"/);
+  assert.match(openingTag(html, 'id="paper-row-p2"'), /aria-selected="false"/);
+  assert.doesNotMatch(html, /件を選択中/);
+});
+
+test("while an action on several papers runs, the library shows its progress with a button that stops it", () => {
+  const { React, LibrarySidebar, useBulkProgress } = modules;
+  const initial = useBulkProgress.getInitialState();
+  const saved = initial.progress;
+  initial.progress = { label: "「ML」へ移動中", ran: 2, total: 5, stopping: false };
+  let html;
+  try {
+    html = render(React.createElement(LibrarySidebar), libraryState, {}, libraryQueries);
+  } finally {
+    initial.progress = saved;
+  }
+  // React separates the text's parts with comments.
+  assert.ok(html.replaceAll("<!-- -->", "").includes("「ML」へ移動中…（3/5）"));
+  assert.match(html, /<button[^>]*title="送信中の 1 件が終わったところで止めます。残りは処理しません。"[^>]*>中止<\/button>/);
 });

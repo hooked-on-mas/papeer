@@ -26,7 +26,13 @@ export interface MoveRecord {
   to: string;
 }
 
-export type LibraryUndoRecord = MoveRecord | { kind: "delete-folder"; path: string; token: string };
+/** Several papers moved at once (selected, or dragged together), undone together. */
+export interface MovePapersRecord {
+  kind: "move-papers";
+  moves: MoveRecord[];
+}
+
+export type LibraryUndoRecord = MoveRecord | MovePapersRecord | { kind: "delete-folder"; path: string; token: string };
 
 /** Text handed from the reader to the チャット or メモ tab, used once by that paper's pane. */
 export interface PaperHandoff {

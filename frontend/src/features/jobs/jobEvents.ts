@@ -6,6 +6,7 @@ import { notifyIfAway, shell } from "@/shell";
 import { removePendingImports, setPendingPages } from "@/app/pendingImports";
 import { useErrorDialog } from "@/components/errorDialog";
 import { QK } from "@/lib/queryKeys";
+import { requestLibraryRefresh } from "@/lib/libraryRefresh";
 import { useLastUsage, usageSummary, type Usage } from "@/lib/usage";
 import { jobHandler, type JobFinished } from "./jobHandlers";
 import { AI_PLAN_JOBS, isJobKind, type JobKind } from "./jobKinds";
@@ -171,9 +172,12 @@ export function useJobEvents(): void {
           store.removeJob(data.job_id);
           handleFinished(data as JobFinished, queryClient);
         } else if (data.type === "library.changed") {
-          for (const root of [QK.papers, QK.collections, QK.librarySearch, QK.tags]) {
-            queryClient.invalidateQueries({ queryKey: [root] });
-          }
+          // Once the events stop coming, and not while an action on several papers runs (libraryRefresh.ts).
+          requestLibraryRefresh(() => {
+            for (const root of [QK.papers, QK.collections, QK.librarySearch, QK.tags]) {
+              queryClient.invalidateQueries({ queryKey: [root] });
+            }
+          });
         } else if (data.type === "import.pages") {
           setPendingPages(data.pages ?? {});
         } else if (data.type === "import.item") {
