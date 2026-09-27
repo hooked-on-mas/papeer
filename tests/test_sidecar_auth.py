@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import re
 import sys
-from types import SimpleNamespace
 
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
@@ -12,7 +11,9 @@ from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
 
 from sidecar import app as app_module
+from sidecar import deps
 from sidecar.app import app
+from sidecar.jobs import JobManager
 from sidecar.routes import system
 
 TOKEN = "correct-token"
@@ -42,8 +43,10 @@ def http_routes() -> list[tuple[str, str]]:
 
 @pytest.fixture
 def client(monkeypatch):
-    # Should the check ever let /shutdown through, the test run must not exit with it.
-    monkeypatch.setattr(system, "threading", SimpleNamespace(Thread=lambda **_: SimpleNamespace(start=lambda: None)))
+    # Should the check ever let /shutdown through, the test run must not exit with it, nor lose the
+    # shared job manager (a shutdown refuses every later job).
+    monkeypatch.setattr(system, "exit_process", lambda: None)
+    monkeypatch.setattr(deps, "job_manager", JobManager())
     return TestClient(app)
 
 

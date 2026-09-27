@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/api/client";
-import { syncDrive, useSyncState } from "./driveSync";
+import { cancelSync, syncDrive, useSyncState } from "./driveSync";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { askConfirm } from "@/components/AppDialogs";
 import { showError } from "@/components/errorDialog";
 import { shell, joinPath } from "@/shell";
@@ -16,13 +16,22 @@ type DriveStatus = {
   connected: boolean; folder: string; auto_sync: boolean; last_sync: string | null;
   error: string | null; conflicts: Revision[]; previous_path: string | null;
 };
+const DIALOG_KEYS = new Set(["Tab", "Enter", " ", "Escape"]);
+
 /** Mounted once: flush editors before every sync and block new edits until it finishes. */
 export function DriveSyncHost() {
   const busy = useSyncState(s => s.busy);
+  const jobId = useSyncState(s => s.jobId);
+  const cancelling = useSyncState(s => s.cancelling);
   const queryClient = useQueryClient();
   useEffect(() => {
     if (!busy) return;
-    const block = (event: KeyboardEvent) => { event.preventDefault(); event.stopImmediatePropagation(); };
+    const block = (event: KeyboardEvent) => {
+      // Dialogs stay usable from the keyboard: the 中止 button, and the confirmation when closing the app.
+      if (DIALOG_KEYS.has(event.key) && !event.ctrlKey && !event.altKey && !event.metaKey
+          && event.target instanceof Element && event.target.closest('[data-slot="dialog-content"]')) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+    };
     window.addEventListener("keydown", block, true);
     return () => window.removeEventListener("keydown", block, true);
   }, [busy]);
@@ -45,7 +54,10 @@ export function DriveSyncHost() {
   }, [queryClient]);
   return <Dialog open={busy}><DialogContent showCloseButton={false}>
     <DialogTitle>同期フォルダーを更新中</DialogTitle>
-    <DialogDescription>完了までお待ちください…</DialogDescription>
+    <DialogDescription>{cancelling ? "中止しています…" : "完了までお待ちください…"}</DialogDescription>
+    <DialogFooter>
+      <Button variant="outline" disabled={!jobId || cancelling} onClick={() => void cancelSync()}>中止</Button>
+    </DialogFooter>
   </DialogContent></Dialog>;
 }
 

@@ -6,6 +6,12 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, MouseButton, TrayIconEvent};
 use tauri::Emitter;
 
+#[cfg(not(debug_assertions))]
+mod sidecar;
+
+/// The tray icon's id, so it can be hidden while the app waits for the sidecar at exit.
+const TRAY_ID: &str = "main";
+
 #[derive(Clone)]
 struct BackendConfig {
     port: u16,
@@ -66,7 +72,7 @@ pub fn run() {
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
 
             if let Some(icon) = app.default_window_icon() {
-                let _tray = TrayIconBuilder::new()
+                let _tray = TrayIconBuilder::with_id(TRAY_ID)
                     .icon(icon.clone())
                     .menu(&menu)
                     .on_menu_event(|app, event| {
@@ -123,14 +129,7 @@ pub fn run() {
             }
 
             #[cfg(not(debug_assertions))]
-            {
-                use tauri_plugin_shell::ShellExt;
-                let sidecar_command = app.shell().sidecar("sidecar").unwrap()
-                    .env("PAPEER_PORT", port.to_string())
-                    .env("PAPEER_TOKEN", token);
-                let (_rx, child) = sidecar_command.spawn().expect("Failed to spawn sidecar");
-                app.manage(SidecarState(std::sync::Mutex::new(Some(child))));
-            }
+            app.manage(sidecar::spawn(app, port, &token)?);
             Ok(())
         })
         
@@ -139,19 +138,13 @@ pub fn run() {
 
     app.run(move |app_handle, event| {
         #[cfg(debug_assertions)]
-        let _ = app_handle;
+        let _ = (app_handle, event);
+        // Wait for the sidecar to end by itself (it has usually been sent /shutdown); kill only as a last resort.
+        #[cfg(not(debug_assertions))]
         if let tauri::RunEvent::Exit = event {
-            #[cfg(not(debug_assertions))]
-            if let Some(state) = app_handle.try_state::<SidecarState>() {
-                if let Ok(mut child_guard) = state.0.lock() {
-                    if let Some(child) = child_guard.take() {
-                        let _ = child.kill();
-                    }
-                }
+            if let Some(sidecar) = app_handle.try_state::<sidecar::Sidecar>() {
+                sidecar.stop(app_handle);
             }
         }
     });
 }
-
-#[cfg(not(debug_assertions))]
-struct SidecarState(std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>);

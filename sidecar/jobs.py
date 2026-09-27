@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
+import time
 import uuid
 from typing import Any, Callable
 
@@ -19,6 +20,7 @@ class JobManager:
         self._threads: dict[str, threading.Thread] = {}
         self._listeners: set[asyncio.Queue] = set()
         self._loop = event_loop
+        self._closed = False
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -60,6 +62,23 @@ class JobManager:
             job.cancelled = True
             return True
 
+    def close(self) -> int:
+        """Refuse new jobs from now on and ask the running ones to stop; returns how many were running."""
+        with self._lock:
+            self._closed = True
+            running = [job_id for job_id, job in self._jobs.items() if job.running]
+        return sum(self.cancel_job(job_id) for job_id in running)
+
+    def wait_idle(self, timeout: float) -> bool:
+        """Wait until no job thread is left running; False if some are still running after `timeout` seconds."""
+        deadline = time.monotonic() + timeout
+        with self._lock:
+            threads = [self._threads[job_id] for job_id, job in self._jobs.items()
+                       if job.running and job_id in self._threads]
+        for thread in threads:
+            thread.join(max(0.0, deadline - time.monotonic()))
+        return not any(thread.is_alive() for thread in threads)
+
     def submit_job(
         self,
         kind: str,
@@ -67,6 +86,8 @@ class JobManager:
         paper_id: str | None = None,
     ) -> JobInfo:
         with self._lock:
+            if self._closed:
+                raise ConcurrencyConflict("アプリを終了しています。")
             # Check concurrency constraints
             if any(j.running and j.kind in {"backup", "restore", "drive-sync"} for j in self._jobs.values()):
                 raise ConcurrencyConflict("バックアップ・復元が実行中です。")
@@ -89,15 +110,19 @@ class JobManager:
                 running=True,
                 cancelled=False,
             )
+            released = threading.Event()
+
+            def begin() -> None:
+                released.wait()
+                runner()
+
+            # Registered and started together with the job, so a shutdown that cancels it always waits
+            # for it too; the work only begins once job.started has gone out (released below).
+            thread = threading.Thread(target=begin, name=f"Job-{kind}-{job_id}", daemon=True)
             self._jobs[job_id] = job
             self._events[job_id] = cancel_event
-        self.broadcast({
-            "type": "job.started",
-            "job_id": job_id,
-            "paper_id": paper_id,
-            "kind": kind,
-            "message": job.message,
-        })
+            self._threads[job_id] = thread
+            thread.start()
 
         def progress(message: str) -> None:
             done, total = None, None
@@ -166,7 +191,6 @@ class JobManager:
             finally:
                 # Cleanup job after a delay so that clients and tests can read the final status
                 def cleanup():
-                    import time
                     time.sleep(5)
                     with self._lock:
                         self._jobs.pop(job_id, None)
@@ -174,10 +198,16 @@ class JobManager:
                         self._threads.pop(job_id, None)
                 threading.Thread(target=cleanup, daemon=True).start()
 
-        thread = threading.Thread(target=runner, name=f"Job-{kind}-{job_id}", daemon=True)
-        with self._lock:
-            self._threads[job_id] = thread
-        thread.start()
+        try:
+            self.broadcast({
+                "type": "job.started",
+                "job_id": job_id,
+                "paper_id": paper_id,
+                "kind": kind,
+                "message": job.message,
+            })
+        finally:
+            released.set()
         return job
 
 

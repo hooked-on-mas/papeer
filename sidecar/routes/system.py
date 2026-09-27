@@ -1,9 +1,9 @@
 """Health, shutdown, remembered UI state and the job list."""
 from __future__ import annotations
 
-import asyncio
 import os
 import threading
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -23,14 +23,38 @@ def health() -> dict[str, str]:
     return {"status": "ok", "version": version, "code_version": version}
 
 
+# How long /shutdown lets cancelled jobs wind down (CLI subprocesses stopped, files closed) and
+# in-flight requests finish before the process exits anyway. Tauri waits longer than this for
+# the process to end before it kills it (SIDECAR_EXIT_TIMEOUT in src-tauri/src/lib.rs).
+SHUTDOWN_JOB_TIMEOUT = 20.0
+SHUTDOWN_REQUEST_TIMEOUT = 5.0
+
+
+def exit_process() -> None:
+    # A normal exit of this (child) process lets PyInstaller's bootloader delete its %TEMP%\_MEI* folder.
+    os._exit(0)
+
+
 @router.post("/shutdown")
-def shutdown() -> dict[str, str]:
+def shutdown() -> dict[str, Any]:
+    """Stop every job, wait for them (bounded), answer, then exit.
+
+    The caller waits for this response, so by the time it arrives nothing is writing any more;
+    new jobs are refused from the first moment.
+    """
+    manager = deps.job_manager
+    cancelled = manager.close()
+    jobs_stopped = manager.wait_idle(SHUTDOWN_JOB_TIMEOUT)
+    requests_finished = deps.wait_for_library_requests(SHUTDOWN_REQUEST_TIMEOUT)
+
+    exit_now = exit_process  # looked up now, so a test's replacement is still the one called later
+
     def stop():
-        asyncio.run(asyncio.sleep(0.5))
-        os._exit(0)
+        time.sleep(0.5)  # let the response reach the caller
+        exit_now()
 
     threading.Thread(target=stop, daemon=True).start()
-    return {"status": "shutting down"}
+    return {"status": "shutting down", "cancelled": cancelled, "stopped": jobs_stopped and requests_finished}
 
 
 @router.get("/api/ui-state", response_model=UIStateModel)

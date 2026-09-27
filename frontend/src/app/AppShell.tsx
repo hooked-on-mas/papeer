@@ -27,6 +27,7 @@ import { bindQueryClient, createFolder, importPdfs, normalizeCollection, renameF
 import { useDropTarget, useFileDrop } from "./fileDrop";
 import { flushUiState, initUiStateSync } from "./uiStateSync";
 import { flushPendingSaves } from "@/lib/pendingSaves";
+import { isAppClosing, setAppClosing } from "./appClosing";
 import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
 import { isJobKind, SNAPSHOT_JOBS } from "@/features/jobs/jobKinds";
 import { registerAllJobHandlers } from "./jobHandlers";
@@ -53,52 +54,62 @@ function useCloseHandling(): void {
     // @ts-ignore injected by Tauri
     if (window.__TAURI_INTERNALS__ === undefined) return;
     const unlisteners: Array<() => void> = [];
-    let closing = false;
 
     const handleClose = async () => {
-      if (closing) return;
+      if (isAppClosing()) return;
       const running = useStore.getState().activeJobs.filter(isRunning);
-      if (running.some(job => isJobKind(job.kind, SNAPSHOT_JOBS))) {
-        useStore.getState().setStatus("同期・バックアップ・復元が完了してから終了してください。");
-        return;
-      }
-      if (running.length) {
+      const snapshot = running.some(job => isJobKind(job.kind, SNAPSHOT_JOBS));
+      if (snapshot) {
+        const ok = await askConfirm("同期・バックアップ中",
+          "同期・バックアップ・復元を中止して終了しますか？\n作りかけのデータは破棄します。ライブラリのフォルダーの入れ替えが始まっている場合は、完了してから終了します。",
+          "中止して終了", true);
+        if (!ok) return;
+      } else if (running.length) {
         const ok = await askConfirm("処理中",
           `実行中の処理が${running.length}件あります。中止して終了しますか？\n翻訳済みのページは保存されており、次回再開できます。`,
           "中止して終了", true);
         if (!ok) return;
       }
-      closing = true;
+      setAppClosing(true);
       if (running.length) {
         useStore.getState().setStatus("処理を中止しています…終了まで少しお待ちください。");
         await apiRequest("POST", "/api/jobs/cancel-all").catch(() => undefined);
-        // Let CLI subprocesses stop before the sidecar exits.
+        // Let CLI subprocesses stop before the sidecar exits (/shutdown also waits, for a while longer).
         await waitForJobs(15_000);
       }
       const failure = await flushPendingSaves();
       if (failure) {
-        closing = false;
+        setAppClosing(false);
         useStore.getState().setStatus(`${failure.message} 終了を中止しました。`);
         return;
       }
       await flushUiState();
-      try {
-        const drive = await apiRequest<{ connected: boolean; auto_sync: boolean }>("GET", "/api/drive");
-        if (drive.connected && drive.auto_sync && await syncDrive()) {
-          closing = false;
-          return;
-        }
-      } catch {
-        if (!await askConfirm("同期フォルダーを更新できませんでした", "変更はこのPCに保存されています。同期せずに終了しますか？", "同期せず終了")) {
-          closing = false;
-          return;
+      // Syncing right after the user stopped a sync (or a backup) would only start it over; the next launch syncs.
+      if (!snapshot) {
+        try {
+          const drive = await apiRequest<{ connected: boolean; auto_sync: boolean }>("GET", "/api/drive");
+          if (drive.connected && drive.auto_sync && await syncDrive()) {
+            setAppClosing(false);
+            return;
+          }
+        } catch {
+          if (!await askConfirm("同期フォルダーを更新できませんでした", "変更はこのPCに保存されています。同期せずに終了しますか？", "同期せず終了")) {
+            setAppClosing(false);
+            return;
+          }
         }
       }
+      useStore.getState().setStatus("終了しています…");
       try {
+        // Answers once the sidecar's jobs have stopped; the sidecar then exits by itself and Tauri
+        // waits for that before the app ends (killing it is the last resort, src-tauri/src/sidecar.rs).
         await apiRequest("POST", "/shutdown");
       } catch {
         // The sidecar may already be gone.
       }
+      // Tauri may still wait a moment for the sidecar to end; a window left on screen would look frozen.
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().hide().catch(() => undefined);
       const { exit } = await import("@tauri-apps/plugin-process");
       await exit(0);
     };
@@ -190,11 +201,7 @@ export function AppShell() {
     bindReaderQueryClient(queryClient);
   }, [queryClient]);
 
-  useEffect(() => {
-    let dispose: (() => void) | undefined;
-    initUiStateSync().then((d) => { dispose = d; });
-    return () => dispose?.();
-  }, []);
+  useEffect(() => initUiStateSync(), []);
 
   useJobEvents();
   useFileDrop();

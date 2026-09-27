@@ -208,3 +208,58 @@ def test_drive_api_sync_status_and_error_redaction(pair, monkeypatch):
         assert "secret-token" not in job.error
         assert "secret-token" not in client.get("/api/drive").text
 
+def test_cancel_during_the_final_replacement_keeps_the_library_and_retries_next_time(pair, monkeypatch):
+    """Stopping just before the folders are swapped loses nothing: the next sync pulls the same revision."""
+    from papeer.providers import Cancelled
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    a.update(identity, note="A")
+    run(a, remote)
+    state = sync.read_state(b.root)
+    folders = sorted(b.root.parent.iterdir())
+    cancel = threading.Event()
+    original = sync.restore_backup
+
+    def restore(lib, archive, stop=None):
+        if Path(lib.root).resolve() == Path(b.root).resolve():
+            cancel.set()  # the user cancels while the replacement starts
+        return original(lib, archive, stop)
+
+    monkeypatch.setattr(sync, "restore_backup", restore)
+    with pytest.raises(Cancelled):
+        sync.sync(b, remote, cancel, lambda _: None)
+    assert b.paper(identity)["note"] != "A"
+    assert sync.read_state(b.root) == state
+    assert sorted(b.root.parent.iterdir()) == folders  # no half-restored or moved-aside folder
+    assert run(b, remote)["reloaded"] is True
+    assert Library(b.root).paper(identity)["note"] == "A"
+
+
+def test_cancel_after_publishing_a_choice_offers_the_choice_again(pair, monkeypatch):
+    """A merge revision is already published when the replacement is cancelled; this PC keeps its data."""
+    from papeer.providers import Cancelled
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    a.update(identity, note="A")
+    run(a, remote)
+    b.update(identity, note="B")
+    assert run(b, remote)["status"] == "conflict"
+    head = sync.revision_heads(remote.items)[0]["id"]
+    cancel = threading.Event()
+    upload = remote.upload
+
+    def upload_then_cancel(*args):
+        identity_ = upload(*args)
+        cancel.set()
+        return identity_
+
+    monkeypatch.setattr(remote, "upload", upload_then_cancel)
+    with pytest.raises(Cancelled):
+        sync.sync(b, remote, cancel, lambda _: None, choice=head, expected_heads=[head])
+    assert b.paper(identity)["note"] == "B"
+    monkeypatch.setattr(remote, "upload", upload)
+    result = run(b, remote)
+    assert result["status"] == "conflict"
+    merged = result["conflicts"][0]["id"]
+    assert run(b, remote, choice=merged, expected_heads=[merged])["reloaded"] is True
+    assert Library(b.root).paper(identity)["note"] == "A"

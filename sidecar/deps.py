@@ -53,9 +53,10 @@ def end_library_request() -> None:
         _requests_condition.notify_all()
 
 
-def wait_for_library_requests() -> None:
+def wait_for_library_requests(timeout: float | None = None) -> bool:
+    """Wait until no admitted HTTP handler is running; False if some still are after `timeout` seconds."""
     with _requests_condition:
-        _requests_condition.wait_for(lambda: _library_requests == 0)
+        return _requests_condition.wait_for(lambda: _library_requests == 0, timeout)
 
 
 # --- Access ---
@@ -89,15 +90,19 @@ def token_matches(provided: str | None) -> bool:
     return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
 
 
+def provided_token(authorization: str | None, token: str | None) -> str | None:
+    """The token a request carries: the Authorization header, else the `token` query parameter."""
+    # <img> tags cannot send headers, so media URLs carry the token as a query parameter.
+    if authorization and authorization.startswith("Bearer "):
+        return authorization[len("Bearer "):].strip()
+    return token or None
+
+
 def verify_token(authorization: str | None = Header(None), token: str | None = Query(None)) -> None:
     if auth_disabled():
         return
-    # <img> tags cannot send headers, so media URLs carry the token as a query parameter.
-    if authorization and authorization.startswith("Bearer "):
-        provided = authorization[len("Bearer "):].strip()
-    elif token:
-        provided = token
-    else:
+    provided = provided_token(authorization, token)
+    if provided is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="認証トークンが必要です。")
     if not token_matches(provided):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="認証トークンが不正です。")

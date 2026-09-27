@@ -26,7 +26,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX-packed DLLs are slower to start, trip antivirus heuristics and gain little inside a onefile exe.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,

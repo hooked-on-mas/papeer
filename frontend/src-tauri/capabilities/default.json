@@ -11,6 +11,7 @@
     "dialog:default",
     "notification:default",
     "core:window:allow-set-progress-bar",
+    "core:window:allow-hide",
     "process:allow-exit",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",

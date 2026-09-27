@@ -143,7 +143,7 @@ class FolderDrive:
             output.write(chunk)
 
 
-def fingerprint(lib: Library) -> str:
+def fingerprint(lib: Library, cancel=None) -> str:
     """Logical DB contents avoid false changes caused by SQLite checkpoint/layout.
 
     UI state is carried in snapshots, but merely navigating doesn't trigger uploads.
@@ -154,6 +154,8 @@ def fingerprint(lib: Library) -> str:
             digest.update(line.encode("utf-8"))
             digest.update(b"\n")
     for path in sorted(lib.root.rglob("*")):
+        if cancel is not None:
+            check_cancel(cancel)
         if path.is_file() and not is_temporary(path) and path.name not in {
             "library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm", "ui-state.json",
         }:
@@ -182,7 +184,7 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
     revisions = remote.revisions()
     heads = revision_heads(revisions)
     ids = sorted(item["id"] for item in heads)
-    local_hash = fingerprint(lib)
+    local_hash = fingerprint(lib, cancel)
     dirty = local_hash != state.get("hash")
     base = state.get("base")
     if base and base not in {item["id"] for item in revisions}:
@@ -211,25 +213,27 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
             # Validate using the backup restore path before touching the active library.
             staging = Path(directory) / "validation"
             staging.mkdir()
-            restore_backup(Library(staging), archive)
-            if fingerprint(Library(staging)) != pull["hash"]:
+            restore_backup(Library(staging), archive, cancel)
+            local_hash = fingerprint(Library(staging), cancel)
+            if local_hash != pull["hash"]:
                 raise ValueError("同期データの内容が一致しません。")
             check_cancel(cancel)
-            local_hash = fingerprint(Library(staging))
             base = pull["id"]
         # Explicit resolutions publish the chosen contents as a merge revision.
         if choice is not None or (not pull and (dirty or not heads)):
             check_cancel(cancel)
             progress("ライブラリ全体の同期データを作成しています…")
             if not pull:
-                create_backup(lib, archive)
+                create_backup(lib, archive, cancel)
             with archive.open("rb") as stream:
                 archive_hash = hashlib.file_digest(stream, "sha256").hexdigest()
             base = remote.upload(archive, {"parents": ids, "hash": local_hash,
                                           "archive_hash": archive_hash, "device": platform.node()}, cancel, progress)
         if pull:
-            # All network operations succeeded; only now replace the local copy.
-            previous = str(restore_backup(lib, archive))
+            # All network operations succeeded; only now replace the local copy. Cancellable until the
+            # folders are swapped: the state is then left as it was, so the next sync pulls the same
+            # revision again (or, when this PC has changes, offers the choice again), and nothing is lost.
+            previous = str(restore_backup(lib, archive, cancel))
         state.update(base=base, hash=local_hash, conflicts=[], error=None,
                      last_sync=datetime.now(timezone.utc).isoformat())
         if previous:

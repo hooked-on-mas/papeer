@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import json
+import re
 import sys
 from typing import AsyncGenerator
 
@@ -34,12 +35,29 @@ app = FastAPI(
 )
 
 
+# What must still answer while a sync, backup or restore holds the library: reading its progress,
+# and stopping it or the whole app (closing the window cancels the job, then calls /shutdown).
+SNAPSHOT_READS = {"/health", "/api/jobs", "/api/drive"}
+SNAPSHOT_CONTROLS = re.compile(r"/api/jobs/(?:cancel-all|[^/]+/cancel)|/shutdown")
+
+
+def allowed_during_snapshot(method: str, path: str) -> bool:
+    if method == "OPTIONS":
+        return True
+    if method == "GET":
+        return path in SNAPSHOT_READS
+    return method == "POST" and SNAPSHOT_CONTROLS.fullmatch(path) is not None
+
+
 @app.middleware("http")
 async def protect_library_snapshot(request: Request, call_next):
     """While a backup or restore copies the library, answer everything else with 409."""
-    guarded = request.method != "OPTIONS" and request.url.path not in {"/health", "/api/jobs", "/api/drive"}
-    if not guarded and request.method not in {"GET", "OPTIONS"}:
-        guarded = True
+    guarded = not allowed_during_snapshot(request.method, request.url.path)
+    # Authentication comes first: a request without the token is refused by its route (401), and must
+    # neither learn that a snapshot is running nor be counted among the requests a snapshot waits for.
+    if guarded and not deps.token_matches(deps.provided_token(request.headers.get("authorization"),
+                                                              request.query_params.get("token"))):
+        return await call_next(request)
     if guarded and not deps.begin_library_request():
         return JSONResponse(status_code=409, content={"detail": "同期・バックアップ・復元が終わるまでお待ちください。"})
     try:

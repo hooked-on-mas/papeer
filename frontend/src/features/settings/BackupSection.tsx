@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { apiRequest } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { askConfirm, showMessage } from "@/components/AppDialogs";
 import { shell } from "@/shell";
@@ -7,10 +8,19 @@ import { startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { describeFailure, flushPendingSaves } from "@/lib/pendingSaves";
 import { flushUiState, suspendUiStateSync } from "@/app/uiStateSync";
+import { reloadUnlessClosing } from "@/app/appClosing";
 
 export function BackupSection() {
   const [pending, setPending] = useState(false);
   const busy = useStore(s => s.activeJobs.some(isRunning));
+  const runningJob = useStore(s => s.activeJobs.find(j => isRunning(j) && (j.kind === "backup" || j.kind === "restore"))?.job_id);
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  // A restore stops only before it swaps the folders; after that it runs to the end.
+  const cancel = async (jobId: string) => {
+    setCancelling(jobId);
+    try { await apiRequest("POST", `/api/jobs/${jobId}/cancel`); }
+    catch (error) { setCancelling(null); showError(error, "中止できませんでした"); }
+  };
   const backup = async (restore: boolean) => {
     setPending(true);
     try {
@@ -28,7 +38,7 @@ export function BackupSection() {
         if (restore) {
           await showMessage("復元しました", `復元前のデータは次の場所に残しています：\n${event.result.previous_path}\n\n画面を読み込み直します。`);
           useStore.setState({ uiStateLoaded: false, activePaperId: null, paperPages: {}, currentPage: 1, librarySearch: "", currentCollection: "", selectedFolder: null, expandedCollections: null, moveHistory: [], chatAttachments: [], chatInputs: {} });
-          window.location.reload();
+          reloadUnlessClosing(() => window.location.reload());
         } else { suspendUiStateSync(false); useStore.getState().setStatus(`バックアップを保存しました：${path}`); }
       });
     } catch (error) { suspendUiStateSync(false); setPending(false); showError(error, "バックアップ・復元を実行できませんでした"); }
@@ -39,5 +49,7 @@ export function BackupSection() {
     <div className="border-t pt-4 space-y-3"><p>バックアップから復元できます。復元前のデータは自動で別フォルダーに残ります。</p>
       <Button variant="outline" disabled={pending || busy} onClick={() => void backup(true)}>バックアップから復元</Button></div>
     {(pending || busy) && <p className="text-muted-foreground text-xs">処理が終わるまでお待ちください。</p>}
+    {runningJob && <Button variant="outline" size="sm" disabled={cancelling === runningJob} onClick={() => void cancel(runningJob)}>
+      {cancelling === runningJob ? "中止しています…" : "バックアップ・復元を中止"}</Button>}
   </div>;
 }

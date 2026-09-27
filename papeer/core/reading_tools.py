@@ -10,6 +10,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import threading
 import uuid
 import zipfile
 
@@ -125,7 +126,14 @@ def library_search(lib: Library, query: str, limit: int = 200) -> dict:
     return {"results": results, "limited": False}
 
 
-def create_backup(lib: Library, destination: Path) -> None:
+def _stop_if_cancelled(cancel: threading.Event | None) -> None:
+    if cancel is not None:
+        from papeer.providers import check_cancel
+        check_cancel(cancel)
+
+
+def create_backup(lib: Library, destination: Path, cancel: threading.Event | None = None) -> None:
+    """Write the whole library to a ZIP; a cancelled backup leaves no file behind (Cancelled is raised)."""
     destination = destination.resolve()
     if destination.is_relative_to(lib.root.resolve()):
         raise ValueError("バックアップはデータ保存フォルダーの外に保存してください。")
@@ -138,13 +146,18 @@ def create_backup(lib: Library, destination: Path) -> None:
             archive.write(snapshot, "library.sqlite3")
             archive.writestr("papeer-backup.json", json.dumps({"version": 1}))
             for path in lib.root.rglob("*"):
+                _stop_if_cancelled(cancel)
                 # Half-written files left by a forced exit must not travel with the backup or sync.
                 if (path.is_file() and not is_temporary(path)
                         and path.name not in {"library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm"}):
                     archive.write(path, path.relative_to(lib.root).as_posix())
 
 
-def restore_backup(lib: Library, source: Path) -> Path:
+def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = None) -> Path:
+    """Replace the library with a validated backup and return where the old one was moved.
+
+    `cancel` is honoured only until the folders are swapped: a cancelled restore leaves the library as it was.
+    """
     root = lib.root.resolve()
     staging = root.with_name(root.name + "-restore-" + uuid.uuid4().hex)
     previous = root.with_name(root.name + "-before-restore-" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
@@ -154,6 +167,7 @@ def restore_backup(lib: Library, source: Path) -> Path:
             total = 0
             names = set()
             for item in archive.infolist():
+                _stop_if_cancelled(cancel)
                 name = item.filename
                 path = PurePosixPath(name)
                 normalized = "/".join(path.parts).casefold()
@@ -187,12 +201,15 @@ def restore_backup(lib: Library, source: Path) -> Path:
             if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or db.execute("PRAGMA foreign_key_check").fetchall():
                 raise ValueError("バックアップのデータベースが破損しています。")
             for paper_id, digest in db.execute("SELECT id,sha256 FROM papers"):
+                _stop_if_cancelled(cancel)
                 if not re.fullmatch(r"[0-9a-f]{32}", paper_id) or not (PaperFiles(staging / "papers" / paper_id).original_pdf).is_file():
                     raise ValueError("バックアップの論文ファイルが不足しています。")
                 with (PaperFiles(staging / "papers" / paper_id).original_pdf).open("rb") as stream:
                     if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
                         raise ValueError("バックアップの原文PDFが破損しています。")
         manifest_path.unlink()
+        # The last point to stop; once the folders are swapped the restore runs to the end.
+        _stop_if_cancelled(cancel)
         root.rename(previous)
         try:
             staging.rename(root)

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from papeer.core import drive_sync
 from papeer.core.storage import Library
+from papeer.providers import Cancelled
 from sidecar import deps
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
@@ -71,6 +72,9 @@ def sync(body: SyncRequest):
                 raise ValueError("同期フォルダーを指定してください。")
             return drive_sync.sync(Library(root), drive_sync.FolderDrive(Path(state["folder"])), cancel, progress,
                                    choice=body.choice, expected_heads=body.expected_heads)
+        except Cancelled:
+            # Stopping is not a failure: no error is recorded, so automatic sync resumes next time.
+            raise Cancelled("同期を中止しました。") from None
         except Exception as exc:
             message = str(exc) if isinstance(exc, ValueError) else "同期フォルダーを読み書きできませんでした。保存先とPC版Google Driveを確認して再試行してください。"
             state = drive_sync.read_state(root)

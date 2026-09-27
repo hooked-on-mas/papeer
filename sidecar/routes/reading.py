@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from papeer.core import reading_tools as tools
-from papeer.providers import check_cancel
+from papeer.providers import Cancelled, check_cancel
 from papeer.core.service import PaperService
 from papeer.core.terminology import global_glossary, save_global_glossary, GlossaryConflict
 from sidecar import deps
@@ -258,7 +258,10 @@ def backup(body: BackupRequest):
         deps.wait_for_library_requests()
         check_cancel(cancel)
         progress("ライブラリ全体をバックアップしています…")
-        tools.create_backup(lib, Path(body.path))
+        try:
+            tools.create_backup(lib, Path(body.path), cancel)
+        except Cancelled:
+            raise Cancelled("バックアップを中止しました。") from None
         return {"path": body.path}
     return deps.submit_job("backup", action)
 
@@ -270,7 +273,9 @@ def restore(body: BackupRequest):
         check_cancel(cancel)
         progress("バックアップを検証して復元しています…")
         try:
-            previous = tools.restore_backup(lib, Path(body.path))
+            previous = tools.restore_backup(lib, Path(body.path), cancel)
+        except Cancelled:
+            raise Cancelled("復元を中止しました。ライブラリは変更していません。") from None
         except (OSError, ValueError, sqlite3.DatabaseError, zipfile.BadZipFile) as exc:
             raise ValueError(f"バックアップを復元できませんでした：{exc}") from exc
         deps.library_changed()
