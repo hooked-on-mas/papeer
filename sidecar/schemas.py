@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from papeer.core.config import Settings
 
@@ -16,9 +16,8 @@ _DEFAULTS = Settings()
 
 
 class SettingsModel(BaseModel):
-    # Older clients send codex_path/api_base etc.; Settings.from_values migrates them.
-    model_config = ConfigDict(extra="allow")
-
+    # Keys the model does not know are ignored (Pydantic's default). This is only the API's shape:
+    # settings.json itself is read by Settings.load, which migrates older flat keys (codex_path etc.).
     provider: str = _DEFAULTS.provider
     model: str = _DEFAULTS.model
     reasoning_effort: str = _DEFAULTS.reasoning_effort
@@ -110,10 +109,6 @@ class BookmarkEditRequest(BaseModel):
     anchor_x: float | None = Field(default=None, ge=0, le=1)
     anchor_y: float | None = Field(default=None, ge=0, le=1)
     color: HighlightColor | None = None  # Highlights only.
-
-
-class GlossaryRequest(BaseModel):
-    terms: list[dict[str, str]]
 
 
 class ExportRequest(BaseModel):

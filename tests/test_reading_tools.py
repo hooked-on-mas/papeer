@@ -427,7 +427,7 @@ def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
     monkeypatch.setattr("sidecar.deps.create_provider", GlossaryProvider)
     with TestClient(runtime.app) as client:
         base = f"/api/papers/{identity}"
-        assert client.put(base + "/glossary", json={"terms": existing}).status_code == 200
+        assert client.put("/api/glossary", json={"terms": existing, "expected_terms": []}).status_code == 200
         response = client.post(base + "/glossary-draft", json={
             "terms": existing, "model": "draft-model", "effort": "low"})
         assert response.status_code == 200
@@ -438,9 +438,10 @@ def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
         assert job.status == "succeeded"
         assert job.result["terms"] == [{"source": "tracking error", "target": "追従誤差"}]
         assert calls[0]["existing_terms"] == existing
-        assert client.get(base + "/glossary").json() == existing
-        assert client.put(base + "/glossary", json={"terms": existing + job.result["terms"]}).status_code == 200
-        assert len(client.get(base + "/glossary").json()) == 2
+        assert client.get("/api/glossary").json() == existing
+        assert client.put("/api/glossary", json={"terms": existing + job.result["terms"],
+                                                 "expected_terms": existing}).status_code == 200
+        assert len(client.get("/api/glossary").json()) == 2
         assert client.post(base + "/glossary-draft", json={"terms": existing * 2}).status_code == 400
 
 

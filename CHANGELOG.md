@@ -44,6 +44,10 @@ Papeer の主な変更を記録します。形式は [Keep a Changelog](https://
 - 用語辞書を語の境目で照合するようにしました（`RL` が `world` に一致しない）。全大文字の略語は大文字だけに、最後の単語の複数形や行末のハイフンで分かれた語にも一致します。辞書に短い語や単数形の語があると、該当するページが更新後に一度だけ訳し直しになることがあります。
 - 訳文の品質・スタイルの指示を、通常の翻訳と段落ごとの復旧・予備の翻訳のプロンプトで共有するようにしました。
 
+### Removed
+
+- 開発: 画面から使われなくなった sidecar の API を削除しました。付箋の旧パス `/api/papers/{id}/bookmarks`（`/sticky-notes` を使う）、書き込みの旧パス `/ink/{side}/{page}`・`/ink-capture`（`-v2` を使う）、論文ごとの辞書 `/api/papers/{id}/glossary`（共通辞書 `/api/glossary` を使う）、ファイルを送って追加する `/api/papers/upload`（パスで追加する `/api/papers/import` を使う）、`/api/papers/{id}/reading-blocks/{page}` です。これに伴い依存から python-multipart を外しました。`PUT /api/settings` は知らない項目（旧形式の `codex_path` など）を無視します。settings.json の旧形式の読み込みは従来どおりです。
+
 ### Fixed
 
 - サマリーを作り直すと、読書メモの切り抜き画像が消えることがある問題を直しました。

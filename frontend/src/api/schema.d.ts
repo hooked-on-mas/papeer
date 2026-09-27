@@ -291,23 +291,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/papers/upload": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Upload Paper */
-        post: operations["upload_paper_api_papers_upload_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/papers/{paper_id}": {
         parameters: {
             query?: never;
@@ -370,23 +353,6 @@ export interface paths {
         };
         /** Get Translation Text */
         get: operations["get_translation_text_api_papers__paper_id__translation_text__page__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/papers/{paper_id}/reading-blocks/{page}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Reading Blocks */
-        get: operations["get_reading_blocks_api_papers__paper_id__reading_blocks__page__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -484,24 +450,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/papers/{paper_id}/bookmarks": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Bookmarks */
-        get: operations["get_bookmarks_api_papers__paper_id__bookmarks_get"];
-        put?: never;
-        /** Add Bookmark */
-        post: operations["add_bookmark_api_papers__paper_id__bookmarks_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/papers/{paper_id}/sticky-notes": {
         parameters: {
             query?: never;
@@ -520,24 +468,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/papers/{paper_id}/bookmarks/{bookmark_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete Bookmark */
-        delete: operations["delete_bookmark_api_papers__paper_id__bookmarks__bookmark_id__delete"];
-        options?: never;
-        head?: never;
-        /** Update Bookmark */
-        patch: operations["update_bookmark_api_papers__paper_id__bookmarks__bookmark_id__patch"];
-        trace?: never;
-    };
     "/api/papers/{paper_id}/sticky-notes/{bookmark_id}": {
         parameters: {
             query?: never;
@@ -554,27 +484,6 @@ export interface paths {
         head?: never;
         /** Update Bookmark */
         patch: operations["update_bookmark_api_papers__paper_id__sticky_notes__bookmark_id__patch"];
-        trace?: never;
-    };
-    "/api/papers/{paper_id}/glossary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Glossary */
-        get: operations["get_glossary_api_papers__paper_id__glossary_get"];
-        /**
-         * Put Glossary
-         * @deprecated
-         */
-        put: operations["put_glossary_api_papers__paper_id__glossary_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/api/collections": {
@@ -1065,23 +974,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/papers/{paper_id}/ink-capture": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Capture */
-        post: operations["capture_api_papers__paper_id__ink_capture_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/papers/{paper_id}/ink-v2/{side}/{page}": {
         parameters: {
             query?: never;
@@ -1093,24 +985,6 @@ export interface paths {
         get: operations["get_ink_api_papers__paper_id__ink_v2__side___page__get"];
         /** Put Ink */
         put: operations["put_ink_api_papers__paper_id__ink_v2__side___page__put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/papers/{paper_id}/ink/{side}/{page}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Ink */
-        get: operations["get_ink_api_papers__paper_id__ink__side___page__get"];
-        /** Put Ink */
-        put: operations["put_ink_api_papers__paper_id__ink__side___page__put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1229,11 +1103,6 @@ export interface components {
             /** Path */
             path: string;
         };
-        /** Body_upload_paper_api_papers_upload_post */
-        Body_upload_paper_api_papers_upload_post: {
-            /** File */
-            file: string;
-        };
         /** BookmarkEditRequest */
         BookmarkEditRequest: {
             /**
@@ -1321,13 +1190,6 @@ export interface components {
         GlossaryFileRequest: {
             /** Path */
             path: string;
-            /** Terms */
-            terms: {
-                [key: string]: string;
-            }[];
-        };
-        /** GlossaryRequest */
-        GlossaryRequest: {
             /** Terms */
             terms: {
                 [key: string]: string;
@@ -1522,8 +1384,6 @@ export interface components {
             };
             /** Api Key */
             api_key?: string | null;
-        } & {
-            [key: string]: unknown;
         };
         /** TagRequest */
         TagRequest: {
@@ -2304,46 +2164,6 @@ export interface operations {
             };
         };
     };
-    upload_paper_api_papers_upload_post: {
-        parameters: {
-            query?: {
-                collection?: string | null;
-                token?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_upload_paper_api_papers_upload_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_paper_api_papers__paper_id__get: {
         parameters: {
             query?: {
@@ -2561,44 +2381,6 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: string[];
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_reading_blocks_api_papers__paper_id__reading_blocks__page__get: {
-        parameters: {
-            query?: {
-                token?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                paper_id: string;
-                page: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
                     };
                 };
             };
@@ -2833,84 +2615,6 @@ export interface operations {
             };
         };
     };
-    get_bookmarks_api_papers__paper_id__bookmarks_get: {
-        parameters: {
-            query?: {
-                token?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                paper_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    add_bookmark_api_papers__paper_id__bookmarks_post: {
-        parameters: {
-            query?: {
-                token?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                paper_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BookmarkRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_bookmarks_api_papers__paper_id__sticky_notes_get: {
         parameters: {
             query?: {
@@ -2964,86 +2668,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["BookmarkRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_bookmark_api_papers__paper_id__bookmarks__bookmark_id__delete: {
-        parameters: {
-            query?: {
-                token?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                paper_id: string;
-                bookmark_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: boolean;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_bookmark_api_papers__paper_id__bookmarks__bookmark_id__patch: {
-        parameters: {
-            query?: {
-                token?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                paper_id: string;
-                bookmark_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BookmarkEditRequest"];
             };
         };
         responses: {
@@ -3135,84 +2759,6 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_glossary_api_papers__paper_id__glossary_get: {
-        parameters: {
-            query?: {
-                token?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                paper_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_glossary_api_papers__paper_id__glossary_put: {
-        parameters: {
-            query?: {
-                token?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                paper_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GlossaryRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: number;
                     };
                 };
             };
@@ -4573,45 +4119,6 @@ export interface operations {
             };
         };
     };
-    capture_api_papers__paper_id__ink_capture_post: {
-        parameters: {
-            query?: {
-                token?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                paper_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["InkCaptureRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_ink_api_papers__paper_id__ink_v2__side___page__get: {
         parameters: {
             query?: {
@@ -4650,84 +4157,6 @@ export interface operations {
         };
     };
     put_ink_api_papers__paper_id__ink_v2__side___page__put: {
-        parameters: {
-            query?: {
-                token?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                paper_id: string;
-                side: "original" | "translated";
-                page: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["InkPageRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_ink_api_papers__paper_id__ink__side___page__get: {
-        parameters: {
-            query?: {
-                token?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                paper_id: string;
-                side: "original" | "translated";
-                page: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_ink_api_papers__paper_id__ink__side___page__put: {
         parameters: {
             query?: {
                 token?: string | null;

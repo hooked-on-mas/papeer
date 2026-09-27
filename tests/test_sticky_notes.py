@@ -42,7 +42,7 @@ def test_legacy_notes_migrate_and_new_positions_survive_reopen(notes_env):
         assert items[0]["anchor_x"] == .8
         assert items[0]["anchor_y"] == .65
         assert client.get(f"/api/papers/{alpha}/sticky-notes").json()[0]["id"] == old["id"]
-        assert client.get(f"/api/papers/{beta}/bookmarks").json()[0]["id"] == new.json()["id"]
+        assert client.get(f"/api/papers/{beta}/sticky-notes").json()[0]["id"] == new.json()["id"]
     assert Library(lib.root).bookmarks(beta)[0]["anchor_x"] == .8
 
 

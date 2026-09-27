@@ -93,7 +93,6 @@ def ink_pages(paper_id: str):
     deps.paper_folder(lib, paper_id)
     return lib.ink_pages(paper_id)
 
-@router.post("/api/papers/{paper_id}/ink-capture")
 @router.post("/api/papers/{paper_id}/ink-capture-v2")
 def capture(paper_id: str, body: InkCaptureRequest):
     lib = deps.get_library()
@@ -107,14 +106,12 @@ def capture(paper_id: str, body: InkCaptureRequest):
     # Notes refer to the capture by this path relative to the paper folder.
     return {"file": target.relative_to(files.folder).as_posix(), "page": body.page, "side": body.side}
 
-@router.get("/api/papers/{paper_id}/ink/{side}/{page}")
 @router.get("/api/papers/{paper_id}/ink-v2/{side}/{page}")
 def get_ink(paper_id: str, side: Side, page: int):
     lib = deps.get_library()
     check_page(lib, paper_id, side, page)
     return {"strokes": lib.ink(paper_id, side, page)}
 
-@router.put("/api/papers/{paper_id}/ink/{side}/{page}")
 @router.put("/api/papers/{paper_id}/ink-v2/{side}/{page}")
 def put_ink(paper_id: str, side: Side, page: int, body: InkPageRequest):
     lib = deps.get_library()

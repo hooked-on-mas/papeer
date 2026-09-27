@@ -16,7 +16,7 @@
   "sourceFiles": [
     {
       "path": "uv.lock",
-      "sha256": "9034706e90ee0ac87594502da47f8bfe17b23d966ee07b3b50dffd2a4332668d"
+      "sha256": "6e98f471ee7a8878d68b00c14bfaa9bc77e82608e8ba0f561d131f7c0e4fe3dd"
     },
     {
       "path": "frontend/pnpm-lock.yaml",
@@ -29,12 +29,12 @@
   ],
   "summary": {
     "python": {
-      "rows": 44,
-      "directRows": 13,
+      "rows": 43,
+      "directRows": 12,
       "unknownLicenseRows": 3,
       "scopeCounts": {
         "build": 7,
-        "windows-runtime": 23,
+        "windows-runtime": 22,
         "development": 16,
         "other-platform-in-lock": 3
       }
@@ -475,20 +475,6 @@
         ],
         "license": "BSD-3-Clause",
         "licenseEvidence": ".venv/Lib/site-packages/python_dotenv-1.2.3.dist-info/METADATA",
-        "installedOnAuditMachine": true
-      },
-      {
-        "name": "python-multipart",
-        "version": "0.0.32",
-        "dependencyType": "direct",
-        "directScopes": [
-          "runtime"
-        ],
-        "scopes": [
-          "windows-runtime"
-        ],
-        "license": "Apache-2.0",
-        "licenseEvidence": ".venv/Lib/site-packages/python_multipart-0.0.32.dist-info/METADATA",
         "installedOnAuditMachine": true
       },
       {

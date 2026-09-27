@@ -3,22 +3,18 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-import shutil
-import tempfile
 import threading
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 
 from papeer.core import reading_state, search
 from papeer.core.bibtex import bibtex, export_bibtex
 from papeer.core.errors import Invalid, NotFound
 from papeer.core.paths import PaperFiles
-from papeer.core.reading_tools import validate_terms
 from papeer.core.storage import normalize_collection_name
-from papeer.core.terminology import global_glossary, save_global_glossary
 from papeer.pdf.pdf_viewer import pdf_page_count
 from papeer.providers import Cancelled
 from sidecar import deps
@@ -29,7 +25,6 @@ from sidecar.schemas import (
     BookmarkEditRequest,
     BookmarkRequest,
     CreateCollectionRequest,
-    GlossaryRequest,
     ImportRequest,
     RenameCollectionRequest,
     RenamePaperRequest,
@@ -74,11 +69,8 @@ def list_papers(query: str = "", sort: int = 0) -> list[dict[str, Any]]:
 import_turns = TurnQueue()
 
 
-def submit_import(action: Any, before_turn: Any = None, cleanup: Any = None) -> str:
-    """Submit an import job that waits for the earlier ones.
-
-    `before_turn` runs before waiting; `cleanup` runs however the job ends, even if never submitted.
-    """
+def submit_import(action: Any, before_turn: Any = None) -> str:
+    """Submit an import job that waits for the earlier ones; `before_turn` runs before waiting."""
     ticket = import_turns.ticket()
 
     def queued(cancel: threading.Event, progress: Any, page_ready: Any) -> Any:
@@ -90,15 +82,11 @@ def submit_import(action: Any, before_turn: Any = None, cleanup: Any = None) -> 
             return action(cancel, progress, page_ready)
         finally:
             import_turns.release(ticket)
-            if cleanup:
-                cleanup()
 
     try:
         return deps.job_manager.submit_job("import", queued, paper_id=None).job_id
     except ConcurrencyConflict:
         import_turns.release(ticket)
-        if cleanup:
-            cleanup()
         raise
 
 
@@ -132,25 +120,6 @@ def import_papers(body: ImportRequest) -> dict[str, str]:
         return {"paper_ids": imported_ids, "added": added}
 
     return {"job_id": submit_import(action, announce_pages)}
-
-
-@router.post("/api/papers/upload", tags=["Papers"])
-def upload_paper(file: UploadFile = File(...), collection: str | None = None) -> dict[str, str]:
-    lib = deps.get_library()
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        shutil.copyfileobj(file.file, tmp)
-        tmp_path = Path(tmp.name)
-
-    def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, Any]:
-        progress(f"PDFアップロード中: {file.filename}")
-        paper_id, is_new = lib.import_pdf(tmp_path, collection_name=collection or "", original_name=file.filename or "")
-        progress(f"テキスト抽出中: {file.filename}")
-        lib.document(paper_id)
-        deps.library_changed()
-        return {"paper_ids": [paper_id], "added": int(is_new)}
-
-    return {"job_id": submit_import(action, cleanup=lambda: tmp_path.unlink(missing_ok=True))}
 
 
 @router.get("/api/papers/{paper_id}")
@@ -218,13 +187,6 @@ def get_translation_text(paper_id: str, page: int) -> dict[str, list[str]]:
     lib = deps.get_library()
     deps.paper_folder(lib, paper_id)
     return {"blocks": reading_state.translation_text(lib, paper_id, page)}
-
-
-@router.get("/api/papers/{paper_id}/reading-blocks/{page}")
-def get_reading_blocks(paper_id: str, page: int) -> dict[str, Any]:
-    lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
-    return reading_state.reading_blocks(lib, paper_id, page)
 
 
 @router.get("/api/papers/{paper_id}/search")
@@ -325,7 +287,7 @@ def get_paper_media(paper_id: str, name: str) -> FileResponse:
     return FileResponse(media_file, media_type="image/png")
 
 
-# --- Sticky notes and highlights (formerly bookmarks; both paths stay for older clients) ---
+# --- Sticky notes and highlights (stored in the bookmarks table) ---
 
 
 def _paper_library(paper_id: str):
@@ -341,13 +303,11 @@ def get_sticky_notes() -> list[dict]:
 
 
 @router.get("/api/papers/{paper_id}/sticky-notes")
-@router.get("/api/papers/{paper_id}/bookmarks")
 def get_bookmarks(paper_id: str) -> list[dict]:
     return _paper_library(paper_id).bookmarks(paper_id)
 
 
 @router.post("/api/papers/{paper_id}/sticky-notes")
-@router.post("/api/papers/{paper_id}/bookmarks")
 def add_bookmark(paper_id: str, body: BookmarkRequest) -> dict:
     return _paper_library(paper_id).add_bookmark(paper_id, body.page, body.side, body.quote, body.label, body.note,
                                                  body.anchor_y, body.anchor_x, kind=body.kind, color=body.color,
@@ -355,37 +315,15 @@ def add_bookmark(paper_id: str, body: BookmarkRequest) -> dict:
 
 
 @router.delete("/api/papers/{paper_id}/sticky-notes/{bookmark_id}")
-@router.delete("/api/papers/{paper_id}/bookmarks/{bookmark_id}")
 def delete_bookmark(paper_id: str, bookmark_id: int) -> dict[str, bool]:
     return {"deleted": _paper_library(paper_id).delete_bookmark(paper_id, bookmark_id)}
 
 
 @router.patch("/api/papers/{paper_id}/sticky-notes/{bookmark_id}")
-@router.patch("/api/papers/{paper_id}/bookmarks/{bookmark_id}")
 def update_bookmark(paper_id: str, bookmark_id: int, body: BookmarkEditRequest) -> dict:
     # A missing note is NotFound (404); a wrong color, like any other invalid value, 400.
     return _paper_library(paper_id).update_bookmark(paper_id, bookmark_id, body.label, body.note,
                                                     anchor_x=body.anchor_x, anchor_y=body.anchor_y, color=body.color)
-
-
-# --- Glossary seen from one paper (the dictionary itself is library-wide; see routes.reading) ---
-
-
-@router.get("/api/papers/{paper_id}/glossary")
-def get_glossary(paper_id: str) -> list[dict[str, str]]:
-    lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
-    return global_glossary(lib.root)
-
-
-@router.put("/api/papers/{paper_id}/glossary", deprecated=True)
-def put_glossary(paper_id: str, body: GlossaryRequest) -> dict[str, int]:
-    with deps.job_manager.idle("実行中の処理が終わってから共通辞書を保存してください。"):
-        lib = deps.get_library()
-        deps.paper_folder(lib, paper_id)
-        terms = validate_terms(body.terms)
-        save_global_glossary(lib.root, terms)
-    return {"count": len(terms)}
 
 
 # --- Folders (collections) ---

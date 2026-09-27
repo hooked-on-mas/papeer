@@ -329,26 +329,25 @@ def test_reader_search_bookmarks_glossary_and_scoped_question(test_env):
     paper_id = imported.result["paper_ids"][0]
     base = f"/api/papers/{paper_id}"
 
-    blocks = client.get(f"{base}/reading-blocks/1").json()
-    assert blocks["source"] and blocks["width"] > 0
-    word = re.search(r"[A-Za-z]{4,}", blocks["source"][0]["text"])
+    with fitz.open(FIXTURE_PDF) as pdf:
+        word = re.search(r"[A-Za-z]{4,}", pdf[0].get_text())
     assert word
     found = client.get(f"{base}/search", params={"q": word.group(), "side": "original"}).json()
     assert found["total"] >= 1 and found["results"][0]["page"] >= 1
     assert 0 <= found["results"][0]["anchor_y"] <= 1
     assert client.get(f"{base}/search", params={"q": "x", "side": "invalid"}).status_code == 400
 
-    bookmark = client.post(f"{base}/bookmarks", json={"page": 1, "side": "original",
+    bookmark = client.post(f"{base}/sticky-notes", json={"page": 1, "side": "original",
         "quote": word.group(), "label": "あとで確認", "note": "復習", "anchor_y": 0.42}).json()
-    assert client.get(f"{base}/bookmarks").json()[0]["note"] == "復習"
+    assert client.get(f"{base}/sticky-notes").json()[0]["note"] == "復習"
     assert bookmark["anchor_y"] == 0.42
-    assert client.delete(f"{base}/bookmarks/{bookmark['id']}").json()["deleted"]
-    assert client.get(f"{base}/bookmarks").json() == []
+    assert client.delete(f"{base}/sticky-notes/{bookmark['id']}").json()["deleted"]
+    assert client.get(f"{base}/sticky-notes").json() == []
 
     terms = [{"source": word.group(), "target": "検証語"}]
-    assert client.put(f"{base}/glossary", json={"terms": terms}).status_code == 200
-    assert client.get(f"{base}/glossary").json() == terms
-    assert client.put(f"{base}/glossary", json={"terms": terms * 2}).status_code == 400
+    assert client.put("/api/glossary", json={"terms": terms, "expected_terms": []}).status_code == 200
+    assert client.get("/api/glossary").json() == terms
+    assert client.put("/api/glossary", json={"terms": terms * 2, "expected_terms": terms}).status_code == 400
     with patch("sidecar.deps.create_provider", FakeProvider):
         job = _wait(client.post(f"{base}/translate", json={"pages": "1"}).json()["job_id"])
         assert job.status == "succeeded"
@@ -356,14 +355,33 @@ def test_reader_search_bookmarks_glossary_and_scoped_question(test_env):
         scoped = _wait(client.post(f"{base}/ask", json={"question": "結果は？",
             "scope": "selected", "paper_ids": [paper_id]}).json()["job_id"])
         assert scoped.status == "succeeded"
-    assert client.get(f"{base}/reading-blocks/1").json()["translations"]
+    assert client.get(f"{base}/translation-text/1").json()["blocks"]
     # Changing a term must make the next translation use a new cache identity.
-    assert client.put(f"{base}/glossary", json={"terms": [{"source": word.group(), "target": "別の訳語"}]}).status_code == 200
+    assert client.put("/api/glossary", json={"terms": [{"source": word.group(), "target": "別の訳語"}],
+                                             "expected_terms": terms}).status_code == 200
     with patch("sidecar.deps.create_provider", FakeProvider):
         updated = _wait(client.post(f"{base}/translate", json={"pages": "1"}).json()["job_id"])
     assert updated.status == "succeeded"
     assert updated.result["already_translated_pages"] == []
     assert updated.result["translation_version"] == first_fingerprint
+
+
+def test_removed_compatibility_routes_stay_removed():
+    # The window and the sidecar ship together, so no older client calls these any more.
+    routes = {(method.upper(), path) for path, item in app.openapi()["paths"].items() for method in item}
+    removed = {
+        ("POST", "/api/papers/upload"),  # a multipart upload; PDFs are added by path (/api/papers/import)
+        ("GET", "/api/papers/{paper_id}/reading-blocks/{page}"),
+        ("GET", "/api/papers/{paper_id}/bookmarks"), ("POST", "/api/papers/{paper_id}/bookmarks"),
+        ("PATCH", "/api/papers/{paper_id}/bookmarks/{bookmark_id}"),
+        ("DELETE", "/api/papers/{paper_id}/bookmarks/{bookmark_id}"),
+        ("GET", "/api/papers/{paper_id}/glossary"), ("PUT", "/api/papers/{paper_id}/glossary"),
+        ("GET", "/api/papers/{paper_id}/ink/{side}/{page}"), ("PUT", "/api/papers/{paper_id}/ink/{side}/{page}"),
+        ("POST", "/api/papers/{paper_id}/ink-capture"),
+    }
+    assert not removed & routes
+    assert {("GET", "/api/papers/{paper_id}/sticky-notes"), ("GET", "/api/glossary"),
+            ("PUT", "/api/papers/{paper_id}/ink-v2/{side}/{page}"), ("POST", "/api/papers/{paper_id}/ink-capture-v2")} <= routes
 
 
 def test_scoped_question_only_uses_selected_papers(test_env):
@@ -560,16 +578,32 @@ def test_connection_settings_round_trip_per_provider(test_env):
     assert saved["provider_options"]["claude"] == {"cli_path": "C:/claude.exe"}
     assert client.put("/api/settings", json={**body, "provider": "bogus"}).status_code == 400
 
-    # A partial update, or one from an older client, keeps every other saved value.
+    # A partial update keeps every other saved value.
     assert client.put("/api/settings", json={"translation_concurrency": 2}).status_code == 200
     partial = client.get("/api/settings").json()
     assert partial["translation_concurrency"] == 2
     assert partial["provider"] == "api" and partial["provider_options"]["claude"] == {"cli_path": "C:/claude.exe"}
+    # Keys the API does not know, such as the flat codex_path/api_base of settings.json before
+    # provider_options, are ignored in a request: only the settings file is migrated (Settings.load).
     assert client.put("/api/settings", json={"provider": "codex", "codex_path": "C:/codex.exe",
                                              "api_base": "http://localhost:9999/v1"}).status_code == 200
-    legacy = client.get("/api/settings").json()
-    assert legacy["provider"] == "codex" and legacy["provider_options"]["codex"]["cli_path"] == "C:/codex.exe"
-    assert legacy["provider_options"]["api"]["base_url"] == "http://localhost:9999/v1"
+    flat = client.get("/api/settings").json()
+    assert flat["provider"] == "codex" and "codex" not in flat["provider_options"]
+    assert flat["provider_options"]["api"]["base_url"] == "http://localhost:11434/v1"
+    assert not {"codex_path", "api_base"} & flat.keys()
+
+
+def test_settings_file_with_keys_of_a_newer_version_still_loads(test_env):
+    # settings.json lives in the (synced) library, so a newer Papeer on another PC may have written keys this one
+    # does not know. They must not stop the settings from loading or being saved.
+    client, tmp_path = test_env
+    (tmp_path / "settings.json").write_text(json.dumps(
+        {"provider": "claude", "model": "claude-x", "future_option": {"a": 1}}), "utf-8")
+    settings = client.get("/api/settings").json()
+    assert settings["provider"] == "claude" and settings["model"] == "claude-x"
+    assert "future_option" not in settings
+    assert client.put("/api/settings", json={**settings, "timeout_seconds": 600}).status_code == 200
+    assert client.get("/api/settings").json()["timeout_seconds"] == 600
 
 
 def test_legacy_settings_file_is_served_in_the_new_shape(test_env):
