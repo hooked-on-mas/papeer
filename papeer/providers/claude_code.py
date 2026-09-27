@@ -15,6 +15,8 @@ _ALIASES = [("sonnet", "sonnet (最新 Claude Sonnet)"), ("opus", "opus (Claude 
 _FALLBACK_MODELS = _ALIASES + [("claude-sonnet-4-6", "claude-sonnet-4-6")]
 # Values accepted by `claude --effort`.
 _FALLBACK_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
+# With --strict-mcp-config, the only MCP servers Claude Code loads: none.
+_NO_MCP_SERVERS = json.dumps({"mcpServers": {}})
 _WINDOWS = {"five_hour": "5時間枠", "seven_day": "7日枠", "seven_day_opus": "7日枠 (Opus)",
             "seven_day_sonnet": "7日枠 (Sonnet)"}
 
@@ -69,7 +71,12 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
             root = Path(directory)
             command = self.command() + [
                 "-p",
+                # The document is untrusted: no built-in tools, no MCP servers (--tools only covers the
+                # built-in set), no project or local settings, no skills.
                 "--tools", "",
+                "--strict-mcp-config", "--mcp-config", _NO_MCP_SERVERS,
+                "--setting-sources", "user",
+                "--disable-slash-commands",
                 "--no-session-persistence",
                 # stream-json (which needs --verbose) is the only format that also reports plan usage.
                 "--output-format", "stream-json", "--verbose",

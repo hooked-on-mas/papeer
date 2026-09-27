@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import threading
 import unittest
@@ -383,16 +384,28 @@ class WorkflowTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
-    @unittest.skipIf(os.name == "nt", "POSIX fixture for subprocess contract; Windows is covered by installer smoke tests")
     def test_codex_transport_does_not_shell_interpolate_documents(self):
-        fake = self.root / "fake-codex"
-        fake.write_text("#!/usr/bin/env python3\nimport sys,pathlib\ndata=sys.stdin.buffer.read().decode('utf-8')\n"
-                        "assert '日本語' in data\nassert '--sandbox' in sys.argv and 'read-only' in sys.argv\n"
-                        "out=sys.argv[sys.argv.index('--output-last-message')+1]\n"
-                        "pathlib.Path(out).write_text('回答',encoding='utf-8')\n", "utf-8")
-        fake.chmod(0o755)
-        settings = Settings(provider_options={"codex": {"cli_path": str(fake)}}, timeout_seconds=10)
-        result = create_provider(settings, self.cancel).generate("read", "日本語 & test `literal` $(literal)")
+        """A real process through the npm layout: codex.cmd is never run, its JS entry is, with "node".
+
+        Python stands in for node, so the entry is a Python script; the shim would exit with 9 if run.
+        """
+        shim = self.root / "npm" / "codex.cmd"
+        entry = shim.parent / "node_modules/@openai/codex/bin/codex.js"
+        entry.parent.mkdir(parents=True)
+        shim.write_text("@exit /b 9\n", "utf-8")
+        entry.write_text("import os,sys,pathlib\ndata=sys.stdin.buffer.read().decode('utf-8')\n"
+                         "assert '日本語 & test `literal` $(literal) %PATH% ^& |' in data\n"
+                         "assert '--sandbox' in sys.argv and 'read-only' in sys.argv\n"
+                         "assert 'features.plugins=false' in sys.argv\n"
+                         "assert 'PAPEER_TOKEN' not in os.environ and os.environ['KEEP_THIS'] == '1'\n"
+                         "out=sys.argv[sys.argv.index('--output-last-message')+1]\n"
+                         "pathlib.Path(out).write_text('回答',encoding='utf-8')\n", "utf-8")
+        settings = Settings(provider_options={"codex": {"cli_path": str(shim)}}, timeout_seconds=30)
+        node = lambda name, *args, **kwargs: sys.executable if name == "node" else None  # noqa: E731
+        with patch("shutil.which", side_effect=node), \
+                patch.dict(os.environ, {"PAPEER_TOKEN": "sidecar-token", "KEEP_THIS": "1"}):
+            result = create_provider(settings, self.cancel).generate(
+                "read", "日本語 & test `literal` $(literal) %PATH% ^& |")
         self.assertEqual(result, "回答")
 
 

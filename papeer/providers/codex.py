@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import threading
+import tomllib
 
 from papeer.providers.base import OptionField, ProviderBackend, ProviderSpec
 from papeer.providers.common import (
@@ -27,6 +30,41 @@ _EFFORTS = [
     ("high", "high — 多め"),
     ("xhigh", "xhigh — さらに多め"),
 ]
+
+
+# Codex takes MCP server names of letters, digits, "_" and "-" only, and `-c mcp_servers.<name>.enabled=false`
+# splits the dotted path on "." without accepting quoted keys, so no other name can be addressed anyway.
+_MCP_SERVER_NAME = re.compile(r"[A-Za-z0-9_-]+")
+# For a config.toml tomllib cannot read: the [mcp_servers.<name>] and [mcp_servers.<name>.env] headings.
+_MCP_SERVER_HEADING = re.compile(r"^[ \t]*\[[ \t]*mcp_servers\.([A-Za-z0-9_-]+)[ \t]*[\].]", re.MULTILINE)
+
+
+def configured_mcp_servers() -> list[str]:
+    """Names of the MCP servers in Codex's config.toml ($CODEX_HOME, default ~/.codex)."""
+    home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
+    try:
+        raw = (Path(home) / "config.toml").read_bytes()
+    except OSError:
+        return []
+    try:
+        servers = tomllib.loads(raw.decode("utf-8")).get("mcp_servers")
+    except ValueError:  # Also UnicodeDecodeError. Switching off what the headings name beats leaving all on.
+        return list(dict.fromkeys(_MCP_SERVER_HEADING.findall(raw.decode("utf-8", "replace"))))
+    return [name for name in servers if _MCP_SERVER_NAME.fullmatch(name)] if isinstance(servers, dict) else []
+
+
+def no_mcp_overrides() -> list[str]:
+    """-c options that keep MCP servers away from a codex exec reading an untrusted document.
+
+    Overriding mcp_servers with an empty table does not work (-c merges tables), so each server in
+    config.toml is disabled by name; naming a server that is not configured would fail the run.
+    Plugins and apps (connectors) bring their own servers and are switched off as features;
+    features.* via -c, unlike --disable, does not fail on a CLI that lacks the feature.
+    """
+    overrides = ["-c", "features.plugins=false", "-c", "features.apps=false"]
+    for name in configured_mcp_servers():
+        overrides += ["-c", f"mcp_servers.{name}.enabled=false"]
+    return overrides
 
 
 def codex_limit_windows(limits: dict) -> list[dict]:
@@ -53,7 +91,6 @@ class CodexProvider(CliBackend, ProviderBackend):
     windows_candidates = ("APPDATA/npm/codex.cmd",)
     npm_entry = "@openai/codex/bin/codex.js"
     missing_message = "Codex CLIが見つかりません。READMEの接続準備を行ってください。"
-    require_node_for_scripts = True
     tool_name = "Codex"
     login_args = ("login",)
     status_args = ("login", "status")
@@ -67,6 +104,7 @@ class CodexProvider(CliBackend, ProviderBackend):
                 "--ephemeral", "--sandbox", "read-only",
                 "-c", "features.shell_tool=false", "-c", "features.unified_exec=false",
                 "-c", "web_search=\"disabled\"",
+                *no_mcp_overrides(),
                 "--output-last-message", str(output),
                 "--json",
             ]

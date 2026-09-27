@@ -55,7 +55,7 @@ Liberation フォント 1.07.4 の上流には[編集用 SFD ソースへの案�
 
 ## 2. Codex、Claude Code、Antigravity を使う条件
 
-**リポジトリの公開と、公開後に誰かが CLI にログインして実行する行為は別**。今回の Git 追跡対象に三つの CLI のバイナリ・認証情報はない。ソースを置くだけで作者が各 AI サービスを利用した、あるいは規約に違反したとは言えない。一方、README は利用者に接続を案内しているため、実行する本人に適用される規約を正確に説明する必要がある。現コードは端末の `codex exec`、`claude -p`、`agy -p` を呼び、API 接続は利用者指定の `/chat/completions` に送る。[providers/](../papeer/providers/)、[README](../README.md)。開発者がコーディング補助に使った際の規約・生成コードの権利も、利用者が翻訳に使う際の規約とは分けて扱う。
+**リポジトリの公開と、公開後に誰かが CLI にログインして実行する行為は別**。今回の Git 追跡対象に三つの CLI のバイナリ・認証情報はない。ソースを置くだけで作者が各 AI サービスを利用した、あるいは規約に違反したとは言えない。一方、README は利用者に接続を案内しているため、実行する本人に適用される規約を正確に説明する必要がある。現コードは端末の `codex exec`、`claude -p`、`agy --print`（本文は標準入力）を呼び、API 接続は利用者指定の `/chat/completions` に送る。[providers/](../papeer/providers/)、[README](../README.md)。開発者がコーディング補助に使った際の規約・生成コードの権利も、利用者が翻訳に使う際の規約とは分けて扱う。
 
 | 接続 | 技術的な公式機能 | ローカルで実行する人への注意 |
 | --- | --- | --- |
@@ -68,7 +68,7 @@ Liberation フォント 1.07.4 の上流には[編集用 SFD ソースへの案�
 
 **データと生成物。** [OpenAI 個人向け規約](https://openai.com/policies/row-terms-of-use/)は入力の権利を利用者に残し、利用者と OpenAI の間で出力の権利を利用者に譲渡するが、入力する権利を利用者が持つことを求め、出力の非侵害・正確性を保証しない。個人プランでは学習利用のオプトアウト設定がある。OpenAI API では[データ管理文書](https://developers.openai.com/api/docs/guides/your-data)により原則として明示的な同意なしに学習へ使わず、通常の不正利用ログは最長 30 日などの条件がある。Codex の `--ephemeral` はローカルのセッション記録に関する指定で、サーバー側のゼロ保持ではない。[OpenAI Service Terms](https://openai.com/policies/service-terms/)の知財補償には入力権利欠如、出力の改変・組合せ等の除外がある。
 
-[Anthropic の商用規約](https://www.anthropic.com/legal/commercial-terms)は入力権利の維持、出力の権利移転、原則として顧客コンテンツを学習に使わないこと、条件付き知財補償を定める。[消費者規約](https://www.anthropic.com/legal/consumer-terms)は別条件であり、同じ知財補償を前提にできない。`--no-session-persistence` はローカル保存の抑制である。現 `--tools ""` は組込みツールを止めても利用者の MCP 設定や hooks の読み込みを全て止める指定ではなく、信頼できない PDF 本文がプロンプトに入る以上、送信先と利用可能なツールの境界を監査する。[Claude CLI リファレンス](https://code.claude.com/docs/en/cli-reference)、[headless 説明](https://code.claude.com/docs/en/headless)。
+[Anthropic の商用規約](https://www.anthropic.com/legal/commercial-terms)は入力権利の維持、出力の権利移転、原則として顧客コンテンツを学習に使わないこと、条件付き知財補償を定める。[消費者規約](https://www.anthropic.com/legal/consumer-terms)は別条件であり、同じ知財補償を前提にできない。`--no-session-persistence` はローカル保存の抑制である。`--tools ""` は組込みツールだけを止める指定なので、`--strict-mcp-config` と空の `--mcp-config` で MCP サーバーを読み込まず、`--setting-sources user` でプロジェクト・ローカル設定を、`--disable-slash-commands` でスキルを外している（2026-09）。利用者本人のユーザー設定（hooks を含む）は読み込むため、信頼できない PDF 本文がプロンプトに入る以上、送信先と利用可能なツールの境界は CLI の更新ごとに監査する。今後の候補として、Claude Code 2.1.283 にある `--safe-mode`（CLAUDE.md・スキル・プラグイン・hooks・MCP サーバーなどの利用者設定をまとめて無効化）への切り替えを検討する。Antigravity（`agy`）は実行ごとに MCP サーバーやプラグインを止める指定がなく、`--sandbox` 以外の制限をかけていない点も今後の課題である。[Claude CLI リファレンス](https://code.claude.com/docs/en/cli-reference)、[headless 説明](https://code.claude.com/docs/en/headless)。
 
 [個人向け Antigravity 規約](https://antigravity.google/terms) §3、§5 は Interaction の保存、製品・モデル改善、人による閲覧の可能性を明示する。設定で改善利用を抑える項目はあるが、処理に必要な送信がなくなるわけではない。開発時に AI が生成したコードも「AI 出力だから自由に配布できる」とは扱わず、既存 OSS からの実質的な転載と依存ライセンスを確認する。[OpenAI Service Terms](https://openai.com/policies/service-terms/) §4 は Codex 生成コードに第三者 OSS ライセンスがかかり得ると明記する。
 

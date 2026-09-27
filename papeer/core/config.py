@@ -29,8 +29,8 @@ DEVICE_OPTION_KEYS = frozenset({"cli_path", "base_url"})
 
 # Model names go to the CLIs as one command-line argument; a leading "-" would read as an option.
 # ASCII only. [ ] @ + appear in real names (Claude Code "opus[1m]", Vertex "claude-opus-4-1@20250805",
-# LM Studio "model@q4_k_m") and are safe: arguments are passed as a list without a shell, and none of
-# them is special to cmd.exe when a .cmd shim runs the CLI.
+# LM Studio "model@q4_k_m") and are safe: arguments are passed as a list without a shell, and a .cmd
+# shim is never run (providers.common.find_cli starts the program behind it), so cmd.exe never sees them.
 MODEL_NAME = re.compile(r"[\w.:/@\[\]][\w.:/@\[\]+-]*", re.ASCII)
 MODEL_NAME_ERROR = "モデル名には英数字と . : / @ [ ] + - _ だけを使ってください（先頭に - は使えません）。"
 
