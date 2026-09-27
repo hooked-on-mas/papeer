@@ -9,6 +9,10 @@ real folders and fails the test even when the code under test swallows the error
 Known gaps: os.stat and friends (Path.exists, is_dir, ...) raise no audit event, so existence
 checks are not caught; C extensions that open files themselves (PyMuPDF, pypdfium2, fontTools'
 native parts) bypass the hook; subprocesses are protected only by the environment they inherit.
+
+The bundled fonts converted to TrueType (pdf_fonts.cached_truetype, some 30 seconds to make) would be
+made again under every test's fresh LOCALAPPDATA, so PAPEER_FONT_CACHE_DIR points at pytest's own cache
+folder instead: converted once, then reused by later runs, and never the real one.
 """
 from __future__ import annotations
 
@@ -38,6 +42,12 @@ atexit.register(shutil.rmtree, _session_base, ignore_errors=True)
 _point_environment_at(_session_base, os.environ.__setitem__)
 os.environ.pop("PAPERDESK_DATA_DIR", None)
 sys.addaudithook(audit_hook)
+
+
+def pytest_configure(config):
+    cache = getattr(config, "cache", None)  # None with -p no:cacheprovider
+    fonts = cache.mkdir("papeer-font-cache") if cache is not None else _session_base / "font-cache"
+    os.environ["PAPEER_FONT_CACHE_DIR"] = str(fonts)
 
 
 @pytest.fixture(autouse=True)

@@ -22,8 +22,9 @@ from papeer.layout.reading_flow import (order_page, continuation_groups, footnot
                                         resolve_unit_joins, source_body_size)
 from papeer.translation.translation_context import request_text
 from papeer.pdf.pdf_typography import (FONT_CSS, LIGHT_TEXT_COLOR, TEXT_COLOR, TIGHT_LEADING, TextStyle, body_font_size,
-                                       character_budget, first_line_indented, font_archive, merge_wrapped_headings,
-                                       readable_size, reading_space, running_headers, text_html, text_style)
+                                       character_budget, first_line_indented, font_subsets, merge_wrapped_headings,
+                                       readable_size, reading_space, running_headers, searchable_text, text_html,
+                                       text_style)
 
 
 # MuPDF must not be called concurrently from the UI and background jobs.
@@ -300,6 +301,19 @@ def _fit(placement: fitz.Rect, markup: str, archive: fitz.Archive, bounds: fitz.
         return candidate.insert_htmlbox(placement, markup, archive=archive, css=FONT_CSS, scale_low=0)
 
 
+def _search_text(writer: fitz.TextWriter, font: fitz.Font | None, rect: fitz.Rect, text: str) -> None:
+    """Invisible text over a formula image, so that the formula can be found and copied:
+    one line of the bundled serif (searchable_text), as large as fits in the image's box."""
+    if font is None or not text or rect.is_empty:
+        return
+    width, height = font.text_length(text, fontsize=1), font.ascender - font.descender
+    if width <= 0 or height <= 0:
+        return
+    size = min(rect.height / height, rect.width / width)
+    baseline = rect.y0 + (rect.height - height * size) / 2 + font.ascender * size
+    writer.append((rect.x0, baseline), text, font=font, fontsize=size)
+
+
 def build_translated_pdf(source: Path, document: dict, translations: dict[str, str], output: Path,
                          page_numbers: set[int] | None = None,
                          translate_page_numbers: set[int] | None = None) -> dict:
@@ -392,8 +406,17 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 block = dict(block, regions=match["regions"])
             enriched.append(block)
         document = dict(document, blocks=enriched)
+    # Subsetting the bundled faces is fontTools work only (and, the first time on a PC, their
+    # conversion): done before PDF_LOCK so that it never holds up the viewer or another job.
+    # The serif also carries the invisible text over the formula images.
+    math_text = "".join(searchable_text(formula.get("text", "")) for block in document["blocks"]
+                        if block["id"] in translations for formula in block.get("formulas", []))
+    subsets = font_subsets("".join(translations.values()) + math_text) if translations else ()
     with PDF_LOCK, fitz.open(source) as pdf, fitz.open(source) as original:
-        fonts = font_archive("".join(translations.values())) if translations else fitz.Archive()
+        fonts = fitz.Archive()
+        for face in subsets:
+            fonts.add(face)
+        math_font = fitz.Font(fontbuffer=subsets[0][0]) if subsets else None
         by_page: dict[int, list] = {}
         for block in document["blocks"]:
             if block["id"] in translations and block.get("kind") not in {"formula", "table", "reference", "figure", "algorithm"}:
@@ -535,27 +558,30 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                     by_token.setdefault(formula["token"], []).append(formula)
                 planned.append((placement, markup, archive, [by_token[token].pop(0) for token in MATH_TOKEN.findall(text)]))
             if planned:
+                search_layer = fitz.TextWriter(page.rect)
                 page.apply_redactions(images=0, graphics=0, text=0)
                 # Redaction removes any glyph touching a text box. Restore math
                 # from a separate source document, retaining vector quality.
                 for rect in restore_rects:
                     page.draw_rect(rect, color=None, fill=background.color(rect), overlay=True)
                     page.show_pdf_page(rect, original, number, clip=rect)
+                # Image boxes on the page so far (each listing costs a text page); only markup
+                # with formulas adds images.
+                images_before: set[tuple] | None = None
                 for rect, markup, archive, formulas in planned:
-                    images_before = {tuple(img['bbox']) for img in page.get_image_info()}
+                    if formulas and images_before is None:
+                        images_before = {tuple(img['bbox']) for img in page.get_image_info()}
                     remaining, _ = page.insert_htmlbox(rect, markup, archive=archive, css=FONT_CSS, scale_low=0)
                     if remaining < 0:
                         raise RuntimeError("訳文の描画に失敗しました。未完成のPDFは保存していません。")
-                    if formulas:
+                    if formulas and images_before is not None:
                         images_after = page.get_image_info()
                         new_images = [img for img in images_after if tuple(img['bbox']) not in images_before]
+                        images_before = {tuple(img['bbox']) for img in images_after}
                         for img, formula in zip(_reading_order(new_images), formulas):
-                            img_rect = fitz.Rect(img['bbox'])
-                            fontsize = img_rect.height
-                            while fontsize >= 0.1:
-                                if page.insert_textbox(img_rect, formula["text"], fontsize=fontsize, render_mode=3) >= 0:
-                                    break
-                                fontsize *= 0.9
+                            _search_text(search_layer, math_font, fitz.Rect(img['bbox']), searchable_text(formula["text"]))
+                if not search_layer.text_rect.is_empty:
+                    search_layer.write_text(page, render_mode=3)
             page.set_rotation(rotation)
         if page_numbers is not None:
             pdf.select([number - 1 for number in sorted(selected)])
