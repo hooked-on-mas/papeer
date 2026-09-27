@@ -1,25 +1,15 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
-
-def safe_replace(src: Path, dst: Path) -> None:
-    for _ in range(50):
-        try:
-            src.replace(dst)
-            return
-        except PermissionError:
-            time.sleep(0.1)
-    src.replace(dst)
-
 import re
 import threading
 import uuid
 import shutil
 from typing import Callable
 
-from papeer.pdf.pdf_engine import PDF_LOCK, batches, interleaved_pdf, build_translated_pdf, save_json, translation_units
+from papeer.core.fileio import atomic_write_json, atomic_write_text, replace_file
+from papeer.pdf.pdf_engine import PDF_LOCK, batches, interleaved_pdf, build_translated_pdf, translation_units
 import pymupdf as fitz
 from papeer.providers import ProviderBackend, check_cancel
 from papeer.core.paths import PaperFiles
@@ -238,12 +228,12 @@ class PaperService:
                         check_cancel(self.cancel)
                         preview["skipped_pages"].append(number)
                         preview["page_errors"][str(number)] = str(error)
-                        save_json(preview_path, preview)
+                        atomic_write_json(preview_path, preview)
                         self.page_ready(paper_id, number)
                         self.progress(f"p.{number} のPDF生成に失敗したためスキップし、次のページへ進みます：{error}")
                         continue
                     preview["pages"].append(number)
-                    save_json(preview_path, preview)
+                    atomic_write_json(preview_path, preview)
                     self.page_ready(paper_id, number)
                     self.progress(f"翻訳ページを表示できます：p.{number}（{len(preview['pages'])}/{document['page_count']}ページ完了）")
 
@@ -254,7 +244,7 @@ class PaperService:
                             "version": version, "source": page_keys[number], "glossary": glossary_key,
                             "model": settings.model,
                             "translations": {u["id"]: done[u["id"]] for u in page_units}}
-                save_json(cache_path, {"fingerprint": fingerprint, "translations": done,
+                atomic_write_json(cache_path, {"fingerprint": fingerprint, "translations": done,
                                        "translation_version": version,
                                        "model": settings.model,
                                        "completed_pages": completed_pages,
@@ -266,7 +256,7 @@ class PaperService:
                 publish_ready()
 
             save()
-            save_json(preview_path, preview)
+            atomic_write_json(preview_path, preview)
             self.page_ready(paper_id, 0)
             publish_ready()
             concurrency = min(settings.translation_requests(), max(1, len(chunks)))
@@ -298,7 +288,7 @@ class PaperService:
                     preview['pages'].remove(number)
                 preview['skipped_pages'].append(number)
                 preview['page_errors'][str(number)] = '文がつながる別ページのPDF生成に失敗したため、まとめて再開対象にしました。'
-                save_json(preview_path, preview)
+                atomic_write_json(preview_path, preview)
                 self.page_ready(paper_id, number)
             block_text = {}
             for unit in units:
@@ -318,8 +308,8 @@ class PaperService:
                             assembled.insert_pdf(previous, start_at=number - 1)
                     merged = staged.with_name("merged.pdf")
                     assembled.save(merged)
-                safe_replace(merged, staged)
-            safe_replace(staged, files.translated_pdf)
+                replace_file(merged, staged)
+            replace_file(staged, files.translated_pdf)
             self.progress("原文と日本語訳を交互に並べたPDFを作成しています…")
             interleaved_pdf(files.original_pdf, files.translated_pdf, files.interleaved_pdf)
             report["skipped_blocks"] = [u["id"] for u in units if unit_pages(u) & (set(preview["pages"]) - retained) and skipped(u)]
@@ -340,9 +330,9 @@ class PaperService:
             report["page_errors"] = preview["page_errors"]
             report["model"] = settings.model
             report["usage"] = self.usage()
-            save_json(files.translation_report, report)
+            atomic_write_json(files.translation_report, report)
             preview["complete"] = True
-            save_json(preview_path, preview)
+            atomic_write_json(preview_path, preview)
             self.page_ready(paper_id, document["page_count"])
             lines = [f"# {document['title']} — 日本語訳", ""]
             for section in re.split(r"(?=^## p\.\d+ / )", previous_markdown, flags=re.M):
@@ -358,7 +348,7 @@ class PaperService:
                               restore_formula_text(rendered_text[block["id"]], block), ""]
                 elif block.get("kind") in {"formula", "table", "reference", "figure", "algorithm"} and block["page"] in preview["pages"]:
                     lines += [f"## p.{block['page']} / {block['id']}", "", block["text"], ""]
-            files.translation_md.write_text("\n".join(lines), "utf-8")
+            atomic_write_text(files.translation_md, "\n".join(lines))
             self.library.update(paper_id, status="一部翻訳済み" if report["untranslated_pages"] or report["skipped_blocks"] else "翻訳済み")
             _remove_other_runs(folder, preview["run_id"])
             for number in superseded:
@@ -374,7 +364,7 @@ class PaperService:
                 for number in superseded - set(restored):
                     previous_page(number).unlink(missing_ok=True)
                 if restored:
-                    save_json(preview_path, preview)
+                    atomic_write_json(preview_path, preview)
                     self.page_ready(paper_id, 0)
                 _remove_other_runs(folder, preview["run_id"])
             except OSError:
@@ -433,10 +423,10 @@ class PaperService:
             prompts.load("summary_article"),
             "\n\n".join(notes) + catalog)
         article = link_citations(article, {paper_id: document["page_count"]})
-        files.article_md.write_text(article, "utf-8")
+        atomic_write_text(files.article_md, article)
         usage_path = files.article_usage
         if usage := self.usage():
-            save_json(usage_path, usage)
+            atomic_write_json(usage_path, usage)
         else:
             usage_path.unlink(missing_ok=True)
         return article

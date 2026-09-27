@@ -8,7 +8,9 @@ from unittest.mock import patch
 import pymupdf as fitz
 from papeer.core.review_publish import apply_review
 from papeer.translation.translation_preview import translated_page_numbers, translated_page
-from papeer.pdf.pdf_engine import extract_pdf, translation_units, save_json
+from papeer.pdf.pdf_engine import extract_pdf, translation_units
+from papeer.core import fileio
+from papeer.core.fileio import atomic_write_json
 from papeer.core.config import Settings
 from papeer.translation.translation import translation_fingerprint
 from tools.review_fresh_layout import review
@@ -51,7 +53,7 @@ class ReviewPublishTests(unittest.TestCase):
                 for n in range(1,4):
                     pdf.new_page(width=400,height=400).insert_text((40,80),f'{prefix} content for page {n}.')
                 pdf.save(folder/name)
-        save_json(folder/'translation-report.json',dict(pages=3,translated_pages=[1,2,3],readability_warnings=[dict(page=2,scale=.2,font_size=2)]))
+        atomic_write_json(folder/'translation-report.json',dict(pages=3,translated_pages=[1,2,3],readability_warnings=[dict(page=2,scale=.2,font_size=2)]))
         (folder/'translation.md').write_text('# Paper\n\n## p.1 / old\n\nKeep first\n\n## p.2 / old\n\nRemove old\n\n## p.3 / old\n\nKeep last\n', 'utf8')
         with patch('tools.review_fresh_layout.create_provider', return_value=FakeProvider()):
             review(root/'papers', root/'review', 1, 1, ['aaaa:2'], settings=Settings())
@@ -88,11 +90,11 @@ class ReviewPublishTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary); folder=self.prepare(root)
             before={p.name:p.read_bytes() for p in folder.iterdir() if p.is_file()}
-            replace=Path.replace
+            replace=fileio.os.replace
             def fail(path,target):
-                if path.name=='translation-cache.json': raise OSError('simulated locked file')
+                if Path(path).name=='translation-cache.json': raise OSError('simulated locked file')
                 return replace(path,target)
-            with patch.object(Path,'replace',fail),self.assertRaises(OSError):
+            with patch.object(fileio.os,'replace',fail),self.assertRaises(OSError):
                 apply_review(root/'papers',root/'review')
             after={p.name:p.read_bytes() for p in folder.iterdir() if p.is_file()}
             self.assertEqual(before,after)

@@ -9,7 +9,8 @@ import pymupdf as fitz
 import pypdfium2 as pdfium
 
 from papeer.layout.math_layout import MATH_TOKEN, restore_formula_text
-from papeer.pdf.pdf_engine import save_json, translation_units
+from papeer.pdf.pdf_engine import translation_units
+from papeer.core.fileio import atomic_write_json
 from papeer.layout.reading_flow import materialize_flows, translation_blocks, unit_pages
 from papeer.translation.translation import validate_translations
 
@@ -81,7 +82,7 @@ def audit(review, papers):
         groups=sum(len(r['groups']) for r in results),
         joined_boundaries=sum(len(g['blocks'])-1 for r in results for g in r['groups']),
         units=sum(r['units'] for r in results),results=results)
-    save_json(review/'integrity-audit.json',result)
+    atomic_write_json(review/'integrity-audit.json',result)
     return result
 
 

@@ -32,7 +32,7 @@ def test_folder_roundtrip_between_two_mirrors(tmp_path, monkeypatch):
     assert b.ink(identity, "original", 1) == [{"id": "ink"}]
     assert (b.folder(identity) / "article.md").read_text() == "summary"
     assert sync.fingerprint(a) == sync.fingerprint(b)
-    assert not list(folder_a.glob("*.partial"))
+    assert not list(folder_a.glob("*.partial")) and not list(folder_a.glob("*.tmp"))
     assert sync.status(a.root)["folder"] == str(folder_a)
 
 
@@ -93,3 +93,34 @@ def test_missing_known_revision_does_not_publish_over_it(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="前回の同期"):
         run(lib)
     assert not list(folder.glob("*.papeer-sync"))
+
+
+def test_leftover_temporary_files_do_not_spread(tmp_path, monkeypatch):
+    # A forced exit can leave atomic_output's ".<name>.<random>.tmp" behind in the library or the sync folder.
+    import zipfile
+    from papeer.core.reading_tools import create_backup
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    lib = Library(tmp_path / "data")
+    folder = tmp_path / "drive"
+    sync.connect(lib.root, str(folder))
+    identity, _ = lib.import_pdf(Path(__file__).parent / "fixtures/sample.pdf")
+    assert run(lib)["status"] == "synced"
+    revisions = sync.FolderDrive(folder).revisions()
+    before = sync.fingerprint(lib)
+
+    (lib.folder(identity) / ".note.md.k3j9x2.tmp").write_text("half a note")
+    (lib.root / ".settings.json.a1b2c3.tmp").write_text("{")
+    head = revisions[0]["id"]
+    (folder / f".{head}.papeer-sync.q8w7e6.tmp").write_bytes(b"half a revision")
+
+    assert sync.fingerprint(lib) == before
+    assert sync.FolderDrive(folder).revisions() == revisions
+    assert run(lib)["status"] == "synced"
+    assert len(list(folder.glob("*.papeer-sync"))) == 1  # Nothing changed, so nothing new was uploaded.
+
+    create_backup(lib, tmp_path / "backup.zip")
+    with zipfile.ZipFile(tmp_path / "backup.zip") as archive:
+        names = archive.namelist()
+    assert not [name for name in names if name.endswith(".tmp")]
+    assert f"papers/{identity}/original.pdf" in names

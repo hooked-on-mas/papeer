@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 
+from papeer.core.fileio import atomic_output
 from papeer.core.paths import PaperFiles
 from papeer.pdf.pdf_engine import bilingual_pdf, interleaved_pdf
 from papeer.translation.translation_preview import read_preview
@@ -36,7 +37,8 @@ def copy_export(files: PaperFiles, kind: str, destination: Path) -> None:
     if not source.is_file():
         raise ValueError("先に解説を作成してください。" if kind == "markdown" else "ファイルが存在しません。")
     try:
-        shutil.copyfile(source, destination)
+        with atomic_output(destination) as temporary:
+            shutil.copyfile(source, temporary)
     except OSError as error:
         raise ValueError(f"保存できませんでした: {error}") from error
 

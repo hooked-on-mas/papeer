@@ -1,6 +1,7 @@
 """Instructions sent to the AI: built-in texts, which the user may override in the data directory."""
 from pathlib import Path
 
+from papeer.core.fileio import atomic_write_text
 from papeer.core.paths import data_directory
 
 _BUILTIN_DIR = Path(__file__).parent / "prompts"
@@ -37,6 +38,6 @@ def save_overrides(texts: dict[str, str]) -> None:
     for name, content in texts.items():
         path = directory / f"{name}.txt"
         if content.strip():
-            path.write_text(content.strip(), "utf-8")
+            atomic_write_text(path, content.strip())
         elif path.exists():
             path.unlink()

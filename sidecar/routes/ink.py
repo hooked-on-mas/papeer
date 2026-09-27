@@ -1,10 +1,8 @@
 """Freehand ink on PDF pages: strokes per page, region capture, and PDFs with the ink painted in."""
 from __future__ import annotations
 
-import os
 import io
 from pathlib import Path
-import tempfile
 import uuid
 from typing import Annotated, Literal
 
@@ -12,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, model_validator
 from PIL import Image
 
+from papeer.core.fileio import atomic_write_bytes
 from papeer.core.paths import PaperFiles
 from papeer.pdf.pdf_ink import annotated_page, annotated_pdf
 from papeer.pdf.pdf_viewer import page_png, pdf_page_count
@@ -151,16 +150,7 @@ def export_ink(paper_id: str, body: InkExportRequest):
         data = annotated_pdf(source, lib.ink_by_page(paper_id, body.side))
         if destination:
             destination.parent.mkdir(parents=True, exist_ok=True)
-            # Replace only after the complete PDF is written successfully.
-            temporary = None
-            try:
-                with tempfile.NamedTemporaryFile(dir=destination.parent, suffix=".pdf", delete=False) as output:
-                    temporary = Path(output.name)
-                    output.write(data)
-                os.replace(temporary, destination)
-            finally:
-                if temporary:
-                    temporary.unlink(missing_ok=True)
+            atomic_write_bytes(destination, data)
             return {"status": "exported", "destination": str(destination)}
         return Response(data, media_type="application/pdf", headers={
             "Content-Disposition": f'attachment; filename="{body.side}-annotated.pdf"'})

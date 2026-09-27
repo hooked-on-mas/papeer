@@ -10,7 +10,8 @@ import sqlite3
 import threading
 import uuid
 
-from papeer.pdf.pdf_engine import PDF_LOCK, extract_pdf, save_json
+from papeer.core.fileio import atomic_write_json, atomic_write_text
+from papeer.pdf.pdf_engine import PDF_LOCK, extract_pdf
 from papeer.core.translation_review import cached_required_translation_pages
 from papeer.core.bibliography import extract_bibliography
 import pymupdf as fitz
@@ -180,7 +181,7 @@ class Library:
         folder.mkdir()
         try:
             shutil.copyfile(source, PaperFiles(folder).original_pdf)
-            save_json(PaperFiles(folder).document_json, info)
+            atomic_write_json(PaperFiles(folder).document_json, info)
             with self.connection() as db:
                 db.execute("""INSERT INTO papers(id,sha256,title,original_name,pages,collection_name,first_author,publication_year,bibliography_version)
                            VALUES(?,?,?,?,?,?,?,?,1)""",
@@ -275,7 +276,7 @@ class Library:
             if "tags" in values:
                 db.executemany("INSERT OR IGNORE INTO tag_choices VALUES('paper',?)", [(name,) for name in tags])
         if "note" in values:
-            PaperFiles(self.folder(paper_id)).note_md.write_text(values["note"], "utf-8")
+            atomic_write_text(PaperFiles(self.folder(paper_id)).note_md, values["note"])
 
     def rename_collection(self, path: str, leaf: str) -> str:
         path = normalize_collection_name(path)
@@ -397,7 +398,7 @@ class Library:
         if document.get("layout_version") != LAYOUT_VERSION:
             refreshed = extract_pdf(PaperFiles(folder).original_pdf)
             refreshed["title"] = document["title"]
-            save_json(path, refreshed)
+            atomic_write_json(path, refreshed)
             document = refreshed
         return document
 

@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from papeer.core.fileio import atomic_write_json
+
 
 DEFAULT_STATE: dict[str, Any] = {
     "reading_pages": {},
@@ -69,8 +71,5 @@ def load_ui_state(data_dir: Path) -> dict[str, Any]:
 
 def save_ui_state(data_dir: Path, state: dict[str, Any]) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
-    json_path = data_dir / "ui-state.json"
-    tmp_path = json_path.with_suffix(".json.tmp")
-    tmp_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_path.replace(json_path)
+    atomic_write_json(data_dir / "ui-state.json", state)
 

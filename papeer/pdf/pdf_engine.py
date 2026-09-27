@@ -2,18 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 import json
-import time
 from pathlib import Path
-
-def safe_replace(src: Path, dst: Path) -> None:
-    for _ in range(50):
-        try:
-            src.replace(dst)
-            return
-        except PermissionError:
-            time.sleep(0.1)
-    src.replace(dst)
-
 import re
 import threading
 
@@ -21,6 +10,7 @@ import pymupdf as fitz
 
 from papeer.layout.math_layout import LAYOUT_VERSION, MATH_TOKEN, annotate_math_fonts, formula_only_block, layout_blocks, merge_overlapping_prose, merge_continued_prose
 from papeer.core.bibliography import extract_bibliography
+from papeer.core.fileio import atomic_output
 from papeer.layout.reference_layout import mark_references
 from papeer.pdf.pdf_math_crops import formula_crop, page_glyph_bounds
 from papeer.layout.table_layout import separate_tables, table_regions
@@ -389,12 +379,8 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
         if page_numbers is not None:
             pdf.select([number - 1 for number in sorted(selected)])
         pdf.set_metadata({"title": document["title"] + " - 日本語訳", "creator": "Papeer"})
-        temporary = output.with_suffix(".tmp.pdf")
-        try:
+        with atomic_output(output) as temporary:
             pdf.save(temporary, garbage=4, deflate=True)
-            safe_replace(temporary, output)
-        finally:
-            temporary.unlink(missing_ok=True)
         return {"overflow_blocks": 0, "pages": pdf.page_count, "supplements": [],
                 "scaled_blocks": scaled_blocks, "inline_formulas": inline_formulas,
                 "readability_warnings": readability_warnings, "preserved_margin_blocks": preserved_margin_blocks,
@@ -421,12 +407,8 @@ def interleaved_pdf(source: Path, translated: Path, output: Path) -> None:
             result.insert_pdf(japanese, from_page=index, to_page=index)
         result.set_metadata({"title": (original.metadata.get("title") or source.stem) + " - 原文・日本語訳（交互）",
                              "creator": "Papeer"})
-        temporary = output.with_suffix(".tmp.pdf")
-        try:
+        with atomic_output(output) as temporary:
             result.save(temporary, garbage=4, deflate=True)
-            safe_replace(temporary, output)
-        finally:
-            temporary.unlink(missing_ok=True)
 
 
 def bilingual_pdf(source: Path, translated: Path, output: Path) -> None:
@@ -441,15 +423,10 @@ def bilingual_pdf(source: Path, translated: Path, output: Path) -> None:
                 page.show_pdf_page(fitz.Rect(left.rect.width + 16, 0, page.rect.width, right.rect.height), japanese, index)
             else:
                 result.insert_pdf(japanese, from_page=index, to_page=index)
-        result.save(output, garbage=4, deflate=True)
+        with atomic_output(output) as temporary:
+            result.save(temporary, garbage=4, deflate=True)
 
 
 def page_png(path: Path, index: int, width: int = 650) -> bytes | None:
     from papeer.pdf.pdf_viewer import page_png as render_png
     return render_png(path, index, width)
-
-
-def save_json(path: Path, value: object) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), "utf-8")
-    safe_replace(temporary, path)

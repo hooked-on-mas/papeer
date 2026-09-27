@@ -10,7 +10,8 @@ from collections import Counter
 from pathlib import Path
 import random
 
-from papeer.pdf.pdf_engine import extract_pdf, save_json, translation_units
+from papeer.pdf.pdf_engine import extract_pdf, translation_units
+from papeer.core.fileio import atomic_write_json
 from papeer.layout.reading_flow import expand_pages
 from tools.review_fresh_layout import review
 
@@ -52,7 +53,7 @@ def study(papers, output, seed=20260920, count=10):
         print(f'INVENTORY {source.parent.name}', flush=True)
         documents[source.parent.name] = extract_pdf(source)
     selection = select_cases(documents, seed)
-    save_json(output/'selection.json', selection)
+    atomic_write_json(output/'selection.json', selection)
     return review(papers, output/'review', seed, count, selection['cases'])
 
 

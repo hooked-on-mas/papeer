@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-import tempfile
 
+from papeer.core.fileio import atomic_write_text
 from papeer.core.reading_tools import validate_terms
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -19,16 +18,7 @@ def export_glossary(path: Path, terms: list[dict]) -> int:
                          ensure_ascii=False, indent=2) + "\n"
     if len(content.encode("utf-8")) > MAX_FILE_BYTES:
         raise ValueError("辞書ファイルは10MBまでです。")
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
-                                         dir=path.parent, delete=False) as stream:
-            temporary = Path(stream.name)
-            stream.write(content)
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    atomic_write_text(path, content)
     return len(terms)
 
 

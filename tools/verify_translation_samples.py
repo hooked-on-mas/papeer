@@ -12,7 +12,8 @@ from pathlib import Path
 import threading
 
 from papeer.core.config import Settings, data_directory
-from papeer.pdf.pdf_engine import batches, build_translated_pdf, extract_pdf, save_json, translation_units
+from papeer.pdf.pdf_engine import batches, build_translated_pdf, extract_pdf, translation_units
+from papeer.core.fileio import atomic_write_json
 from papeer.providers import create_provider
 from papeer.translation.translation import RetryState, translate_batch
 from papeer.translation.translation_context import contextual_units
@@ -32,7 +33,7 @@ def run(snapshot: Path, output: Path):
         print(f"EXTRACT {identity[:4]} pages {sorted(selected)}", flush=True)
         document_path = folder / "fresh-document.json"
         document = json.loads(document_path.read_text("utf-8")) if document_path.exists() else extract_pdf(folder / "original.pdf")
-        save_json(document_path, document)
+        atomic_write_json(document_path, document)
         all_units = contextual_units(document, translation_units(document))
         selected = expand_pages(all_units, selected)
         units = [u for u in all_units if unit_pages(u) & selected]
@@ -45,7 +46,7 @@ def run(snapshot: Path, output: Path):
         state = RetryState.from_cache(cache.get("retry_state"))
 
         def save():
-            save_json(cache_path, {"fingerprint": fingerprint, "translations": done, "retry_state": state.to_cache()})
+            atomic_write_json(cache_path, {"fingerprint": fingerprint, "translations": done, "retry_state": state.to_cache()})
 
         def accept(values):
             done.update(values)
@@ -71,7 +72,7 @@ def run(snapshot: Path, output: Path):
         except Exception as error:
             reports[identity] = {"source_pages": sorted(selected), "error": str(error)}
             print(f"FAILED {identity[:4]}: {error}", flush=True)
-        save_json(output / "reports.json", reports)
+        atomic_write_json(output / "reports.json", reports)
     return reports
 
 

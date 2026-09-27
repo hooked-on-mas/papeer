@@ -13,7 +13,8 @@ import pymupdf as fitz
 from papeer.core.config import Settings
 from papeer.core.paths import PaperFiles
 from papeer.layout.math_layout import LAYOUT_VERSION, restore_formula_text
-from papeer.pdf.pdf_engine import PDF_LOCK, translation_units, interleaved_pdf, bilingual_pdf, save_json
+from papeer.core.fileio import atomic_write_json, atomic_write_text, replace_file
+from papeer.pdf.pdf_engine import PDF_LOCK, translation_units, interleaved_pdf, bilingual_pdf
 from papeer.translation.translation import translation_fingerprint, validate_translations
 from papeer.translation.translation_preview import translated_page, translated_page_numbers
 from papeer.layout.reading_flow import unit_pages, materialize_flows
@@ -89,7 +90,7 @@ def apply_review(papers: Path, review: Path, cases: list[str] | None = None) -> 
     for identity, entries in groups.items():
         with PDF_LOCK:
             receipts.append(_publish(papers/identity, review, manifest, entries))
-    save_json(review/'applied.json', receipts)
+    atomic_write_json(review/'applied.json', receipts)
     return receipts
 
 
@@ -150,8 +151,8 @@ def _publish(folder, review, manifest, entries):
     retry = cache.setdefault('retry_state', {'attempts': {}, 'retry_calls': 0})
     for key in reviewed_values:
         retry['attempts'].pop(key, None)
-    save_json(stage/'translation-cache.json', cache)
-    save_json(stage/'document.json', document)
+    atomic_write_json(stage/'translation-cache.json', cache)
+    atomic_write_json(stage/'document.json', document)
     report = _read(folder/'translation-report.json', {})
     # Old whole-document counters cannot be subtracted reliably by page.
     aggregate_keys = ('scaled_blocks', 'inline_formulas', 'preserved_table_blocks', 'preserved_figure_blocks', 'preserved_formula_blocks')
@@ -168,8 +169,8 @@ def _publish(folder, review, manifest, entries):
     report['skipped_pages'] = [p for p in report.get('skipped_pages', []) if p not in selected]
     report['page_errors'] = {k:v for k,v in report.get('page_errors', {}).items() if int(k) not in selected}
     report['skipped_blocks'] = [k for k in report.get('skipped_blocks', []) if not any(k.startswith(f'p{p}b') for p in selected)]
-    save_json(stage/'translation-report.json', report)
-    save_json(stage/'translation-preview.json', dict(fingerprint=fingerprint, run_id=run_id, pages=sorted(completed),
+    atomic_write_json(stage/'translation-report.json', report)
+    atomic_write_json(stage/'translation-preview.json', dict(fingerprint=fingerprint, run_id=run_id, pages=sorted(completed),
         skipped_pages=report['skipped_pages'], page_errors=report['page_errors'], target_pages=sorted(completed),
         total_pages=count, complete=True))
     md_path = folder/'translation.md'
@@ -194,7 +195,7 @@ def _publish(folder, review, manifest, entries):
     head = [s for s in sections if not re.match(r'## p\.\d+', s)]
     body = [s for s in sections if re.match(r'## p\.\d+', s)]
     body.sort(key=lambda s:int(re.match(r'## p\.(\d+)', s)[1]))
-    (stage/'translation.md').write_text(''.join(head+body), 'utf-8')
+    atomic_write_text(stage/'translation.md', ''.join(head+body))
     # Detect concurrent app writes before publishing; keep staging for diagnosis.
     if (_digest(PaperFiles(folder).original_pdf) != entries[0][0]['source_sha256'] or
             any((folder/n).exists() != (n in existed) or (n in existed and _digest(folder/n) != _digest(backup/n)) for n in names)):
@@ -209,7 +210,7 @@ def _publish(folder, review, manifest, entries):
             row = connection.execute('SELECT status FROM papers WHERE id=?', (folder.name,)).fetchone()
             previous_status = row[0] if row else None
         for name in names:
-            (stage/name).replace(folder/name)
+            replace_file(stage/name, folder/name)
             replaced.append(name)
         if connection:
             status = '翻訳済み' if len(completed) == count and not report.get('skipped_blocks') else '一部翻訳済み'
@@ -229,5 +230,5 @@ def _publish(folder, review, manifest, entries):
             connection.close()
     receipt = dict(paper=folder.name, pages=sorted(selected), backup=str(backup), review=str(review),
                    previous_status=previous_status, applied_at=datetime.now(timezone.utc).isoformat())
-    save_json(backup/'receipt.json', receipt)
+    atomic_write_json(backup/'receipt.json', receipt)
     return receipt

@@ -17,7 +17,8 @@ from papeer.core import prompts
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library, forget_schema
 from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision
-from papeer.pdf.pdf_engine import save_json, translation_units
+from papeer.core.fileio import atomic_output, atomic_write_json, is_temporary
+from papeer.pdf.pdf_engine import translation_units
 
 __all__ = ["effective_glossary", "validate_revision"]
 
@@ -129,21 +130,18 @@ def create_backup(lib: Library, destination: Path) -> None:
     if destination.is_relative_to(lib.root.resolve()):
         raise ValueError("バックアップはデータ保存フォルダーの外に保存してください。")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(destination.name + "." + uuid.uuid4().hex + ".tmp")
-    try:
-        with tempfile.TemporaryDirectory() as directory:
-            snapshot = Path(directory) / "library.sqlite3"
-            with lib.connection() as source, closing(sqlite3.connect(snapshot)) as target:
-                source.backup(target)
-            with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
-                archive.write(snapshot, "library.sqlite3")
-                archive.writestr("papeer-backup.json", json.dumps({"version": 1}))
-                for path in lib.root.rglob("*"):
-                    if path.is_file() and path.name not in {"library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm"}:
-                        archive.write(path, path.relative_to(lib.root).as_posix())
-        temporary.replace(destination)
-    finally:
-        temporary.unlink(missing_ok=True)
+    with atomic_output(destination) as temporary, tempfile.TemporaryDirectory() as directory:
+        snapshot = Path(directory) / "library.sqlite3"
+        with lib.connection() as source, closing(sqlite3.connect(snapshot)) as target:
+            source.backup(target)
+        with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.write(snapshot, "library.sqlite3")
+            archive.writestr("papeer-backup.json", json.dumps({"version": 1}))
+            for path in lib.root.rglob("*"):
+                # Half-written files left by a forced exit must not travel with the backup or sync.
+                if (path.is_file() and not is_temporary(path)
+                        and path.name not in {"library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm"}):
+                    archive.write(path, path.relative_to(lib.root).as_posix())
 
 
 def restore_backup(lib: Library, source: Path) -> Path:
@@ -239,4 +237,4 @@ def save_revision_history(folder: Path, unit_id: str, before: str, after: str) -
     history = PaperFiles.read_json(path, [])
     history.append({"id": uuid.uuid4().hex, "unit_id": unit_id, "before": before, "after": after,
                     "created_at": datetime.now().isoformat(timespec="seconds")})
-    save_json(path, history[-500:])
+    atomic_write_json(path, history[-500:])

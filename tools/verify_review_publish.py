@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import pypdfium2 as pdfium
-from papeer.pdf.pdf_engine import save_json
+from papeer.core.fileio import atomic_write_json
 
 
 def verify(papers, review):
@@ -47,7 +47,7 @@ def verify(papers, review):
                                source_unchanged=True,pixel_engine='PDFium',all_pixels_equal=True))
         finally:
             for doc in opened.values():doc.close()
-    save_json(review/'publish-verification.json',checks)
+    atomic_write_json(review/'publish-verification.json',checks)
     return checks
 
 

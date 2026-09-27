@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from urllib.parse import urlparse
 
+from papeer.core.fileio import atomic_write_json
 from papeer.core.paths import app_env, data_directory  # noqa: F401  (re-exported for existing importers)
 
 REASONING_EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
@@ -100,7 +101,4 @@ class Settings:
         root.mkdir(parents=True, exist_ok=True)
         values = asdict(self)
         values.pop("api_key")  # Session-only; never write credentials into the library.
-        target = root / "settings.json"
-        temporary = target.with_suffix(".tmp")
-        temporary.write_text(json.dumps(values, ensure_ascii=False, indent=2), "utf-8")
-        temporary.replace(target)
+        atomic_write_json(root / "settings.json", values)

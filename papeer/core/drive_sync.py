@@ -16,6 +16,7 @@ import re
 import uuid
 import zipfile
 
+from papeer.core.fileio import atomic_output, atomic_write_json, is_temporary
 from papeer.core.reading_tools import create_backup, restore_backup
 from papeer.core.storage import Library
 from papeer.providers import check_cancel
@@ -36,9 +37,7 @@ def read_state(root: Path) -> dict:
 def save_state(root: Path, state: dict) -> None:
     path = state_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(state, ensure_ascii=False), "utf-8")
-    temporary.replace(path)
+    atomic_write_json(path, state, indent=None)
 
 
 def status(root: Path) -> dict:
@@ -119,18 +118,14 @@ class FolderDrive:
 
     def upload(self, path: Path, metadata: dict, cancel, progress) -> str:
         identity = uuid.uuid4().hex
-        temporary = self.folder / (identity + ".partial")
-        final = self.folder / (identity + ".papeer-sync")
-        try:
-            with zipfile.ZipFile(temporary, "x", zipfile.ZIP_STORED, allowZip64=True) as archive:
+        # Readers list only *.papeer-sync, so the half-written temporary file is never picked up.
+        with atomic_output(self.folder / (identity + ".papeer-sync")) as temporary:
+            with zipfile.ZipFile(temporary, "w", zipfile.ZIP_STORED, allowZip64=True) as archive:
                 archive.writestr("revision.json", json.dumps({**metadata, "format": FORMAT, "id": identity,
                     "created": datetime.now(timezone.utc).isoformat()}, ensure_ascii=False))
                 with path.open("rb") as source, archive.open("library.zip", "w", force_zip64=True) as output:
                     self._copy(source, output, cancel)
             check_cancel(cancel)
-            temporary.replace(final)
-        finally:
-            temporary.unlink(missing_ok=True)
         return identity
 
     def download(self, revision: str, path: Path, cancel, progress) -> None:
@@ -159,7 +154,7 @@ def fingerprint(lib: Library) -> str:
             digest.update(line.encode("utf-8"))
             digest.update(b"\n")
     for path in sorted(lib.root.rglob("*")):
-        if path.is_file() and path.name not in {
+        if path.is_file() and not is_temporary(path) and path.name not in {
             "library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm", "ui-state.json",
         }:
             digest.update(path.relative_to(lib.root).as_posix().encode("utf-8"))
