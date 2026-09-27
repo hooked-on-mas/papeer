@@ -18,7 +18,7 @@ from papeer.layout.math_layout import restore_formula_text
 from papeer.translation.translation import RetryState, TranslationKey, shared_translations, translate_batches, page_fingerprint
 from papeer.core.code_version import loaded_version
 from papeer.translation.translation_preview import PREVIOUS_CACHE, preview_page, remove_unused_runs, translated_page, translated_page_numbers
-from papeer.translation.translation_context import contextual_units
+from papeer.translation.translation_context import contextual_units, paper_context
 from papeer.layout.reading_flow import unit_pages, expand_pages, materialize_flows, translation_blocks
 from papeer.core.summary_figures import summary_figures
 from papeer.core import exports, prompts
@@ -188,8 +188,10 @@ class PaperService:
             self.progress("保存済みの訳文を使うページ（AIには送りません）：" +
                           ", ".join(f"p.{n}" for n in sorted(already_done)))
         # Context is request-only: adding it must not invalidate translations or
-        # reset the retry budget of an otherwise unchanged document.
+        # reset the retry budget of an otherwise unchanged document. So is the paper's
+        # title and abstract sent with every request.
         units = contextual_units(document, units)
+        paper = paper_context(document)
         selected_units = [unit for unit in units if unit_pages(unit) & selected]
         by_page = {number: [u for u in units if number in unit_pages(u)]
                    for number in range(1, document["page_count"] + 1)}
@@ -312,7 +314,7 @@ class PaperService:
             check_cancel(self.cancel)
             report_progress()
             translate_batches(self.provider, chunks, self.cancel, self.progress, accept, retry_state, save,
-                              concurrency=concurrency, finished=finished, instruction=instruction)
+                              concurrency=concurrency, finished=finished, instruction=instruction, paper=paper)
             check_cancel(self.cancel)
             # A shared sentence must not be published with half its destinations
             # missing. Retain cached translations for retry, but restore all

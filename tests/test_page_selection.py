@@ -17,8 +17,9 @@ from papeer.layout.page_selection import parse_page_selection
 from papeer.core.service import PaperService
 from papeer.pdf.pdf_engine import build_translated_pdf, translation_units
 from papeer.core.storage import Library
-from papeer.translation.translation import (BUILTIN_PROMPT_REVISION, TRANSLATION_PROTOCOL, TranslationKey,
-                                             legacy_translation_fingerprint, prompt_identity, translation_identity)
+from papeer.translation.translation import (BUILTIN_PROMPT_REVISION, EARLIER_BUILTIN_PROMPTS, TRANSLATION_PROTOCOL,
+                                             TranslationKey, legacy_translation_fingerprint, prompt_identity,
+                                             translation_identity)
 from papeer.translation.translation_preview import read_preview, translated_page, translated_page_numbers
 from papeer.core import prompts
 from papeer.core.config import Settings
@@ -28,8 +29,11 @@ from papeer.providers.openai_compat import OpenAICompatProvider, forget_refused_
 from test_workflow import FakeProvider
 
 
-# The built-in translation.txt this test last approved (test_builtin_translation_prompt_edits_are_decided).
-BUILTIN_TRANSLATION_PROMPT_SHA256 = '3a67b4686483bdd0bdfd5aaaa6e48ea5ab4e4fb703575544aa01b93997831f60'
+# The built-in translation.txt this test last approved (test_builtin_translation_prompt_edits_are_decided),
+# as sent: with the shared Japanese style section (_translation_style.txt) filled in.
+# 2026-09-28: the style section moved out to be shared with the recovery prompts (the same
+# instructions reordered, with small wording changes) without raising BUILTIN_PROMPT_REVISION.
+BUILTIN_TRANSLATION_PROMPT_SHA256 = 'd2220d95f79a04f2e08dbf26051f2b40bfcfe99b66c951e31e019918d25aad7c'
 
 
 class PageSelectionTests(unittest.TestCase):
@@ -395,13 +399,38 @@ class PageSelectionTests(unittest.TestCase):
         prompts.save_overrides({'translation': ''})
 
     def test_builtin_translation_prompt_edits_are_decided(self):
-        text = prompts.builtin('translation')
+        text = prompts.expand(prompts.builtin('translation'))
         self.assertEqual(
             hashlib.sha256(text.encode('utf-8')).hexdigest(), BUILTIN_TRANSLATION_PROMPT_SHA256,
-            '既定の translation.txt が変わりました。既存の訳文を訳し直すべき変更なら '
-            'papeer/translation/translation.py の BUILTIN_PROMPT_REVISION を上げ、'
+            '既定の translation.txt（または共通の訳文スタイル _translation_style.txt）が変わりました。'
+            '既存の訳文を訳し直すべき変更なら papeer/translation/translation.py の BUILTIN_PROMPT_REVISION を上げ、'
             'そうでなければそのままにしてから、このテストの BUILTIN_TRANSLATION_PROMPT_SHA256 を更新してください。'
+            'translation.txt 自体を変えたときは、変更前の本文のハッシュを EARLIER_BUILTIN_PROMPTS に加えます'
             '（LEGACY_PROMPT_SHA256 は変えないこと）')
+
+    def test_override_holding_an_earlier_builtin_text_keeps_its_revision(self):
+        # An override still holding an earlier built-in text (here translation.txt before its
+        # style section was shared, pinned by this test until then) was translated as that
+        # revision and keeps those translations.
+        self.assertEqual(EARLIER_BUILTIN_PROMPTS['3a67b4686483bdd0bdfd5aaaa6e48ea5ab4e4fb703575544aa01b93997831f60'], 1)
+        self.assertTrue(all(1 <= revision <= BUILTIN_PROMPT_REVISION for revision in EARLIER_BUILTIN_PROMPTS.values()))
+        old_text = '以前の既定の翻訳指示'
+        with patch.dict('papeer.translation.translation.EARLIER_BUILTIN_PROMPTS',
+                        {hashlib.sha256(old_text.encode()).hexdigest(): 1}):
+            self.assertEqual(prompt_identity(old_text), 'builtin-1')
+            settings = Settings(translation_concurrency=1)
+            self.assertEqual(translation_identity(settings, old_text),
+                             translation_identity(settings, prompts.builtin('translation')))
+        # The key holds the prompt as written: the shared section's text is not in it.
+        self.assertNotIn('Write accurate, readable Japanese', prompts.builtin('translation'))
+        # An override keeping the marker gets the section's later edits, decided with the built-in revision.
+        with_marker = prompt_identity('独自の指示。\n{{translation_style}}')
+        self.assertTrue(with_marker.startswith('custom-sha256-'))
+        self.assertTrue(with_marker.endswith(f'+builtin-{BUILTIN_PROMPT_REVISION}'))
+        with patch('papeer.translation.translation.BUILTIN_PROMPT_REVISION', BUILTIN_PROMPT_REVISION + 1):
+            self.assertNotEqual(prompt_identity('独自の指示。\n{{translation_style}}'), with_marker)
+            # Overrides without the marker (every one saved before it existed) keep their key.
+            self.assertEqual(prompt_identity('独自の指示。'), 'custom-sha256-' + hashlib.sha256('独自の指示。'.encode()).hexdigest())
 
     def test_paragraph_revision_keeps_the_key_and_model_the_page_was_translated_with(self):
         with tempfile.TemporaryDirectory() as temporary:

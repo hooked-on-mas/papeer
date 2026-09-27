@@ -438,12 +438,13 @@ def test_edited_translation_prompt_applies_without_restart():
     builtin = prompts.defaults()["translation"]
     first = ScriptedProvider(translations(good="訳文。"))
     translate_batch(first, UNITS[:1], threading.Event(), lambda _: None, lambda _: None)
-    assert first.calls[0][0] == builtin
+    assert first.calls[0][0] == prompts.expand(builtin)
 
     prompts.save_overrides({"translation": "編集した翻訳指示"})
     edited = ScriptedProvider(translations(good="訳文。"))
     translate_batch(edited, UNITS[:1], threading.Event(), lambda _: None, lambda _: None)
     assert edited.calls[0][0] == "編集した翻訳指示"
+    prompts.save_overrides({"translation": ""})
 
 
 if __name__ == "__main__":

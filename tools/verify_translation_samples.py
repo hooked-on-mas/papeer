@@ -16,7 +16,7 @@ from papeer.pdf.pdf_engine import batches, build_translated_pdf, extract_pdf, tr
 from papeer.core.fileio import atomic_write_json
 from papeer.providers import create_provider
 from papeer.translation.translation import RetryState, translate_batch
-from papeer.translation.translation_context import contextual_units
+from papeer.translation.translation_context import contextual_units, paper_context
 from papeer.layout.reading_flow import unit_pages, expand_pages
 
 
@@ -56,7 +56,8 @@ def run(snapshot: Path, output: Path):
             chunks = list(batches([u for u in units if u["id"] not in done], limit=12000))
             for index, chunk in enumerate(chunks, 1):
                 print(f"TRANSLATE {identity[:4]} batch {index}/{len(chunks)} ({len(chunk)} units)", flush=True)
-                translate_batch(provider, chunk, cancel, lambda message: print(message, flush=True), accept, state, save)
+                translate_batch(provider, chunk, cancel, lambda message: print(message, flush=True), accept, state, save,
+                                paper=paper_context(document))
             missing = [u["id"] for u in units if u["id"] not in done]
             if missing:
                 raise ValueError(f"Missing sample translations: {missing}")
