@@ -15,14 +15,14 @@ from papeer.core.fileio import atomic_output
 from papeer.layout.reference_layout import mark_references
 from papeer.pdf.pdf_math_crops import formula_crop, page_glyph_bounds
 from papeer.layout.table_layout import separate_tables, table_regions
-from papeer.layout.figure_layout import figure_regions
+from papeer.layout.figure_layout import diagram_regions, figure_regions
 from papeer.layout.algorithm_layout import separate_algorithms
 from papeer.layout.ocr_pages import ocr_check
 from papeer.layout.reading_flow import (order_page, continuation_groups, footnote_ids, translation_blocks, materialize_flows,
                                         resolve_unit_joins, source_body_size)
-from papeer.pdf.pdf_typography import (FONT_CSS, TIGHT_LEADING, TextStyle, body_font_size, character_budget, first_line_indented,
-                                       font_archive, merge_wrapped_headings, readable_size, reading_space, running_headers,
-                                       text_html, text_style)
+from papeer.pdf.pdf_typography import (FONT_CSS, LIGHT_TEXT_COLOR, TEXT_COLOR, TIGHT_LEADING, TextStyle, body_font_size,
+                                       character_budget, first_line_indented, font_archive, merge_wrapped_headings,
+                                       readable_size, reading_space, running_headers, text_html, text_style)
 
 
 # MuPDF must not be called concurrently from the UI and background jobs.
@@ -45,6 +45,7 @@ def extract_pdf(path: Path) -> dict:
             items, algorithms, algorithm_regions = separate_algorithms(page, items)
             figures = figure_regions(page)
             tables = [r for r in table_regions(page) if not any(r.intersects(f) for f in figures + algorithm_regions)]
+            figures += diagram_regions(page, figures + tables + algorithm_regions)
             items, tables = separate_tables(items, tables, number + 1)
             items, figures = separate_tables(items, figures, number + 1, kind="figure")
             for item in items:
@@ -212,6 +213,81 @@ def _space_without_formulas(rect: fitz.Rect, formulas: list[fitz.Rect]) -> fitz.
     return max(candidates, key=lambda candidate: candidate.get_area())
 
 
+class _Background:
+    """Color under the source text, sampled from a low-resolution image of the original page.
+
+    A translated block is painted over (to hide its glyphs and the vector parts of inline math)
+    with the most frequent color just around it: the paper, a shaded box or a colored panel.
+    Where no color prevails (a gradient, a photo) the average around the block is closer than
+    any single shade or white. The page is rendered only when a block on it needs the color.
+    """
+
+    ZOOM = 1  # pixels per point
+    MARGIN = 3  # width of the sampled ring around the block, in points
+    PREVAILING = .3  # share of the ring the most frequent color needs to be used as is
+
+    def __init__(self, page: fitz.Page):
+        self.page = page
+        self.pixmap: fitz.Pixmap | None = None
+        self.samples = b""
+
+    def color(self, rect: fitz.Rect) -> tuple[float, float, float]:
+        if self.pixmap is None:
+            # Annotations (highlights, notes) are not part of the page the translation replaces.
+            self.pixmap = self.page.get_pixmap(matrix=fitz.Matrix(self.ZOOM, self.ZOOM),
+                                               colorspace=fitz.csRGB, alpha=False, annots=False)
+            self.samples = self.pixmap.samples
+        pixmap, zoom, margin = self.pixmap, self.ZOOM, self.MARGIN
+        inner = rect * zoom
+        outer = fitz.IRect(int((rect.x0 - margin) * zoom), int((rect.y0 - margin) * zoom),
+                           int((rect.x1 + margin) * zoom + 1), int((rect.y1 + margin) * zoom + 1))
+        outer &= fitz.IRect(0, 0, pixmap.width, pixmap.height)
+        counts: Counter[bytes] = Counter()
+        stride, n, samples = pixmap.stride, pixmap.n, self.samples
+        # Pixels are taken by their centers; beside the block only the left and right parts count.
+        beside = [x for x in range(outer.x0, outer.x1) if not inner.x0 <= x + .5 <= inner.x1]
+        for y in range(outer.y0, outer.y1):
+            row = y * stride
+            for x in beside if inner.y0 <= y + .5 <= inner.y1 else range(outer.x0, outer.x1):
+                offset = row + x * n
+                counts[samples[offset:offset + 3]] += 1
+        if not counts:
+            return (1, 1, 1)
+        # Group near shades (anti-aliasing, halftones), then take the commonest exact color of
+        # the commonest group, so that the paper stays exactly white.
+        groups: Counter[tuple[int, int, int]] = Counter()
+        for value, count in counts.items():
+            groups[value[0] >> 4, value[1] >> 4, value[2] >> 4] += count
+        group, share = groups.most_common(1)[0]
+        total = sum(counts.values())
+        if share < total * self.PREVAILING:
+            red, green, blue = (sum(v[i] * c for v, c in counts.items()) / total / 255 for i in range(3))
+            return (red, green, blue)
+        value = max((v for v in counts if (v[0] >> 4, v[1] >> 4, v[2] >> 4) == group), key=counts.__getitem__)
+        return (value[0] / 255, value[1] / 255, value[2] / 255)
+
+
+def _luminance(color: tuple[float, float, float]) -> float:
+    """WCAG relative luminance of an sRGB color (components 0..1)."""
+    red, green, blue = (c / 12.92 if c <= .04045 else ((c + .055) / 1.055) ** 2.4 for c in color)
+    return .2126 * red + .7152 * green + .0722 * blue
+
+
+def _hex_color(value: str) -> tuple[float, float, float]:
+    return (int(value[1:3], 16) / 255, int(value[3:5], 16) / 255, int(value[5:7], 16) / 255)
+
+
+def _light_text(fill: tuple[float, float, float]) -> bool:
+    """Whether the light translation color contrasts more with fill than the usual dark one
+    (WCAG contrast ratio of relative luminances)."""
+    background = _luminance(fill)
+
+    def contrast(text: str) -> float:
+        foreground = _luminance(_hex_color(text))
+        return (max(foreground, background) + .05) / (min(foreground, background) + .05)
+    return contrast(LIGHT_TEXT_COLOR) > contrast(TEXT_COLOR)
+
+
 def _fit(placement: fitz.Rect, markup: str, archive: fitz.Archive, bounds: fitz.Rect) -> tuple[float, float]:
     """(remaining, scale) of the markup laid out in placement, shrunk as far as needed."""
     with fitz.open() as probe:
@@ -325,6 +401,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
             page.set_rotation(0)
             original[number].set_rotation(0)
             glyph_bounds = page_glyph_bounds(original[number])
+            background = _Background(original[number])
             planned = []
             # Text extraction coordinates are unrotated; the media box uses the same coordinates.
             bounds = fitz.Rect(0, 0, page.cropbox.width, page.cropbox.height)
@@ -371,7 +448,12 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 if style.role in {"note", "caption"}:
                     note_blocks.append(block["id"])
                 overlapping = [formula for formula in display_rects if rect.intersects(formula)]
-                placement = _space_without_formulas(reading_space(block, style, page_blocks, bounds, obstacles), display_rects)
+                fill = background.color(rect)
+                light = _light_text(fill)
+                color = LIGHT_TEXT_COLOR if light else TEXT_COLOR
+                # Light text is readable only on the painted box, not on the paper around it.
+                space = rect if light else reading_space(block, style, page_blocks, bounds, obstacles)
+                placement = _space_without_formulas(space, display_rects)
                 restore_rects.extend(overlapping)
                 text = translations[block["id"]]
                 formulas = block.get("formulas", [])
@@ -405,13 +487,13 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                                if rect.contains((line.tl + line.br) / 2)]
                     block = dict(block, regions=regions)
                 first_indent = first_line_indented(block)
-                markup = text_html(text, style, images, first_indent=first_indent)
+                markup = text_html(text, style, images, first_indent=first_indent, color=color)
                 remaining, scale = _fit(placement, markup, archive, bounds)
                 role, regular_scale = style.role, scale
                 # Before shrinking the type, tighten the leading of running text.
                 if scale < 1 and style.leading > TIGHT_LEADING and role in {"body", "runin"}:
                     tight = replace(style, leading=TIGHT_LEADING)
-                    tight_markup = text_html(text, tight, images, first_indent=first_indent)
+                    tight_markup = text_html(text, tight, images, first_indent=first_indent, color=color)
                     tight_remaining, tight_scale = _fit(placement, tight_markup, archive, bounds)
                     if tight_remaining >= 0 and tight_scale > scale:
                         style, markup, remaining, scale = tight, tight_markup, tight_remaining, tight_scale
@@ -422,7 +504,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 if (regular_scale < .85 and role in {"body", "note", "caption"}
                         and placement.height < max(style.size, body_size) * 3 and len(MATH_TOKEN.sub("x", text)) < 160):
                     compact_style = TextStyle("compact", style.size, 1.15)
-                    compact = text_html(text, compact_style, images)
+                    compact = text_html(text, compact_style, images, color=color)
                     compact_remaining, compact_scale = _fit(placement, compact, archive, bounds)
                     if compact_remaining >= 0 and compact_scale > scale:
                         style, markup, remaining, scale = compact_style, compact, compact_remaining, compact_scale
@@ -441,7 +523,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                         "char_budget": character_budget(placement, minimum, style.leading, math_ems),
                         "source_blocks": sources.get(block["id"], [block["id"]])})
                 inline_formulas += len(formulas)
-                page.add_redact_annot(rect, fill=(1, 1, 1), cross_out=False)
+                page.add_redact_annot(rect, fill=fill, cross_out=False)
                 # In the translation's order, which the laid-out images follow; word order may differ from the source.
                 by_token = {}
                 for formula in formulas:
@@ -452,7 +534,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 # Redaction removes any glyph touching a text box. Restore math
                 # from a separate source document, retaining vector quality.
                 for rect in restore_rects:
-                    page.draw_rect(rect, color=None, fill=(1, 1, 1), overlay=True)
+                    page.draw_rect(rect, color=None, fill=background.color(rect), overlay=True)
                     page.show_pdf_page(rect, original, number, clip=rect)
                 for rect, markup, archive, formulas in planned:
                     images_before = {tuple(img['bbox']) for img in page.get_image_info()}

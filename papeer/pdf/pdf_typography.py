@@ -357,12 +357,16 @@ def first_line_indented(block: dict) -> bool:
     return size * .35 <= inset <= size * 2.5
 
 
+# Translation text color, and the one used on a dark background (white text in a dark panel).
+TEXT_COLOR = "#161c24"
+LIGHT_TEXT_COLOR = "#f4f6f8"
+
+
 def text_html(text: str, style: TextStyle, images: dict[str, str], *,
-              first_indent: bool = False) -> str:
+              first_indent: bool = False, color: str = TEXT_COLOR) -> str:
     heading = style.role in {"title", "section", "subsection"}
     family = "PapeerHeading" if heading else "PapeerSerif"
     weight = "bold" if heading else "normal"
-    color = "#161c24"
     paragraphs = []
     # A block split into several translation units continues the same paragraph.
     for index, line in enumerate(resolve_unit_joins(text).splitlines()):
