@@ -19,7 +19,7 @@ from fastapi import Header, HTTPException, Query, status
 
 from papeer.core.config import Settings, api_key_from_env
 from papeer.core.paths import app_env, data_directory
-from papeer.core.storage import Library
+from papeer.core.storage import Library, NewerSchemaError
 from papeer.providers import ProviderBackend, create_provider
 from sidecar.jobs import ConcurrencyConflict, JobManager
 from sidecar.schemas import ProviderActionRequest
@@ -121,7 +121,11 @@ def snapshot_running() -> bool:
 def get_library() -> Library:
     if snapshot_running():
         raise HTTPException(status_code=409, detail="バックアップ・復元が終わるまでお待ちください。")
-    return Library(get_data_dir())
+    try:
+        return Library(get_data_dir())
+    except NewerSchemaError as exc:
+        # Opened by a newer Papeer: say so instead of a bare server error on every request.
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 def paper_folder(lib: Library, paper_id: str) -> Path:

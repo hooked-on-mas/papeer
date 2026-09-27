@@ -1,6 +1,8 @@
+import json
 from pathlib import Path
 import shutil
 import threading
+import zipfile
 
 import pytest
 
@@ -124,3 +126,18 @@ def test_leftover_temporary_files_do_not_spread(tmp_path, monkeypatch):
         names = archive.namelist()
     assert not [name for name in names if name.endswith(".tmp")]
     assert f"papers/{identity}/original.pdf" in names
+
+
+@pytest.mark.parametrize("field,value", [("schema_version", "1"), ("schema_version", -1),
+                                         ("schema_version", True), ("app_version", 2)])
+def test_malformed_version_fields_are_rejected(tmp_path, field, value):
+    folder = tmp_path / "drive"
+    folder.mkdir()
+    identity = "0" * 32
+    with zipfile.ZipFile(folder / (identity + ".papeer-sync"), "w") as archive:
+        archive.writestr("revision.json", json.dumps({
+            "format": sync.FORMAT, "id": identity, "parents": [], "hash": "h", "archive_hash": "a",
+            "device": "pc", "created": "2026-09-27T00:00:00Z", field: value}))
+        archive.writestr("library.zip", b"")
+    with pytest.raises(ValueError, match="形式が不正"):
+        sync.FolderDrive(folder).revisions()

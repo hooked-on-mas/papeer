@@ -16,7 +16,8 @@ import zipfile
 
 from papeer.core import prompts
 from papeer.core.paths import PaperFiles
-from papeer.core.storage import Library, forget_schema
+from papeer import __version__
+from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, newer_papeer
 from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision
 from papeer.core.fileio import atomic_output, atomic_write_json, is_temporary
 from papeer.pdf.pdf_engine import translation_units
@@ -142,9 +143,12 @@ def create_backup(lib: Library, destination: Path, cancel: threading.Event | Non
         snapshot = Path(directory) / "library.sqlite3"
         with lib.connection() as source, closing(sqlite3.connect(snapshot)) as target:
             source.backup(target)
+            schema_version = target.execute("PRAGMA user_version").fetchone()[0]
         with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.write(snapshot, "library.sqlite3")
-            archive.writestr("papeer-backup.json", json.dumps({"version": 1}))
+            # "version" is the archive layout; schema_version lets an older Papeer refuse a newer library.
+            archive.writestr("papeer-backup.json", json.dumps(
+                {"version": 1, "schema_version": schema_version, "app_version": __version__}))
             for path in lib.root.rglob("*"):
                 _stop_if_cancelled(cancel)
                 # Half-written files left by a forced exit must not travel with the backup or sync.
@@ -206,6 +210,15 @@ def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = 
         if manifest.get("version") != 1 or not (staging / "library.sqlite3").is_file():
             raise ValueError("Papeerのバックアップを選択してください。")
         with closing(sqlite3.connect(staging / "library.sqlite3")) as db:
+            # Backups made before schema versioning have neither field and are at user_version 0.
+            schema_version = manifest.get("schema_version", 0)
+            if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+                raise ValueError("Papeerのバックアップを選択してください。")
+            if max(schema_version, db.execute("PRAGMA user_version").fetchone()[0]) > SCHEMA_VERSION:
+                made_by = newer_papeer(manifest.get("app_version") if schema_version > SCHEMA_VERSION else None)
+                # Neutral wording: sync validates a pulled revision through this path as well.
+                raise NewerSchemaError(f"このデータは{made_by}で作成されたため読み込めません。"
+                                       "Papeerを最新版に更新してから、もう一度お試しください。")
             if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or db.execute("PRAGMA foreign_key_check").fetchall():
                 raise ValueError("バックアップのデータベースが破損しています。")
             for paper_id, digest in db.execute("SELECT id,sha256 FROM papers"):
@@ -226,8 +239,6 @@ def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = 
         except Exception:
             previous.rename(root)
             raise
-        finally:
-            forget_schema(root)
         return previous
     finally:
         if staging.exists():

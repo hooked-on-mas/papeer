@@ -1,11 +1,14 @@
 from copy import deepcopy
+import hashlib
 from pathlib import Path
 import threading
 
 import pytest
 
+from _legacy_library import legacy_backup, legacy_library
+from papeer import __version__
 from papeer.core import drive_sync as sync
-from papeer.core.storage import Library
+from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, database_version
 
 
 class MemoryDrive:
@@ -263,3 +266,59 @@ def test_cancel_after_publishing_a_choice_offers_the_choice_again(pair, monkeypa
     merged = result["conflicts"][0]["id"]
     assert run(b, remote, choice=merged, expected_heads=[merged])["reloaded"] is True
     assert Library(b.root).paper(identity)["note"] == "A"
+
+
+def publish_old_revision(remote, tmp_path):
+    """A revision as a Papeer from before schema versioning published it: no schema_version,
+    the hash taken over its own (unmigrated) database."""
+    legacy = tmp_path / "old-pc"
+    identity = legacy_library(legacy, "middle")
+    archive = tmp_path / "old.zip"
+    legacy_backup(legacy, archive)
+    revision = str(len(remote.items) + 1)
+    remote.items.append({"parents": [], "hash": sync.fingerprint(legacy), "device": "old-pc", "id": revision,
+                         "archive_hash": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                         "created": "2026-09-01T00:00:00Z"})
+    remote.data[revision] = archive.read_bytes()
+    return identity, revision
+
+
+def test_revision_from_before_schema_versioning_is_taken_and_migrated(pair, tmp_path):
+    a, b, _, remote = pair
+    identity, revision = publish_old_revision(remote, tmp_path)
+    assert run(b, remote)["status"] == "conflict"
+    # Validated against the database as the old PC hashed it, not as this version migrates it.
+    assert run(b, remote, choice=revision, expected_heads=[revision])["reloaded"] is True
+    lib = Library(b.root)
+    assert database_version(b.root / "library.sqlite3") == SCHEMA_VERSION
+    assert (lib.paper(identity)["tags"], lib.paper(identity)["bibliography_version"]) == (["古いタグ"], 1)
+    # The choice republishes the old archive as it is, under its own version and hash.
+    merged = remote.items[-1]
+    assert (merged["schema_version"], merged["hash"]) == (0, remote.items[0]["hash"])
+    # Migrating what was taken is not a change to publish.
+    count = len(remote.items)
+    run(Library(b.root), remote)
+    assert len(remote.items) == count
+    # Another PC accepts the republished revision too.
+    assert run(a, remote)["status"] == "conflict"
+    run(a, remote, choice=merged["id"], expected_heads=[merged["id"]])
+    assert Library(a.root).paper(identity)["read_status"] == "積読"
+
+
+def test_revisions_record_the_schema_and_app_versions(pair):
+    a, _, _, remote = pair
+    run(a, remote)
+    assert (remote.items[0]["schema_version"], remote.items[0]["app_version"]) == (SCHEMA_VERSION, __version__)
+
+
+def test_revision_from_a_newer_papeer_is_refused(pair):
+    a, b, identity, remote = pair
+    run(a, remote)
+    remote.items[0].update(schema_version=SCHEMA_VERSION + 1, app_version="9.9.9")
+    remote.data.clear()  # Refused before downloading anything.
+    sync.save_state(b.root, {"connected": True, "hash": sync.fingerprint(b)})
+    with pytest.raises(NewerSchemaError, match=r"新しいバージョンのPapeer（9\.9\.9）.*更新"):
+        run(b, remote)
+    with pytest.raises(NewerSchemaError):
+        run(b, remote, choice="1", expected_heads=["1"])
+    assert Library(b.root).papers() == []

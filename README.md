@@ -85,6 +85,10 @@ just lint   # ruff, pyright, tsc
 
 pytest は `tests/conftest.py` で `LOCALAPPDATA` と `PAPEER_DATA_DIR` をテストごとの一時フォルダーに向けます。実際のデータフォルダー（`%LOCALAPPDATA%\Papeer`、`PaperDesk`、`PapeerSync`）でファイルを開いたり書き込んだりすると、そのテストは失敗します。
 
+### データベースの変更
+
+`library.sqlite3` の版は `PRAGMA user_version` で管理します。列・テーブル・索引の追加や保存値の変換は、`papeer/core/storage.py` の `MIGRATIONS` に関数を 1 つ追加して行います（約束事は同ファイルのコメント、テストは `tests/test_schema_migration.py`）。バックアップの `papeer-backup.json` と同期の世代の `revision.json` には `schema_version` と `app_version` を記録し、自分より新しい版のライブラリ・バックアップ・同期データは開かずに Papeer の更新を促します。新しい版で開いた（移行済みの）ライブラリのまま Papeer を古い版に戻すと、復元を含むすべての操作がこのエラーになるため、最新版を入れ直してください。
+
 ## ビルド
 
 ```bash
@@ -131,7 +135,7 @@ CLI は PATH と既定のインストール先から自動検出します。見�
 
 「設定 → 保存先・同期」でPC版Google Driveのローカルフォルダーを指定すると、PDF・書き込み・サマリーを含むライブラリ全体を別PCと同期できます。Papeer内でのGoogleログインやOAuth設定は不要です。導入手順、競合時の操作、容量・転送の制限は [Google Drive同期](docs/google-drive-sync.md) を参照してください。
 
-新規環境では `%LOCALAPPDATA%\Papeer` に保存します。新しい保存先がなく、旧 `%LOCALAPPDATA%\PaperDesk` が存在する場合は、その保存先を引き続き使います。「設定 → バックアップ」からライブラリ全体を保存・復元できます。手動でコピーする場合は、アプリを閉じてからフォルダー全体をコピーしてください。
+新規環境では `%LOCALAPPDATA%\Papeer` に保存します。新しい保存先がなく、旧 `%LOCALAPPDATA%\PaperDesk` が存在する場合は、その保存先を引き続き使います。「設定 → バックアップ」からライブラリ全体を保存・復元できます。新しいバージョンのPapeerで作成したバックアップは復元できません（更新を促すメッセージを表示します）。手動でコピーする場合は、アプリを閉じてからフォルダー全体をコピーしてください。
 
 ```text
 Papeer/

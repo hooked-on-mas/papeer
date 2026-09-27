@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import hashlib
 import json
 from pathlib import Path
@@ -24,19 +24,156 @@ def normalize_collection_name(value: str) -> str:
     return " / ".join(part.strip() for part in re.split(r"[\\/]", value) if part.strip())
 
 
-# The sidecar opens a Library per request; concurrent first requests after an upgrade must not
-# both see a column missing and both try to add it.
+class NewerSchemaError(ValueError):
+    """Data written by a newer Papeer: this version must neither read nor overwrite it."""
+
+
+def newer_papeer(app_version: object) -> str:
+    """Name the newer Papeer, with the version a backup or sync revision states when it looks like one."""
+    if isinstance(app_version, str) and re.fullmatch(r"[0-9A-Za-z.+-]{1,40}", app_version):
+        return f"新しいバージョンのPapeer（{app_version}）"
+    return "新しいバージョンのPapeer"
+
+
+NEWER_LIBRARY = "このライブラリは新しいバージョンのPapeerで更新されています。Papeerを最新版に更新してください。"
+
+
+def _baseline(db: sqlite3.Connection, root: Path) -> None:
+    """Version 1: the schema as it was before versioning.
+
+    Every library made before then is at user_version 0 with whatever tables and columns
+    its version created, so each statement here checks first and is safe to repeat.
+    """
+    db.execute("""CREATE TABLE IF NOT EXISTS papers (
+        id TEXT PRIMARY KEY, sha256 TEXT UNIQUE NOT NULL,
+        title TEXT NOT NULL, original_name TEXT NOT NULL,
+        pages INTEGER NOT NULL, status TEXT NOT NULL DEFAULT '追加済み',
+        collection_name TEXT NOT NULL DEFAULT '',
+        note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS pages (
+        paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+        number INTEGER NOT NULL, text TEXT NOT NULL,
+        PRIMARY KEY(paper_id, number)
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+        role TEXT NOT NULL, content TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'paper',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS collections (
+        name TEXT PRIMARY KEY
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS bookmarks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+        page INTEGER NOT NULL,
+        side TEXT NOT NULL,
+        quote TEXT NOT NULL,
+        label TEXT NOT NULL DEFAULT '重要',
+        note TEXT NOT NULL DEFAULT '',
+        anchor_y REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS pdf_ink (
+        paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+        side TEXT NOT NULL,
+        page INTEGER NOT NULL,
+        strokes TEXT NOT NULL,
+        PRIMARY KEY(paper_id, side, page)
+    )""")
+    if "anchor_y" not in {row[1] for row in db.execute("PRAGMA table_info(bookmarks)")}:
+        db.execute("ALTER TABLE bookmarks ADD COLUMN anchor_y REAL NOT NULL DEFAULT 0")
+    if "anchor_x" not in {row[1] for row in db.execute("PRAGMA table_info(bookmarks)")}:
+        db.execute("ALTER TABLE bookmarks ADD COLUMN anchor_x REAL NOT NULL DEFAULT 0")
+    if "usage" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
+        db.execute("ALTER TABLE messages ADD COLUMN usage TEXT")
+    if "scope" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
+        db.execute("ALTER TABLE messages ADD COLUMN scope TEXT NOT NULL DEFAULT 'paper'")
+    if "attachments" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
+        db.execute("ALTER TABLE messages ADD COLUMN attachments TEXT")
+    columns = {row[1] for row in db.execute("PRAGMA table_info(papers)")}
+    if "tags" not in columns:
+        db.execute("ALTER TABLE papers ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+    if "read_status" not in columns:
+        db.execute("ALTER TABLE papers ADD COLUMN read_status TEXT NOT NULL DEFAULT '未読'")
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reading_status_choices'").fetchone():
+        db.execute("CREATE TABLE reading_status_choices (name TEXT PRIMARY KEY)")
+        db.executemany("INSERT INTO reading_status_choices VALUES(?)",
+                       [(name,) for name in ("未読", "読書中", "読了", "再読したい")])
+    db.execute("CREATE TABLE IF NOT EXISTS note_templates (name TEXT PRIMARY KEY, content TEXT NOT NULL)")
+    db.execute("CREATE TABLE IF NOT EXISTS collection_glossaries (name TEXT PRIMARY KEY, terms TEXT NOT NULL)")
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tag_choices'").fetchone():
+        db.execute("CREATE TABLE tag_choices (kind TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(kind,name))")
+        db.executemany("INSERT INTO tag_choices VALUES('sticky',?)",
+                       [(name,) for name in ("重要", "疑問", "あとで確認", "引用", "確認済み")])
+        db.execute("INSERT OR IGNORE INTO tag_choices SELECT 'sticky',label FROM bookmarks WHERE label<>''")
+        for row in db.execute("SELECT tags FROM papers").fetchall():
+            db.executemany("INSERT OR IGNORE INTO tag_choices VALUES('paper',?)",
+                           [(name,) for name in json.loads(row[0])])
+    for name in ("first_author", "publication_year"):
+        if name not in columns:
+            db.execute(f"ALTER TABLE papers ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+    if "bibliography_version" not in columns:
+        db.execute("ALTER TABLE papers ADD COLUMN bibliography_version INTEGER NOT NULL DEFAULT 0")
+    for (paper_id,) in db.execute("SELECT id FROM papers WHERE bibliography_version=0").fetchall():
+        try:
+            with PDF_LOCK, fitz.open(PaperFiles(root / "papers" / paper_id).original_pdf) as document:
+                info = extract_bibliography(document)
+        except (OSError, ValueError, RuntimeError):
+            continue
+        db.execute("UPDATE papers SET first_author=?,publication_year=?,bibliography_version=1 WHERE id=?",
+                   (info["first_author"], info["publication_year"], paper_id))
+
+
+# Schema migrations. PRAGMA user_version counts the steps a library database has been through.
+# To change the schema or convert stored values (a column, a table, an FTS index, status codes, ...),
+# append a function taking (db, library root) to MIGRATIONS. It runs once, on a database at exactly
+# the previous version, in one transaction with the other pending steps and the version update, so it
+# may assume that state (no "if not exists" checks) and a failure leaves the database as it was.
+# Use db.execute only: executescript commits, and PRAGMA foreign_keys is off and cannot change here.
+# A newer database (a later Papeer, its backups or sync revisions) is refused, never migrated down.
+# Changing the stored contents also changes drive_sync.fingerprint, so each PC publishes a new sync
+# revision once after updating; tables needed only when used (collection_undo, global_glossary) are
+# therefore still created on first use rather than here. They may be missing at any version: a later
+# step that touches them must check whether they exist first (sqlite_master), unlike other tables.
+# Add a test in tests/test_schema_migration.py.
+MIGRATIONS = [_baseline]
+SCHEMA_VERSION = len(MIGRATIONS)
+
+# The sidecar opens a Library per request; concurrent first requests after an upgrade wait here
+# rather than on SQLite's busy timeout while one of them migrates.
 _SCHEMA_LOCK = threading.Lock()
-# SQLite's schema_version of each database after it was migrated in this process.
-# Opening a Library then costs one pragma instead of the full migration, and any
-# schema change made elsewhere (a restore, an older copy) triggers the migration again.
-_MIGRATED: dict[str, int] = {}
 
 
-def forget_schema(root: Path) -> None:
-    """Migrate again on next open, e.g. after a restore replaced the database."""
-    with _SCHEMA_LOCK:
-        _MIGRATED.pop(str(Path(root).resolve()), None)
+def database_version(path: Path) -> int:
+    """PRAGMA user_version of a library database file, without migrating it."""
+    with closing(sqlite3.connect(path, timeout=30)) as db:
+        return db.execute("PRAGMA user_version").fetchone()[0]
+
+
+def migrate_database(root: Path) -> None:
+    """Bring the library database to SCHEMA_VERSION: every pending step or none."""
+    with closing(sqlite3.connect(root / "library.sqlite3", timeout=30, isolation_level=None)) as db:
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            # Read again under the write lock: another process may have migrated meanwhile.
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version > SCHEMA_VERSION:
+                raise NewerSchemaError(NEWER_LIBRARY)
+            if version == SCHEMA_VERSION:
+                db.execute("ROLLBACK")  # Nothing to write.
+                return
+            for step in MIGRATIONS[version:]:
+                step(db, root)
+            db.execute(f"PRAGMA user_version={SCHEMA_VERSION:d}")
+            db.execute("COMMIT")
+        except BaseException:
+            db.execute("ROLLBACK")
+            raise
 
 
 class Library:
@@ -44,106 +181,13 @@ class Library:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
         (root / "papers").mkdir(exist_ok=True)
-        key = str(root.resolve())
-        with _SCHEMA_LOCK:
-            if _MIGRATED.get(key) != self._schema_version():
-                self._migrate()
-                _MIGRATED[key] = self._schema_version()
-
-    def _schema_version(self) -> int:
-        with self.connection() as db:
-            return db.execute("PRAGMA schema_version").fetchone()[0]
-
-    def _migrate(self) -> None:
-        """Create tables and add columns introduced by later versions."""
-        with self.connection() as db:
-            db.executescript("""
-                PRAGMA journal_mode=WAL;
-                CREATE TABLE IF NOT EXISTS papers (
-                    id TEXT PRIMARY KEY, sha256 TEXT UNIQUE NOT NULL,
-                    title TEXT NOT NULL, original_name TEXT NOT NULL,
-                    pages INTEGER NOT NULL, status TEXT NOT NULL DEFAULT '追加済み',
-                    collection_name TEXT NOT NULL DEFAULT '',
-                    note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE TABLE IF NOT EXISTS pages (
-                    paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
-                    number INTEGER NOT NULL, text TEXT NOT NULL,
-                    PRIMARY KEY(paper_id, number)
-                );
-                CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
-                    role TEXT NOT NULL, content TEXT NOT NULL,
-                    scope TEXT NOT NULL DEFAULT 'paper',
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE TABLE IF NOT EXISTS collections (
-                    name TEXT PRIMARY KEY
-                );
-                CREATE TABLE IF NOT EXISTS bookmarks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
-                    page INTEGER NOT NULL,
-                    side TEXT NOT NULL,
-                    quote TEXT NOT NULL,
-                    label TEXT NOT NULL DEFAULT '重要',
-                    note TEXT NOT NULL DEFAULT '',
-                    anchor_y REAL NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE TABLE IF NOT EXISTS pdf_ink (
-                    paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
-                    side TEXT NOT NULL,
-                    page INTEGER NOT NULL,
-                    strokes TEXT NOT NULL,
-                    PRIMARY KEY(paper_id, side, page)
-                );
-            """)
-            if "anchor_y" not in {row[1] for row in db.execute("PRAGMA table_info(bookmarks)")}:
-                db.execute("ALTER TABLE bookmarks ADD COLUMN anchor_y REAL NOT NULL DEFAULT 0")
-            if "anchor_x" not in {row[1] for row in db.execute("PRAGMA table_info(bookmarks)")}:
-                db.execute("ALTER TABLE bookmarks ADD COLUMN anchor_x REAL NOT NULL DEFAULT 0")
-            if "usage" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
-                db.execute("ALTER TABLE messages ADD COLUMN usage TEXT")
-            if "scope" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
-                db.execute("ALTER TABLE messages ADD COLUMN scope TEXT NOT NULL DEFAULT 'paper'")
-            if "attachments" not in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
-                db.execute("ALTER TABLE messages ADD COLUMN attachments TEXT")
-            columns = {row[1] for row in db.execute("PRAGMA table_info(papers)")}
-            if "tags" not in columns:
-                db.execute("ALTER TABLE papers ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
-            if "read_status" not in columns:
-                db.execute("ALTER TABLE papers ADD COLUMN read_status TEXT NOT NULL DEFAULT '未読'")
-            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reading_status_choices'").fetchone():
-                db.execute("CREATE TABLE reading_status_choices (name TEXT PRIMARY KEY)")
-                db.executemany("INSERT INTO reading_status_choices VALUES(?)",
-                               [(name,) for name in ("未読", "読書中", "読了", "再読したい")])
-            db.executescript("""
-                CREATE TABLE IF NOT EXISTS note_templates (name TEXT PRIMARY KEY, content TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS collection_glossaries (name TEXT PRIMARY KEY, terms TEXT NOT NULL);
-            """)
-            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tag_choices'").fetchone():
-                db.execute("CREATE TABLE tag_choices (kind TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(kind,name))")
-                db.executemany("INSERT INTO tag_choices VALUES('sticky',?)",
-                               [(name,) for name in ("重要", "疑問", "あとで確認", "引用", "確認済み")])
-                db.execute("INSERT OR IGNORE INTO tag_choices SELECT 'sticky',label FROM bookmarks WHERE label<>''")
-                for row in db.execute("SELECT tags FROM papers").fetchall():
-                    db.executemany("INSERT OR IGNORE INTO tag_choices VALUES('paper',?)",
-                                   [(name,) for name in json.loads(row[0])])
-            for name in ("first_author", "publication_year"):
-                if name not in columns:
-                    db.execute(f"ALTER TABLE papers ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
-            if "bibliography_version" not in columns:
-                db.execute("ALTER TABLE papers ADD COLUMN bibliography_version INTEGER NOT NULL DEFAULT 0")
-            for row in db.execute("SELECT id FROM papers WHERE bibliography_version=0").fetchall():
-                try:
-                    with PDF_LOCK, fitz.open(PaperFiles(self.folder(row["id"])).original_pdf) as document:
-                        info = extract_bibliography(document)
-                except (OSError, ValueError, RuntimeError):
-                    continue
-                db.execute("UPDATE papers SET first_author=?,publication_year=?,bibliography_version=1 WHERE id=?",
-                           (info["first_author"], info["publication_year"], row["id"]))
+        # One pragma per open, so a database a restore or sync put in place is migrated on first use.
+        version = database_version(root / "library.sqlite3")
+        if version > SCHEMA_VERSION:
+            raise NewerSchemaError(NEWER_LIBRARY)
+        if version < SCHEMA_VERSION:
+            with _SCHEMA_LOCK:
+                migrate_database(root)
 
     @contextmanager
     def connection(self):

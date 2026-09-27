@@ -5,20 +5,23 @@ The caller must hold exclusive library access throughout sync().
 """
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
 import platform
+import sqlite3
 import tempfile
 import re
 import uuid
 import zipfile
 
+from papeer import __version__
 from papeer.core.fileio import atomic_output, atomic_write_json, is_temporary
 from papeer.core.paths import device_directory
 from papeer.core.reading_tools import create_backup, restore_backup
-from papeer.core.storage import Library
+from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, database_version, newer_papeer
 from papeer.providers import check_cancel
 
 FORMAT = "papeer-folder-sync-v1"
@@ -106,7 +109,10 @@ class FolderDrive:
                         or not re.fullmatch(r"[0-9a-f]{32}", str(meta.get("id", "")))
                         or not isinstance(meta.get("parents"), list)
                         or not all(isinstance(p, str) for p in meta["parents"])
-                        or not all(isinstance(meta.get(k), str) for k in ("hash", "archive_hash", "device", "created"))):
+                        or not all(isinstance(meta.get(k), str) for k in ("hash", "archive_hash", "device", "created"))
+                        # Both are absent from revisions made before schema versioning (version 0).
+                        or type(meta.get("schema_version", 0)) is not int or meta.get("schema_version", 0) < 0
+                        or not isinstance(meta.get("app_version", ""), str)):
                     raise ValueError("同期履歴の形式が不正です。")
                 archive.getinfo("library.zip")
                 result.append(meta)
@@ -142,23 +148,25 @@ class FolderDrive:
             output.write(chunk)
 
 
-def fingerprint(lib: Library, cancel=None) -> str:
+def fingerprint(lib: Library | Path, cancel=None) -> str:
     """Logical DB contents avoid false changes caused by SQLite checkpoint/layout.
 
     UI state is carried in snapshots, but merely navigating doesn't trigger uploads.
+    Given a folder instead of a Library, its database is read as it is, without migrating it.
     """
+    root = lib.root if isinstance(lib, Library) else lib
     digest = hashlib.sha256()
-    with lib.connection() as db:
+    with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db:
         for line in db.iterdump():
             digest.update(line.encode("utf-8"))
             digest.update(b"\n")
-    for path in sorted(lib.root.rglob("*")):
+    for path in sorted(root.rglob("*")):
         if cancel is not None:
             check_cancel(cancel)
         if path.is_file() and not is_temporary(path) and path.name not in {
             "library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm", "ui-state.json",
         }:
-            digest.update(path.relative_to(lib.root).as_posix().encode("utf-8"))
+            digest.update(path.relative_to(root).as_posix().encode("utf-8"))
             with path.open("rb") as stream:
                 digest.update(hashlib.file_digest(stream, "sha256").digest())
     return digest.hexdigest()
@@ -203,7 +211,12 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
         if choice is not None and choice != "local" and selected is None:
             raise ValueError("選んだ同期データが見つかりません。")
         pull = selected or (heads[0] if choice is None and heads and base != heads[0]["id"] and not dirty else None)
+        # What `archive` holds if it is published: this library, or the revision taken below.
+        content_hash, content_schema = local_hash, SCHEMA_VERSION
         if pull:
+            if pull.get("schema_version", 0) > SCHEMA_VERSION:
+                raise NewerSchemaError(f"この同期データは{newer_papeer(pull.get('app_version'))}で作成されたため取り込めません。"
+                                       "このPCのPapeerを最新版に更新してから同期してください。")
             remote.download(pull["id"], archive, cancel, progress)
             check_cancel(cancel)
             with archive.open("rb") as stream:
@@ -213,9 +226,15 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
             staging = Path(directory) / "validation"
             staging.mkdir()
             restore_backup(Library(staging), archive, cancel)
-            local_hash = fingerprint(Library(staging), cancel)
-            if local_hash != pull["hash"]:
+            # Hash the database as the publishing PC did, before this version migrates it.
+            content_hash = fingerprint(staging, cancel)
+            content_schema = database_version(staging / "library.sqlite3")
+            if content_hash != pull["hash"]:
                 raise ValueError("同期データの内容が一致しません。")
+            local_hash = content_hash
+            if content_schema < SCHEMA_VERSION:
+                # The library as it is once opened here, so taking an older revision is not published again.
+                local_hash = fingerprint(Library(staging), cancel)
             check_cancel(cancel)
             base = pull["id"]
         # Explicit resolutions publish the chosen contents as a merge revision.
@@ -226,8 +245,11 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
                 create_backup(lib, archive, cancel)
             with archive.open("rb") as stream:
                 archive_hash = hashlib.file_digest(stream, "sha256").hexdigest()
-            base = remote.upload(archive, {"parents": ids, "hash": local_hash,
-                                          "archive_hash": archive_hash, "device": platform.node()}, cancel, progress)
+            # app_version is the Papeer that published this revision; a taken revision published again
+            # keeps its own schema_version, since the archive holds its database unmigrated.
+            base = remote.upload(archive, {"parents": ids, "hash": content_hash, "archive_hash": archive_hash,
+                                          "device": platform.node(), "schema_version": content_schema,
+                                          "app_version": __version__}, cancel, progress)
         if pull:
             # All network operations succeeded; only now replace the local copy. Cancellable until the
             # folders are swapped: the state is then left as it was, so the next sync pulls the same

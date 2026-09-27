@@ -52,6 +52,7 @@ def test_tags_read_status_and_old_database_migration(library):
     with lib.connection() as db:
         db.execute("ALTER TABLE papers DROP COLUMN tags")
         db.execute("ALTER TABLE papers DROP COLUMN read_status")
+        db.execute("PRAGMA user_version=0")  # as saved by a version before schema versioning
     lib = Library(lib.root)
     assert lib.paper(identity)["read_status"] == "未読"
     lib.update(identity, tags=[" 実装したい ", "研究/制御", "実装したい"], read_status="読書中")
