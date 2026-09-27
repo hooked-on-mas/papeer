@@ -68,9 +68,7 @@ def test_vector_and_raster_panels_are_combined():
         assert figures[0]["rect"] == fitz.Rect(40, 40, 340, 140)
 
 
-def test_article_only_passes_grounded_assets_to_both_stages(tmp_path, monkeypatch):
-    # Built-in prompts only: never read the user's prompt overrides.
-    monkeypatch.setenv("PAPEER_DATA_DIR", str(tmp_path / "data"))
+def test_article_only_passes_grounded_assets_to_both_stages(tmp_path):
     source = tmp_path / "source.pdf"
     with fitz.open() as pdf:
         page = pdf.new_page(width=500, height=500)
@@ -107,7 +105,6 @@ def test_article_only_passes_grounded_assets_to_both_stages(tmp_path, monkeypatc
                    for line in data.splitlines())
         assert "p1i2.png" not in data
         assert "p1i3.png" not in data
-    images = sorted(files.media.glob("*.png"))
-    assert len(images) == 1
-    with fitz.open(images[0]) as image:
+    assert len(files.summary_images()) == 1
+    with fitz.open(files.summary_images()[0]) as image:
         assert image[0].rect.width > image[0].rect.height * 2
