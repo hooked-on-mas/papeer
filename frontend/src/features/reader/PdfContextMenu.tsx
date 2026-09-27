@@ -126,8 +126,14 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
             <ContextMenuItem onClick={copy}>
               <Copy /> コピー <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
             </ContextMenuItem>
-            <ContextMenuItem onClick={() => emitAppEvent("open-paragraph-editor")}>
-              <Languages /> このページの段落を修正…
+            <ContextMenuItem onClick={async () => {
+              const current = passage.current;
+              if (!current) return;
+              emitAppEvent("open-paragraph-editor", {
+                page: current.page, side: translated ? "translated" : "original", text: await current.text,
+              });
+            }}>
+              <Languages /> この段落の翻訳を修正…
             </ContextMenuItem>
             <ContextMenuItem onClick={withPassage(async (text) => {
               const source = await askText("共通辞書に登録", "原語（100文字まで）", text.slice(0, 100));

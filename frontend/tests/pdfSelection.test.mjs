@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cleanPdfSelection, quoteForNote, restoreFormulas } from "../src/lib/pdfSelection.ts";
+import { cleanPdfSelection, paragraphOfSelection, quoteForNote, restoreFormulas } from "../src/lib/pdfSelection.ts";
 
 const PAGE = [
   "上記の情報をもとに、y > 1.7 の場合に不安全領域における応答の確率を境界づけることを目指す。関数および目的の不安全領域を図2に示す。",
@@ -52,4 +52,17 @@ test("Surrounding whitespace is trimmed", () => {
 
 test("Quotes for the memo are Markdown blockquotes with the source", () => {
   assert.equal(quoteForNote("abc", "p.3"), "> abc\n>\n> — p.3");
+});
+
+test("The paragraph a selection comes from is found despite missing math and line breaks", () => {
+  assert.equal(paragraphOfSelection("上記の情報をもとに、\n の場合に不安全領域", PAGE), 0);
+  assert.equal(paragraphOfSelection("によって定義される集合は", PAGE), 1);
+  // Mostly in the third paragraph, with its first characters from the second.
+  assert.equal(paragraphOfSelection("集合である。表Iにおいて、 の i 番目の焦点要素と", PAGE), 2);
+});
+
+test("A selection that does not single out a paragraph finds none", () => {
+  assert.equal(paragraphOfSelection("焦点", PAGE), -1);
+  assert.equal(paragraphOfSelection("Fig. 3. Focal elements from the induced DS structure", PAGE), -1);
+  assert.equal(paragraphOfSelection("焦点要素", [PAGE[2], PAGE[2]]), -1);
 });

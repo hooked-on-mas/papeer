@@ -101,6 +101,29 @@ export function restoreFormulas(selection: string, blocks: string[]): string | n
   return cleanPdfSelection(source.slice(text.starts[best.start], text.ends[best.end - 1]));
 }
 
+const GRAM = 4;
+
+/**
+ * Index of the text in `texts` (the paragraphs of a page) that the selection comes from: the one sharing
+ * the most of its 4-character runs, which survives math missing from the selection and line breaks.
+ * -1 when no text clearly wins, e.g. a single word found in several paragraphs.
+ */
+export function paragraphOfSelection(selection: string, texts: string[]): number {
+  const wanted = comparable(selection).chars;
+  const grams = new Set<string>();
+  for (let i = 0; i + GRAM <= wanted.length; i++) grams.add(wanted.slice(i, i + GRAM));
+  if (!grams.size) return -1;
+  const hits = texts.map((text) => {
+    const chars = comparable(text).chars;
+    let count = 0;
+    for (const gram of grams) if (chars.includes(gram)) count++;
+    return count;
+  });
+  const most = Math.max(0, ...hits);
+  if (most < grams.size * 0.3 || hits.filter((count) => count === most).length > 1) return -1;
+  return hits.indexOf(most);
+}
+
 /** Markdown blockquote of the selection, with the page it came from. */
 export function quoteForNote(text: string, source: string): string {
   return text.split("\n").map((line) => `> ${line}`).join("\n") + `\n>\n> — ${source}`;
