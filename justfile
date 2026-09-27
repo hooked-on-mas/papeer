@@ -22,9 +22,11 @@ test: test-backend test-frontend
 test-backend:
     uv run pytest
 
+# node:test のテスト (frontend/tests) は Node 22.18 以上の型除去で .ts を直接実行する
 [working-directory: 'frontend']
 test-frontend:
-    pnpm tsc --noEmit
+    pnpm typecheck
+    pnpm test
 
 # Lint and type check
 lint: lint-backend lint-frontend
@@ -35,7 +37,7 @@ lint-backend:
 
 [working-directory: 'frontend']
 lint-frontend:
-    pnpm tsc --noEmit
+    pnpm typecheck
 
 # Run sidecar server in development
 # 前回の本アプリの sidecar がポート 8000 に残っていれば止めてから起動する

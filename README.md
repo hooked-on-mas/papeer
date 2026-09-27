@@ -41,6 +41,7 @@ papeer/        翻訳・PDF 処理・ライブラリ管理のコア (Python)
 sidecar/          papeer を HTTP/WebSocket で公開する FastAPI サーバー
 frontend/         デスクトップ UI (Tauri 2 + React 19 + Tailwind v4)
   src/            React アプリ
+  tests/          node:test によるフロントエンドのテスト
   src-tauri/      Tauri (Rust)。本番では sidecar を子プロセスとして起動
 tests/            pytest によるバックエンドのテスト
 tools/            翻訳レイアウトの検証用スクリプト (開発用)
@@ -54,7 +55,7 @@ docs/             仕様ドキュメント
 Windows 11 x64 を対象にしています。次のツールを用意してください。
 
 - [uv](https://docs.astral.sh/uv/)（Python 3.12 は uv が自動で導入します）
-- [Node.js](https://nodejs.org/) LTS と [pnpm](https://pnpm.io/)
+- [Node.js](https://nodejs.org/) 22.18 以上と [pnpm](https://pnpm.io/)（フロントエンドのテストは Node が `.ts` を直接実行します）
 - [Rust](https://www.rust-lang.org/tools/install) と [Tauri の前提条件](https://tauri.app/start/prerequisites/)
 - [just](https://github.com/casey/just) 1.38 以上（`winget install Casey.Just`）
 
@@ -74,7 +75,7 @@ just dev-frontend   # ターミナル 2: Tauri + Vite
 ### テストと lint
 
 ```bash
-just test   # pytest と TypeScript の型チェック
+just test   # pytest、TypeScript の型チェック、フロントエンドのテスト (node:test)
 just lint   # ruff, pyright, tsc
 ```
 
