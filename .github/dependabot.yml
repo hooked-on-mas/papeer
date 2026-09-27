@@ -1,0 +1,92 @@
+# Weekly dependency updates, grouped so that each ecosystem opens only a few pull requests: minor and
+# patch updates together; the "tauri" and "actions" groups also take major updates; any other major
+# update comes on its own (README「依存ライブラリ」).
+#
+# A pull request that changes uv.lock, pnpm-lock.yaml or Cargo.lock also needs a regenerated license
+# inventory; tests/test_license_inventory.py fails until docs/dependency-license-inventory.json matches
+# the lock files again. Dependabot cannot regenerate it (it reads the installed packages), so check out
+# the branch, run `just setup` and `just licenses`, and commit the inventory (README「依存ライブラリ」).
+#
+# The tauri crates and the @tauri-apps/* npm packages must stay on the same minor version: merge the
+# "tauri" pull requests of both ecosystems together.
+#
+# cooldown: a new release is proposed only after it has been public for a week, so a compromised
+# release that is pulled within days never reaches a pull request. Security updates (enabled in the
+# repository settings, not here) are not delayed.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Tokyo
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+      include: scope
+    open-pull-requests-limit: 5
+    groups:
+      python:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # The npm ecosystem updates pnpm-lock.yaml with pnpm.
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Tokyo
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+      include: scope
+    open-pull-requests-limit: 5
+    groups:
+      tauri:
+        patterns: ["@tauri-apps/*"]
+      frontend-production:
+        dependency-type: production
+        update-types: [minor, patch]
+      frontend-development:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /frontend/src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Tokyo
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+      include: scope
+    open-pull-requests-limit: 5
+    groups:
+      tauri:
+        patterns: ["tauri", "tauri-*"]
+      rust:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # The workflows pin actions to commit SHAs (.github/workflows/release.yml); Dependabot moves the
+  # SHA and the version comment beside it.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Tokyo
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]

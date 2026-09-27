@@ -5,7 +5,7 @@
 #
 # The build job only reads the repository; only the release job, which runs no project code and
 # no setup actions, may write (create the release). Third-party actions are pinned to commit SHAs
-# (the version is in the comment); add the github-actions ecosystem to .github/dependabot.yml to update them.
+# (the version is in the comment); .github/dependabot.yml updates them weekly.
 name: Release
 
 on:

@@ -16,6 +16,7 @@ Papeer の主な変更を記録します。形式は [Keep a Changelog](https://
 - Google Drive 同期で競合したときに、このPCと他のPCのライブラリの違い（片方にだけある論文、内容が異なるメモ・付箋・書き込みの件数）を表示するようにしました。選ばなかった側のライブラリはライブラリの隣の `*-sync-backups` に退避し（最新 3 件）、設定のバックアップの「退避データから復元」で戻せます。
 - 開発: `just bump`（全ファイルの版の書き換え）、この変更履歴、`v*` タグで Windows インストーラーを GitHub Releases に置くワークフロー（`.github/workflows/release.yml`）を追加しました。
 - 開発: `just clean`（`build`・`dist`・`output`・`tmp` の一覧表示と削除）と、抽出結果を比べる `tools/compare_layout.py` を追加しました。
+- 開発: 依存のライセンス台帳（`docs/dependency-license-inventory.json`）を作り直す `just licenses` を追加し、台帳を最新にしました。台帳には元にしたロックファイルの sha256 を記録し、ロックファイルだけが変わるとテストが失敗します。既知の脆弱性を調べる `just audit`（pip-audit・pnpm audit・cargo audit）と、Dependabot による週次の更新（`.github/dependabot.yml`）も追加しました。
 
 ### Changed
 
@@ -41,5 +42,6 @@ Papeer の主な変更を記録します。形式は [Keep a Changelog](https://
 - 解説・メモの Markdown で `file:` のリンクや偽装した `papeer:` のリンクを表示しないようにしました。
 - 書き出し・書き込み付き PDF・辞書・バックアップの保存先がライブラリの中なら拒否するようにしました。
 - 本番の sidecar では開発サーバーのオリジンを CORS で許可せず、CSP の接続先を起動時に決めた sidecar のポートだけに絞りました。
+- mermaid（chevrotain 経由）が使う `lodash-es` を、脆弱性（GHSA-r5fr-rjxr-66jc、GHSA-f23m-r3pf-42rh）を直した 4.18.1 以上に上げました（`frontend/pnpm-workspace.yaml` の `overrides`）。chevrotain が `lodash-es` の固定を上げたら上書きを外します。
 
 [Unreleased]: https://github.com/fukao-m/paperdesk/commits/main

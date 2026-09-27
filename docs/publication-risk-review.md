@@ -35,7 +35,7 @@ README は本体を `AGPL-3.0-or-later` と記載し、ルートの `LICENSE` �
 
 JavaScript の直接依存を固定版でさらに示すと、MIT は `@base-ui/react 1.8.0`、`@dnd-kit/core 6.3.1`、`@tanstack/react-query 5.103.2`、`cn 0.4.0`、`katex 0.18.7`、`mermaid 12.0.0`、`openapi-fetch 0.17.0`、`react 19.3.0`、`react-dom 19.3.0`、`react-hotkeys-hook 5.3.3`、`react-markdown 10.1.0`、`react-pdf 11.0.0`、`react-resizable-panels 4.13.2`、`rehype-katex 7.0.1`、`remark-gfm 4.0.1`、`remark-math 6.0.0`、`zustand 5.0.15` の 17 件。Apache-2.0 は `class-variance-authority 0.7.1` と `pdfjs-dist 6.3.289`、ISC は `lucide-react 1.47.0`、OFL-1.1 は `@fontsource-variable/geist 5.3.0`。`@tauri-apps/api 2.11.1`、`plugin-dialog 2.7.3`、`plugin-notification 2.4.0`、`plugin-opener 2.5.5`、`plugin-process 2.3.1` は Apache-2.0/MIT の選択である。開発専用依存と間接依存は別紙に分けている。
 
-ロックファイル上の Python 外部依存は開発・ビルド込み **43 件**（Windows 実行時 **23 件**）、JavaScript 本番依存閉包は **295 個の name@version**（うち **285 個**が Windows x64 に該当して手元にインストール、残り 10 個は他 OS/CPU 向け optional バイナリ）、Windows 対象の Rust 外部 crate は **266 件**である。Windows x64 に該当する一覧行にはライセンス不明がない。全件の固定版・ライセンスは[依存ライセンス一覧](dependency-license-inventory.json)を参照する。これは**利用者がインストールする依存と、将来ビルドを再配布する場合の調査資料**であり、一覧の全パッケージを作者がソースリポジトリに同梱するという意味ではない。対象 OS やロックを変えた場合、再生成する。
+ロックファイル上の Python 外部依存は開発・ビルド込み **44 件**（Windows 実行時 **23 件**）、JavaScript 本番依存閉包は **294 個の name@version**（うち **284 個**が Windows x64 に該当して手元にインストール、残り 10 個は他 OS/CPU 向け optional バイナリ）、Windows 対象の Rust 外部 crate は **266 件**である。Windows x64 に該当する一覧行にはライセンス不明がない。全件の固定版・ライセンスは[依存ライセンス一覧](dependency-license-inventory.json)を参照する。これは**利用者がインストールする依存と、将来ビルドを再配布する場合の調査資料**であり、一覧の全パッケージを作者がソースリポジトリに同梱するという意味ではない。対象 OS やロックを変えた場合、`just licenses` で再生成する（台帳に記録したロックファイルの sha256 との一致をテストで検査する）。
 
 ### 特に検討が必要な依存
 

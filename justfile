@@ -44,6 +44,18 @@ lint-frontend:
 bump version:
     uv run python tools/bump_version.py {{ version }}
 
+# Regenerate the license inventory of every locked dependency (tools/license_inventory.py, README「依存ライブラリ」)
+# 依存を変えたら実行して台帳もコミットする。ロックファイルとインストール済みの情報だけを読み、ネットワークは使わない
+# ライセンス台帳を作り直す。`just licenses check` は記録したロックファイル等のハッシュが今と一致するかだけを確かめる
+licenses mode="":
+    uv run python tools/license_inventory.py {{ if mode == "check" { "--check" } else if mode == "" { "" } else { error("just licenses か just licenses check を指定してください") } }}
+
+# Check the locked dependencies against vulnerability advisories (tools/audit_dependencies.py, README「依存ライブラリ」)
+# 依存の名前と版だけを外部のアドバイザリ DB に問い合わせる（ライブラリや設定などのデータは送らない）
+# 既知の脆弱性を調べる（pip-audit・pnpm audit・cargo audit）。一部だけなら just audit python rust
+audit *ecosystems:
+    uv run python tools/audit_dependencies.py {{ ecosystems }}
+
 # Run sidecar server in development
 # 前回の本アプリの sidecar がポート 8000 に残っていれば止めてから起動する
 # 認証トークンはデバッグ版 Tauri (src-tauri/src/lib.rs の DEV_TOKEN) と同じ固定値を使う

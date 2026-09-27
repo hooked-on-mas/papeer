@@ -1,6 +1,7 @@
 """The app version: one MAJOR.MINOR.PATCH in every manifest, `just bump`, the CHANGELOG and /health."""
 from datetime import date
 import io
+import json
 from pathlib import Path
 import re
 import shutil
@@ -218,3 +219,44 @@ def test_notes_are_written_as_utf8(tmp_path, monkeypatch):
     monkeypatch.setattr(bump_version, "ROOT", tmp_path)
     assert main(["--notes", "0.3.0", "--output", str(tmp_path / "notes.md")]) == 0
     assert (tmp_path / "notes.md").read_bytes().decode("utf-8") == "### Added\n\n- 足した。\n"
+
+
+def _with_inventory(repo):
+    """A copy of the inventory made current for the copied lock files (whatever the repository's state)."""
+    from tools.license_inventory import INVENTORY, SOURCE_FILES, refresh_source_hashes
+
+    for relative in SOURCE_FILES:
+        (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relative, repo / relative)
+    text = refresh_source_hashes((ROOT / INVENTORY).read_bytes().decode("utf-8"),
+                                 {relative: (repo / relative).read_bytes() for relative in SOURCE_FILES})
+    (repo / INVENTORY).parent.mkdir(parents=True, exist_ok=True)
+    (repo / INVENTORY).write_bytes(text.encode("utf-8"))
+    return repo / INVENTORY
+
+
+def test_bump_keeps_a_current_license_inventory_current(repo):
+    from tools.license_inventory import stale_sources
+
+    inventory = _with_inventory(repo)
+    before = json.loads(inventory.read_bytes())
+    out = io.StringIO()
+    bump("9.0.0", root=repo, out=out)
+    after = json.loads(inventory.read_bytes())
+    assert stale_sources(after, repo) == []
+    # Only the hashes of the lock files carrying the version moved; the dependency rows stay as they are.
+    moved = {row["path"] for row, old in zip(after["sourceFiles"], before["sourceFiles"]) if row != old}
+    assert moved == {"uv.lock", "frontend/src-tauri/Cargo.lock"}
+    assert {**after, "sourceFiles": None} == {**before, "sourceFiles": None}
+    assert "ハッシュを更新しました" in out.getvalue()
+
+
+def test_bump_leaves_a_stale_license_inventory_alone(repo):
+    inventory = _with_inventory(repo)
+    lock = repo / "frontend/pnpm-lock.yaml"
+    lock.write_bytes(lock.read_bytes() + b"\n")  # A dependency changed without `just licenses`.
+    original = inventory.read_bytes()
+    out = io.StringIO()
+    bump("9.0.0", root=repo, out=out)
+    assert inventory.read_bytes() == original
+    assert "just licenses" in out.getvalue()
