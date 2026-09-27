@@ -55,6 +55,8 @@ class RevisionRequest(BaseModel):
     text: str = ""
     instruction: str = Field(default="自然な日本語にしてください。", max_length=2000)
     expected_text: str | None = None
+    # A shorter translation to fit the typeset space: about this many characters (revision-draft only).
+    char_budget: int | None = Field(default=None, ge=1, le=50000)
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
@@ -224,7 +226,7 @@ def draft_revision(paper_id: str, body: RevisionRequest):
     def action(cancel, progress, _page_ready):
         progress("この段落の修正案を作っています…")
         text = tools.draft_revision(lib, paper_id, paragraph, body.instruction,
-                                   deps.provider_for(settings, cancel), cancel)
+                                   deps.provider_for(settings, cancel), cancel, body.char_budget)
         return {"text": text, "unit_id": paragraph["id"]}
     return deps.submit_job("revision-draft", action, paper_id)
 

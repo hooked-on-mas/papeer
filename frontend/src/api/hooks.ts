@@ -31,13 +31,29 @@ export type PaperData = {
 
 export type TranslatedPageRef = { file: string; index: number; mtime: number } | null;
 
+/** A paragraph typeset below the readable size because it overflowed its box (pdf_engine.build_translated_pdf).
+ * Reports written before the length estimate have only page, block, font_size and scale. */
+export type ReadabilityWarning = {
+  page: number;
+  block?: string;
+  font_size?: number;
+  scale?: number;
+  role?: string;
+  /** Characters of the typeset translation (math and spaces not counted), and about how many fit at the readable size:
+   * null when the box is too small for any translation at that size. */
+  chars?: number;
+  char_budget?: number | null;
+  /** Translation blocks the typeset text came from; a paragraph's block is its id before the last "_". */
+  source_blocks?: string[];
+};
+
 export type TranslationReport = {
   pages?: number;
   selected_pages?: number[];
   translated_pages?: number[];
   skipped_pages?: number[];
   scaled_blocks?: number;
-  readability_warnings?: { page: number }[];
+  readability_warnings?: ReadabilityWarning[];
   skipped_blocks?: string[];
   skipped_block_pages?: number[];
   page_errors?: Record<string, string>;

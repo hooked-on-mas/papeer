@@ -13,7 +13,7 @@ import pytest
 from papeer.core.config import Settings
 from papeer.core.exports import interleaved_cache
 from papeer.core.paths import PaperFiles
-from papeer.core.reading_tools import create_backup, restore_backup, library_search, translation_paragraphs
+from papeer.core.reading_tools import create_backup, draft_revision, restore_backup, library_search, translation_paragraphs
 from papeer.core.terminology import effective_glossary, validate_revision, global_glossary, save_global_glossary
 from papeer.core.service import PaperService
 from papeer.core.storage import Library
@@ -300,6 +300,8 @@ def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
         assert client.get("/api/library-search", params={"q": "日本語訳"}).json()["results"]
         paragraph = client.get(f"/api/papers/{identity}/paragraphs").json()[0]
         assert client.post(f"/api/papers/{identity}/revision", json={"unit_id": paragraph["id"], "text": "修正", "expected_text": "stale"}).status_code == 409
+        assert client.post(f"/api/papers/{identity}/revision-draft",
+                           json={"unit_id": paragraph["id"], "char_budget": 0}).status_code == 422
         response = client.post(f"/api/papers/{identity}/revision-draft", json={"unit_id": paragraph["id"]})
         assert response.status_code == 200
         job = deps.job_manager.get_job(response.json()["job_id"])
@@ -318,6 +320,19 @@ def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
         assert client.get(f"/api/papers/{identity}/revisions").json()[0]["before"] == paragraph["text"]
         assert client.get(f"/api/papers/{identity}/citation-excerpts", params={"page": 1}).json()["text"]
         assert client.delete("/api/note-templates/実験").status_code == 200
+
+
+def test_shorter_revision_draft_asks_for_the_estimated_length(library):
+    lib, identity = library
+    provider = FakeProvider()
+    paragraph = {"source": "A long source paragraph.", "text": "長い訳文です。"}
+    assert draft_revision(lib, identity, paragraph, "簡潔にしてください。", provider, threading.Event(), 120) == "修正した日本語。"
+    instruction, payload = provider.calls[-1]
+    assert payload["max_characters"] == 120
+    assert "簡潔にしてください。" in instruction and "about 120 characters" in instruction
+    draft_revision(lib, identity, paragraph, "自然な日本語にしてください。", provider, threading.Event())
+    instruction, payload = provider.calls[-1]
+    assert "max_characters" not in payload and "characters" not in instruction
 
 
 @pytest.mark.parametrize("name", ["/outside.txt", "papers/../outside.txt", "C:/outside.txt", "papers\\outside.txt", "CON.txt", "papers/test. /file"])

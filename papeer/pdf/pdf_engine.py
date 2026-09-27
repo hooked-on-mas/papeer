@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 import json
 from pathlib import Path
 import re
@@ -17,8 +18,11 @@ from papeer.layout.table_layout import separate_tables, table_regions
 from papeer.layout.figure_layout import figure_regions
 from papeer.layout.algorithm_layout import separate_algorithms
 from papeer.layout.ocr_pages import ocr_check
-from papeer.layout.reading_flow import order_page, continuation_groups, translation_blocks, materialize_flows
-from papeer.pdf.pdf_typography import FONT_CSS, TextStyle, body_font_size, first_line_indented, font_archive, merge_wrapped_headings, reading_space, running_headers, text_html, text_style
+from papeer.layout.reading_flow import (order_page, continuation_groups, footnote_ids, translation_blocks, materialize_flows,
+                                        resolve_unit_joins, source_body_size)
+from papeer.pdf.pdf_typography import (FONT_CSS, TIGHT_LEADING, TextStyle, body_font_size, character_budget, first_line_indented,
+                                       font_archive, merge_wrapped_headings, readable_size, reading_space, running_headers,
+                                       text_html, text_style)
 
 
 # MuPDF must not be called concurrently from the UI and background jobs.
@@ -208,6 +212,13 @@ def _space_without_formulas(rect: fitz.Rect, formulas: list[fitz.Rect]) -> fitz.
     return max(candidates, key=lambda candidate: candidate.get_area())
 
 
+def _fit(placement: fitz.Rect, markup: str, archive: fitz.Archive, bounds: fitz.Rect) -> tuple[float, float]:
+    """(remaining, scale) of the markup laid out in placement, shrunk as far as needed."""
+    with fitz.open() as probe:
+        candidate = probe.new_page(width=bounds.width, height=bounds.height)
+        return candidate.insert_htmlbox(placement, markup, archive=archive, css=FONT_CSS, scale_low=0)
+
+
 def build_translated_pdf(source: Path, document: dict, translations: dict[str, str], output: Path,
                          page_numbers: set[int] | None = None,
                          translate_page_numbers: set[int] | None = None) -> dict:
@@ -218,7 +229,13 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
     readability_warnings = []
     preserved_margin_blocks = []
     compact_blocks = []
+    tight_leading_blocks = []
+    note_blocks = []
     preserved_label_blocks = []
+    # The cached translation blocks each laid-out block takes its text from (a warning's
+    # "source_blocks": the paragraphs to shorten). A flow member shows part of its first block.
+    sources = {member: [group["blocks"][0]] for group in document.get("continuations", [])
+               if group["blocks"][0] in translations for member in group["blocks"]}
     document, translations = materialize_flows(document, translations)
     document = dict(document, blocks=running_headers(document))
     document = dict(document, blocks=[dict(b, kind="formula", formulas=[]) if formula_only_block(b) else b
@@ -237,6 +254,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
         if len(parts) > 1 and all(part in original_blocks for part in parts):
             if all(part in translations for part in parts):
                 translations[block["id"]] = " ".join(translations[part] for part in parts)
+                sources[block["id"]] = [s for part in parts for s in sources.get(part, [part])]
             else:
                 restored.extend(original_blocks[part] for part in parts)
                 continue
@@ -262,6 +280,8 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
             target["text"] += " " + block["text"]
             target["formulas"] = target.get("formulas", []) + block.get("formulas", [])
             translations[target["id"]] += " " + translations[block["id"]]
+            sources[target["id"]] = list(dict.fromkeys(sources.get(target["id"], [target["id"]])
+                                                       + sources.get(block["id"], [block["id"]])))
     document = dict(document, blocks=merged)
     selected = set(range(1, document["page_count"] + 1)) if page_numbers is None else set(page_numbers)
     if not selected or not selected <= set(range(1, document["page_count"] + 1)):
@@ -315,6 +335,8 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
             obstacles = [fitz.Rect(item["bbox"]) for item in page.get_image_info()]
             obstacles.extend(fitz.Rect(item["rect"]) for item in page.get_drawings())
             body_size = body_font_size(page_blocks)
+            footnotes = footnote_ids(page_blocks, bounds.height)
+            source_body = source_body_size(page_blocks)
             # Preserve the full box for isolated math (including fraction bars).
             # Where it encloses prose, protect the actual equation lines instead.
             prose_rects = [fitz.Rect(b["bbox"]) for b in page_blocks if b.get("kind") not in {"formula", "table", "reference", "figure", "algorithm"}]
@@ -344,7 +366,10 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 if rect.width < 45 and rect.height > rect.width * 4 and len(block["text"]) > 25:
                     preserved_margin_blocks.append(block["id"])
                     continue
-                style = text_style(block, body_size, bounds.height)
+                style = text_style(block, body_size, bounds.height, footnote=block["id"] in footnotes,
+                                   source_body=source_body)
+                if style.role in {"note", "caption"}:
+                    note_blocks.append(block["id"])
                 overlapping = [formula for formula in display_rects if rect.intersects(formula)]
                 placement = _space_without_formulas(reading_space(block, style, page_blocks, bounds, obstacles), display_rects)
                 restore_rects.extend(overlapping)
@@ -355,6 +380,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 archive = fitz.Archive()
                 archive.add(fonts)
                 images = {}
+                math_ems = 0.0
                 for index, formula in enumerate(formulas):
                     source_number = formula.get('source_page', number + 1) - 1
                     source_page = original[source_number]
@@ -365,6 +391,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                     pixels = source_page.get_pixmap(matrix=fitz.Matrix(4, 4), clip=crop, alpha=False)
                     archive.add((pixels.tobytes("png"), name))
                     em = max(1, block["font_size"])
+                    math_ems += crop.width / em
                     descent = (crop.y1 - formula["baseline"]) / em
                     images[formula["token"]] = (
                         f'<img src="{name}" style="width:{crop.width / em:.4f}em;'
@@ -377,28 +404,42 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                     regions = [list(line & rect) for line in source_lines
                                if rect.contains((line.tl + line.br) / 2)]
                     block = dict(block, regions=regions)
-                markup = text_html(text, style, images, first_indent=first_line_indented(block))
-                with fitz.open() as probe:
-                    candidate = probe.new_page(width=bounds.width, height=bounds.height)
-                    remaining, scale = candidate.insert_htmlbox(placement, markup, archive=archive, css=FONT_CSS, scale_low=0)
-                # Tight, short lead-ins around equations should keep readable
-                # glyphs before sacrificing font size. Never compact paragraphs.
-                if (scale < .85 and style.role == "body" and placement.height < style.size * 3
-                        and len(MATH_TOKEN.sub("x", text)) < 160):
-                    compact = text_html(text, TextStyle("compact", style.size, 1.15), images)
-                    with fitz.open() as probe:
-                        candidate = probe.new_page(width=bounds.width, height=bounds.height)
-                        compact_remaining, compact_scale = candidate.insert_htmlbox(
-                            placement, compact, archive=archive, css=FONT_CSS, scale_low=0)
+                first_indent = first_line_indented(block)
+                markup = text_html(text, style, images, first_indent=first_indent)
+                remaining, scale = _fit(placement, markup, archive, bounds)
+                role, regular_scale = style.role, scale
+                # Before shrinking the type, tighten the leading of running text.
+                if scale < 1 and style.leading > TIGHT_LEADING and role in {"body", "runin"}:
+                    tight = replace(style, leading=TIGHT_LEADING)
+                    tight_markup = text_html(text, tight, images, first_indent=first_indent)
+                    tight_remaining, tight_scale = _fit(placement, tight_markup, archive, bounds)
+                    if tight_remaining >= 0 and tight_scale > scale:
+                        style, markup, remaining, scale = tight, tight_markup, tight_remaining, tight_scale
+                        tight_leading_blocks.append(block["id"])
+                # Tight, short lead-ins around equations (and short notes) should keep readable
+                # glyphs before sacrificing font size. Never compact paragraphs. The box height
+                # is measured in body lines, also for the smaller type of notes.
+                if (regular_scale < .85 and role in {"body", "note", "caption"}
+                        and placement.height < max(style.size, body_size) * 3 and len(MATH_TOKEN.sub("x", text)) < 160):
+                    compact_style = TextStyle("compact", style.size, 1.15)
+                    compact = text_html(text, compact_style, images)
+                    compact_remaining, compact_scale = _fit(placement, compact, archive, bounds)
                     if compact_remaining >= 0 and compact_scale > scale:
-                        markup, remaining, scale = compact, compact_remaining, compact_scale
+                        style, markup, remaining, scale = compact_style, compact, compact_remaining, compact_scale
                         compact_blocks.append(block["id"])
                 if remaining < 0:
                     raise RuntimeError("訳文を元のページ内に配置できませんでした。未完成のPDFは保存していません。")
                 scaled_blocks += int(scale < 0.60)
-                if style.size * scale < (6 if style.role == "footer" else 8):
+                minimum = readable_size(TextStyle(role, style.size, style.leading))
+                if style.size * scale < minimum:
+                    # With a rough length that would fit at the smallest readable size, so that a
+                    # shorter translation can be requested (translation review, AI 修正案);
+                    # None when the box is too small for any translation at that size.
                     readability_warnings.append({"page": number + 1, "block": block["id"],
-                        "font_size": round(style.size * scale, 2), "scale": round(scale, 3)})
+                        "font_size": round(style.size * scale, 2), "scale": round(scale, 3), "role": role,
+                        "chars": len(re.sub(r"\s", "", MATH_TOKEN.sub("", resolve_unit_joins(text)))),
+                        "char_budget": character_budget(placement, minimum, style.leading, math_ems),
+                        "source_blocks": sources.get(block["id"], [block["id"]])})
                 inline_formulas += len(formulas)
                 page.add_redact_annot(rect, fill=(1, 1, 1), cross_out=False)
                 # In the translation's order, which the laid-out images follow; word order may differ from the source.
@@ -438,6 +479,8 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 "scaled_blocks": scaled_blocks, "inline_formulas": inline_formulas,
                 "readability_warnings": readability_warnings, "preserved_margin_blocks": preserved_margin_blocks,
                 "compact_blocks": compact_blocks,
+                "tight_leading_blocks": tight_leading_blocks,
+                "note_blocks": note_blocks,
                 "preserved_label_blocks": preserved_label_blocks,
                 "preserved_reference_blocks": [b["id"] for b in document["blocks"]
                                                if b.get("kind") == "reference" and b["page"] in selected],

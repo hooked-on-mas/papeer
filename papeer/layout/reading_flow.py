@@ -21,10 +21,43 @@ def _prose(b):
             and not (_HEADING.match(text) and len(text.split()) < 16))
 
 
+def _body_size(blocks):
+    sizes = [b['font_size'] for b in blocks if _prose(b) and len(b['text']) > 100]
+    return median(sizes) if sizes else 10
+
+
+def _footnote(b, body, height):
+    # Small type in the lower part of the page.
+    return b.get('kind', 'text') == 'text' and b['bbox'][1] > height*.72 and b['font_size'] < body*.90
+
+
+def _as_extracted(blocks):
+    # Stored blocks as order_page saw them: without the flags it set, and with references
+    # still text (mark_references runs after it).
+    return [{k: v for k, v in b.items() if k not in ('reading_margin', 'reading_ambiguous')}
+            | ({'kind': 'text'} if b.get('kind') == 'reference' else {}) for b in blocks]
+
+
+def source_body_size(blocks):
+    """The body type size of one page (median of long prose) as order_page measures it,
+    not rounded into the range the Japanese typesetting uses."""
+    return _body_size(_as_extracted(blocks))
+
+
+def footnote_ids(blocks, height):
+    """Footnotes of one page, judged much as order_page judges them at extraction.
+
+    Nearly the same answer, not always the same: the laid-out page may join blocks
+    (wrapped headings, overlapping fragments) that order_page saw separately.
+    """
+    fresh = _as_extracted(blocks)
+    body = _body_size(fresh)
+    return {b['id'] for b in fresh if _footnote(b, body, height)}
+
+
 def order_page(blocks, width, height):
     blocks = [dict(b) for b in blocks]
-    sizes = [b['font_size'] for b in blocks if _prose(b) and len(b['text']) > 100]
-    body = median(sizes) if sizes else 10
+    body = _body_size(blocks)
     for b in blocks:
         x0,y0,x1,y1 = b['bbox']
         edge_text = b.get('kind', 'text') == 'text' and len(b['text']) < 220
@@ -34,7 +67,7 @@ def order_page(blocks, width, height):
                 or (b['text'].strip().isdigit() and abs((x0+x1)/2-width/2) < width*.1 and (y1 < height*.15 or y0 > height*.85))))):
             b['reading_margin'] = True
         # Small-type footnotes do not interrupt the main reading flow.
-        if b.get('kind', 'text') == 'text' and y0 > height*.72 and b['font_size'] < body*.90:
+        if _footnote(b, body, height):
             b['reading_margin'] = True
     prose = [b for b in blocks if _prose(b) and len(b['text']) > 60
              and width*.18 < b['bbox'][2]-b['bbox'][0] < width*.58]

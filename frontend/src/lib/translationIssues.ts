@@ -1,4 +1,4 @@
-import type { OcrPage, ReadingData } from "../api/hooks";
+import type { OcrPage, ReadabilityWarning, ReadingData } from "../api/hooks";
 
 /** Why a page needs OCR, as the translation review lists it. */
 export function ocrMessage(entry: OcrPage): string {
@@ -32,7 +32,63 @@ export function translationIssues(reading: ReadingData | null | undefined): [num
   // A scanned page has no text either; its OCR message already says so.
   reading.empty_pages.forEach(page => { if (!whole.has(page)) add(page, "抽出できる文字がありません"); });
   reading.report?.skipped_block_pages?.forEach(page => add(page, "翻訳をスキップした段落があります"));
+  readabilityPages(reading).forEach((size, page) => add(page, readabilityMessage(size)));
   [...(reading.report?.skipped_pages ?? []), ...(reading.preview?.skipped_pages ?? [])].forEach(page => add(page,
     reading.preview?.page_errors?.[String(page)] ?? reading.report?.page_errors?.[String(page)] ?? "PDF生成をスキップしました"));
   return [...issues].sort(([a], [b]) => a - b).map(([page, messages]) => [page, [...messages]]);
+}
+
+/** Pages with a paragraph typeset below the readable size, with the smallest size on each. */
+export function readabilityPages(reading: Pick<ReadingData, "report"> | null | undefined): Map<number, number> {
+  const pages = new Map<number, number>();
+  for (const warning of reading?.report?.readability_warnings ?? []) {
+    pages.set(warning.page, Math.min(pages.get(warning.page) ?? Infinity, warning.font_size ?? Infinity));
+  }
+  return pages;
+}
+
+export function readabilityMessage(size: number): string {
+  const shrunk = Number.isFinite(size) ? `${size.toFixed(1)}ptまで` : "";
+  return `枠に収まらず文字を${shrunk}縮小した段落があります（「翻訳を修正」で短い訳の修正案を作れます）`;
+}
+
+type ParagraphText = { id: string; pages: number[]; text: string };
+
+const MATH_MARKER = /\[\[PD_MATH_[A-Za-z0-9_]+\]\]/g;
+
+/** Characters as the typesetting's length estimate counts them: without math markers and spaces. */
+export function visibleLength(text: string): number {
+  return text.replace(MATH_MARKER, "").replace(/\s/g, "").length;
+}
+
+const blockOf = (paragraphId: string) => paragraphId.slice(0, paragraphId.lastIndexOf("_"));
+
+/** How short a translation of this paragraph should be to fit its box at a readable size.
+ *
+ * Each warning's excess (typeset characters over its estimate) is shared among the paragraphs its
+ * text came from by their length: a paragraph continued on another page, or a block translated in
+ * several parts. null when the paragraph was typeset at a readable size. target is null for a report
+ * written before the estimate, and when tooSmall: a box where no shorter translation is readable. */
+export function shorteningHint(warnings: ReadabilityWarning[] | undefined, paragraph: ParagraphText,
+  paragraphs: ParagraphText[]): { fontSize: number; chars: number; target: number | null; tooSmall: boolean } | null {
+  const block = blockOf(paragraph.id);
+  const chars = visibleLength(paragraph.text);
+  let fontSize = Infinity, excess = 0, estimated = false, found = false, tooSmall = false;
+  for (const warning of warnings ?? []) {
+    const sources = warning.source_blocks ?? (warning.block ? [warning.block] : []);
+    if (!sources.includes(block) || !paragraph.pages.includes(warning.page)) continue;
+    found = true;
+    fontSize = Math.min(fontSize, warning.font_size ?? Infinity);
+    if (warning.chars === undefined || warning.char_budget === undefined) continue;
+    if (warning.char_budget === null || warning.char_budget <= 0) { tooSmall = true; continue; }
+    estimated = true;
+    const sharing = paragraphs.filter(other => sources.includes(blockOf(other.id)));
+    const total = sharing.reduce((sum, other) => sum + visibleLength(other.text), 0);
+    excess += Math.max(0, warning.chars - warning.char_budget) * (total ? chars / total : 1);
+  }
+  if (!found) return null;
+  // The estimate is rough: when the text is already within it yet still too small, ask for 10% less.
+  const target = Math.floor(excess > 0 ? chars - excess : chars * .9);
+  if (target < 1) tooSmall = true;
+  return { fontSize, chars, target: estimated && !tooSmall ? target : null, tooSmall };
 }
