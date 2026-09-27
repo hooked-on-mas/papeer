@@ -13,7 +13,7 @@ from papeer.core.fileio import atomic_write_json
 from papeer.providers import create_provider
 from papeer.translation.translation import translate_batch, RetryState
 from papeer.translation.translation_context import contextual_units, paper_context
-from papeer.layout.reading_flow import unit_pages, expand_pages
+from papeer.layout.reading_flow import unit_pages, expand_pages, join_unit_translations
 
 
 def review(papers: Path, output: Path, seed: int, count: int, cases: list[str], settings: Settings | None = None):
@@ -78,7 +78,7 @@ def review(papers: Path, output: Path, seed: int, count: int, cases: list[str], 
             atomic_write_json(output/(label+'-translation.json'), dict(translations=values, retry_state=state.to_cache()))
             grouped = {}
             for u in page_units: grouped.setdefault(u['block'], []).append(done[u['id']])
-            translated = {k:'\n'.join(v) for k,v in grouped.items()}
+            translated = {k:join_unit_translations(v) for k,v in grouped.items()}
             atomic_write_json(output/(label+'-document.json'), document)
             report = build_translated_pdf(source, document, translated, output/(label+'.pdf'), page_numbers={number})
             with fitz.open(source) as original:

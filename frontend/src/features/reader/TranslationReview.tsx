@@ -9,12 +9,12 @@ import { startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { paperBusy, useStore } from "@/store";
 import { jumpToPage } from "./navigation";
-import { translationIssues } from "./translationIssues";
 import { onAppEvent, type AppEvents } from "@/lib/appEvents";
 import { paragraphOfSelection } from "@/lib/pdfSelection";
 import { QK } from "@/lib/queryKeys";
 import { useOpenEdit } from "@/lib/pendingSaves";
 import { GlossaryWarnings } from "./GlossaryWarnings";
+import { readabilityPages, shorteningHint, translationIssues } from "@/lib/translationIssues";
 
 type Paragraph = { id: string; page: number; pages: number[]; source: string; text: string };
 type Revision = { id: string; unit_id: string; before: string; after: string; created_at: string };
@@ -44,7 +44,7 @@ function PaperReview({ paperId }: { paperId: string }) {
   // The issues tab only appears when there is something to check. Glossary warnings have a list of
   // their own there and do not count among the issues shown on the toolbar.
   const glossaryWarnings = reading?.report?.glossary_warnings ?? [];
-  const hasIssues = issues.size > 0 || glossaryWarnings.length > 0;
+  const hasIssues = issues.length > 0 || glossaryWarnings.length > 0;
   const view = hasIssues ? tab : "edit";
   const { data: paragraphs = [], isFetching, isError } = useQuery({ queryKey: [QK.paragraphs, paperId],
     queryFn: () => apiRequest<Paragraph[]>("GET", `/api/papers/${paperId}/paragraphs`), enabled: open && view === "edit" });
@@ -66,16 +66,22 @@ function PaperReview({ paperId }: { paperId: string }) {
     setSelected(candidates[index]); setText(candidates[index].text);
   }, [target, isFetching, isError, paragraphs]);
   const pageParagraphs = paragraphs.filter(p => p.pages.includes(currentPage));
+  const warnings = reading?.report?.readability_warnings;
+  const shrunkPages = readabilityPages(reading);
+  const hint = (paragraph: Paragraph) => shorteningHint(warnings, paragraph, paragraphs);
+  const selectedHint = selected && hint(selected);
   const choose = async (paragraph: Paragraph) => {
     if (dirty && !await askConfirm("修正案を破棄", "保存していない修正案を破棄しますか？", "破棄")) return;
     setSelected(paragraph); setText(paragraph.text); setUnmatched(false);
   };
-  const run = async (draft: boolean, value = text) => {
+  // shorten: ask the AI draft for about this many characters, so the paragraph fits its box.
+  const run = async (draft: boolean, value = text, shorten?: { instruction: string; charBudget: number | null }) => {
     if (!selected || pending || busy) return;
     setPending(true);
     try {
       await startJob(`/api/papers/${paperId}/${draft ? "revision-draft" : "revision"}`,
-        { unit_id: selected.id, text: value, instruction, expected_text: selected.text },
+        { unit_id: selected.id, text: value, instruction: shorten?.instruction ?? instruction, expected_text: selected.text,
+          ...(shorten?.charBudget ? { char_budget: shorten.charBudget } : {}) },
         { kind: draft ? "revision-draft" : "revision", paperId }, event => {
           setPending(false);
           if (event.status !== "succeeded") return;
@@ -101,8 +107,13 @@ function PaperReview({ paperId }: { paperId: string }) {
         {hasIssues && <div className="flex gap-2"><Button variant={view === "issues" ? "default" : "outline"} onClick={() => setTab("issues")}>要確認箇所</Button>
           <Button variant={view === "edit" ? "default" : "outline"} onClick={() => setTab("edit")}>翻訳を修正</Button></div>}
         {view === "issues" ? <div className="space-y-2 text-sm">
-          {[...issues].sort(([a], [b]) => a - b).map(([page, messages]) => <button key={page} className="block w-full text-left border rounded p-3 hover:bg-muted"
-            onClick={() => { jumpToPage(page); setOpen(false); }}>p.{page} — {[...messages].join(" / ")}</button>)}
+          {issues.map(([page, messages]) => <button key={page} className="block w-full text-left border rounded p-3 hover:bg-muted"
+            onClick={() => {
+              jumpToPage(page);
+              // A shrunk paragraph is fixed in the edit tab, which lists the page's paragraphs.
+              if (shrunkPages.has(page)) setTab("edit"); else setOpen(false);
+            }}>p.{page} — {messages.join(" / ")}</button>)}
+          {!!reading?.ocr_pages?.length && <p className="text-muted-foreground">要OCRのページは原文のまま表示します。OCR済みのPDFを追加し直すと翻訳できます。</p>}
           {!!reading?.report?.skipped_blocks?.length && <p className="text-destructive">翻訳をスキップした段落が{reading.report.skipped_blocks.length}箇所あります。原文と照合してください。</p>}
           <GlossaryWarnings warnings={glossaryWarnings} />
         </div> : <div className="space-y-3 text-sm">
@@ -113,10 +124,22 @@ function PaperReview({ paperId }: { paperId: string }) {
           {!isFetching && !!paragraphs.length && !pageParagraphs.length && <p className="text-muted-foreground">このページには修正できる訳文がありません。</p>}
           {!!pageParagraphs.length && <div className="max-h-32 overflow-auto border rounded">{pageParagraphs.map(p => <button key={p.id}
             disabled={pending || busy} className={`block w-full text-left p-2 border-b hover:bg-muted ${selected?.id === p.id ? "bg-muted" : ""}`}
-            onClick={() => void choose(p)}>p.{p.pages.join(", ")}　{p.text.slice(0, 160)}</button>)}</div>}
+            onClick={() => void choose(p)}>p.{p.pages.join(", ")}　{hint(p) && <span className="text-destructive">［文字縮小］</span>}{p.text.slice(0, 160)}</button>)}</div>}
           {!!paragraphs.length && <p className="text-xs text-muted-foreground">別のページを直すときは、PDFでそのページを表示してください。</p>}
           {selected && <>
             <p className="text-xs text-muted-foreground">数式の目印は残してください。修正案は「採用してPDFに反映」を押すまで保存されません。</p>
+            {selectedHint && <div className="border rounded p-3 space-y-2">
+              <p>この段落は枠に収まらず、文字を{Number.isFinite(selectedHint.fontSize) ? `${selectedHint.fontSize.toFixed(1)}ptまで` : ""}縮小しています。
+                {selectedHint.target !== null && `読める大きさで収まる目安は約${selectedHint.target}字です（現在${selectedHint.chars}字）。`}
+                {selectedHint.tooSmall && "枠が小さく、短くしても読める大きさにはなりません。"}</p>
+              <Button variant="outline" disabled={pending || busy} onClick={() => {
+                const request = selectedHint.target !== null
+                  ? `意味・数値・引用を落とさずに、約${selectedHint.target}字以内の簡潔な訳にしてください。`
+                  : "意味・数値・引用を落とさずに、より簡潔な訳にしてください。";
+                setInstruction(request);
+                void run(true, text, { instruction: request, charBudget: selectedHint.target });
+              }}>AIで簡潔な修正案を作る</Button>
+            </div>}
             <details><summary className="cursor-pointer">原文を見る</summary><p className="whitespace-pre-wrap border rounded p-3 mt-2">{selected.source}</p></details>
             <div className="grid grid-cols-2 gap-3">
               <div><p className="font-medium mb-1">変更前</p><div className="border rounded p-3 h-48 overflow-auto whitespace-pre-wrap">{selected.text}</div></div>

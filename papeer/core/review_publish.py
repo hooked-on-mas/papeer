@@ -18,7 +18,7 @@ from papeer.core.exports import discard_interleaved
 from papeer.pdf.pdf_engine import PDF_LOCK, translation_units, bilingual_pdf
 from papeer.translation.translation import legacy_translation_fingerprint, translation_fingerprint, validate_translations
 from papeer.translation.translation_preview import read_preview, translated_page, translated_page_numbers
-from papeer.layout.reading_flow import unit_pages, materialize_flows
+from papeer.layout.reading_flow import unit_pages, materialize_flows, join_unit_translations, resolve_unit_joins
 from papeer.core.terminology import apply_glossary, glossary_for_folder
 
 
@@ -204,12 +204,12 @@ def _publish(folder, review, manifest, entries):
     for unit in translation_units(document):
         if unit['id'] in reviewed_values:
             grouped[unit['block']].append(reviewed_values[unit['id']])
-    rendered_document, rendered_text = materialize_flows(document, {k:'\n'.join(v) for k,v in grouped.items()})
+    rendered_document, rendered_text = materialize_flows(document, {k:join_unit_translations(v) for k,v in grouped.items()})
     for block in rendered_document['blocks']:
         if block['page'] not in selected:
             continue
         if block['id'] in rendered_text:
-            text = restore_formula_text(rendered_text[block['id']], block)
+            text = restore_formula_text(resolve_unit_joins(rendered_text[block['id']]), block)
         elif block.get('kind') in {'formula','table','figure','reference'}:
             text = block['text']
         else:

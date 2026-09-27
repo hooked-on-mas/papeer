@@ -10,12 +10,15 @@ from papeer.pdf.pdf_engine import translation_units
 from papeer.core.paths import PaperFiles
 
 
-def cached_required_translation_pages(folder: Path, page_count: int) -> list[int]:
+def cached_review_pages(folder: Path, page_count: int) -> dict:
+    """Pages needing translation, and pages kept as the original because they need OCR
+    ([{"page", "reason", "garbled_ratio"?}], see papeer.layout.ocr_pages)."""
     try:
         document = json.loads((PaperFiles(folder).document_json).read_text("utf-8"))
-        return required_translation_pages(document)
-    except (OSError, ValueError, KeyError, TypeError):
-        return list(range(1, page_count + 1))
+        return {"required": required_translation_pages(document),
+                "ocr": [dict(entry) for entry in document.get("ocr_pages", [])]}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {"required": list(range(1, page_count + 1)), "ocr": []}
 
 
 def required_translation_pages(document: dict) -> list[int]:

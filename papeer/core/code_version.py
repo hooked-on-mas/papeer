@@ -19,7 +19,7 @@ import sys
 # must be listed here or in RENDER_EXCLUDED (tests/test_code_version.py checks it).
 RENDER_SOURCES = (
     "core/service.py",
-    "layout/algorithm_layout.py", "layout/figure_layout.py", "layout/math_layout.py",
+    "layout/algorithm_layout.py", "layout/figure_layout.py", "layout/math_layout.py", "layout/ocr_pages.py",
     "layout/reading_flow.py", "layout/reference_layout.py", "layout/table_layout.py",
     "pdf/pdf_engine.py", "pdf/pdf_fonts.py", "pdf/pdf_math_crops.py", "pdf/pdf_typography.py",
 )

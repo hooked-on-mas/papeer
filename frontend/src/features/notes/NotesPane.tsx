@@ -39,6 +39,11 @@ export function NotesPane({ compact = false }: { compact?: boolean }) {
 function metaLines(paper: PaperData, reading: ReadingData | null | undefined): { text: string; title?: string }[] {
   const lines: { text: string; title?: string }[] = [{ text: `${paper.pages ?? "?"} ページ / ${paper.status ?? ""}` }];
   if (reading?.empty_pages?.length) lines.push({ text: `文字のないページ: ${reading.empty_pages.join(", ")}` });
+  const ocr = reading?.ocr_pages ?? [];
+  const whole = ocr.filter(entry => entry.reason !== "partial").map(entry => entry.page);
+  const partial = ocr.filter(entry => entry.reason === "partial").map(entry => entry.page);
+  if (whole.length) lines.push({ text: "要OCR: p." + whole.join(", "), title: "文字化け・画像だけのページは翻訳せず原文のまま表示します" });
+  if (partial.length) lines.push({ text: "一部文字化け: p." + partial.join(", "), title: "文字化けした段落は翻訳せず原文のまま表示します" });
   const report = reading?.report;
   if (report?.skipped_pages?.length) lines.push({ text: "PDF生成スキップ: p." + report.skipped_pages.join(", ") });
   return lines;

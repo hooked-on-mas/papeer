@@ -15,11 +15,12 @@ from papeer.providers import ProviderBackend, check_cancel
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library
 from papeer.layout.math_layout import restore_formula_text
+from papeer.layout.ocr_pages import needs_ocr_message, ocr_markdown_note
 from papeer.translation.translation import RetryState, TranslationKey, shared_translations, translate_batches, page_fingerprint
 from papeer.core.code_version import loaded_version
 from papeer.translation.translation_preview import PREVIOUS_CACHE, preview_page, remove_unused_runs, translated_page, translated_page_numbers
 from papeer.translation.translation_context import contextual_units, paper_context
-from papeer.layout.reading_flow import unit_pages, expand_pages, materialize_flows, translation_blocks
+from papeer.layout.reading_flow import unit_pages, expand_pages, materialize_flows, translation_blocks, join_unit_translations, resolve_unit_joins
 from papeer.core.summary_figures import summary_figures
 from papeer.core import exports, prompts
 from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision, glossary_for_folder, glossary_warnings, kept_glossary_warnings
@@ -87,8 +88,8 @@ def page_translation_text(folder: Path, document: dict, page: int,
         if unit["block"] in started:
             block_text.setdefault(unit["block"], []).append(done.get(unit["id"], unit["text"]))
     rendered_document, rendered_text = materialize_flows(
-        document, {key: "\n".join(parts) for key, parts in block_text.items()})
-    blocks = [restore_formula_text(rendered_text[b["id"]], b) for b in rendered_document["blocks"]
+        document, {key: join_unit_translations(parts) for key, parts in block_text.items()})
+    blocks = [restore_formula_text(resolve_unit_joins(rendered_text[b["id"]]), b) for b in rendered_document["blocks"]
               if b["page"] == page and b["id"] in rendered_text]
     if blocks:
         return blocks
@@ -122,7 +123,7 @@ class PaperService:
         glossary_key = json.dumps(glossary, ensure_ascii=False, sort_keys=True)
         apply_glossary(units, glossary)
         if not units:
-            raise ValueError("翻訳対象の文字が見つかりませんでした。")
+            raise ValueError(needs_ocr_message(document) or "翻訳対象の文字が見つかりませんでした。")
         requested = set(selected)
         selected = expand_pages(units, selected)
         if selected != requested:
@@ -253,7 +254,7 @@ class PaperService:
                     self.progress(f"p.{number} の日本語PDFを作成しています…")
                     try:
                         build_translated_pdf(files.original_pdf, document,
-                            {key: "\n".join(parts) for key, parts in block_text.items()},
+                            {key: join_unit_translations(parts) for key, parts in block_text.items()},
                             preview_page(folder, preview, number), page_numbers={number})
                     except Exception as error:
                         if isinstance(error, OSError):
@@ -332,7 +333,7 @@ class PaperService:
                 if not unit_pages(unit) & (set(preview["pages"]) - retained):
                     continue
                 block_text.setdefault(unit["block"], []).append(done.get(unit["id"], unit["text"]))
-            translated = {key: "\n".join(parts) for key, parts in block_text.items()}
+            translated = {key: join_unit_translations(parts) for key, parts in block_text.items()}
             self.progress("日本語PDFを作成しています…")
             staged = preview_page(folder, preview, 1).parent / "assembled.pdf"
             report = build_translated_pdf(files.original_pdf, document, translated, staged,
@@ -378,7 +379,7 @@ class PaperService:
             preview["complete"] = True
             atomic_write_json(preview_path, preview)
             self.page_ready(paper_id, document["page_count"])
-            lines = [f"# {document['title']} — 日本語訳", ""]
+            lines = [f"# {document['title']} — 日本語訳", "", *ocr_markdown_note(document)]
             for section in re.split(r"(?=^## p\.\d+ / )", previous_markdown, flags=re.M):
                 match = re.match(r"## p\.(\d+) / ", section)
                 if match and int(match[1]) in retained:
@@ -389,7 +390,7 @@ class PaperService:
                     continue
                 if block["id"] in rendered_text:
                     lines += [f"## p.{block['page']} / {block['id']}", "",
-                              restore_formula_text(rendered_text[block["id"]], block), ""]
+                              restore_formula_text(resolve_unit_joins(rendered_text[block["id"]]), block), ""]
                 elif block.get("kind") in {"formula", "table", "reference", "figure", "algorithm"} and block["page"] in preview["pages"]:
                     lines += [f"## p.{block['page']} / {block['id']}", "", block["text"], ""]
             atomic_write_text(files.translation_md, "\n".join(lines))

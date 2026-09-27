@@ -17,7 +17,7 @@ from papeer.core.fileio import atomic_write_json
 from papeer.providers import create_provider
 from papeer.translation.translation import RetryState, translate_batch
 from papeer.translation.translation_context import contextual_units, paper_context
-from papeer.layout.reading_flow import unit_pages, expand_pages
+from papeer.layout.reading_flow import unit_pages, expand_pages, join_unit_translations
 
 
 def run(snapshot: Path, output: Path):
@@ -65,7 +65,7 @@ def run(snapshot: Path, output: Path):
             for unit in units:
                 grouped.setdefault(unit["block"], []).append(done[unit["id"]])
             report = build_translated_pdf(folder / "original.pdf", document,
-                {key: "\n".join(parts) for key, parts in grouped.items()}, output / f"{identity}.pdf", page_numbers=selected)
+                {key: join_unit_translations(parts) for key, parts in grouped.items()}, output / f"{identity}.pdf", page_numbers=selected)
             report.update(title=document["title"], source_pages=sorted(selected), model=settings.model,
                           translated_units=len(units), error=None)
             reports[identity] = report

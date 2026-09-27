@@ -298,15 +298,24 @@ REVISION_SCHEMA = {"type": "object", "properties": {"text": {"type": "string"}},
                    "additionalProperties": False}
 
 
-def draft_revision(lib: Library, paper_id: str, paragraph: dict, instruction: str, provider, cancel) -> str:
-    """A revised translation of one paragraph following the user's instruction; not saved."""
+def draft_revision(lib: Library, paper_id: str, paragraph: dict, instruction: str, provider, cancel,
+                   char_budget: int | None = None) -> str:
+    """A revised translation of one paragraph following the user's instruction; not saved.
+
+    char_budget: about how many characters fit where the paragraph is typeset (a readability
+    warning's estimate), when the user asked for a shorter translation.
+    """
     from papeer.providers import check_cancel, parse_json_answer
 
-    answer = provider.generate(
-        prompts.load("revision_draft") + " " + instruction,
-        json.dumps({"source": paragraph["source"], "current": paragraph["text"],
-                    "glossary": effective_glossary(lib, paper_id)}, ensure_ascii=False),
-        REVISION_SCHEMA)
+    payload = {"source": paragraph["source"], "current": paragraph["text"],
+               "glossary": effective_glossary(lib, paper_id)}
+    prompt = prompts.load("revision_draft") + " " + instruction
+    if char_budget:
+        payload["max_characters"] = char_budget
+        prompt += (f" Keep the Japanese text within about {char_budget} characters, not counting math"
+                   " placeholders or spaces: it must fit the space of the original paragraph. Make it concise"
+                   " by removing redundancy, but do not drop any claim, condition, number or citation.")
+    answer = provider.generate(prompt, json.dumps(payload, ensure_ascii=False), REVISION_SCHEMA)
     value = parse_json_answer(answer, REVISION_SCHEMA)
     if not isinstance(value.get("text"), str):
         raise ValueError("AIから修正案を取得できませんでした。再試行してください。")

@@ -18,7 +18,7 @@ import { currentOutlineIndex, type OutlineEntry } from "./pdfLinks";
 import { fitReaderToolbar, inkToolbarOpen } from "./readerBars";
 import { ReaderSearch } from "./ReaderSearch";
 import { TranslationReview } from "./TranslationReview";
-import { translationIssues } from "./translationIssues";
+import { translationIssues } from "@/lib/translationIssues";
 import { useInkTools } from "./useInkEditor";
 import type { SidePanel } from "./sidePanel";
 
@@ -85,7 +85,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   const version = reading?.page_versions?.[String(currentPage)];
   const atStart = translatedOnly ? completed[0] === undefined || currentPage <= completed[0] : currentPage <= 1;
   const atEnd = translatedOnly ? !completed.length || currentPage >= completed[completed.length - 1] : currentPage >= count;
-  const reviewCount = translationIssues(reading).size;
+  const reviewCount = translationIssues(reading).length;
   const outlineIndex = outline?.length ? currentOutlineIndex(outline, currentPage) : -1;
   // Pressed whenever the writing toolbar is on screen (see inkToolbarOpen).
   const inkPressed = inkToolbarOpen({ open: inkBarOpen, tool: inkTool, listOpen: inkListOpen });

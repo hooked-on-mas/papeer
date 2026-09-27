@@ -14,16 +14,50 @@ _HEADING = re.compile(r'^(?:\d+(?:\.\d+)*\.?|[IVX]+\.|[A-Z]\.)\s+\S')
 
 def _prose(b):
     text = b.get('text','').strip()
-    return (b.get('kind','text') == 'text' and not b.get('running_header')
+    # A page needing OCR is kept as the original, so its blocks never join a flow.
+    return (b.get('kind','text') == 'text' and not b.get('running_header') and not b.get('needs_ocr')
             and not b.get('reading_margin') and not b.get('reading_ambiguous') and not formula_only_block(b)
             and not _CAPTION.match(text) and len(text.split()) >= 5
             and not (_HEADING.match(text) and len(text.split()) < 16))
 
 
+def _body_size(blocks):
+    sizes = [b['font_size'] for b in blocks if _prose(b) and len(b['text']) > 100]
+    return median(sizes) if sizes else 10
+
+
+def _footnote(b, body, height):
+    # Small type in the lower part of the page.
+    return b.get('kind', 'text') == 'text' and b['bbox'][1] > height*.72 and b['font_size'] < body*.90
+
+
+def _as_extracted(blocks):
+    # Stored blocks as order_page saw them: without the flags it set, and with references
+    # still text (mark_references runs after it).
+    return [{k: v for k, v in b.items() if k not in ('reading_margin', 'reading_ambiguous')}
+            | ({'kind': 'text'} if b.get('kind') == 'reference' else {}) for b in blocks]
+
+
+def source_body_size(blocks):
+    """The body type size of one page (median of long prose) as order_page measures it,
+    not rounded into the range the Japanese typesetting uses."""
+    return _body_size(_as_extracted(blocks))
+
+
+def footnote_ids(blocks, height):
+    """Footnotes of one page, judged much as order_page judges them at extraction.
+
+    Nearly the same answer, not always the same: the laid-out page may join blocks
+    (wrapped headings, overlapping fragments) that order_page saw separately.
+    """
+    fresh = _as_extracted(blocks)
+    body = _body_size(fresh)
+    return {b['id'] for b in fresh if _footnote(b, body, height)}
+
+
 def order_page(blocks, width, height):
     blocks = [dict(b) for b in blocks]
-    sizes = [b['font_size'] for b in blocks if _prose(b) and len(b['text']) > 100]
-    body = median(sizes) if sizes else 10
+    body = _body_size(blocks)
     for b in blocks:
         x0,y0,x1,y1 = b['bbox']
         edge_text = b.get('kind', 'text') == 'text' and len(b['text']) < 220
@@ -33,7 +67,7 @@ def order_page(blocks, width, height):
                 or (b['text'].strip().isdigit() and abs((x0+x1)/2-width/2) < width*.1 and (y1 < height*.15 or y0 > height*.85))))):
             b['reading_margin'] = True
         # Small-type footnotes do not interrupt the main reading flow.
-        if b.get('kind', 'text') == 'text' and y0 > height*.72 and b['font_size'] < body*.90:
+        if _footnote(b, body, height):
             b['reading_margin'] = True
     prose = [b for b in blocks if _prose(b) and len(b['text']) > 60
              and width*.18 < b['bbox'][2]-b['bbox'][0] < width*.58]
@@ -148,6 +182,30 @@ def translation_blocks(document):
 
 def unit_pages(unit):
     return set(unit.get('flow_pages',[unit['page']]))
+
+
+# Where one block was split into several translation units (pdf_engine.translation_units).
+# The translations are joined with this marker instead of a newline, so the split is not
+# typeset as a paragraph break; resolve_unit_joins removes it before text leaves the
+# PDF layout (translation.md, page text, search). Never stored in the translation cache.
+UNIT_JOINER = '\u2063'
+_UNIT_JOIN = re.compile(r'\s*' + UNIT_JOINER + r'\s*')
+
+
+def join_unit_translations(parts):
+    return UNIT_JOINER.join(parts)
+
+
+def resolve_unit_joins(text):
+    """Join the parts of a split block: a space only between two ASCII words (e.g. an
+    untranslated source fallback), nothing between Japanese sentences."""
+    def join(match):
+        left = text[match.start() - 1] if match.start() else ''
+        right = text[match.end()] if match.end() < len(text) else ''
+        spaced = (left.isascii() and right.isascii() and not left.isspace() and not right.isspace()
+                  and left not in '([{"\'' and right not in ')]}.,;:!?"\'')
+        return ' ' if left and right and spaced else ''
+    return _UNIT_JOIN.sub(join, text)
 
 
 def split_flow_text(text, members, formulas):

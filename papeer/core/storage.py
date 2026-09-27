@@ -12,7 +12,7 @@ import uuid
 
 from papeer.core.fileio import atomic_write_json, atomic_write_text
 from papeer.pdf.pdf_engine import PDF_LOCK, extract_pdf
-from papeer.core.translation_review import cached_required_translation_pages
+from papeer.core.translation_review import cached_review_pages
 from papeer.core.bibliography import extract_bibliography
 import pymupdf as fitz
 from papeer.layout.math_layout import LAYOUT_VERSION
@@ -501,9 +501,11 @@ class Library:
                 "SELECT number FROM pages WHERE paper_id=? AND trim(text)='' ORDER BY number",
                 (paper_id,))]
         # Use the same units as translation: references, formulas and other
-        # deliberately preserved content do not require a translated page.
-        required = cached_required_translation_pages(self.folder(paper_id), paper[0])
-        return {"page_count": paper[0], "empty_pages": empty, "translation_required_pages": required}
+        # deliberately preserved content do not require a translated page, nor does a
+        # page needing OCR (garbled text or a scanned image), which is listed instead.
+        review = cached_review_pages(self.folder(paper_id), paper[0])
+        return {"page_count": paper[0], "empty_pages": empty, "translation_required_pages": review["required"],
+                "ocr_pages": review["ocr"]}
 
     def document(self, paper_id: str) -> dict:
         folder = self.folder(paper_id)
