@@ -103,6 +103,29 @@ def test_export_renders_same_coordinates_on_rotated_cropped_pages(ink_env, tmp_p
     assert min(image.getpixel((round(0.45 * image.width), round(0.4 * image.height)))) > 240
 
 
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_export_paints_highlights_under_the_ink_where_the_reader_showed_them(ink_env, tmp_path, rotation):
+    _, lib, identity = ink_env
+    source = tmp_path / f"highlight-{rotation}.pdf"
+    with fitz.open() as pdf:
+        page = pdf.new_page(width=500, height=700)
+        page.set_cropbox(fitz.Rect(50, 50, 450, 650))
+        page.set_rotation(rotation)
+        pdf.save(source)
+    lib.add_bookmark(identity, 1, "original", "passage", "", kind="highlight", color="blue", rects=[[.1, .6, .4, .1]])
+    lib.save_ink(identity, "original", 1, [stroke()])
+    result = tmp_path / f"highlighted-{rotation}.pdf"
+    result.write_bytes(annotated_pdf(source, lib.ink_by_page(identity, "original"), lib.highlights_by_page(identity, "original")))
+    image = Image.open(io.BytesIO(page_png(result, 0, 800))).convert("RGB")
+    at = lambda x, y: image.getpixel((round(x * image.width), round(y * image.height)))
+    # Translucent blue inside the rectangle, white paper around it, the ink as before.
+    red, green, blue = at(.3, .65)
+    assert blue > 230 and red < 225 and blue - red > 25
+    assert min(at(.3, .75)) > 240 and min(at(.6, .65)) > 240
+    red, green, blue = at(.3, .3)
+    assert red > 180 and green < 90 and blue < 90
+
+
 def test_export_all_pages_preserves_sources_and_blocks_library_overwrite(ink_env, tmp_path):
     client, lib, identity = ink_env
     folder = lib.folder(identity)
@@ -110,6 +133,8 @@ def test_export_all_pages_preserves_sources_and_blocks_library_overwrite(ink_env
     (folder / "translated.pdf").write_bytes(original)
     lib.save_ink(identity, "original", 2, [stroke()])
     lib.save_ink(identity, "translated", 1, [stroke("translation", color="#2563eb")])
+    # A page with only a highlight of selected text is painted too, on its own side.
+    lib.add_bookmark(identity, 1, "original", "Original paper", "", kind="highlight", color="yellow", rects=[[.1, .05, .3, .03]])
     path = f"/api/papers/{identity}/ink-export"
     for side in ["original", "translated"]:
         response = client.post(path, json={"side": side})
@@ -118,8 +143,10 @@ def test_export_all_pages_preserves_sources_and_blocks_library_overwrite(ink_env
         with fitz.open(stream=response.content, filetype="pdf") as pdf:
             assert len(pdf) == 2
             assert all("Original paper" in page.get_text() for page in pdf)
-            assert bool(pdf[0].get_drawings()) == (side == "translated")
+            assert bool(pdf[0].get_drawings())
             assert bool(pdf[1].get_drawings()) == (side == "original")
+            fills = [drawing["fill"] for drawing in pdf[0].get_drawings() if drawing.get("fill")]
+            assert any(abs(r - 0xfa / 255) < .01 and abs(b - 0x15 / 255) < .01 for r, _, b in fills) == (side == "original")
     dest = tmp_path / "exports" / "ink.pdf"
     assert client.post(path, json={"side": "original", "destination": str(dest)}).status_code == 200
     assert dest.read_bytes().startswith(b"%PDF-")

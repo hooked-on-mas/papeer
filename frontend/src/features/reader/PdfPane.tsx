@@ -6,6 +6,7 @@ import type { PDFDocumentProxy, TextContent, TextItem } from "pdfjs-dist/types/s
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
+import { MessageSquareText } from "lucide-react";
 import { authToken } from "@/api/client";
 import { shell } from "@/shell";
 import { useStore } from "@/store";
@@ -18,9 +19,11 @@ import { InkOverlay } from "./InkOverlay";
 import { InkToolbar } from "./InkToolbar";
 import { InkCapture } from "./InkCapture";
 import type { Bounds } from "./inkGeometry";
-import type { StickyNote } from "./stickyNotes";
+import { isHighlight, type StickyNote } from "./stickyNotes";
 import { StickyNoteMarker } from "./StickyNoteMarker";
-import { openStickyNote } from "./stickyNotesStore";
+import { openStickyNote, useStickyNotes } from "./stickyNotesStore";
+import { highlightColor, highlightFill } from "./highlights";
+import { SelectionToolbar } from "./SelectionToolbar";
 import { cappedPixelRatio, snapshotSize } from "./canvasBudget";
 import { resolveDestination, type PdfPlace } from "./pdfLinks";
 import { pageWidthFor } from "./zoomLevels";
@@ -45,6 +48,7 @@ interface PdfPaneProps {
   translated?: boolean;
   searchTerm?: string;
   jumpTarget?: JumpTarget | null;
+  /** The sticky notes and highlights on the page shown, of this pane's side. */
   savedHighlights?: StickyNote[];
   /** Called with each PDF once it has loaded, e.g. to read its table of contents. */
   onDocumentLoad?: (doc: PDFDocumentProxy) => void;
@@ -135,6 +139,21 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   useEffect(() => { if (editor.tool !== "select") setPlacingNote(false); }, [editor.tool]);
   const inkKey = `${url}:${pageNumber}`;
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // The scroller and the element around it, for the toolbar over a selection.
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const [frame, setFrame] = useState<HTMLDivElement | null>(null);
+  const attachScroller = useCallback((node: HTMLDivElement | null) => {
+    containerRef.current = node;
+    if (scrollRef) scrollRef.current = node;
+    setScroller(node);
+  }, [scrollRef]);
+  // Sticky notes show as markers (and their quotes as marks in the text), highlights as coloured rectangles.
+  const notes = useMemo(() => savedHighlights.filter((item) => !isHighlight(item)), [savedHighlights]);
+  const highlights = useMemo(() => savedHighlights.filter(isHighlight), [savedHighlights]);
+  const selectedId = useStickyNotes((s) => s.selectedId);
+  // The notes' quotes marked in the text, as one string: adding or recolouring a highlight must not redraw
+  // the text layer (see onTextLayerRendered), which would drop the selection.
+  const noteQuotes = JSON.stringify(notes.map((item) => item.quote.trim().slice(0, 32).toLocaleLowerCase()).filter(Boolean));
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const containerWidth = containerSize.width;
   const [numPages, setNumPages] = useState<number | null>(null);
@@ -296,7 +315,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     // The scale react-pdf renders the text layer at for this width.
     const scale = page.getViewport({ scale: drawnWidth / page.getViewport({ scale: 1 }).width }).scale;
     fitTextLayer(layer, textContent.current, scale);
-    const terms = [...savedHighlights.map(item => ({ text: item.quote.trim().slice(0, 32).toLocaleLowerCase(), saved: true })),
+    const terms = [...(JSON.parse(noteQuotes) as string[]).map(text => ({ text, saved: true })),
       { text: searchTerm.trim().toLocaleLowerCase(), saved: false }].filter(item => item.text);
     const spans = Array.from(layer.querySelectorAll<HTMLElement>('span[role="presentation"]'));
     if (!terms.length || !spans.length) { setMatches([]); return; }
@@ -326,7 +345,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
       for (const rect of Array.from(range.getClientRects())) rects.push({ left: rect.left - base.left, top: rect.top - base.top, width: rect.width, height: rect.height, saved: term.saved });
     }
     setMatches(rects);
-  }, [drawnWidth, searchTerm, savedHighlights]);
+  }, [drawnWidth, searchTerm, noteQuotes]);
   useEffect(() => { onTextLayerRendered(); }, [onTextLayerRendered, pageNumber]);
   const handleTextLayerRendered = useCallback(() => {
     textLayerReady.current = true;
@@ -358,7 +377,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
       PDF上の貼りたい場所をクリックしてください。
       <button className="ml-auto underline" onClick={() => setPlacingNote(false)}>キャンセル</button>
     </div>}
-    <div className="flex-1 min-h-0 relative">
+    <div ref={setFrame} className="flex-1 min-h-0 relative">
     {caption && <div className={`pointer-events-none absolute left-1 top-0.5 z-10 max-w-[calc(100%-2rem)] truncate rounded bg-background/80 px-1.5 text-[0.75rem] font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-opacity duration-200 ${scrolled ? "opacity-0" : "opacity-100"}`}>
       {caption}
     </div>}
@@ -370,10 +389,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
       side={translated ? "translated" : "original"} box={capture} onClose={() => setCapture(null)} />}
     <PdfContextMenu translated={translated}>
       <div
-        ref={(node) => {
-          containerRef.current = node;
-          if (scrollRef) scrollRef.current = node;
-        }}
+        ref={attachScroller}
         onScroll={(e) => {
           setScrolled(e.currentTarget.scrollTop > 4);
           onScroll?.(e);
@@ -431,7 +447,19 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                     className="shadow-sm border bg-(--pdf-page-bg)! [&_canvas]:[filter:var(--pdf-page-filter)]"
                   />
                   {matches.map(({ saved, ...rect }, index) => <div key={index} className={`absolute pointer-events-none ${saved ? "bg-amber-400/30" : "bg-yellow-300/50"}`} style={rect} />)}
-                  {savedHighlights.map(item => <StickyNoteMarker key={`sticky-${item.id}`} item={item}
+                  {highlights.map(item => item.rects?.map((rect, index) => <div key={`highlight-${item.id}-${index}`} data-highlight={item.id} aria-hidden="true"
+                    className="absolute pointer-events-none rounded-[1px]"
+                    style={{ left: `${rect[0] * 100}%`, top: `${rect[1] * 100}%`, width: `${rect[2] * 100}%`, height: `${rect[3] * 100}%`,
+                      backgroundColor: highlightFill(item.color), mixBlendMode: appearance.highlightBlend ?? "multiply",
+                      boxShadow: selectedId === item.id ? `0 2px 0 rgb(${highlightColor(item.color).rgb})` : undefined }} />))}
+                  {highlights.map(item => {
+                    // A highlight with a memo shows a small mark after its last line; the memo opens from a click on it.
+                    const last = item.note.trim() && item.rects?.[item.rects.length - 1];
+                    return last && <MessageSquareText key={`highlight-note-${item.id}`} aria-hidden="true"
+                      className="absolute size-3 -translate-y-1/2 pointer-events-none text-foreground/70 drop-shadow-sm"
+                      style={{ left: `min(calc(100% - 0.75rem), ${(last[0] + last[2]) * 100}%)`, top: `${last[1] * 100}%` }} />;
+                  })}
+                  {notes.map(item => <StickyNoteMarker key={`sticky-${item.id}`} item={item}
                     movable={!editor.locked && !placingNote && ["select", "region", "lasso"].includes(editor.tool)} />)}
                   {placingNote && inkPage && <button autoFocus aria-label="PDFのこの位置に付箋を貼る" className="absolute inset-0 z-30 cursor-copy bg-amber-100/10 outline-2 outline-amber-400"
                     onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setPlacingNote(false); } }}
@@ -458,6 +486,8 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
         )}
       </div>
     </PdfContextMenu>
+    {url && !placeholder && <SelectionToolbar container={scroller} frame={frame} translated={translated} highlights={highlights}
+      inkTool={editor.tool !== "select"} placingNote={placingNote} />}
     </div>
     </div>
   );

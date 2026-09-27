@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from papeer.core.config import Settings
@@ -84,6 +84,11 @@ class AskRequest(BaseModel):
     max_pages: int = Field(default=10, ge=1, le=30)
 
 
+# The keys of storage.HIGHLIGHT_COLORS.
+HighlightColor = Literal["yellow", "green", "blue", "pink", "purple"]
+PageFraction = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
+
+
 class BookmarkRequest(BaseModel):
     page: int
     side: str
@@ -92,13 +97,19 @@ class BookmarkRequest(BaseModel):
     note: str = ""
     anchor_y: float = Field(default=0, ge=0, le=1)
     anchor_x: float = Field(default=0, ge=0, le=1)
+    # A highlight: its colour and the rectangles it covers, [x, y, width, height] as fractions of the page.
+    kind: Literal["note", "highlight"] = "note"
+    color: HighlightColor | Literal[""] = ""
+    rects: list[tuple[PageFraction, PageFraction, PageFraction, PageFraction]] = Field(default_factory=list, max_length=400)
 
 
 class BookmarkEditRequest(BaseModel):
-    label: str = Field(default="重要", max_length=40)
-    note: str = Field(default="", max_length=1000)
+    # Left out (None), the label or memo stays as it is: a PATCH of the colour or position alone keeps them.
+    label: str | None = Field(default=None, max_length=40)
+    note: str | None = Field(default=None, max_length=1000)
     anchor_x: float | None = Field(default=None, ge=0, le=1)
     anchor_y: float | None = Field(default=None, ge=0, le=1)
+    color: HighlightColor | None = None  # Highlights only.
 
 
 class GlossaryRequest(BaseModel):

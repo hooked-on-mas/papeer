@@ -133,7 +133,7 @@ export function InkToolbar({ editor, disabled, onStickyNote, side, errorsOnly = 
           <DropdownMenuItem onClick={() => editor.setListOpen(!editor.listOpen)}>書き込み一覧</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled={ink.saving} onClick={() => void saveAll()}>保存を再試行</DropdownMenuItem>
-          <DropdownMenuItem disabled={disabled || !ink.ready || exporting} onClick={() => void exportPdf()}><Download />{exporting ? "出力中…" : "書き込み付きPDFを保存"}</DropdownMenuItem>
+          <DropdownMenuItem disabled={disabled || !ink.ready || exporting} title="ペンの書き込みと文章のハイライトを描き込んだPDFを保存します" onClick={() => void exportPdf()}><Download />{exporting ? "出力中…" : "書き込み付きPDFを保存"}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <button aria-label="書き込みツールを閉じる" title="書き込みツールを閉じて本文選択に戻る" className={button} onClick={close}><X className="size-4" /></button>

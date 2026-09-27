@@ -1,117 +1,48 @@
 import React, { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  StickyNote, ChevronLeft, ChevronRight, Copy, Languages, MoveHorizontal, NotebookPen, Paperclip, Sparkles, ZoomIn, ZoomOut, Scan,
+  StickyNote, ChevronLeft, ChevronRight, Copy, Highlighter, Languages, MoveHorizontal, NotebookPen, Paperclip, Sparkles, ZoomIn, ZoomOut, Scan,
 } from "lucide-react";
-import { useStore, ZOOM_FIT_PAGE, type PassageAttachment } from "@/store";
+import { useStore, ZOOM_FIT_PAGE } from "@/store";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { apiRequest } from "@/api/client";
-import { cleanPdfSelection, quoteForNote, restoreFormulas } from "@/lib/pdfSelection";
 import { showError } from "@/components/errorDialog";
 import { changeZoom, movePage } from "./navigation";
 import { askText } from "@/components/AppDialogs";
-import { openStickyNote } from "./stickyNotesStore";
-import { textLayerOffsets } from "./textLayerRange";
+import { attachPassage, capturePassage, explainPassage, highlightPassage, quotePassageInNote, stickyNoteForPassage, type Passage } from "./readerPassage";
+import { highlightColor } from "./highlights";
+import { useStickyNotes } from "./stickyNotesStore";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 
-/** Raw selected text inside `area`, or "" when the selection is empty or elsewhere. */
-function selectionWithin(area: HTMLElement | null): string {
-  const selection = window.getSelection();
-  if (!area || !selection || selection.isCollapsed || !selection.rangeCount) return "";
-  if (!area.contains(selection.getRangeAt(0).commonAncestorContainer)) return "";
-  return selection.toString();
-}
-
-/** The translated PDF shows inline math as images; take the passage with its math from the translation text. */
-async function translatedPassage(raw: string, paperId: string, page: number): Promise<string> {
-  try {
-    const { blocks } = await apiRequest<{ blocks: string[] }>("GET", `/api/papers/${paperId}/translation-text/${page}`);
-    return restoreFormulas(raw, blocks) ?? cleanPdfSelection(raw);
-  } catch {
-    return cleanPdfSelection(raw);
-  }
-}
-
 /**
  * Replaces the webview's browser menu (戻る, 印刷, 検査…) over a PDF page:
- * selected text goes to the clipboard, チャット or メモ; otherwise it offers page and zoom controls.
+ * selected text goes to the clipboard, チャット, メモ, a sticky note or a highlight; otherwise it offers
+ * page and zoom controls. The toolbar over a selection (SelectionToolbar) offers the most used of these.
  */
 export function PdfContextMenu({ translated, children }: { translated: boolean; children: React.ReactNode }) {
   const queryClient = useQueryClient();
   const areaRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState(false);
-  // Resolved when the menu opens, so the translation text is usually loaded before an item is chosen.
-  const passage = useRef<{
-    paperId: string; page: number; text: Promise<string>; anchorY: number;
-    offsets: ReturnType<typeof textLayerOffsets>;
-  } | null>(null);
+  // Taken when the menu opens, so the translation text is usually loaded before an item is chosen.
+  const passage = useRef<Passage | null>(null);
+  const lastColor = useStickyNotes(s => s.highlightColor);
 
   const handleOpen = (open: boolean) => {
     if (!open) return;
-    const raw = selectionWithin(areaRef.current);
-    const { activePaperId, currentPage } = useStore.getState();
-    const cleaned = cleanPdfSelection(raw);
-    const selection = window.getSelection();
-    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-    const selectedRect = range?.getClientRects()[0];
-    const pageRect = areaRef.current?.querySelector(".react-pdf__Page")?.getBoundingClientRect();
-    const anchorY = selectedRect && pageRect ? Math.max(0, Math.min(1, (selectedRect.top - pageRect.top) / pageRect.height)) : 0;
-    setSelected(!!cleaned);
-    passage.current = cleaned && activePaperId ? {
-      paperId: activePaperId,
-      page: currentPage,
-      anchorY,
-      offsets: range && textLayerOffsets(range),
-      text: translated ? translatedPassage(raw, activePaperId, currentPage) : Promise.resolve(cleaned),
-    } : null;
+    passage.current = capturePassage(areaRef.current, translated);
+    setSelected(!!passage.current);
   };
 
-  const withPassage = (action: (text: string, source: string, paperId: string, anchorY: number) => void) => async () => {
+  const withPassage = (action: (passage: Passage) => unknown) => () => {
     const current = passage.current;
-    if (!current) return;
-    action(await current.text, `p.${current.page}${translated ? "（訳文）" : ""}`, current.paperId, current.anchorY);
+    if (current) void action(current);
   };
 
-  const attachment = async (): Promise<PassageAttachment | null> => {
-    const current = passage.current;
-    if (!current) return null;
-    return {
-      id: crypto.randomUUID(), paperId: current.paperId, page: current.page, side: translated ? "translated" : "original",
-      text: await current.text, anchor_y: current.anchorY, ...current.offsets,
-    };
-  };
-
-  const quoteInNote = (paperId: string, text: string) => {
-    const store = useStore.getState();
-    if (store.activePaperId !== paperId) return;
-    store.setNoteInsert({ paperId, text });
-    store.openSidePanel("notes");
-  };
-
-  const explain = async () => {
-    const item = await attachment();
-    const store = useStore.getState();
-    if (!item || store.activePaperId !== item.paperId) return;
-    store.setChatDraft({ paperId: item.paperId, text: "この箇所をわかりやすく説明してください。", send: true, attachments: [item] });
-    store.openSidePanel("chat");
-  };
-
-  // Opens the chat beside the reader, which stays on screen so that more passages can be attached.
-  const attach = async () => {
-    const item = await attachment();
-    const store = useStore.getState();
-    if (!item || store.activePaperId !== item.paperId) return;
-    store.addChatAttachment(item);
-    store.openSidePanel("chat");
-    const count = useStore.getState().chatAttachments.filter((x) => x.paperId === item.paperId).length;
-    store.setStatus(`チャットに添付しました（${count}件）。右のチャットで送信できます。`);
-  };
-
-  const copy = withPassage((text) => {
-    navigator.clipboard.writeText(text).catch((error) => showError(error, "コピーできませんでした"));
+  const copy = withPassage(async (current) => {
+    navigator.clipboard.writeText(await current.text).catch((error) => showError(error, "コピーできませんでした"));
   });
 
   return (
@@ -135,7 +66,8 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
             }}>
               <Languages /> この段落の翻訳を修正…
             </ContextMenuItem>
-            <ContextMenuItem onClick={withPassage(async (text) => {
+            <ContextMenuItem onClick={withPassage(async (current) => {
+              const text = await current.text;
               const source = await askText("共通辞書に登録", "原語（100文字まで）", text.slice(0, 100));
               if (!source?.trim()) return;
               const target = await askText("共通辞書に登録", `「${source}」の訳語`);
@@ -154,21 +86,22 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
               <Languages /> 共通辞書に登録…
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem onClick={explain}>
+            <ContextMenuItem onClick={withPassage(explainPassage)}>
               <Sparkles /> この箇所を説明してもらう
             </ContextMenuItem>
-            <ContextMenuItem onClick={attach}>
+            <ContextMenuItem onClick={withPassage(attachPassage)}>
               <Paperclip /> この箇所をチャットに添付
             </ContextMenuItem>
-            <ContextMenuItem onClick={withPassage((text, source, paperId) => quoteInNote(paperId, quoteForNote(text, source)))}>
+            <ContextMenuItem onClick={withPassage(quotePassageInNote)}>
               <NotebookPen /> メモに引用
             </ContextMenuItem>
-            <ContextMenuItem onClick={withPassage((text, _source, paperId, anchorY) => {
-              void openStickyNote({
-                paperId, page: passage.current!.page, side: translated ? "translated" : "original", quote: text, anchorY,
-              });
-            })}>
+            <ContextMenuItem onClick={withPassage(stickyNoteForPassage)}>
               <StickyNote /> 選択した文章に付箋を貼る…
+            </ContextMenuItem>
+            <ContextMenuItem onClick={withPassage(async (current) => {
+              if (await highlightPassage(current, lastColor, queryClient)) window.getSelection()?.removeAllRanges();
+            })}>
+              <Highlighter /> ハイライト（{highlightColor(lastColor).label}）
             </ContextMenuItem>
           </>
         ) : (

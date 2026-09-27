@@ -141,6 +141,7 @@ def start_new_library(root: Path) -> dict:
 #
 # Each revision records how much the library holds, and this PC remembers the counts it last synced.
 # A sync that would publish, or take in, a library with far fewer items stops and asks first.
+# "stickies" counts the rows of bookmarks: sticky notes and highlights of selected text alike (storage._highlights).
 COUNT_LABELS = {"papers": "論文", "notes": "メモ", "stickies": "付箋", "ink": "書き込み"}
 # "Far fewer" is at least SHRINK_MIN_ITEMS items and at least half of a kind. The absolute floor keeps
 # ordinary deletions in a small library (1 of 2 papers) from stopping sync; the ratio keeps a clean-up

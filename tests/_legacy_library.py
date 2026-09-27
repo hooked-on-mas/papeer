@@ -100,3 +100,18 @@ def legacy_backup(root: Path, destination: Path) -> None:
         for path in root.rglob("*"):
             if path.is_file() and not path.name.startswith("library.sqlite3"):
                 archive.write(path, path.relative_to(root).as_posix())
+
+
+# Columns that schema versions after the baseline add (storage.MIGRATIONS[1:]), by table. A database
+# saved before schema versioning never had them; add a later step's columns here (test_schema_migration
+# checks that this list is complete).
+LATER_COLUMNS = {"bookmarks": ("kind", "color", "rects")}
+
+
+def mark_unversioned(db: sqlite3.Connection) -> None:
+    """Make a current library database look saved before schema versioning: user_version 0, without the
+    columns later versions added (a test drops the baseline's own columns it wants migrated first)."""
+    for table, names in LATER_COLUMNS.items():
+        for name in names:
+            db.execute(f"ALTER TABLE {table} DROP COLUMN {name}")
+    db.execute("PRAGMA user_version=0")

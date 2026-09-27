@@ -6,6 +6,7 @@ import pymupdf as fitz
 
 from papeer.core.bibliography import extract_bibliography, paper_display_name
 from papeer.core.storage import Library
+from _legacy_library import mark_unversioned
 
 
 class BibliographyTests(unittest.TestCase):
@@ -39,7 +40,7 @@ class BibliographyTests(unittest.TestCase):
             with library.connection() as db:
                 for name in ("first_author", "publication_year", "bibliography_version"):
                     db.execute(f"ALTER TABLE papers DROP COLUMN {name}")
-                db.execute("PRAGMA user_version=0")  # as saved by a version before schema versioning
+                mark_unversioned(db)  # as saved by a version before schema versioning
             library = Library(library.root)
             self.assertEqual(library.paper(identity)["publication_year"], "2021")
             library.update(identity, first_author="山田", publication_year="2020")

@@ -328,7 +328,7 @@ def get_paper_media(paper_id: str, name: str) -> FileResponse:
     return FileResponse(media_file, media_type="image/png")
 
 
-# --- Sticky notes (formerly bookmarks; both paths stay for older clients) ---
+# --- Sticky notes and highlights (formerly bookmarks; both paths stay for older clients) ---
 
 
 @router.get("/api/sticky-notes")
@@ -347,7 +347,8 @@ def get_bookmarks(paper_id: str) -> list[dict]:
 def add_bookmark(paper_id: str, body: BookmarkRequest) -> dict:
     try:
         return deps.get_library().add_bookmark(paper_id, body.page, body.side, body.quote, body.label, body.note,
-                                               body.anchor_y, body.anchor_x)
+                                               body.anchor_y, body.anchor_x, kind=body.kind, color=body.color,
+                                               rects=[list(rect) for rect in body.rects])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -363,7 +364,7 @@ def delete_bookmark(paper_id: str, bookmark_id: int) -> dict[str, bool]:
 def update_bookmark(paper_id: str, bookmark_id: int, body: BookmarkEditRequest) -> dict:
     try:
         return deps.get_library().update_bookmark(paper_id, bookmark_id, body.label, body.note,
-                                                  anchor_x=body.anchor_x, anchor_y=body.anchor_y)
+                                                  anchor_x=body.anchor_x, anchor_y=body.anchor_y, color=body.color)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
