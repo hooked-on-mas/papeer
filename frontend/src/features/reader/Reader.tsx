@@ -16,7 +16,6 @@ import { inkToolActive } from "./useInkEditor";
 import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 import { createScrollSync } from "./scrollSync";
 import { apiRequest } from "@/api/client";
-import { ReaderExtras } from "./ReaderExtras";
 import type { StickyNote } from "./stickyNotes";
 import type { JumpTarget } from "./PdfPane";
 import { emitAppEvent } from "@/lib/appEvents";
@@ -84,6 +83,8 @@ export function Reader() {
     return !hasPage(first) && hasPage(second) ? second : first ?? second;
   };
   useEffect(() => bindReaderViewport(() => viewAnchor(leftScrollRef.current)), []);
+  // Where the pane being written on places the writing toolbar, across both panes.
+  const [inkToolbarSlot, setInkToolbarSlot] = useState<HTMLDivElement | null>(null);
 
   // The original's table of contents, for the 目次 menu.
   const [outline, setOutline] = useState<OutlineEntry[] | null>(null);
@@ -274,8 +275,9 @@ export function Reader() {
 
   return (
     <div ref={readerRef} className="flex flex-col h-full w-full bg-reader-bg">
-      <ReaderToolbar />
-      <ReaderExtras paperId={activePaperId} search={search} setSearch={setSearch} outline={outline} ownsKey={ownsKey} />
+      <ReaderToolbar paperId={activePaperId} search={search} setSearch={setSearch} outline={outline} ownsKey={ownsKey} />
+      {/* data-ink-toolbar-slot: INK_TOOLBAR_SLOT, which lets the toolbar's keys through to its pane. */}
+      <div ref={setInkToolbarSlot} data-ink-toolbar-slot="" className="flex flex-col shrink-0 max-h-[40%]" />
       {noTranslatedPages ? (
         <div className="flex-1 flex items-center justify-center text-muted-foreground p-8 text-[13px]">
           翻訳済みのページはまだありません。完了すると自動で表示します。
@@ -291,10 +293,7 @@ export function Reader() {
           }}
         >
           <ResizablePanel id="original" defaultSize={`${readerSplit * 100}%`} minSize="15%" className="flex flex-col">
-            <div className="h-[28px] border-b flex items-center px-4 bg-background shrink-0 text-muted-foreground font-medium text-xs">
-              原文
-            </div>
-            <div className="flex-1 relative min-h-0">
+            <div className="flex-1 relative min-h-0" role="region" aria-label="原文">
               <PdfPane
                 url={leftUrl}
                 inkPage={reading ? { paperId: activePaperId, page: currentPage } : undefined}
@@ -308,6 +307,8 @@ export function Reader() {
                 savedHighlights={sourceHighlights}
                 onDocumentLoad={onOriginalLoad}
                 onInternalLink={(place) => navigateTo({ ...place, side: "original" })}
+                caption="原文"
+                inkToolbarSlot={inkToolbarSlot}
               />
             </div>
           </ResizablePanel>
@@ -315,15 +316,7 @@ export function Reader() {
           <ResizableHandle className="w-1 bg-border hover:bg-primary/60 transition-colors cursor-col-resize z-10" />
 
           <ResizablePanel id="translated" defaultSize={`${(1 - readerSplit) * 100}%`} minSize="15%" className="flex flex-col">
-            <div className="h-[28px] border-b flex items-center px-4 bg-background shrink-0 justify-between">
-              <span className="text-muted-foreground font-medium text-xs">{caption}</span>
-              {translating && (
-                <span className="flex items-center gap-1 text-[11px] text-primary">
-                  <Loader2 className="w-3 h-3 animate-spin" /> 翻訳中
-                </span>
-              )}
-            </div>
-            <div className="flex-1 relative min-h-0">
+            <div className="flex-1 relative min-h-0" role="region" aria-label={caption}>
               <PdfPane
                 url={rightUrl}
                 inkPage={{ paperId: activePaperId, page: currentPage }}
@@ -342,6 +335,13 @@ export function Reader() {
                   const page = ref && reading ? originalPageFor(reading.translated_pages, ref.file, place.page - 1) : null;
                   if (page) navigateTo({ page, anchor_y: place.anchor_y, side: "translated" });
                 }}
+                caption={caption}
+                badge={translating && (
+                  <span role="status" aria-label="翻訳中">
+                    <Loader2 aria-hidden="true" className="w-3.5 h-3.5 animate-spin text-primary" />
+                  </span>
+                )}
+                inkToolbarSlot={inkToolbarSlot}
               />
             </div>
           </ResizablePanel>

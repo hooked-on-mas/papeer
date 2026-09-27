@@ -1,22 +1,42 @@
-import { useState } from "react";
-import { StickyNote, ChevronDown, ClipboardPaste, Copy, Download, Eraser, MoreHorizontal, MousePointer2, PenLine, Redo2, Scan, Scissors, SquareDashed, Trash2, Type, Undo2 } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { StickyNote, ChevronDown, ClipboardPaste, Copy, Download, Eraser, MoreHorizontal, MousePointer2, PenLine, Redo2, Scan, Scissors, SquareDashed, Trash2, Type, Undo2, X } from "lucide-react";
 import { apiRequest, authToken, backendUrl } from "@/api/client";
 import type { PaperData } from "@/api/hooks";
 import { paperExportFilename } from "@/lib/exportFilename";
 import { shell, tauriShell } from "@/shell";
 import { useStore } from "@/store";
 import { showError } from "@/components/errorDialog";
-import { flushInkSaves } from "./inkStore";
-import type { InkEditor } from "./useInkEditor";
+import { flushInkSaves, type InkSide } from "./inkStore";
+import { useInkPanes, type InkEditor } from "./useInkEditor";
+import { inkToolbarOpen } from "./readerBars";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import type { InkTool } from "./inkGeometry";
 import { InkPageList } from "./InkPageList";
 
-type Props = { editor: InkEditor; disabled: boolean; onStickyNote: (selection: boolean) => void };
+type Props = {
+  editor: InkEditor; disabled: boolean; onStickyNote: (selection: boolean) => void;
+  /** The pane this toolbar serves: it is shared by both, and follows the one last used. */
+  side: InkSide;
+  /** For the pane the toolbar doesn't serve: shows only a failed save, in that pane. */
+  errorsOnly?: boolean;
+  /**
+   * Where to show the toolbar, shared by both panes (see Reader.tsx); null while it isn't there
+   * yet, undefined to show it in place. Kept inside this component, so that moving the toolbar
+   * keeps its state (a PDF being saved, a save error).
+   */
+  slot?: HTMLElement | null;
+};
 const colors = [["#dc2626", "赤"], ["#2563eb", "青"], ["#16a34a", "緑"], ["#18181b", "黒"], ["#facc15", "黄"]];
+const SIDES = [["original", "原文"], ["translated", "訳文"]] as const;
+// Tool labels show only when the bar is wide enough for all of them on one row (about 780px with
+// them, 440px without); the buttons keep their aria-label and title either way.
+const toolLabel = "hidden @min-[800px]:inline";
 
-export function InkToolbar({ editor, disabled, onStickyNote }: Props) {
+export function InkToolbar({ editor, disabled, onStickyNote, side, errorsOnly = false, slot }: Props) {
   const { ink, tool, setTool, lastPen, lastRange, color, width, preferences, selected, visible, locked } = editor;
+  const barOpen = useStore(s => s.inkBarOpen);
+  const hosts = useInkPanes(s => s.hosts);
   const editable = !disabled && !!ink.ready && visible && !locked;
   const [exporting, setExporting] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -64,9 +84,30 @@ export function InkToolbar({ editor, disabled, onStickyNote }: Props) {
       await flushInkSaves(ink.entry.paperId, ink.entry.side);
     } catch (error) { setSaveError(error instanceof Error ? error.message : String(error)); }
   };
-  return <div className="shrink-0 border-b bg-background px-2 py-1 text-muted-foreground max-h-[40%] overflow-y-auto">
+  const close = () => {
+    useStore.getState().setInkBarOpen(false);
+    editor.setListOpen(false);
+    setTool("select");
+  };
+  const place = (node: ReactNode) => slot === undefined ? node : slot ? createPortal(node, slot) : null;
+  // Names the side, as the error may come from the pane the toolbar isn't serving.
+  const saveAlert = (ink.error || saveError) && <p role="alert" className="text-xs text-destructive px-1 py-1">
+    {side === "original" ? "原文" : "訳文"}：{ink.error || saveError}<button className="underline ml-1" onClick={() => void saveAll()}>再試行</button>
+  </p>;
+  // Hidden while reading, but a failed save is still reported.
+  if (errorsOnly || !inkToolbarOpen({ open: barOpen, tool, listOpen: editor.listOpen })) {
+    return saveAlert ? place(<div className="shrink-0 border-b bg-background px-2">{saveAlert}</div>) : null;
+  }
+  // Scrolls within the slot's height limit (Reader.tsx) when its option rows and page list run long.
+  return place(<div className="@container min-h-0 border-b bg-background px-2 py-1 text-muted-foreground overflow-y-auto">
     <div className="flex flex-wrap items-center gap-0.5" role="toolbar" aria-label="PDFの書き込み">
-      <button aria-label="本文選択" aria-pressed={tool === "select"} className={`${button} ${tool === "select" ? "bg-primary/10 text-primary" : ""}`} onClick={() => setTool("select")}><MousePointer2 className="size-3.5" />本文</button>
+      <div role="group" aria-label="書き込むPDF" className="mr-1 inline-flex h-7 shrink-0 overflow-hidden rounded border text-xs">
+        {SIDES.map(([value, label]) => <button key={value} aria-pressed={side === value} disabled={!hosts[value]}
+          title={`${label}のPDFに書き込む（PDFをクリックしても切り替わります）`}
+          className={`px-2 disabled:opacity-40 ${side === value ? "bg-primary/10 font-medium text-primary" : "hover:bg-muted"}`}
+          onClick={() => useInkPanes.getState().setActive(value)}>{label}</button>)}
+      </div>
+      <button aria-label="本文選択" title="本文選択（Esc）" aria-pressed={tool === "select"} className={`${button} ${tool === "select" ? "bg-primary/10 text-primary" : ""}`} onClick={() => setTool("select")}><MousePointer2 className="size-3.5" /><span className={toolLabel}>本文</span></button>
       <span className="mx-1 h-4 border-l" />
       {([{ value: lastPen, label: "ペン・図形", Icon: PenLine, active: drawing },
         { value: "eraser", label: "消しゴム", Icon: Eraser, active: tool === "eraser" },
@@ -74,10 +115,10 @@ export function InkToolbar({ editor, disabled, onStickyNote }: Props) {
         { value: "sticky", label: "付箋", Icon: StickyNote, active: false },
         { value: lastRange, label: "選択", Icon: SquareDashed, active: selecting }] as const).map(({ value, label, Icon, active }) =>
         <button key={label} aria-label={label} aria-pressed={active} title={label} disabled={value === "sticky" ? disabled : !editable} onClick={() => value === "sticky" ? onStickyNote(false) : setTool(value)}
-          className={`${button} ${active ? "bg-primary/10 text-primary" : ""}`}><Icon className="size-3.5" />{label}</button>)}
+          className={`${button} ${active ? "bg-primary/10 text-primary" : ""}`}><Icon className="size-3.5" /><span className={toolLabel}>{label}</span></button>)}
       <span className="mx-1 h-4 border-l" />
       <button aria-label="範囲キャプチャ" aria-pressed={tool === "capture"} disabled={disabled} title="囲んだ範囲をキャプチャする"
-        className={`${button} ${tool === "capture" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : ""}`} onClick={() => setTool("capture")}><Scan className="size-3.5" />範囲キャプチャ</button>
+        className={`${button} ${tool === "capture" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : ""}`} onClick={() => setTool("capture")}><Scan className="size-3.5" /><span className={toolLabel}>範囲キャプチャ</span></button>
       <button aria-label="書き込みを元に戻す" title="元に戻す（Ctrl+Z）" className={button} disabled={!editable || !ink.canUndo || exporting} onClick={ink.entry?.undo}><Undo2 className="size-3.5" /></button>
       <button aria-label="書き込みをやり直す" title="やり直し（Ctrl+Y）" className={button} disabled={!editable || !ink.canRedo || exporting} onClick={ink.entry?.redo}><Redo2 className="size-3.5" /></button>
       <DropdownMenu>
@@ -93,6 +134,7 @@ export function InkToolbar({ editor, disabled, onStickyNote }: Props) {
           <DropdownMenuItem disabled={disabled || !ink.ready || exporting} onClick={() => void exportPdf()}><Download />{exporting ? "出力中…" : "書き込み付きPDFを保存"}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <button aria-label="書き込みツールを閉じる" title="書き込みツールを閉じて本文選択に戻る" className={button} onClick={close}><X className="size-4" /></button>
     </div>
     {editable && (drawing || tool === "text" || (selected.length > 0 && styleOpen)) && <div className="flex flex-wrap items-center gap-1 border-t mt-1 pt-1" role="group" aria-label="書き込みの色と太さ">
       {drawing && <select aria-label="描画の種類" className="h-7 border rounded bg-background text-xs" value={tool} onChange={e => setTool(e.target.value as InkTool)}>
@@ -146,6 +188,6 @@ export function InkToolbar({ editor, disabled, onStickyNote }: Props) {
       </DropdownMenu>
     </div>}
     {editor.listOpen && ink.entry && <InkPageList paperId={ink.entry.paperId} onClose={() => editor.setListOpen(false)} />}
-    {(ink.error || saveError) && <p role="alert" className="text-xs text-destructive px-1 py-1">{ink.error || saveError}<button className="underline ml-1" onClick={() => void saveAll()}>再試行</button></p>}
-  </div>;
+    {saveAlert}
+  </div>);
 }

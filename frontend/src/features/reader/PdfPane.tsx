@@ -13,7 +13,7 @@ import { useTheme } from "@/app/ThemeProvider";
 import { externalHttpUrl } from "@/lib/externalLinks";
 import { PdfContextMenu } from "./PdfContextMenu";
 import { selectInTextLayer } from "./textLayerRange";
-import { useInkEditor } from "./useInkEditor";
+import { useInkEditor, useInkPanes } from "./useInkEditor";
 import { InkOverlay } from "./InkOverlay";
 import { InkToolbar } from "./InkToolbar";
 import { InkCapture } from "./InkCapture";
@@ -25,6 +25,7 @@ import { cappedPixelRatio, snapshotSize } from "./canvasBudget";
 import { resolveDestination, type PdfPlace } from "./pdfLinks";
 import { pageWidthFor } from "./zoomLevels";
 import { pageAppearance } from "./pageAppearance";
+import { inkToolbarSide } from "./readerBars";
 
 // Bundled worker, cMaps and fonts keep PDFs (including CJK text) readable offline.
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -49,6 +50,15 @@ interface PdfPaneProps {
   onDocumentLoad?: (doc: PDFDocumentProxy) => void;
   /** A link to another place in this PDF was clicked; `page` is the PDF's own page number. */
   onInternalLink?: (place: PdfPlace) => void;
+  /** Names the pane over its top-left corner while the view is at the top of the page. */
+  caption?: React.ReactNode;
+  /** A small mark kept over the top-right corner however far the page is scrolled, e.g. 翻訳中. */
+  badge?: React.ReactNode;
+  /**
+   * Where the writing toolbar goes, shared by both panes: the pane it serves places it there.
+   * Without one, the pane shows its own toolbar above the page.
+   */
+  inkToolbarSlot?: HTMLElement | null;
 }
 
 /** A place to scroll to, from a bookmark, a search result or a chat attachment. */
@@ -97,10 +107,27 @@ function fitTextLayer(layer: HTMLElement, content: TextContent, scale: number) {
 
 export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholder, missingPageMessage,
   translated = false, searchTerm = "", jumpTarget,
-  savedHighlights = [], inkPage, onDocumentLoad, onInternalLink }: PdfPaneProps) {
+  savedHighlights = [], inkPage, onDocumentLoad, onInternalLink, caption, badge, inkToolbarSlot }: PdfPaneProps) {
   const [inkViewport, setInkViewport] = useState<{ key: string; ratio: number } | null>(null);
-  const editor = useInkEditor(url && !placeholder ? inkPage?.paperId : undefined, translated ? "translated" : "original", inkPage?.page ?? pageNumber, inkViewport?.ratio ?? 1);
+  const side = translated ? "translated" : "original";
+  const editor = useInkEditor(url && !placeholder ? inkPage?.paperId : undefined, side, inkPage?.page ?? pageNumber, inkViewport?.ratio ?? 1);
   const { ink } = editor;
+  // Whether this pane has a page to write on, and so can be the one the writing toolbar serves.
+  const inkHost = !!inkPage && !!url && !placeholder;
+  useEffect(() => {
+    const { setHost } = useInkPanes.getState();
+    setHost(side, inkHost);
+    return () => setHost(side, false);
+  }, [side, inkHost]);
+  const servesToolbar = useInkPanes((s) => inkToolbarSide(s.active, s.hosts)) === side && inkHost;
+  // The toolbar's keys (Ctrl+Z, Delete…) follow it when it moves to this pane from its 原文/訳文 switch.
+  useEffect(() => { if (servesToolbar) editor.activate(); }, [servesToolbar]);
+  const activate = () => {
+    editor.activate();
+    if (inkHost) useInkPanes.getState().setActive(side);
+  };
+  // The caption steps aside once the page is scrolled, so that it never covers the text.
+  const [scrolled, setScrolled] = useState(false);
   const [capture, setCapture] = useState<Bounds | null>(null);
   useEffect(() => setCapture(null), [url, pageNumber, editor.tool]);
   const [placingNote, setPlacingNote] = useState(false);
@@ -314,8 +341,11 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   );
 
   return (
-    <div ref={editor.scopeRef} className="flex flex-col h-full min-h-0" onPointerDownCapture={editor.activate} onFocusCapture={editor.activate}>
-    {inkPage && url && !placeholder && <InkToolbar editor={editor} disabled={inkViewport?.key !== inkKey} onStickyNote={selection => {
+    // React events bubble up from the portaled toolbar too, so using it activates this pane.
+    <div ref={editor.scopeRef} className="flex flex-col h-full min-h-0" onPointerDownCapture={activate} onFocusCapture={activate}>
+    {/* The same element either way, so that its state survives the toolbar moving between panes. */}
+    {inkPage && inkHost && <InkToolbar editor={editor} side={side} errorsOnly={!servesToolbar} slot={servesToolbar ? inkToolbarSlot : undefined}
+      disabled={inkViewport?.key !== inkKey} onStickyNote={selection => {
       const box = editor.selection;
       if (selection && box) {
         void openStickyNote({ paperId: inkPage.paperId, page: inkPage.page, side: translated ? "translated" : "original",
@@ -329,6 +359,13 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
       <button className="ml-auto underline" onClick={() => setPlacingNote(false)}>キャンセル</button>
     </div>}
     <div className="flex-1 min-h-0 relative">
+    {caption && <div className={`pointer-events-none absolute left-1 top-0.5 z-10 max-w-[calc(100%-2rem)] truncate rounded bg-background/80 px-1.5 text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-opacity duration-200 ${scrolled ? "opacity-0" : "opacity-100"}`}>
+      {caption}
+    </div>}
+    {/* Clear of the scrollbar, which takes up to 16px. */}
+    {badge && <div className="pointer-events-none absolute right-5 top-1 z-10 flex rounded-full bg-background/80 p-0.5 shadow-sm backdrop-blur-sm">
+      {badge}
+    </div>}
     {capture && inkPage && <InkCapture key={`${inkPage.paperId}:${inkPage.page}`} paperId={inkPage.paperId} page={inkPage.page}
       side={translated ? "translated" : "original"} box={capture} onClose={() => setCapture(null)} />}
     <PdfContextMenu translated={translated}>
@@ -337,7 +374,10 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
           containerRef.current = node;
           if (scrollRef) scrollRef.current = node;
         }}
-        onScroll={onScroll}
+        onScroll={(e) => {
+          setScrolled(e.currentTarget.scrollTop > 4);
+          onScroll?.(e);
+        }}
         onClickCapture={handleLinkClick}
         onAuxClickCapture={handleLinkClick}
         // A stable gutter keeps the width from changing as the scrollbar comes and goes; otherwise a

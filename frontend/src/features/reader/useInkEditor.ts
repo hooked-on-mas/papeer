@@ -20,18 +20,38 @@ const useInkClipboard = create<{ strokes: InkStroke[]; ratio: number; put: (stro
   strokes: [], ratio: 1, put: (strokes, ratio) => set({ strokes: structuredClone(strokes), ratio }),
 }));
 
-// Both panes share the active tool and the last subtype in each tool group.
-const useInkTools = create<{
-  tool: InkTool; lastPen: InkTool; lastRange: InkTool; version: number;
+// Both panes share the active tool and the last subtype in each tool group, and the 書き込み一覧,
+// which lists both sides' pages.
+export const useInkTools = create<{
+  tool: InkTool; lastPen: InkTool; lastRange: InkTool; version: number; listOpen: boolean;
   setTool: (tool: InkTool) => void;
+  setListOpen: (open: boolean) => void;
 }>(set => ({
-  tool: "select", lastPen: "pen", lastRange: "region", version: 0,
+  tool: "select", lastPen: "pen", lastRange: "region", version: 0, listOpen: false,
+  setListOpen: listOpen => set({ listOpen }),
   setTool: tool => set(state => ({ tool, version: state.version + 1,
     lastPen: ["pen", "highlighter", "line", "arrow", "rectangle", "ellipse"].includes(tool) ? tool : state.lastPen,
     lastRange: tool === "region" || tool === "lasso" ? tool : state.lastRange,
   })),
 }));
 let activeEditor: symbol | null = null;
+
+/** Marks where the writing toolbar is placed, outside either pane (see Reader.tsx). */
+export const INK_TOOLBAR_SLOT = "data-ink-toolbar-slot";
+
+/**
+ * The one writing toolbar serves the pane last used (`active`), among those with a page to write on
+ * (`hosts`); see inkToolbarSide.
+ */
+export const useInkPanes = create<{
+  active: InkSide; hosts: Record<InkSide, boolean>;
+  setActive: (side: InkSide) => void;
+  setHost: (side: InkSide, host: boolean) => void;
+}>(set => ({
+  active: "original", hosts: { original: false, translated: false },
+  setActive: active => set(state => state.active === active ? state : { active }),
+  setHost: (side, host) => set(state => state.hosts[side] === host ? state : { hosts: { ...state.hosts, [side]: host } }),
+}));
 
 /** Whether a writing tool is chosen (pen, eraser, range selection…), rather than text selection. */
 export function inkToolActive(): boolean {
@@ -45,14 +65,13 @@ export function useInkEditor(paperId: string | undefined, side: InkSide, page: n
   const ink = useInkPage(paperId, side, page);
   const preferences = useInkPreferences();
   const clipboard = useInkClipboard();
-  const { tool, setTool, lastPen, lastRange, version } = useInkTools();
+  const { tool, setTool, lastPen, lastRange, version, listOpen, setListOpen } = useInkTools();
   const [selectionState, setSelectionState] = useState<{ ids: string[]; version: number }>({ ids: [], version: 0 });
   // Clear both panes on tool changes, while retaining a newly pasted/created selection.
   const selectedIds = selectionState.version === version ? selectionState.ids : [];
   const setSelectedIds = (ids: string[]) => setSelectionState({ ids, version: useInkTools.getState().version });
   const [visible, setVisible] = useState(true);
   const [locked, setLocked] = useState(false);
-  const [listOpen, setListOpen] = useState(false);
   const strokes = ink.strokes ?? [];
   const selected = strokes.filter(s => selectedIds.includes(s.id));
   const selection = boundsOf(selected);
@@ -119,7 +138,9 @@ export function useInkEditor(paperId: string | undefined, side: InkSide, page: n
       // A clicked Cut/Delete button becomes disabled and loses focus to body.
       // Remember the active pane so Undo still works, without hijacking other panels.
       if (activeEditor !== owner.current || !scopeRef.current) return;
-      if (event.target !== document.body && !scopeRef.current.contains(event.target as Node)) return;
+      // The writing toolbar sits outside the pane, and serves the active one.
+      const inToolbar = event.target instanceof Element && !!event.target.closest(`[${INK_TOOLBAR_SLOT}]`);
+      if (event.target !== document.body && !scopeRef.current.contains(event.target as Node) && !inToolbar) return;
       keyHandler.current(event);
     };
     window.addEventListener("keydown", listener, true);

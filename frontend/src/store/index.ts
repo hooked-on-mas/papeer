@@ -80,6 +80,8 @@ interface UiState {
   /** Tab shown beside the reader in focus mode ("summary" | "chat" | "notes"), or null. */
   focusPanel: string | null;
   focusPanelWidth: number;
+  /** Whether the writing toolbar is shown while no writing tool is picked; see readerBars.ts. */
+  inkBarOpen: boolean;
   statusMessage: string;
   /** Folder that new PDFs go into ("" = 未分類); follows the selected tree row. */
   currentCollection: string;
@@ -114,6 +116,7 @@ interface UiState {
   setFocusMode: (f: boolean) => void;
   setFocusPanel: (panel: string | null) => void;
   setFocusPanelWidth: (w: number) => void;
+  setInkBarOpen: (open: boolean) => void;
   setStatus: (message: string) => void;
   setCurrentCollection: (collection: string) => void;
   setSelectedFolder: (folder: string | null) => void;
@@ -150,6 +153,7 @@ export const useStore = create<UiState>()(
       focusMode: false,
       focusPanel: null,
       focusPanelWidth: 420,
+      inkBarOpen: false,
       statusMessage: "準備できました。PDFの追加・閲覧・メモ保存にはAI接続は不要です。",
       currentCollection: "",
       selectedFolder: null,
@@ -194,6 +198,7 @@ export const useStore = create<UiState>()(
       })),
       setFocusPanel: (focusPanel) => set({ focusPanel }),
       setFocusPanelWidth: (focusPanelWidth) => set({ focusPanelWidth }),
+      setInkBarOpen: (inkBarOpen) => set({ inkBarOpen }),
       setStatus: (statusMessage) => set({ statusMessage }),
       setCurrentCollection: (currentCollection) => set({ currentCollection }),
       setSelectedFolder: (selectedFolder) => set({ selectedFolder }),
@@ -243,6 +248,7 @@ export const useStore = create<UiState>()(
         translatedOnly: state.translatedOnly,
         focusPanel: state.focusPanel,
         focusPanelWidth: state.focusPanelWidth,
+        inkBarOpen: state.inkBarOpen,
       }),
     }
   )

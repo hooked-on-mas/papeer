@@ -9,6 +9,7 @@ import { startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { paperBusy, useStore } from "@/store";
 import { jumpToPage } from "./navigation";
+import { translationIssues } from "./translationIssues";
 import { onAppEvent, type AppEvents } from "@/lib/appEvents";
 import { paragraphOfSelection } from "@/lib/pdfSelection";
 import { QK } from "@/lib/queryKeys";
@@ -17,6 +18,7 @@ import { useOpenEdit } from "@/lib/pendingSaves";
 type Paragraph = { id: string; page: number; pages: number[]; source: string; text: string };
 type Revision = { id: string; unit_id: string; before: string; after: string; created_at: string };
 
+/** The 翻訳の確認・修正 dialog; the reading toolbar opens it with the open-translation-review event. */
 export function TranslationReview({ paperId }: { paperId: string }) {
   return <PaperReview key={paperId} paperId={paperId} />;
 }
@@ -37,18 +39,7 @@ function PaperReview({ paperId }: { paperId: string }) {
   const [target, setTarget] = useState<AppEvents["open-paragraph-editor"] | null>(null);
   const [unmatched, setUnmatched] = useState(false);
   const dirty = !!selected && text !== selected.text;
-  const issues = new Map<number, Set<string>>();
-  const add = (page: number, message: string) => { if (!issues.has(page)) issues.set(page, new Set()); issues.get(page)!.add(message); };
-  if (reading) {
-    for (let page = 1; page <= reading.page_count; page++) {
-      if ((reading.translation_required_pages?.includes(page) ?? true)
-          && !reading.completed_pages.includes(page) && !reading.empty_pages.includes(page)) add(page, "未翻訳");
-    }
-    reading.empty_pages.forEach(page => add(page, "抽出できる文字がありません"));
-    reading.report?.skipped_block_pages?.forEach(page => add(page, "翻訳をスキップした段落があります"));
-    [...(reading.report?.skipped_pages ?? []), ...(reading.preview?.skipped_pages ?? [])].forEach(page => add(page,
-      reading.preview?.page_errors?.[String(page)] ?? reading.report?.page_errors?.[String(page)] ?? "PDF生成をスキップしました"));
-  }
+  const issues = translationIssues(reading);
   // The issues tab only appears when there is something to check.
   const view = issues.size ? tab : "edit";
   const { data: paragraphs = [], isFetching, isError } = useQuery({ queryKey: [QK.paragraphs, paperId],
@@ -58,6 +49,7 @@ function PaperReview({ paperId }: { paperId: string }) {
   useEffect(() => {
     return onAppEvent("open-paragraph-editor", selection => { setOpen(true); setTab("edit"); setTarget(selection); setUnmatched(false); });
   }, []);
+  useEffect(() => onAppEvent("open-translation-review", () => { setOpen(true); setTab("issues"); }), []);
   useEffect(() => {
     if (!target || isFetching) return;
     setTarget(null);
@@ -91,7 +83,6 @@ function PaperReview({ paperId }: { paperId: string }) {
     } catch (error) { setPending(false); showError(error, "翻訳の修正を実行できませんでした"); }
   };
   return <>
-    <button className="rounded px-2 py-1 hover:bg-muted" onClick={() => { setOpen(true); setTab("issues"); }}>翻訳の確認・修正{issues.size ? ` (${issues.size})` : ""}</button>
     <Dialog open={open} onOpenChange={async next => {
       if (!next && (pending || busy)) return;
       if (!next && dirty && !await askConfirm("修正案を破棄", "保存していない修正案を破棄しますか？", "破棄")) return;
