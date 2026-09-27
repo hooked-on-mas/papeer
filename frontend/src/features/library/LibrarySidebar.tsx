@@ -7,7 +7,7 @@ import {
   type DragEndEvent, type DragOverEvent, type DragStartEvent,
 } from "@dnd-kit/core";
 import {
-  ArrowUpDown, ChevronDown, ChevronRight, Edit2, ExternalLink, FilePlus2, FileText, Folder, FolderOpen,
+  ArrowUpDown, ChevronDown, ChevronRight, CircleAlert, Edit2, ExternalLink, FilePlus2, FileText, Folder, FolderOpen,
   FolderPlus, Loader2, Save, Search, Trash2, Undo2, X,
 } from "lucide-react";
 import { paperDisplayName, useCollections, usePaperList, type PaperData } from "@/api/hooks";
@@ -30,6 +30,7 @@ import { TagChip } from "@/components/ui/TagChip";
 import { PaperStatusBadge } from "@/components/ui/PaperStatusBadge";
 import { paperTranslationStatus } from "@/lib/paperStatus";
 import { isJobKind, TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
+import { showJobFailure, useJobFailures } from "@/features/jobs/jobFailures";
 import { onAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 
@@ -443,6 +444,7 @@ function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData
   const jobs = useStore((s) => s.activeJobs);
   const running = jobs.some((j) => isRunning(j) && j.paper_id === paper.id);
   const translating = jobs.some(j => isRunning(j) && j.paper_id === paper.id && isJobKind(j.kind, TRANSLATION_JOBS));
+  const failure = useJobFailures((s) => s.failures[paper.id]);
   const isActive = paper.id === activePaperId && selectedFolder === null;
   const collection = normalizeCollection(paper.collection_name || "");
 
@@ -497,6 +499,11 @@ function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData
             </div>}
           </div>
           {running && !translating && <Loader2 className="w-3.5 h-3.5 ml-1 mt-0.5 animate-spin text-primary shrink-0" />}
+          {failure && <button type="button" className="ml-1 mt-0.5 shrink-0 rounded text-destructive hover:bg-destructive/10"
+            title={`${failure.title}（クリックで詳細）`} aria-label={`${failure.title}。詳細を表示`}
+            onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); showJobFailure(paper.id); }}>
+            <CircleAlert className="w-3.5 h-3.5" aria-hidden="true" /></button>}
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-56">

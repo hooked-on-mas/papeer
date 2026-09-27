@@ -26,6 +26,8 @@ export type JobHandler = {
   succeeded?: (event: JobFinished, context: JobContext) => void;
   /** Queries to refresh when the job ends, whatever the outcome. */
   refresh?: (event: JobFinished) => QueryKey[];
+  /** How the error dialog's 再開 starts a failed job's work again (none: the dialog offers no 再開). */
+  resume?: { label: string; run: (event: JobFinished) => void };
 };
 
 export type JobHandlers = Partial<Record<JobKind, JobHandler>>;

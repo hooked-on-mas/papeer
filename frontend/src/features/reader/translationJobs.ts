@@ -1,4 +1,6 @@
 import { notifyIfAway } from "@/shell";
+import { useStore } from "@/store";
+import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 import type { JobFinished, JobHandlers } from "@/features/jobs/jobHandlers";
 import { finishGlossaryDraft, isGlossaryDialogOpen } from "./glossaryDraft";
@@ -19,6 +21,20 @@ function translationQueries(event: JobFinished) {
     [QK.librarySearch], [QK.translationPlan, event.paper_id]];
 }
 
+/**
+ * 再開 after a failure: open the paper and its translation dialog, which resumes the interrupted run
+ * (and shows what it will send) instead of calling the AI straight from the error dialog.
+ */
+function openTranslationDialog(event: JobFinished): void {
+  if (!event.paper_id) return;
+  const store = useStore.getState();
+  store.setSelectedFolder(null);
+  store.setActivePaperId(event.paper_id);
+  store.setActiveTab("reader");
+  emitAppEvent("reveal-paper", { paperId: event.paper_id, focus: false });
+  emitAppEvent("open-translate-dialog");
+}
+
 export const translationJobHandlers: JobHandlers = {
   translate: {
     succeeded: (event, { status }) => {
@@ -27,6 +43,7 @@ export const translationJobHandlers: JobHandlers = {
       notifyIfAway("翻訳処理が終了しました", message);
     },
     refresh: translationQueries,
+    resume: { label: "翻訳を再開…", run: openTranslationDialog },
   },
   revision: { refresh: translationQueries },
   "glossary-draft": {
@@ -40,5 +57,6 @@ export const translationJobHandlers: JobHandlers = {
       status(message);
       notifyIfAway("用語の確認が終わりました", message);
     },
+    resume: { label: "翻訳の設定を開く…", run: openTranslationDialog },
   },
 };

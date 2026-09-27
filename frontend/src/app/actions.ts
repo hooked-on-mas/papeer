@@ -4,6 +4,7 @@ import type { PaperData, ReadingData } from "@/api/hooks";
 import { askConfirm, askText, showMessage } from "@/components/AppDialogs";
 import { showStartedJob, startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
+import { clearJobFailure } from "@/features/jobs/jobFailures";
 import { joinPath, shell } from "@/shell";
 import { useStore } from "@/store";
 import { paperExportFilename } from "@/lib/exportFilename";
@@ -282,6 +283,7 @@ export async function deletePaper(paperId: string): Promise<void> {
   }
   const s = useStore.getState();
   if (s.activePaperId === paperId) s.setActivePaperId(null);
+  clearJobFailure(paperId);
   useStore.setState({ moveHistory: s.moveHistory.filter((m) => "kind" in m || m.paperId !== paperId) });
   refreshLibrary();
   s.setStatus(`「${current.title}」を削除しました。`);

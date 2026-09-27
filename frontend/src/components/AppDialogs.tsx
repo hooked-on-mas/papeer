@@ -3,7 +3,12 @@ import { create } from "zustand";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CircleAlert } from "lucide-react";
 import { useErrorDialog } from "@/components/errorDialog";
+import { Toaster } from "@/components/Toaster";
+import { errorAdvice, firstLine, reportDetails, type ErrorAction, type ErrorReport } from "@/lib/errorReports";
+import { openSettings } from "@/features/settings/settingsNavigation";
+import { ConnectionBanner } from "@/features/jobs/ConnectionBanner";
 
 type Request =
   | { kind: "text"; title: string; label: string; defaultValue: string; resolve: (value: string | null) => void }
@@ -93,37 +98,72 @@ function PromptDialogs() {
 }
 
 function JobErrorDialog() {
-  const { error, close } = useErrorDialog();
+  const queue = useErrorDialog((s) => s.queue);
+  const close = useErrorDialog((s) => s.close);
+  const error = queue[0] ?? null;
   const [copied, setCopied] = useState(false);
   useEffect(() => setCopied(false), [error]);
+  // Keep the last error on screen while the dialog animates closed.
+  const shown = useRef<ErrorReport | null>(null);
+  if (error) shown.current = error;
+  const report = error ?? shown.current;
+  const advice = report ? errorAdvice(report.message, { kind: report.kind, canResume: !!report.resume }) : null;
+  const detailLine = report && advice && advice.cause !== "other" ? firstLine(report.message) : "";
+  const waiting = queue.length - 1;
+
+  const run = (action: ErrorAction) => {
+    if (!report || !advice) return;
+    if (action === "copy") {
+      navigator.clipboard.writeText(reportDetails(report, advice)).then(() => setCopied(true), () => setCopied(false));
+      return;
+    }
+    close();
+    if (action === "settings") openSettings(advice.settingsSection);
+    else report.resume?.run();
+  };
+
+  const label = (action: ErrorAction) =>
+    action === "settings" ? (advice?.settingsSection === "connection" ? "AI接続の設定を開く" : "設定を開く")
+      : action === "resume" ? (report?.resume?.label ?? "再開")
+      : copied ? "コピーしました" : "詳細をコピー";
 
   return (
     <Dialog open={!!error} onOpenChange={(open) => { if (!open) close(); }}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{error?.title}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <CircleAlert className="size-4 shrink-0 text-destructive" aria-hidden="true" />
+            {report?.title}
+          </DialogTitle>
+          {report?.paperTitle && (
+            <p className="text-[13px] text-muted-foreground break-words">論文：{report.paperTitle}</p>
+          )}
         </DialogHeader>
-        <textarea
-          readOnly
-          aria-label="エラー詳細"
-          value={error?.message ?? ""}
-          className="h-[260px] w-full resize-none rounded-md border bg-muted/40 p-3 font-mono text-[12px] leading-relaxed outline-none"
-        />
-        <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(error?.message ?? "");
-                setCopied(true);
-              } catch {
-                setCopied(false);
-              }
-            }}
-          >
-            {copied ? "コピーしました" : "エラーをコピー"}
+        <DialogDescription className="text-[14px] text-foreground">{advice?.summary}</DialogDescription>
+        {detailLine && detailLine !== advice?.summary && (
+          <p className="text-[12px] text-muted-foreground break-words">{detailLine}</p>
+        )}
+        <details key={report?.id} className="rounded-md border bg-muted/30 text-[12px]">
+          <summary className="cursor-pointer select-none px-3 py-1.5 text-muted-foreground hover:text-foreground">エラーの詳細</summary>
+          <textarea
+            readOnly
+            aria-label="エラー詳細"
+            value={report?.message ?? ""}
+            className="block h-[200px] w-full resize-none border-t bg-transparent p-3 font-mono text-[12px] leading-relaxed outline-none"
+          />
+        </details>
+        <DialogFooter className="items-center">
+          {waiting > 0 && (
+            <span className="mr-auto text-[12px] text-muted-foreground" aria-live="polite">ほかに {waiting} 件のエラーがあります</span>
+          )}
+          {advice?.actions.map((action) => (
+            <Button key={action} variant={action === advice.primary ? "default" : "outline"} onClick={() => run(action)}>
+              {label(action)}
+            </Button>
+          ))}
+          <Button variant={advice && advice.primary ? "outline" : "default"} onClick={close}>
+            {waiting > 0 ? "次のエラーへ" : "閉じる"}
           </Button>
-          <Button onClick={close}>閉じる</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -135,6 +175,8 @@ export function AppDialogs() {
     <>
       <PromptDialogs />
       <JobErrorDialog />
+      <Toaster />
+      <ConnectionBanner />
     </>
   );
 }

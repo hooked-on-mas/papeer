@@ -4,6 +4,7 @@ import { providerLabel, useHealth, useProviders, useSettings, useUsageLimits } f
 import { formatTokens, limitsDetails, limitsSummary, useLastUsage, usageDetails } from "@/lib/usage";
 import { isRunning, useStore } from "@/store";
 import { cancelVisibleJobs } from "@/features/jobs/jobEvents";
+import { JobListPopover } from "@/features/jobs/JobListPopover";
 import { undoMove } from "./actions";
 
 export function StatusBar() {
@@ -38,15 +39,18 @@ export function StatusBar() {
       {running.length > 0 && (
         <>
           <Progress value={percent} className="w-32 shrink-0" />
-          <button
-            onClick={cancelVisibleJobs}
-            className="flex items-center gap-1 h-6 px-2 rounded border hover:bg-muted hover:text-foreground shrink-0"
-            title="表示中の論文の処理と、全体の処理を中止します"
-          >
-            <Square className="w-3 h-3" /> 中止
-          </button>
+          {job && (
+            <button
+              onClick={cancelVisibleJobs}
+              className="flex items-center gap-1 h-6 px-2 rounded border hover:bg-muted hover:text-foreground shrink-0"
+              title="表示中の論文の処理と、全体の処理を中止します（他の論文の処理は一覧から個別に中止できます）"
+            >
+              <Square className="w-3 h-3" /> 中止
+            </button>
+          )}
         </>
       )}
+      <JobListPopover />
       {moveHistory.length > 0 && (
         <button
           onClick={undoMove}
