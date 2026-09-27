@@ -44,8 +44,9 @@ frontend/         デスクトップ UI (Tauri 2 + React 19 + Tailwind v4)
   tests/          node:test によるフロントエンドのテスト
   src-tauri/      Tauri (Rust)。本番では sidecar を子プロセスとして起動
 tests/            pytest によるバックエンドのテスト
-tools/            開発用スクリプト (翻訳レイアウトの検証・比較、掃除など)
+tools/            開発用スクリプト (翻訳レイアウトの検証・比較、掃除、版の更新など)
 docs/             仕様ドキュメント
+.github/          GitHub Actions (タグでインストーラーを作るリリース)
 ```
 
 フロントエンドは sidecar の REST API と WebSocket でバックエンドと通信します。本番ビルドでは Tauri が空きポートと起動ごとの認証トークンを決め、PyInstaller で単一 exe 化した sidecar を起動します。設計の背景は [DESIGN-REWRITE.md](DESIGN-REWRITE.md) と [DESIGN-UI.md](DESIGN-UI.md) にあります。
@@ -107,6 +108,20 @@ just build
 PyInstaller は依存グループ `build` にあり、`just build-sidecar` が `uv run --group build` で使います。
 
 `just clean` はリポジトリ直下の `build/`・`dist/`・`output/`・`tmp/` とその容量を一覧表示するだけで、`just clean yes` で削除します。それ以外のフォルダーは消しません。
+
+## リリース
+
+アプリの版は `MAJOR.MINOR.PATCH`（数字のみ）で、`pyproject.toml`・`papeer/__init__.py`・`frontend/package.json`・`frontend/src-tauri/tauri.conf.json`・`frontend/src-tauri/Cargo.toml` と、ロックファイル（`uv.lock`・`Cargo.lock`）の自パッケージの項目、`frontend/openapi.json` に同じ値を書きます。手で書き換えず `just bump` を使ってください（一致は `tests/test_version.py` で検査します）。`-beta` などの接尾辞は MSI が受け付けないため使えません。sidecar の `/health` は `version` にこの版を、`code_version` に翻訳キャッシュの識別値（翻訳処理のコードのハッシュ）を返し、ステータスバーには前者を表示します。
+
+1. 変更点を `CHANGELOG.md` の `[Unreleased]` に書く（日々の変更のたびに追記しておく。ブランチごとの追記は `.gitattributes` の `merge=union` で両方残るので、マージ後に重複と順序を確かめる）
+2. `just bump 0.3.0` で全ファイルの版を書き換え、`[Unreleased]` の内容を `[0.3.0] - 日付` の節に移す（版を下げる・`[Unreleased]` が空のときは何も変更せずに止まる）
+3. 差分を確認してコミットし、`git tag v0.3.0` を付けて、コミットとタグを push する
+
+タグ `v*` の push で `.github/workflows/release.yml` が動き、windows-latest 上で `just build`（sidecar の exe を含む）を実行して、NSIS のセットアップ（`.exe`）と MSI を下書きの GitHub Release に添付します。リリースノートは `CHANGELOG.md` の該当する節です。タグと全ファイルの版が一致しないときはビルドしません。内容を確かめてから GitHub 上で下書きを公開してください。ビルドするジョブはリポジトリの読み取り権限だけで動き、Release を作る後続のジョブだけが書き込み権限を持ちます。依存のキャッシュは使わず、毎回まっさらな状態からビルドします。
+
+MSI は Tauri が WiX Toolset v3 で作り、WiX v3 は Windows の VBScript（オプション機能）に依存します。GitHub のランナーや手元の PC で VBScript が無効・削除されていると MSI の作成に失敗するため、最初のリリースでは実機（または Actions の実行結果）で MSI と NSIS の両方ができ、インストールと起動ができることを確認してください。
+
+このワークフローは自動で発行される `GITHUB_TOKEN` だけを使い、追加のシークレットは不要です。インストーラーはコード署名をしていないため、初回の実行時に Windows SmartScreen の警告が出ます（署名する場合は証明書をシークレットに登録し、`tauri.conf.json` の `bundle.windows` に署名の設定を加えます）。自動更新は未対応です。
 
 ## AI 接続
 

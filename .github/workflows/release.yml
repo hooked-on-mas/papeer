@@ -1,0 +1,126 @@
+# Pushing a tag vX.Y.Z builds the Windows installers (NSIS setup .exe and MSI) with `just build`
+# and attaches them to a draft GitHub Release whose notes are the [X.Y.Z] section of CHANGELOG.md.
+# Publish the draft by hand after checking it. Only the automatic GITHUB_TOKEN is used: the
+# installers are not code-signed and the app has no updater, so no signing secrets are needed.
+#
+# The build job only reads the repository; only the release job, which runs no project code and
+# no setup actions, may write (create the release). Third-party actions are pinned to commit SHAs
+# (the version is in the comment); add the github-actions ecosystem to .github/dependabot.yml to update them.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      # Build from the lock files as committed; fail instead of re-resolving.
+      UV_LOCKED: "1"
+      # The runner's console code page cannot print the Japanese messages of the tools.
+      PYTHONUTF8: "1"
+    defaults:
+      run:
+        shell: pwsh
+    # pwsh does not stop at a failing native command, so multi-line steps check $LASTEXITCODE themselves.
+    # No dependency caches: a cache saved on a tag ref is never reused, and a release is built from scratch.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: false
+
+      - name: Check the tag against every version
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          uv run python tools/bump_version.py --check $version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force release | Out-Null
+          uv run python tools/bump_version.py --notes $version --output release/release-notes.md
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 12
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: stable
+
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: just
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-groups
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          pnpm --dir frontend install --frozen-lockfile
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      # code-version.txt, the PyInstaller sidecar exe (copied next to tauri.conf.json), then `pnpm tauri build`.
+      - name: Build
+        run: just build
+
+      - name: Collect installers
+        run: |
+          $bundle = "frontend/src-tauri/target/release/bundle"
+          $files = @(Get-ChildItem "$bundle/nsis/*-setup.exe", "$bundle/msi/*.msi" | ForEach-Object FullName)
+          if ($files.Count -lt 2) { throw "インストーラーが見つかりません: $($files -join ', ')" }
+          Copy-Item $files release/
+
+      # The installers and release-notes.md: all the release job needs.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release
+          path: release/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release
+          path: release
+
+      - name: Attach to a draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(release/*.exe release/*.msi)
+          if [ "${#files[@]}" -lt 2 ]; then echo "インストーラーが見つかりません" >&2; exit 1; fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # A re-run replaces the installers of the existing release and leaves its notes alone.
+            gh release upload "$TAG" "${files[@]}" --clobber
+          else
+            gh release create "$TAG" "${files[@]}" --draft --verify-tag \
+              --title "Papeer ${TAG#v}" --notes-file release/release-notes.md
+          fi

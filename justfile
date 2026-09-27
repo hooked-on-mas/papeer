@@ -39,6 +39,11 @@ lint-backend:
 lint-frontend:
     pnpm typecheck
 
+# Set the app version in every manifest and lock file (tools/bump_version.py, README「リリース」)
+# 全ファイルの版を書き換え、CHANGELOG の [Unreleased] をその版の節に移す（例: just bump 0.3.0）
+bump version:
+    uv run python tools/bump_version.py {{ version }}
+
 # Run sidecar server in development
 # 前回の本アプリの sidecar がポート 8000 に残っていれば止めてから起動する
 # 認証トークンはデバッグ版 Tauri (src-tauri/src/lib.rs の DEV_TOKEN) と同じ固定値を使う

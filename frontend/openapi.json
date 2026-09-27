@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Papeer Sidecar",
-    "version": "code-sha256-17b59483b21651e2b338583580246a4dabfb2df69b7f8ee80befd3dde015d6d8"
+    "version": "0.2.0"
   },
   "paths": {
     "/shutdown": {

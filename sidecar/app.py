@@ -12,8 +12,8 @@ from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect, sta
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from papeer import __version__
 from papeer.core.paths import app_env
-from papeer.core.code_version import application_version
 from papeer.translation import translation_preview
 from sidecar import deps
 from sidecar.routes import ai_jobs, drive, ink, papers, reading, settings, system
@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="Papeer Sidecar",
-    version=application_version(),
+    version=__version__,
     lifespan=lifespan,
     # The API schema and its pages would be the only routes open without the token.
     docs_url=None,
