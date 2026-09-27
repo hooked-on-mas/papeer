@@ -10,7 +10,7 @@ import re
 import unicodedata
 
 from papeer.layout.math_layout import MATH_TOKEN
-from papeer.providers import AnswerRejected, check_cancel, parse_json_answer
+from papeer.providers import AnswerRejected, TransientError, check_cancel, parse_json_answer
 from papeer.translation.translation_context import recovery_context
 
 
@@ -151,8 +151,9 @@ class RetryState:
     # Blocks whose latest request (the one attempts names) is sent but not answered yet:
     # how many times it went out without an answer. Recorded with the attempt before sending
     # and removed once an answer (valid or not) arrives, so what is left after a run ended by an
-    # error, a cancel or a crash is exactly the requests that got no answer. Caches from before
-    # this record have attempts only; their blocks count as answered, as they did then.
+    # error, a cancel or a crash is exactly the requests that got no answer. A timeout waiting
+    # for the answer sets it to the limit at once (timed_out). Caches from before this record have attempts only; their
+    # blocks count as answered, as they did then.
     unanswered: dict[str, int] = field(default_factory=dict)
 
     @classmethod
@@ -218,9 +219,20 @@ class RetryState:
         for unit in units:
             self.unanswered.pop(unit["id"], None)
 
+    def timed_out(self, units):
+        """The request of `units` timed out waiting for its answer (TransientError.after_sending, after
+        generate()'s own resend): it counts as sent without an answer MAX_UNANSWERED_SENDS times, so that
+        resuming charges it once and moves on to the next way of asking instead of sending the same
+        request again. The service had the request and may have used tokens up to then, and the same
+        one would likely run out again. A timeout while connecting or sending stays an ordinary
+        unanswered request."""
+        for unit in units:
+            if unit["id"] in self.unanswered:
+                self.unanswered[unit["id"]] = MAX_UNANSWERED_SENDS
+
 
 def validate_translations(answer: str, expected: list[dict]) -> dict[str, str]:
-    items = parse_json_answer(answer).get("translations")
+    items = parse_json_answer(answer, TRANSLATION_SCHEMA).get("translations")
     if not isinstance(items, list):
         raise ValueError("翻訳の応答形式が不正です。")
     result = {}
@@ -260,7 +272,7 @@ def _normalize_markers(text: str, source: str) -> str:
 
 def _valid_items(answer: str, units: list[dict]) -> dict[str, str]:
     try:
-        items = parse_json_answer(answer).get("translations")
+        items = parse_json_answer(answer, TRANSLATION_SCHEMA).get("translations")
     except ValueError:
         return {}
     if not isinstance(items, list):
@@ -309,7 +321,7 @@ def _parts_schema(count: int) -> dict:
 
 
 def _assemble_parts(answer: str, tokens: list[str]) -> str:
-    parts = parse_json_answer(answer).get("parts")
+    parts = parse_json_answer(answer, _parts_schema(len(tokens))).get("parts")
     if not isinstance(parts, list) or not parts:
         raise ValueError("翻訳の部品が欠落しています。")
     indices, text = [], []
@@ -359,15 +371,22 @@ def _received(state, save, units, send):
     """send() the request of `units` and record them as answered.
 
     An answer that came back unusable (AnswerRejected: cut off, empty) was answered too: it is
-    recorded and saved before the error stops the run, so that resuming moves on (a first
-    request to recovery, a retry to the next one) instead of paying for the same request again.
-    Any other error leaves the request unanswered (RetryState.unanswered).
+    recorded and saved before the error goes on, so that the same request is not paid for again
+    (translate_batches takes a first request on to recovery at once; a retry stops the run, and
+    resuming moves on to the next one). Any other error leaves the request unanswered
+    (RetryState.unanswered); a timeout waiting for the answer, unanswered up to the limit
+    (RetryState.timed_out).
     """
     try:
         answer = send()
     except AnswerRejected:
         state.answered(units)
         save()
+        raise
+    except TransientError as error:
+        if error.after_sending:
+            state.timed_out(units)
+            save()
         raise
     state.answered(units)
     return answer
@@ -383,7 +402,9 @@ def _recover_unit(provider, unit, cancel, progress, state, save):
     Only an answer failing the checks moves on to the next retry. An error of the request itself
     stops the run: with no answer (a lost connection, a missing model name) the retry is sent again
     as it was when translation resumes (RetryState.unanswered); an unusable answer (AnswerRejected)
-    counts as answered, and resuming goes on to the next retry (_received).
+    or a timeout counts as answered, and resuming goes on to the next retry (_received). An
+    unusable answer here stops the run rather than moving on at once, so that a service that
+    keeps cutting answers off is not asked again for every paragraph of the paper.
     """
     parts, tokens = _source_parts(unit)
     instruction = prompts.load("translation_recovery")
@@ -428,6 +449,10 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
     saved before every request just as in serial translation. `finished(index)` runs
     once a batch is done; with concurrency, batches may finish out of order.
     `instruction` is the translation prompt the caller keyed its cache with (TranslationKey).
+
+    A first request answered unusably (AnswerRejected: cut off at the output limit, empty) goes on
+    to recovery paragraph by paragraph at once, like an answer failing the checks, so that one
+    batch cut off does not stop the whole paper.
     """
     state = state if state is not None else RetryState()
     # Read at the start of each run, so a prompt edited in the settings applies to the next translation.
@@ -469,8 +494,17 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
     def request(fresh):
         return provider.generate(instruction, json.dumps(fresh, ensure_ascii=False), TRANSLATION_SCHEMA)
 
+    def first_answer(fresh, send):
+        """The answer to the first request of `fresh`, or None when it came back unusable."""
+        try:
+            return _received(state, save, fresh, send)
+        except AnswerRejected as error:
+            pages = "・".join(f"p.{page}" for page in dict.fromkeys(unit["page"] for unit in fresh))
+            progress(f"{pages}：{error} 段落ごとに翻訳し直します。")
+            return None
+
     def finish(fresh, answer):
-        accepted = _valid_items(answer, fresh)
+        accepted = _valid_items(answer, fresh) if answer is not None else {}
         if accepted:
             accept(accepted)
         else:
@@ -485,7 +519,7 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
         for index, units in enumerate(batches):
             fresh = start(units)
             if fresh:
-                finish(fresh, _received(state, save, fresh, lambda: request(fresh)))
+                finish(fresh, first_answer(fresh, lambda: request(fresh)))
             finished(index)
         return
 
@@ -504,13 +538,13 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
             completed, _ = wait(running, return_when=FIRST_COMPLETED)
             for future in completed:
                 index, fresh = running.pop(future)
-                finish(fresh, _received(state, save, fresh, future.result))
+                finish(fresh, first_answer(fresh, future.result))
                 finished(index)
     except BaseException:
         # Keep answers that were already on their way; after a cancel, only those already here,
         # without waiting for the rest. Blocks with an answer (also one that fails the checks or
-        # is unusable) go to recovery when translation resumes; blocks whose request got no
-        # answer stay unanswered and are sent with a batch again. One save records them all.
+        # is unusable) or a timeout go to recovery when translation resumes; blocks whose request
+        # got no answer stay unanswered and are sent with a batch again. One save records them all.
         answered = False
         for future, (index, fresh) in running.items():
             if cancel.is_set() and not future.done():
@@ -520,6 +554,11 @@ def translate_batches(provider, batches, cancel, progress, accept, state=None, s
             except AnswerRejected:
                 state.answered(fresh)
                 answered = True
+                continue
+            except TransientError as error:
+                if error.after_sending:
+                    state.timed_out(fresh)
+                    answered = True
                 continue
             except Exception:
                 continue

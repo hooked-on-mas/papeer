@@ -1,10 +1,13 @@
+from email.message import Message
 import hashlib
+import io
 import json
 from pathlib import Path
 import tempfile
 import threading
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 import pymupdf as fitz
 
@@ -20,6 +23,8 @@ from papeer.translation.translation_preview import read_preview, translated_page
 from papeer.core import prompts
 from papeer.core.config import Settings
 from papeer.core.terminology import apply_glossary, effective_glossary
+from papeer.providers import create_provider
+from papeer.providers.openai_compat import OpenAICompatProvider, forget_refused_options
 from test_workflow import FakeProvider
 
 
@@ -221,6 +226,64 @@ class PageSelectionTests(unittest.TestCase):
         same = Settings.from_values({'provider': 'api', 'provider_options': {'api': {'base_url': ' https://one.example/v1'}}})
         self.assertEqual(translation_identity(api, instruction), translation_identity(same, instruction))
         self.assertNotEqual(translation_identity(api, instruction), translation_identity(api, instruction + '。'))
+
+    def test_translation_identity_is_pinned(self):
+        # How requests are sent and answers read (structured output, temperature, JSON parsing, prompt
+        # wording besides the translation prompt) is not part of the key: changing it must not make
+        # saved papers translate again. Update these values only together with TRANSLATION_PROTOCOL,
+        # BUILTIN_PROMPT_REVISION or a deliberate change of what the key holds.
+        settings = Settings.from_values({'provider': 'api', 'model': 'gpt-4.1-mini',
+                                         'provider_options': {'api': {'base_url': 'https://api.example/v1'}}})
+        self.assertEqual(translation_identity(settings, '独自の翻訳指示です。'),
+                         'translation-sha256-1ab69f652d6b0c7876c60f512ce3d3b445d206818d873760a4bb6d26a45b66e7')
+        self.assertEqual(translation_identity(settings, prompts.builtin('translation')),
+                         'translation-sha256-756d024fb94ec2928745e1470c040c53d39eb6f356c350a860615d45e5026475')
+        self.assertEqual(TranslationKey.current(settings, '独自の翻訳指示です。',
+                                                [{'id': 'p1b0', 'page': 1, 'text': 'A sentence.'}]).fingerprint,
+                         '43f8f123992c0bb8f83d32def0565b9bc90ed77f94f8352addc9603a6a588046')
+
+    def test_saved_translations_do_not_depend_on_how_the_api_was_asked(self):
+        """A paper translated through a server that refused structured output is reused by one that takes it."""
+        forget_refused_options()
+        self.addCleanup(forget_refused_options)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'source.pdf'
+            with fitz.open() as pdf:
+                for n in range(1, 3):
+                    pdf.new_page().insert_text((40, 70), f'Original content on page {n}.')
+                pdf.save(source)
+            library = Library(root / 'library')
+            identity, _ = library.import_pdf(source)
+            settings = Settings(provider='api', model='local-model', translation_concurrency=1,
+                                provider_options={'api': {'base_url': 'http://localhost:1234/v1'}})
+            formats = []
+
+            def serve(refuse):
+                def fetch(request):
+                    payload = json.loads(request.data)
+                    kind = payload.get('response_format', {}).get('type')
+                    formats.append(kind)
+                    if kind in refuse:
+                        raise HTTPError('http://localhost:1234/v1', 400, 'unsupported', Message(),
+                                        io.BytesIO(b'response_format is not supported'))  # type: ignore[arg-type]
+                    units = json.loads(payload['messages'][1]['content'])
+                    content = json.dumps({'translations': [{'id': u['id'], 'text': '適応制御の検証結果。'} for u in units]},
+                                         ensure_ascii=False)
+                    return json.dumps({'choices': [{'finish_reason': 'stop', 'message': {'content': content}}]}).encode()
+                return patch.object(OpenAICompatProvider, '_fetch', side_effect=fetch)
+
+            with serve({'json_schema', 'json_object'}):
+                first = PaperService(library, create_provider(settings, threading.Event()), threading.Event()).translate(identity)
+            self.assertEqual(first['translated_pages'], [1, 2])
+            self.assertEqual(formats[:3], ['json_schema', 'json_object', None])
+            forget_refused_options()
+            formats.clear()
+            with serve(set()):
+                again = PaperService(library, create_provider(settings, threading.Event()), threading.Event()).translate(identity)
+            self.assertEqual(formats, [])
+            self.assertEqual(again['already_translated_pages'], [1, 2])
+            self.assertEqual(again['translation_version'], first['translation_version'])
 
     def _legacy_paper(self, root):
         """A paper translated (pages 1 and 2) by a version before TranslationKey: code hashes in the cache."""

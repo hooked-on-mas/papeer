@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from email.message import Message
 from email.utils import format_datetime
+import io
 import json
 import os
 from pathlib import Path
@@ -17,8 +18,10 @@ from papeer.providers.antigravity import AntigravityProvider
 from papeer.providers.base import TRANSPORT_WAIT_LIMIT
 from papeer.providers.claude_code import ClaudeCodeProvider
 from papeer.providers.codex import CodexProvider, codex_limit_windows
-from papeer.providers.common import TransientError, cli_failure, run_cli_process
-from papeer.providers.openai_compat import MIN_RETRY_AFTER, OpenAICompatProvider, retry_after
+from papeer.providers.common import TransientError, cli_failure, matches_schema, run_cli_process
+from papeer.providers.openai_compat import (MIN_RETRY_AFTER, STRUCTURED_TEMPERATURE, OpenAICompatProvider,
+                                            forget_refused_options, retry_after)
+from papeer.translation.translation import TRANSLATION_SCHEMA, _parts_schema
 
 POPEN = "papeer.providers.common.subprocess.Popen"
 RUN = "papeer.providers.common.subprocess.run"
@@ -53,10 +56,43 @@ class ProvidersTests(unittest.TestCase):
     def test_parse_json_answer(self):
         self.assertEqual(parse_json_answer('{"a": 1}'), {"a": 1})
         self.assertEqual(parse_json_answer('```json\n{"a": 2}\n```'), {"a": 2})
+        self.assertEqual(parse_json_answer('```JSON\n{"a": 3}'), {"a": 3})
         with self.assertRaises(ValueError):
             parse_json_answer("not a json")
         with self.assertRaises(ValueError):
             parse_json_answer('["list", "not", "dict"]')
+
+    def test_json_answer_with_words_around_it_must_follow_the_schema(self):
+        answer = {"translations": [{"id": "p1b0", "text": "訳文 {x} と }"}]}
+        body = json.dumps(answer, ensure_ascii=False)
+        for text in (f"Here is the translation:\n{body}\nDone.", f"訳しました。\n```json\n{body}\n```\n以上です。"):
+            with self.subTest(text=text):
+                self.assertEqual(parse_json_answer(text, TRANSLATION_SCHEMA), answer)
+        refused = (
+            "Here: " + body[:-2],  # Cut off.
+            f"{body}\n{body}",  # Two answers: the outermost braces do not hold one object.
+            "Note {see below}: " + body,  # Braces in the words around it.
+            "Here: " + json.dumps({"translations": [{"id": "p1b0"}]}),  # Parses, but not in the requested shape.
+            "Here: " + json.dumps({"translations": [], "note": "extra"}),
+            "Here: [1, 2]",
+        )
+        for text in refused:
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse_json_answer(text, TRANSLATION_SCHEMA)
+        # A bare object is taken as before; the caller checks its content.
+        self.assertEqual(parse_json_answer('{"translations": [], "note": "extra"}', TRANSLATION_SCHEMA),
+                         {"translations": [], "note": "extra"})
+
+    def test_matches_schema(self):
+        self.assertTrue(matches_schema({"translations": [{"id": "a", "text": "b"}]}, TRANSLATION_SCHEMA))
+        self.assertFalse(matches_schema({"translations": [{"id": "a", "text": 1}]}, TRANSLATION_SCHEMA))
+        self.assertFalse(matches_schema({"translations": [{"id": "a", "text": "b", "x": 1}]}, TRANSLATION_SCHEMA))
+        parts = _parts_schema(2)
+        self.assertTrue(matches_schema({"parts": [{"kind": "text", "text": "a"}, {"kind": "math", "index": 1}]}, parts))
+        for bad in ({"kind": "math", "index": 2}, {"kind": "math", "index": True}, {"kind": "math", "index": 1.0},
+                    {"kind": "math", "text": "a"}, {"kind": "text", "index": 0}):
+            with self.subTest(part=bad):
+                self.assertFalse(matches_schema({"parts": [bad]}, parts))
 
     def test_cli_paths_are_saved_per_connection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -559,6 +595,7 @@ class TransportRetryTests(unittest.TestCase):
             with self.assertRaises(TransientError) as caught:
                 run_cli_process(["cli"], b"", threading.Event(), 0, "CLI", Path(directory))
         self.assertTrue(caught.exception.timed_out)
+        self.assertTrue(caught.exception.after_sending)  # The CLI had the request: past its deadline, not unsent.
         self.assertIn("タイムアウト", str(caught.exception))
 
     def test_api_timeouts_and_dropped_connections_are_sent_again(self):
@@ -569,6 +606,18 @@ class TransportRetryTests(unittest.TestCase):
                 with patch.object(OpenAICompatProvider, "_fetch", side_effect=[error, body]) as fetch:
                     self.assertEqual(provider.generate("i", "d"), "訳文")
                 self.assertEqual(fetch.call_count, 2)
+
+    def test_api_timeout_tells_whether_the_server_had_the_request(self):
+        # urllib wraps a timeout while connecting or sending in URLError; one waiting for the response is bare.
+        for error, after_sending in ((URLError(TimeoutError("timed out")), False), (TimeoutError("timed out"), True)):
+            with self.subTest(error=error):
+                provider = create_provider(Settings(provider="api", model="m"), RecordingEvent())
+                with patch.object(OpenAICompatProvider, "_fetch", side_effect=[error, error]) as fetch:
+                    with self.assertRaises(TransientError) as caught:
+                        provider.generate("i", "d")
+                self.assertEqual(fetch.call_count, 2)  # Any timeout is sent again only once.
+                self.assertTrue(caught.exception.timed_out)
+                self.assertEqual(caught.exception.after_sending, after_sending)
 
     def test_retry_after_seconds_and_dates(self):
         def error(value):
@@ -585,6 +634,158 @@ class TransportRetryTests(unittest.TestCase):
         # 0 or a date already past still waits a little rather than asking again at once.
         self.assertEqual(retry_after(error("0")), MIN_RETRY_AFTER)
         self.assertEqual(retry_after(error("Wed, 21 Oct 2015 07:28:00 GMT")), MIN_RETRY_AFTER)
+
+
+def http_error(status: int, body: str = "") -> HTTPError:
+    return HTTPError("https://example.invalid", status, "error", Message(), io.BytesIO(body.encode()))  # type: ignore[arg-type]
+
+
+API_ANSWER = json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": '{"text": "訳文"}'}}]}).encode()
+SCHEMA = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"], "additionalProperties": False}
+
+
+class StructuredOutputTests(unittest.TestCase):
+    """Requests with a schema ask the server for that shape and a low temperature, stepping down on refusals."""
+
+    def setUp(self):
+        forget_refused_options()
+        self.addCleanup(forget_refused_options)
+
+    def send(self, replies, schema=SCHEMA, **settings):
+        """generate() once against scripted replies (an HTTPError or a body); return (answer or error, payloads sent)."""
+        payloads, replies = [], list(replies)
+
+        def fetch(request):
+            payloads.append(json.loads(request.data))
+            reply = replies.pop(0) if replies else API_ANSWER
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        values = {"provider": "api", "model": "gpt-4.1-mini", **settings}
+        provider = create_provider(Settings(**values), RecordingEvent())
+        with patch.object(OpenAICompatProvider, "_fetch", side_effect=fetch):
+            try:
+                result = provider.generate("Translate", "data", schema)
+            except Exception as error:  # noqa: BLE001 - the test inspects it
+                result = error
+        return result, payloads
+
+    def test_schema_requests_ask_for_the_schema_and_a_low_temperature(self):
+        answer, payloads = self.send([])
+        self.assertEqual(answer, '{"text": "訳文"}')
+        self.assertEqual(payloads[0]["response_format"],
+                         {"type": "json_schema", "json_schema": {"name": "answer", "schema": SCHEMA, "strict": True}})
+        self.assertEqual(payloads[0]["temperature"], STRUCTURED_TEMPERATURE)
+        # The prompt still names the schema, for servers that ignore response_format.
+        self.assertIn(json.dumps(SCHEMA), payloads[0]["messages"][0]["content"])
+
+    def test_chat_and_summaries_keep_the_server_defaults(self):
+        _, payloads = self.send([], schema=None)
+        self.assertNotIn("response_format", payloads[0])
+        self.assertNotIn("temperature", payloads[0])
+
+    def test_reasoning_models_get_no_temperature(self):
+        for model in ("o1", "o3-mini", "o4-mini-2025-04-16", "openai/o3", "gpt-5", "gpt-5-mini", "gpt-5.1", "openai/gpt-5"):
+            with self.subTest(model=model):
+                _, payloads = self.send([], model=model)
+                self.assertNotIn("temperature", payloads[0])
+                self.assertEqual(payloads[0]["response_format"]["type"], "json_schema")
+        _, payloads = self.send([], reasoning_effort="low")
+        self.assertNotIn("temperature", payloads[0])
+        for model in ("gpt-4o", "gpt-4.1-mini", "llama3.1:8b", "qwen2.5:14b", "olmo2"):
+            with self.subTest(model=model):
+                _, payloads = self.send([], model=model)
+                self.assertEqual(payloads[0]["temperature"], STRUCTURED_TEMPERATURE)
+
+    def test_refused_json_schema_steps_down_and_is_remembered_per_endpoint_and_model(self):
+        refusal = http_error(400, '{"error": {"message": "Unknown response_format type: json_schema"}}')
+        answer, payloads = self.send([refusal])
+        self.assertEqual(answer, '{"text": "訳文"}')
+        self.assertEqual([p["response_format"]["type"] for p in payloads], ["json_schema", "json_object"])
+        # The next request goes straight to what answered, without meeting the refusal again.
+        _, payloads = self.send([])
+        self.assertEqual([p["response_format"]["type"] for p in payloads], ["json_object"])
+        _, payloads = self.send([], model="another-model")
+        self.assertEqual([p["response_format"]["type"] for p in payloads], ["json_schema"])
+        _, payloads = self.send([], provider_options={"api": {"base_url": "https://other.example/v1"}})
+        self.assertEqual([p["response_format"]["type"] for p in payloads], ["json_schema"])
+
+    def test_server_refusing_both_forms_gets_the_prompt_only(self):
+        # LM Studio refuses json_object; a server taking neither form gets no response_format at all.
+        answer, payloads = self.send([http_error(400, "'response_format.type' must be 'json_schema' or 'text'"),
+                                      http_error(422, "unsupported")])
+        self.assertEqual(answer, '{"text": "訳文"}')
+        self.assertEqual([p.get("response_format", {}).get("type") for p in payloads], ["json_schema", "json_object", None])
+        self.assertTrue(all(p["temperature"] == STRUCTURED_TEMPERATURE for p in payloads))
+        _, payloads = self.send([])
+        self.assertEqual([("response_format" in p, "temperature" in p) for p in payloads], [(False, True)])
+
+    def test_refused_temperature_is_left_out_and_remembered(self):
+        refusal = http_error(400, json.dumps({"error": {"message": "Unsupported value: 'temperature' does not support 0.2 "
+                                                                   "with this model.", "param": "temperature"}}))
+        answer, payloads = self.send([refusal], model="my-azure-deployment")
+        self.assertEqual(answer, '{"text": "訳文"}')
+        self.assertEqual([("temperature" in p, p["response_format"]["type"]) for p in payloads],
+                         [(True, "json_schema"), (False, "json_schema")])
+        _, payloads = self.send([], model="my-azure-deployment")
+        self.assertEqual([("temperature" in p, p["response_format"]["type"]) for p in payloads], [(False, "json_schema")])
+
+    def test_validation_error_echoing_the_request_steps_down_the_form_first(self):
+        # A 422 may hold the request it refused, temperature included: that is no refusal of the temperature.
+        echo = http_error(422, json.dumps({"detail": [{"loc": ["body", "response_format", "type"], "msg": "invalid",
+                                                       "input": {"temperature": 0.2, "response_format": {}}}]}))
+        answer, payloads = self.send([echo])
+        self.assertEqual(answer, '{"text": "訳文"}')
+        self.assertEqual([(p["response_format"]["type"], "temperature" in p) for p in payloads],
+                         [("json_schema", True), ("json_object", True)])
+        # A body about the temperature alone leaves the form as it is.
+        forget_refused_options()
+        answer, payloads = self.send([http_error(400, "temperature is not supported for this model")])
+        self.assertEqual([(p["response_format"]["type"], "temperature" in p) for p in payloads],
+                         [("json_schema", True), ("json_schema", False)])
+
+    def test_refused_form_is_remembered_per_kind_of_schema(self):
+        parts = {"type": "object", "properties": {"parts": {"type": "array", "items": {"anyOf": [
+            {"type": "object", "properties": {"kind": {"type": "string"}}}]}}}}
+        self.send([http_error(400, "anyOf is not supported in json_schema")], schema=parts)
+        _, payloads = self.send([], schema=parts)
+        self.assertEqual([p["response_format"]["type"] for p in payloads], ["json_object"])
+        _, payloads = self.send([])
+        self.assertEqual([p["response_format"]["type"] for p in payloads], ["json_schema"])
+
+    def test_refusal_for_another_reason_reports_the_first_error_and_remembers_nothing(self):
+        # A context too long (or an effort the model does not take) fails in every form: nothing is learnt.
+        too_long = http_error(400, "This model's maximum context length is 8192 tokens.")
+        answer, payloads = self.send([too_long] * 4, reasoning_effort="high")
+        self.assertIsInstance(answer, RuntimeError)
+        self.assertNotIsInstance(answer, TransientError)
+        self.assertIn("HTTP 400", str(answer))
+        self.assertIn("既定値", str(answer))
+        self.assertEqual([p.get("response_format", {}).get("type") for p in payloads], ["json_schema", "json_object", None])
+        _, payloads = self.send([])
+        self.assertEqual([p["response_format"]["type"] for p in payloads], ["json_schema"])
+
+    def test_only_refusals_step_down(self):
+        for error, sends in ((http_error(401, "invalid api key"), 1), (http_error(404, "Not Found"), 1),
+                             (http_error(404, "No endpoints found that support the requested parameters"), 2),
+                             (http_error(500, "Invalid response_format"), 2)):
+            with self.subTest(error=error.code, body=sends):
+                forget_refused_options()
+                with patch.object(OpenAICompatProvider, "transport_backoff", 0.0):
+                    answer, payloads = self.send([error])
+                self.assertEqual(len(payloads), sends)
+                if sends == 1:
+                    self.assertIsInstance(answer, RuntimeError)
+                else:
+                    self.assertEqual(answer, '{"text": "訳文"}')
+
+    def test_temporary_error_while_stepping_down_is_sent_again_from_the_start(self):
+        refusal = http_error(400, "response_format json_schema is not supported")
+        answer, payloads = self.send([refusal, http_error(503, "busy"), refusal])
+        self.assertEqual(answer, '{"text": "訳文"}')
+        self.assertEqual([p["response_format"]["type"] for p in payloads],
+                         ["json_schema", "json_object", "json_schema", "json_object"])
 
 
 class UnusableAnswerTests(unittest.TestCase):

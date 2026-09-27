@@ -199,21 +199,87 @@ class TranslationRecoveryTests(unittest.TestCase):
                 self.assertEqual(state.to_cache(), {"attempts": {"bad": 1}, "retry_calls": 0, "unanswered": {"bad": 1}})
                 self.assertEqual(state.answered_level(UNITS[1]), 0)
 
-    def test_unusable_first_answer_is_recorded_as_answered_and_resumes_in_recovery(self):
+    def test_unusable_first_answer_goes_on_to_paragraph_recovery_at_once(self):
         state = RetryState()
         journal = []
         def persist():
             journal.append(state.to_cache())
-        provider = ScriptedProvider(AnswerRejected("AIの回答が出力上限で途切れました。"))
+        provider = ScriptedProvider(AnswerRejected("AIの回答が出力上限で途切れました。"),
+                                    {"parts": [{"kind": "text", "text": "正常な文章。"}]},
+                                    {"parts": [{"kind": "math", "index": 0}, {"kind": "math", "index": 1}]})
+        saved, progress = [], []
+        translate_batch(provider, UNITS, threading.Event(), progress.append, saved.append, state, persist)
+        # Paid for and answered: on record before the first retry goes out, then each paragraph is asked alone.
+        self.assertEqual(journal[1], {"attempts": {"good": 1, "bad": 1}, "retry_calls": 0, "unanswered": {}})
+        self.assertEqual([("source_parts" in call[1]) for call in provider.calls[1:]], [True, True])
+        self.assertEqual(saved, [{"good": "正常な文章。"}, {"bad": A + B}])
+        self.assertEqual(state.to_cache(), {"attempts": {"good": 2, "bad": 2}, "retry_calls": 2, "unanswered": {}})
+        self.assertTrue(any("出力上限" in message and "段落ごと" in message for message in progress))
+
+    def test_unusable_recovery_answer_after_an_unusable_first_answer_stops_the_run(self):
+        # A service that keeps cutting answers off is not asked again for every paragraph of the paper.
+        state = RetryState()
+        journal = []
+        def persist():
+            journal.append(state.to_cache())
+        provider = ScriptedProvider(AnswerRejected("AIの回答が出力上限で途切れました。"),
+                                    AnswerRejected("AIの回答が出力上限で途切れました。"))
         with self.assertRaises(AnswerRejected):
             translate_batch(provider, UNITS, threading.Event(), lambda _: None, lambda _: None, state, persist)
-        # Paid for and answered: saved before the error stops the run, so the batch is not sent again as it was.
-        self.assertEqual(journal[-1], {"attempts": {"good": 1, "bad": 1}, "retry_calls": 0, "unanswered": {}})
-        resumed = ScriptedProvider({"parts": [{"kind": "text", "text": "正常な文章。"}]},
+        self.assertEqual(len(provider.calls), 2)
+        self.assertEqual(journal[-1], {"attempts": {"good": 2, "bad": 1}, "retry_calls": 1, "unanswered": {}})
+        # Resuming moves on: the next retry for the first paragraph, the first retry for the second.
+        resumed = ScriptedProvider(translations(text0="正常な文章。"),
                                    {"parts": [{"kind": "math", "index": 0}, {"kind": "math", "index": 1}]})
         saved = self.run_batch_with_state(resumed, UNITS, RetryState.from_cache(journal[-1]))
-        self.assertEqual([("source_parts" in call[1]) for call in resumed.calls], [True, True])
+        self.assertEqual([("context_parts" in call[1], "source_parts" in call[1]) for call in resumed.calls],
+                         [(True, False), (False, True)])
         self.assertEqual(saved, [{"good": "正常な文章。"}, {"bad": A + B}])
+
+    def test_timed_out_first_request_counts_once_when_resumed(self):
+        state = RetryState()
+        journal = []
+        def persist():
+            journal.append(state.to_cache())
+        provider = ScriptedProvider(TransientError("APIの応答がタイムアウトしました。", after_sending=True))
+        with self.assertRaises(TransientError):
+            translate_batch(provider, UNITS[1:], threading.Event(), lambda _: None, lambda _: None, state, persist)
+        # A timeout may have used tokens up to then: resuming does not send the same batch again.
+        self.assertEqual(journal[-1], {"attempts": {"bad": 1}, "retry_calls": 0,
+                                       "unanswered": {"bad": MAX_UNANSWERED_SENDS}})
+        resumed = ScriptedProvider({"parts": [{"kind": "math", "index": 1}, {"kind": "math", "index": 0}]})
+        state = RetryState.from_cache(journal[-1])
+        self.assertEqual(self.run_batch_with_state(resumed, UNITS[1:], state), [{"bad": B + A}])
+        self.assertIn("source_parts", resumed.calls[0][1])
+        self.assertEqual(state.to_cache(), {"attempts": {"bad": 2}, "retry_calls": 1, "unanswered": {}})
+
+    def test_timeout_while_connecting_stays_an_ordinary_unanswered_request(self):
+        # Sleep or a VPN dropping: the request never reached the service and used no tokens,
+        # so resuming sends it again as it was.
+        for error in (TransientError("APIに接続できません。", timed_out=True), TransientError("接続断")):
+            with self.subTest(error=error):
+                state = RetryState()
+                with self.assertRaises(TransientError):
+                    translate_batch(ScriptedProvider(error), UNITS[1:], threading.Event(), lambda _: None,
+                                    lambda _: None, state)
+                self.assertEqual(state.to_cache(), {"attempts": {"bad": 1}, "retry_calls": 0, "unanswered": {"bad": 1}})
+                self.assertEqual(state.answered_level(UNITS[1]), 0)
+
+    def test_timed_out_retry_moves_on_to_the_next_retry_when_resumed(self):
+        state = RetryState()
+        journal = []
+        def persist():
+            journal.append(state.to_cache())
+        provider = ScriptedProvider(translations(bad="欠落"), TransientError("タイムアウト", after_sending=True))
+        with self.assertRaises(TransientError):
+            translate_batch(provider, UNITS[1:], threading.Event(), lambda _: None, lambda _: None, state, persist)
+        self.assertEqual(journal[-1], {"attempts": {"bad": 2}, "retry_calls": 1,
+                                       "unanswered": {"bad": MAX_UNANSWERED_SENDS}})
+        resumed = ScriptedProvider(translations(text0="条件", text2="を使う"))
+        state = RetryState.from_cache(journal[-1])
+        self.assertEqual(self.run_batch_with_state(resumed, UNITS[1:], state), [{"bad": "条件" + A + "を使う" + B + "."}])
+        self.assertIn("context_parts", resumed.calls[0][1])
+        self.assertEqual((state.attempts, state.unanswered, state.retry_calls), ({"bad": 3}, {}, 2))
 
     def test_unusable_retry_answer_moves_on_to_the_next_retry(self):
         state = RetryState()

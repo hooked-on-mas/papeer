@@ -66,7 +66,7 @@ def draft_glossary(lib, paper_id, provider, cancel, progress, existing):
             prompts.load("glossary_draft"),
             json.dumps({"source": chunk, "existing_terms": [t for key, t in known.items() if key in chunk.casefold()]}, ensure_ascii=False), schema)
         try:
-            value = parse_json_answer(answer)
+            value = parse_json_answer(answer, schema)
         except ValueError:
             raise ValueError("AIから有効な翻訳対応表を取得できませんでした。再試行してください。") from None
         terms = value.get("terms")
@@ -272,7 +272,7 @@ def draft_revision(lib: Library, paper_id: str, paragraph: dict, instruction: st
         json.dumps({"source": paragraph["source"], "current": paragraph["text"],
                     "glossary": effective_glossary(lib, paper_id)}, ensure_ascii=False),
         REVISION_SCHEMA)
-    value = parse_json_answer(answer)
+    value = parse_json_answer(answer, REVISION_SCHEMA)
     if not isinstance(value.get("text"), str):
         raise ValueError("AIから修正案を取得できませんでした。再試行してください。")
     text = validate_revision(paragraph["source"], value["text"])

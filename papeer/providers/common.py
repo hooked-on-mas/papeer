@@ -26,13 +26,19 @@ class TransientError(RuntimeError):
     a server error, a CLI that stopped for a reason retrying can help with.
     ProviderBackend.generate retries it.
 
-    retry_after is the wait the service asked for (HTTP Retry-After), in seconds.
+    retry_after is the wait the service asked for (HTTP Retry-After), in seconds. timed_out marks
+    any timeout (generate() sends those again only once); after_sending marks one that ran out while
+    waiting for the answer to a request the service had received (an API response, a CLI run past
+    its deadline), which may already have used tokens. A timeout while connecting or sending (sleep,
+    a VPN dropping) has timed_out only.
     """
 
-    def __init__(self, message: str, retry_after: float | None = None, timed_out: bool = False):
+    def __init__(self, message: str, retry_after: float | None = None, timed_out: bool = False,
+                 after_sending: bool = False):
         super().__init__(message)
         self.retry_after = retry_after
-        self.timed_out = timed_out
+        self.timed_out = timed_out or after_sending
+        self.after_sending = after_sending
 
 
 class AnswerRejected(RuntimeError):
@@ -40,8 +46,10 @@ class AnswerRejected(RuntimeError):
     file, or an error after the model had already written output.
 
     The request was paid for and asking the same again likely ends the same way, so generate()
-    does not send it again, and translation records it as answered (not unanswered): resuming
-    moves on to the next way of asking instead of repeating the same request.
+    does not send it again, and translation records it as answered (not unanswered): a batch's
+    first request goes on to recovery paragraph by paragraph at once, like an answer failing the
+    checks; a recovery request stops the run, and resuming moves on to the next way of asking
+    instead of repeating the same request.
     """
 
 
@@ -103,12 +111,54 @@ def check_cancel(cancel: threading.Event) -> None:
         raise Cancelled("処理を中止しました。完了した翻訳は次回再利用できます。")
 
 
-def parse_json_answer(text: str) -> dict:
+_JSON_TYPES: dict[str, type | tuple[type, ...]] = {
+    "object": dict, "array": list, "string": str, "integer": int, "number": (int, float), "boolean": bool}
+
+
+def matches_schema(value, schema: dict) -> bool:
+    """Whether `value` follows `schema`, for the parts of JSON Schema the requests use
+    (type, properties, required, additionalProperties: false, items, enum, anyOf)."""
+    if "anyOf" in schema:
+        return any(matches_schema(value, option) for option in schema["anyOf"])
+    expected = _JSON_TYPES.get(schema.get("type", ""))
+    if expected is not None and (not isinstance(value, expected)
+                                 or (isinstance(value, bool) and schema["type"] in {"integer", "number"})):
+        return False
+    if "enum" in schema and not any(type(value) is type(choice) and value == choice for choice in schema["enum"]):
+        return False
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        if any(key not in value for key in schema.get("required", ())):
+            return False
+        if schema.get("additionalProperties") is False and any(key not in properties for key in value):
+            return False
+        return all(matches_schema(value[key], rule) for key, rule in properties.items() if key in value)
+    if isinstance(value, list) and isinstance(schema.get("items"), dict):
+        return all(matches_schema(item, schema["items"]) for item in value)
+    return True
+
+
+def parse_json_answer(text: str, schema: dict | None = None) -> dict:
+    """The JSON object an answer holds: the whole answer, the inside of a code fence around it,
+    or else the outermost {...} of the answer (some models add a sentence before or after it).
+
+    An object taken from inside other text is a guess, so it must follow `schema` in full when one
+    is given; truncated or doubled JSON does not parse and is refused either way. Callers still
+    check the content (validate_translations, ...), as for any answer.
+    """
     text = text.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    value = json.loads(text)
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced[1]
+    try:
+        value = json.loads(text)
+    except ValueError:
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        value = json.loads(text[start:end + 1])
+        if not isinstance(value, dict) or (schema is not None and not matches_schema(value, schema)):
+            raise ValueError("AIの応答から指定した形式のJSONを取り出せませんでした。") from None
     if not isinstance(value, dict):
         raise ValueError("AIの応答がJSONオブジェクトではありません。")
     return value
@@ -282,7 +332,7 @@ def run_cli_process(
                 check_cancel(cancel)
                 if time.monotonic() > deadline:
                     raise TransientError(f"{tool_name}の応答がタイムアウトしました。途中結果は保存されています。",
-                                         timed_out=True)
+                                         after_sending=True)
                 cancel.wait(0.15)
             check_cancel(cancel)
             stdout.seek(0)
