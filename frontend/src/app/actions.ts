@@ -12,6 +12,7 @@ import { addPendingImports, removePendingImports, usePendingImports } from "./pe
 import { showSaved } from "./savedNotice";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
+import { summaryQuestionKey, summaryStartQuestion } from "@/features/summary/summaryStart";
 
 let queryClient: QueryClient | null = null;
 
@@ -372,7 +373,11 @@ export async function exportMarkdown(paperId: string): Promise<void> {
   }
 }
 
+/** Make the paper's サマリー; one that exists is replaced only after a confirmation (features/summary/summaryStart.ts). */
 export async function generateArticle(paperId: string): Promise<void> {
+  const hasSummary = await paper(paperId).then((target) => !!target.has_article, () => null);
+  const question = summaryStartQuestion(hasSummary);
+  if (question && !await askConfirm(question.title, question.message, question.okLabel, false, { key: summaryQuestionKey(paperId) })) return;
   try {
     await startJob(`/api/papers/${paperId}/article`, {}, { kind: "article", paperId });
   } catch (error) {

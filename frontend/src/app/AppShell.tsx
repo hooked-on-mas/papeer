@@ -70,6 +70,12 @@ async function waitForJobs(timeoutMs: number): Promise<void> {
 
 registerAllJobHandlers();
 
+/**
+ * The confirmation before closing goes ahead of any question already on screen (lib/dialogQueue.ts),
+ * and pressing close again while it is up does not ask a second time (that press is ignored).
+ */
+const CLOSE_QUESTION = { key: "app-close", urgent: true } as const;
+
 function useCloseHandling(): void {
   useEffect(() => {
     // @ts-ignore injected by Tauri
@@ -83,12 +89,12 @@ function useCloseHandling(): void {
       if (snapshot) {
         const ok = await askConfirm("同期・バックアップ中",
           "同期・バックアップ・復元を中止して終了しますか？\n作りかけのデータは破棄します。ライブラリのフォルダーの入れ替えが始まっている場合は、完了してから終了します。",
-          "中止して終了", true);
+          "中止して終了", true, CLOSE_QUESTION);
         if (!ok) return;
       } else if (running.length) {
         const ok = await askConfirm("処理中",
           `実行中の処理が${running.length}件あります。中止して終了しますか？\n翻訳済みのページは保存されており、次回再開できます。`,
-          "中止して終了", true);
+          "中止して終了", true, CLOSE_QUESTION);
         if (!ok) return;
       }
       setAppClosing(true);

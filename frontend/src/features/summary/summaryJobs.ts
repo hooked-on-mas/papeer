@@ -23,7 +23,8 @@ export const summaryJobHandlers: JobHandlers = {
       const store = useStore.getState();
       if (event.paper_id && event.paper_id === store.activePaperId) showSummary();
     },
-    // Only shows the paper's サマリー: asking the AI again is the pane's own button (with its confirmation).
+    // Only shows the paper's サマリー: asking the AI again is the pane's own button, which confirms
+    // before replacing one that exists (features/summary/summaryStart.ts).
     resume: { label: "サマリーを開く", run: openSummary },
   },
 };

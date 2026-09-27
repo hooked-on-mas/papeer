@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { create } from "zustand";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,63 +8,90 @@ import { Toaster } from "@/components/Toaster";
 import { errorAdvice, firstLine, reportDetails, type ErrorAction, type ErrorReport } from "@/lib/errorReports";
 import { openSettings } from "@/features/settings/settingsNavigation";
 import { ConnectionBanner } from "@/features/jobs/ConnectionBanner";
+import { isAppClosing, onAppClosingChange } from "@/app/appClosing";
+import { createDialogQueue, type DialogOptions, type QueuedDialog } from "@/lib/dialogQueue";
 
-type Request =
-  | { kind: "text"; title: string; label: string; defaultValue: string; resolve: (value: string | null) => void }
-  | { kind: "confirm"; title: string; message: string; okLabel: string; destructive: boolean; resolve: (ok: boolean) => void }
-  | { kind: "message"; title: string; message: string; resolve: () => void };
+const dialogs = createDialogQueue();
+// Once the closing is confirmed, a question from before would start work in the middle of it: those
+// wait, hidden, and come back if the closing is called off (a save that failed, a sync that asked).
+onAppClosingChange((closing) => dialogs.hold(closing));
 
-const useDialogQueue = create<{ current: Request | null; set: (r: Request | null) => void }>((set) => ({
-  current: null,
-  set: (current) => set({ current }),
-}));
+/**
+ * While the app is closing, what the close sequence asks (AppShell's close handling, the sync on
+ * closing) goes ahead of any question left waiting from before.
+ */
+const withDefaults = (options: DialogOptions): DialogOptions => ({ ...options, urgent: options.urgent ?? isAppClosing() });
 
 /** In-app replacement for window.prompt, which WebViews render poorly or not at all. */
-export function askText(title: string, label: string, defaultValue = ""): Promise<string | null> {
-  return new Promise((resolve) => useDialogQueue.getState().set({ kind: "text", title, label, defaultValue, resolve }));
+export function askText(title: string, label: string, defaultValue = "", options: DialogOptions = {}): Promise<string | null> {
+  return dialogs.ask({ kind: "text", title, label, defaultValue }, withDefaults(options));
 }
 
-export function askConfirm(title: string, message: string, okLabel = "OK", destructive = false): Promise<boolean> {
-  return new Promise((resolve) => useDialogQueue.getState().set({ kind: "confirm", title, message, okLabel, destructive, resolve }));
+export function askConfirm(title: string, message: string, okLabel = "OK", destructive = false, options: DialogOptions = {}): Promise<boolean> {
+  return dialogs.ask({ kind: "confirm", title, message, okLabel, destructive }, withDefaults(options));
 }
 
-export function showMessage(title: string, message: string): Promise<void> {
-  return new Promise((resolve) => useDialogQueue.getState().set({ kind: "message", title, message, resolve }));
+export function showMessage(title: string, message: string, options: DialogOptions = {}): Promise<void> {
+  return dialogs.ask({ kind: "message", title, message }, withDefaults(options));
 }
 
+/** The questions, one at a time in the order of lib/dialogQueue.ts; a new one waits instead of replacing the one on screen. */
 function PromptDialogs() {
-  const { current, set } = useDialogQueue();
+  const current = useSyncExternalStore(dialogs.subscribe, dialogs.getShown);
+  // Keep the last question on screen while the dialog animates closed.
+  const shown = useRef<QueuedDialog | null>(null);
+  if (current) shown.current = current;
+  const entry = current ?? shown.current;
+  const request = entry?.request ?? null;
   const [value, setValue] = useState("");
+  // What was typed into a question that an urgent one pushed back, for when it comes back.
+  const drafts = useRef(new Map<number, string>());
   const inputRef = useRef<HTMLInputElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const okRef = useRef<HTMLButtonElement>(null);
 
+  // Each question gets the focus where it would on opening, also when it follows another in the
+  // open dialog (the focus would stay on the last one's button): the input, else キャンセル (OK for a message).
   useEffect(() => {
-    if (current?.kind === "text") {
-      setValue(current.defaultValue);
-      setTimeout(() => {
-        inputRef.current?.focus();
-        inputRef.current?.select();
-      }, 30);
-    }
+    if (!current) return;
+    const draft = drafts.current.get(current.id);
+    if (current.request.kind === "text") setValue(draft ?? current.request.defaultValue);
+    const timer = setTimeout(() => {
+      if (current.request.kind !== "text") {
+        (current.request.kind === "message" ? okRef : cancelRef).current?.focus();
+        return;
+      }
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      // A default is there to be replaced; what the user typed before is there to be continued.
+      if (draft === undefined) input.select();
+      else input.setSelectionRange(input.value.length, input.value.length);
+    }, 30);
+    return () => clearTimeout(timer);
   }, [current]);
 
-  const finish = (result: string | boolean | null) => {
+  const finish = (result: unknown) => {
     if (!current) return;
-    set(null);
-    if (current.kind === "text") current.resolve(result as string | null);
-    else if (current.kind === "confirm") current.resolve(result === true);
-    else current.resolve();
+    drafts.current.delete(current.id);
+    dialogs.answer(current.id, result);
+  };
+  const cancel = () => finish(null);
+  const edit = (text: string) => {
+    setValue(text);
+    if (current) drafts.current.set(current.id, text);
   };
 
   return (
-    <Dialog open={!!current} onOpenChange={(open) => { if (!open) finish(current?.kind === "confirm" ? false : null); }}>
+    <Dialog open={!!current} onOpenChange={(open) => { if (!open) cancel(); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{current?.title}</DialogTitle>
-          {current && current.kind !== "text" && (
-            <DialogDescription className="whitespace-pre-wrap">{current.message}</DialogDescription>
+          <DialogTitle>{request?.title}</DialogTitle>
+          {request && request.kind !== "text" && (
+            <DialogDescription className="whitespace-pre-wrap">{request.message}</DialogDescription>
           )}
         </DialogHeader>
-        {current?.kind === "text" && (
+        {request?.kind === "text" && (
           <form
             className="grid gap-2"
             onSubmit={(e) => {
@@ -73,21 +99,21 @@ function PromptDialogs() {
               finish(value);
             }}
           >
-            <label className="text-[0.8125rem] text-muted-foreground">{current.label}</label>
-            <Input ref={inputRef} value={value} onChange={(e) => setValue(e.target.value)} />
+            <label className="text-[0.8125rem] text-muted-foreground">{request.label}</label>
+            <Input ref={inputRef} value={value} onChange={(e) => edit(e.target.value)} />
           </form>
         )}
         <DialogFooter>
-          {current?.kind === "message" ? (
-            <Button onClick={() => finish(null)}>OK</Button>
+          {request?.kind === "message" ? (
+            <Button ref={okRef} onClick={() => finish(null)}>OK</Button>
           ) : (
             <>
-              <Button variant="outline" onClick={() => finish(current?.kind === "confirm" ? false : null)}>キャンセル</Button>
+              <Button ref={cancelRef} variant="outline" onClick={cancel}>キャンセル</Button>
               <Button
-                variant={current?.kind === "confirm" && current.destructive ? "destructive" : "default"}
-                onClick={() => finish(current?.kind === "confirm" ? true : value)}
+                variant={request?.kind === "confirm" && request.destructive ? "destructive" : "default"}
+                onClick={() => finish(request?.kind === "confirm" ? true : value)}
               >
-                {current?.kind === "confirm" ? current.okLabel : "OK"}
+                {request?.kind === "confirm" ? request.okLabel : "OK"}
               </Button>
             </>
           )}

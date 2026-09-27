@@ -5,13 +5,16 @@
  */
 let closing = false;
 let heldReload: (() => void) | null = null;
+const listeners = new Set<(closing: boolean) => void>();
 
 export function isAppClosing(): boolean {
   return closing;
 }
 
 export function setAppClosing(value: boolean): void {
+  const changed = closing !== value;
   closing = value;
+  if (changed) listeners.forEach((listener) => listener(value));
   if (!value && heldReload) {
     const reload = heldReload;
     heldReload = null;
@@ -23,4 +26,10 @@ export function setAppClosing(value: boolean): void {
 export function reloadUnlessClosing(reload: () => void): void {
   if (closing) heldReload = reload;
   else reload();
+}
+
+/** Hear the app start closing (true) and the closing called off (false); returns the unsubscribe. */
+export function onAppClosingChange(listener: (closing: boolean) => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
