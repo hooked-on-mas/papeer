@@ -8,6 +8,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest } from "@/api/client";
 import { usePaper } from "@/api/hooks";
 import { AppDialogs, askConfirm } from "@/components/AppDialogs";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { lazyComponent, paneStates } from "@/components/LazyPanel";
+import { whenIdle } from "@/lib/lazyLoader";
 import { isRunning, useStore } from "../store";
 import { Header, TranslationDialogHost } from "./Header";
 import { StatusBar } from "./StatusBar";
@@ -15,10 +19,6 @@ import { LibrarySidebar } from "../features/library/LibrarySidebar";
 import { Reader } from "../features/reader/Reader";
 import { StickyNotesTab } from "../features/reader/StickyNotesTab";
 import { StickyNoteDialog } from "../features/reader/StickyNoteDialog";
-import { SummaryPane } from "../features/summary/SummaryPane";
-import { ChatPane } from "../features/chat/ChatPane";
-import { NotesPane } from "../features/notes/NotesPane";
-import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { DriveSyncHost } from "../features/settings/DriveSection";
 import { syncDrive } from "../features/settings/driveSync";
 import { useJobEvents } from "../features/jobs/jobEvents";
@@ -33,6 +33,29 @@ import { isJobKind, SNAPSHOT_JOBS } from "@/features/jobs/jobKinds";
 import { registerAllJobHandlers } from "./jobHandlers";
 
 const TABS = ["reader", "summary", "chat", "notes", "sticky-notes"];
+
+// Split from the initial bundle, which then holds only what the reader needs: these bring in the
+// Markdown renderer with KaTeX, and the settings. They load when first shown, or once the app is idle.
+const SummaryPane = lazyComponent(() => import("../features/summary/SummaryPane").then((m) => m.SummaryPane), paneStates);
+const ChatPane = lazyComponent(() => import("../features/chat/ChatPane").then((m) => m.ChatPane), paneStates);
+const NotesPane = lazyComponent(() => import("../features/notes/NotesPane").then((m) => m.NotesPane), paneStates);
+const SettingsDialog = lazyComponent(() => import("../features/settings/SettingsDialog").then((m) => m.SettingsDialog), {
+  loading: () => null,
+  failed: ({ open, onOpenChange }, retry) => (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>接続・設定を開けませんでした</DialogTitle>
+          <DialogDescription>繰り返す場合はアプリを再起動してください。</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>閉じる</Button>
+          <Button onClick={retry}>再試行</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  ),
+});
 
 async function waitForJobs(timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -196,6 +219,9 @@ export function AppShell() {
   const attachmentCount = useStore((s) => s.chatAttachments.filter((item) => item.paperId === s.activePaperId).length);
   const isSettingsOpen = useSettingsNavigation(s => s.open);
   const setIsSettingsOpen = useSettingsNavigation(s => s.setOpen);
+  // Mounted from the first opening on, so that it can play its closing animation.
+  const [settingsMounted, setSettingsMounted] = useState(isSettingsOpen);
+  if (isSettingsOpen && !settingsMounted) setSettingsMounted(true);
   const queryClient = useQueryClient();
   const { data: activePaper, error: activePaperError } = usePaper(activePaperId);
   const lastCollectionPaper = useRef<string | null>(null);
@@ -206,6 +232,10 @@ export function AppShell() {
   }, [queryClient]);
 
   useEffect(() => initUiStateSync(), []);
+
+  useEffect(() => whenIdle(() => {
+    for (const component of [SummaryPane, ChatPane, NotesPane, SettingsDialog]) component.preload();
+  }), []);
 
   useJobEvents();
   useFileDrop();
@@ -413,7 +443,7 @@ export function AppShell() {
       </ResizablePanelGroup>
 
       {(!focusMode || anyRunning) && <StatusBar />}
-      <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
+      {settingsMounted && <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />}
       <DriveSyncHost />
       <StickyNoteDialog />
       <AppDialogs />

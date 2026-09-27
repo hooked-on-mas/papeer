@@ -17,6 +17,7 @@ import type { Bounds } from "./inkGeometry";
 import type { StickyNote } from "./stickyNotes";
 import { StickyNoteMarker } from "./StickyNoteMarker";
 import { openStickyNote } from "./stickyNotesStore";
+import { cappedPixelRatio, snapshotSize } from "./canvasBudget";
 
 // Bundled worker, cMaps and fonts keep PDFs (including CJK text) readable offline.
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -51,6 +52,11 @@ export interface JumpTarget {
 }
 
 const PADDING = 16;
+
+/** Frees a canvas's pixels; a hidden canvas otherwise keeps them for as long as it is mounted. */
+function releaseCanvas(canvas: HTMLCanvasElement | null) {
+  if (canvas) { canvas.width = 0; canvas.height = 0; }
+}
 
 /**
  * pdf.js sizes each text-layer span by measuring its text on a canvas, but the canvas and the page
@@ -118,6 +124,9 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
 
   const fitWidth = Math.max(250, containerWidth - PADDING * 2);
   const pageWidth = Math.round(fitWidth * zoom);
+  // Height over width of the page, to size its canvas before it is drawn. Until the first page loads,
+  // assume A4, which is taller than Letter and so errs toward the smaller canvas.
+  const [pageRatio, setPageRatio] = useState(Math.SQRT2);
 
   // react-pdf replaces the canvas whenever the width changes, leaving the page blank until it is
   // redrawn. So while a side panel opens or the pane is resized or zoomed, the current drawing is
@@ -138,21 +147,30 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
       const snapshot = snapshotRef.current;
       // A canvas still hidden is mid-redraw; the snapshot already holds the last finished drawing.
       if (canvas?.width && snapshot && canvas.style.visibility !== "hidden") {
-        snapshot.width = canvas.width;
-        snapshot.height = canvas.height;
-        snapshot.getContext("2d")?.drawImage(canvas, 0, 0);
+        // Scaled down when zoomed in: it only covers the page for a moment (see canvasBudget.ts).
+        const size = snapshotSize(canvas.width, canvas.height);
+        snapshot.width = size.width;
+        snapshot.height = size.height;
+        snapshot.getContext("2d")?.drawImage(canvas, 0, 0, size.width, size.height);
         setCovering(true);
       }
       setDrawnWidth(pageWidth);
     }, 150);
     return () => clearTimeout(timer);
   }, [containerWidth, pageWidth, drawnWidth]);
+  const endCovering = useCallback(() => {
+    setCovering(false);
+    releaseCanvas(snapshotRef.current);
+  }, []);
+  // Zoomed in on a high-DPI display, the page is drawn at a lower resolution than the display's so
+  // that its canvas stays within a memory limit.
+  const pixelRatio = cappedPixelRatio(window.devicePixelRatio || 1, drawnWidth, drawnWidth * pageRatio);
 
   // Whether the text layer shows this page yet, rather than the one before it.
   const textLayerReady = useRef(false);
   // Whether the canvas shows this page yet, so that a jump made now lands in the right place.
   const pageRendered = useRef(false);
-  useEffect(() => { setCovering(false); setMatches([]); textLayerReady.current = false; pageRendered.current = false; }, [url, pageNumber]);
+  useEffect(() => { endCovering(); setMatches([]); textLayerReady.current = false; pageRendered.current = false; }, [url, pageNumber, endCovering]);
   // Each target is scrolled to once, so that zooming or resizing later doesn't pull the view back.
   const jumpedTo = useRef<JumpTarget | null>(null);
   const jumpToBookmark = useCallback(() => {
@@ -283,15 +301,20 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                   <Page
                     pageNumber={pageNumber}
                     width={drawnWidth}
+                    devicePixelRatio={pixelRatio}
                     inputRef={pageRef}
-                    onLoadSuccess={(page) => { loadedPage.current = page; }}
+                    onLoadSuccess={(page) => {
+                      loadedPage.current = page;
+                      const viewport = page.getViewport({ scale: 1 });
+                      setPageRatio(viewport.height / viewport.width);
+                    }}
                     onGetTextSuccess={(content) => { textContent.current = content; }}
                     onRenderSuccess={(page) => {
-                      setCovering(false); pageRendered.current = true; jumpToBookmark();
+                      endCovering(); pageRendered.current = true; jumpToBookmark();
                       const viewport = page.getViewport({ scale: 1 });
                       setInkViewport({ key: inkKey, ratio: viewport.height / viewport.width });
                     }}
-                    onRenderError={() => setCovering(false)}
+                    onRenderError={endCovering}
                     onRenderTextLayerSuccess={handleTextLayerRendered}
                     renderTextLayer
                     renderAnnotationLayer
