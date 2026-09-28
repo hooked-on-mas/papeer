@@ -7,7 +7,6 @@ import { useErrorDialog } from "@/components/errorDialog";
 import { Toaster } from "@/components/Toaster";
 import { errorAdvice, firstLine, reportDetails, type ErrorAction, type ErrorReport } from "@/lib/errorReports";
 import { openSettings } from "@/features/settings/settingsNavigation";
-import { ConnectionBanner } from "@/features/jobs/ConnectionBanner";
 import { isAppClosing, onAppClosingChange } from "@/app/appClosing";
 import { createDialogQueue, type DialogOptions, type QueuedDialog } from "@/lib/dialogQueue";
 
@@ -209,7 +208,6 @@ export function AppDialogs() {
       <PromptDialogs />
       <JobErrorDialog />
       <Toaster />
-      <ConnectionBanner />
     </>
   );
 }
