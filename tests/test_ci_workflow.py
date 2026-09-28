@@ -54,6 +54,13 @@ def test_ci_runs_the_checks_of_just_test_and_just_lint():
         assert command in python
     # pytest comes after pnpm install, so that the schema.d.ts test (tests/test_openapi_schema.py) is not skipped.
     assert python.index("pnpm --dir frontend install --frozen-lockfile") < python.index("uv run pytest -q")
+    # The OCR tests run on CI: the language data is downloaded when the cache has none, and a failed
+    # download fails them (tests/conftest.py tessdata) instead of skipping them unnoticed.
+    pytest_step = next(step for step in jobs["python"]["steps"] if step.get("run") == "uv run pytest -q")
+    assert pytest_step["env"]["PAPEER_TEST_DOWNLOAD_TESSDATA"] == "1"
+    cache = next(step for step in jobs["python"]["steps"]
+                 if step.get("with", {}).get("path") == ".pytest_cache/d/papeer-tessdata")
+    assert jobs["python"]["steps"].index(cache) < jobs["python"]["steps"].index(pytest_step)
     assert _runs(jobs["frontend"]) == ["pnpm install --frozen-lockfile", "pnpm typecheck", "pnpm lint", "pnpm test",
                                        "pnpm build"]
     rust = jobs["rust"]

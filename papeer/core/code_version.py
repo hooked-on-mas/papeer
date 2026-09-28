@@ -23,6 +23,8 @@ RENDER_SOURCES = (
     "core/service.py", "core/translation_review.py",
     "layout/algorithm_layout.py", "layout/figure_layout.py", "layout/math_layout.py", "layout/ocr_pages.py",
     "layout/reading_flow.py", "layout/reference_layout.py", "layout/table_layout.py",
+    # OCR of scanned and garbled pages (off unless PAPEER_OCR=1): regions, engines, blocks from the text.
+    "layout/ocr_engines.py", "layout/ocr_regions.py", "pdf/pdf_ocr.py",
     "pdf/pdf_engine.py", "pdf/pdf_fonts.py", "pdf/pdf_math_crops.py", "pdf/pdf_typography.py",
 )
 RENDER_DIRECTORIES = ("layout", "pdf", "translation", "providers")

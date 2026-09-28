@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import replace
+import logging
 from pathlib import Path
 import re
 import threading
@@ -17,9 +18,11 @@ from papeer.pdf.pdf_math_crops import formula_crop, page_glyph_bounds
 from papeer.layout.table_layout import separate_tables, table_regions
 from papeer.layout.figure_layout import diagram_regions, figure_regions
 from papeer.layout.algorithm_layout import separate_algorithms
+from papeer.layout.ocr_engines import EngineSet, OcrError, OcrOptions
 from papeer.layout.ocr_pages import ocr_check
 from papeer.layout.reading_flow import (order_page, continuation_groups, footnote_ids, translation_blocks, materialize_flows,
                                         resolve_unit_joins, source_body_size)
+from papeer.pdf.pdf_ocr import document_language, ocr_page, ocr_page_blocks
 from papeer.translation.translation_context import request_text
 from papeer.pdf.pdf_typography import (FONT_CSS, LIGHT_TEXT_COLOR, TEXT_COLOR, TIGHT_LEADING, TextStyle, body_font_size,
                                        character_budget, first_line_indented, font_subsets, merge_wrapped_headings,
@@ -27,17 +30,51 @@ from papeer.pdf.pdf_typography import (FONT_CSS, LIGHT_TEXT_COLOR, TEXT_COLOR, T
                                        text_style)
 
 
+logger = logging.getLogger(__name__)
+
 # MuPDF must not be called concurrently from the UI and background jobs.
 PDF_LOCK = threading.RLock()
 
 
-def extract_pdf(path: Path) -> dict:
+def _read_by_ocr(page: fitz.Page, number: int, engines: EngineSet, lang: str | None) -> tuple[list[dict], dict] | None:
+    """The blocks of a page read by OCR and what document.json records of it, or None when no
+    engine could read it (the page stays "要OCR")."""
+    try:
+        result = ocr_page(page, engines, lang)
+        blocks = ocr_page_blocks(result, number, page.cropbox.height)
+    except OcrError as error:
+        logger.warning("OCR of page %d failed: %s", number, error)
+        return None
+    # When jobs can cancel OCR (next stage), put `except Cancelled: raise` before this, or a cancelled
+    # page is only logged as failed (papeer.layout.ocr_engines, module docstring).
+    except Exception:  # noqa: BLE001 - a fault in OCR must not stop the paper from being added
+        logger.warning("OCR of page %d failed", number, exc_info=True)
+        return None
+    logger.info("OCR of page %d: %s in %.2f s", number, result.summary(), result.seconds)
+    if not any(b.get("kind") == "text" for b in blocks):
+        return None
+    return blocks, result.summary()
+
+
+def extract_pdf(path: Path, ocr: OcrOptions | None = None) -> dict:
+    """The document's text blocks, pages and bibliography (document.json).
+
+    Pages that need OCR are kept as the original ("ocr_pages"), unless OCR is on (ocr, by default
+    OcrOptions.from_env(): off unless PAPEER_OCR=1) and an engine reads them: then their blocks come
+    from the OCR text and the page is listed in "ocr_applied" instead. They are read once every page
+    has been looked at, so that the language (OcrOptions.lang "auto") comes from the text of the pages
+    that need no OCR; with too little of it, from a first look at each page.
+    """
+    ocr = OcrOptions.from_env() if ocr is None else ocr
+    engines = EngineSet(ocr, PDF_LOCK) if ocr.enabled else None
+    ocr_applied: list[dict] = []
     with PDF_LOCK, fitz.open(path) as document:
         if document.needs_pass:
             raise ValueError("パスワード付きPDFです。解除したコピーを追加してください。")
         if not document.page_count:
             raise ValueError("PDFにページがありません。")
-        blocks, pages, empty_pages, ocr_pages = [], [], [], []
+        page_lists: list[list[dict]] = []
+        pages, empty_pages, needing = [], [], []
         for number, page in enumerate(document):
             page_blocks = []
             block_seq = 1
@@ -69,17 +106,43 @@ def extract_pdf(path: Path) -> dict:
             if not page_blocks:
                 empty_pages.append(number + 1)
             # A garbled or scanned page (or paragraph) keeps its original and is listed for review.
-            if ocr := ocr_check(page, page_items, page_blocks):
-                ocr_pages.append({"page": number + 1, **ocr})
-            blocks.extend(page_blocks)
+            if needed := ocr_check(page, page_items, page_blocks):
+                needing.append((number, needed))
+            page_lists.append(page_blocks)
             pages.append({"number": number + 1, "text": "\n\n".join(b["text"] for b in page_blocks),
                           "width": page.cropbox.width, "height": page.cropbox.height,
                           "rotation": page.rotation})
+        read_pages: set[int] = set()
+        readable = [(number, needed) for number, needed in needing if needed["reason"] != "partial"]
+        if engines is not None and readable:
+            flagged = {number for number, _ in needing}
+            lang = (ocr.lang if ocr.lang != "auto"
+                    else document_language(info["text"] for index, info in enumerate(pages) if index not in flagged))
+            # An English paper can hold a scanned Japanese page (an appendix, a letter): read as English it
+            # becomes noise. When Japanese can be read, each page gets a first look at its opening lines
+            # (pdf_ocr._probe_language: a few lines, some 0.1-0.5 s). Japanese models read Latin letters,
+            # so a Japanese document keeps its language.
+            if ocr.lang == "auto" and lang == "en" and engines.order("ja"):
+                lang = None
+            for number, needed in readable:
+                read = _read_by_ocr(document[number], number + 1, engines, lang)
+                if read is None:
+                    continue
+                page_lists[number], summary = read
+                pages[number]["text"] = "\n\n".join(b["text"] for b in page_lists[number])
+                ocr_applied.append({"page": number + 1, "reason": needed["reason"], **summary})
+                read_pages.add(number)
+                if number + 1 in empty_pages:
+                    empty_pages.remove(number + 1)
+        ocr_pages = [{"page": number + 1, **needed} for number, needed in needing if number not in read_pages]
+        blocks = [block for page_blocks in page_lists for block in page_blocks]
         title = (document.metadata or {}).get("title", "").strip()
         if not title or len(title) > 240:
             title = path.stem
         result = {**extract_bibliography(document), "layout_version": LAYOUT_VERSION, "title": title, "pages": pages, "blocks": blocks,
                 "empty_pages": empty_pages, "ocr_pages": ocr_pages, "page_count": len(pages)}
+        if ocr_applied:
+            result["ocr_applied"] = ocr_applied
         ordered = []
         headers = running_headers(result)
         for info in pages:
