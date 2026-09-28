@@ -130,5 +130,5 @@ def usage_limits() -> dict[str, Any] | None:
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         # Left as an HTTPException on purpose: the AI service failed, not the request, which none of
         # Invalid/NotFound/Conflict says. The frontend shows the detail like any other error.
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     return dict(limits, provider=provider.spec.id) if limits else None

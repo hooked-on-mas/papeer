@@ -215,7 +215,23 @@ def test_auto_sync_option_and_check_of_the_chosen_folder(tmp_path, monkeypatch):
     assert sync.set_auto_sync(lib.root, False)["auto_sync"] is False
     assert sync.read_state(lib.root)["auto_sync"] is False
     assert sync.set_auto_sync(lib.root, True)["auto_sync"] is True
-    assert sync.check_connected(lib.root)["action"] in {"none", "quiet"}
+
+    # check() looks at the chosen folder. The first check since launch cannot rely on the records of
+    # the last sync, so it is "quiet" by check() itself (were it an error, check() here would raise).
+    looked_at = []
+    real_check = sync.check
+
+    def recording(root, remote):
+        looked_at.append(remote.folder.resolve())
+        return real_check(root, remote)
+    monkeypatch.setattr(sync, "check", recording)
+    assert real_check(lib.root, sync.FolderDrive(tmp_path / "drive")) == {"action": "quiet", "local_version": None}
+    assert sync.check_connected(lib.root) == {"action": "quiet", "local_version": None}
+    assert looked_at == [(tmp_path / "drive").resolve()]
+    # Once synced, nothing has changed on either side.
+    run(lib)
+    assert sync.check_connected(lib.root)["action"] == "none"
+    assert len(looked_at) == 2
 
     def unreadable(root, remote):
         raise OSError("the folder is still arriving")

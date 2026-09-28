@@ -86,6 +86,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     const { glossary: merged, added } = mergeDraftTerms(glossary.terms, terms);
     if (added.length) glossary.addCandidates(merged, added, { expand: true });
     choose({ reviewed: true, draftMessage: draftResultMessage(added.length) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- glossary and choose are new on every render; a finished check is what it waits for
   }, [open, paperId, draft, savedGlossary]);
   const provider = settings?.provider ?? "";
   const pageCount = reading?.source_page_count ?? reading?.page_count ?? 0;

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import re
+from typing import cast
+
 import pymupdf as fitz
 
 
@@ -36,7 +38,7 @@ def figure_regions(page: fitz.Page) -> list[fitz.Rect]:
                 rect |= other
                 regions.remove(other)
             regions.append(rect)
-        lines = [line for block in page.get_text("dict")["blocks"]
+        lines = [line for block in cast(dict, page.get_text("dict"))["blocks"]
                  for line in block.get("lines", [])]
         result = []
         for rect in regions:
@@ -136,7 +138,7 @@ def diagram_regions(page: fitz.Page, exclude: list[fitz.Rect]) -> list[fitz.Rect
         if not candidates:
             return []
         lines = [(fitz.Rect(line["bbox"]), "".join(span["text"] for span in line["spans"]).strip())
-                 for block in page.get_text("dict")["blocks"] for line in block.get("lines", [])]
+                 for block in cast(dict, page.get_text("dict"))["blocks"] for line in block.get("lines", [])]
         lines = [(box, text) for box, text in lines if text]
 
         def labels(rect: fitz.Rect) -> list[fitz.Rect] | None:
@@ -209,7 +211,7 @@ def figure_caption(page: fitz.Page, rect: fitz.Rect, limit: int = 200) -> str:
 def figure_caption_match(page: fitz.Page, rect: fitz.Rect) -> tuple[fitz.Rect, str] | None:
     """Return the caption's location and full text, so panels can share one identity."""
     best = None
-    for block in page.get_text("dict")["blocks"]:
+    for block in cast(dict, page.get_text("dict"))["blocks"]:
         lines = block.get("lines", [])
         for index, line in enumerate(lines):
             text = "".join(span["text"] for span in line["spans"]).strip()

@@ -40,6 +40,7 @@ export function ReaderSearch({ paperId, search, setSearch, ownsKey, open, setOpe
   useEffect(() => {
     const timer = setTimeout(() => setSearch({ ...search, query: input }), 250);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- with search, each search set would start the timer again, forever
   }, [input, search.side, paperId]);
   useEffect(() => {
     return onAppEvent("open-reader-search", () => {
@@ -48,7 +49,7 @@ export function ReaderSearch({ paperId, search, setSearch, ownsKey, open, setOpe
       inputRef.current?.focus();
       inputRef.current?.select();
     });
-  }, []);
+  }, [setOpen]);
 
   const showResult = (index: number, results: SearchResult[]) => {
     const item = results[index];
@@ -62,6 +63,7 @@ export function ReaderSearch({ paperId, search, setSearch, ownsKey, open, setOpe
     const delta = pendingStep.current;
     pendingStep.current = 0;
     showResult(stepSearchResult(-1, found.results.length, delta), found.results);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showResult is new on every render; the results arriving are what matter
   }, [found, search.query, search.side]);
   useEffect(() => {
     if (current >= 0) listRef.current?.children[current]?.scrollIntoView({ block: "nearest" });

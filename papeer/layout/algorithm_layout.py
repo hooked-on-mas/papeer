@@ -120,7 +120,7 @@ def separate_algorithms(page, items):
             box = fitz.Rect(row[0]["bbox"])
             for c in row[1:]:
                 box |= fitz.Rect(c["bbox"])
-            steps[-1].append(dict(bbox=list(box), spans=spans, merged=True, regions=[list(box)]))
+            steps[-1].append(dict(bbox=list(box), spans=spans, merged=True, regions=[list(box)]))  # pyright: ignore[reportArgumentType]
         for step in steps:
             algorithms.append(dict(type=0, lines=step, algorithm=True,
                                    algorithm_right=region.x1, algorithm_size=size))

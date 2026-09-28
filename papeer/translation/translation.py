@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Container
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 import json
@@ -205,7 +206,7 @@ def standalone_source(text: str) -> bool:
 
 
 def shared_translations(units: list[dict], pending: list[dict], done: dict[str, str],
-                        excluded=frozenset(), marginal=frozenset()) -> tuple[dict[str, list[str]], dict[str, dict]]:
+                        excluded: Container[object] = frozenset(), marginal: Container[object] = frozenset()) -> tuple[dict[str, list[str]], dict[str, dict]]:
     """Translate each source text of a paper once: units with the same text (formula markers
     included, which name their block, and so the same glossary) take the same translation.
     Running heads repeated on every page are the common case.

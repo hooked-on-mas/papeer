@@ -59,7 +59,7 @@ class JobManager:
         for queue in listeners:
             try:
                 self._loop.call_soon_threadsafe(queue.put_nowait, data)
-            except Exception:
+            except RuntimeError:  # The event loop has closed (the app is shutting down).
                 pass
 
     def get_jobs(self) -> list[JobInfo]:
@@ -198,7 +198,7 @@ class JobManager:
                     job.running = False
                     job.status = "succeeded"
                     job.result = result
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - every failure ends the job with a message (job_error_message)
                 is_cancelled = cancel_event.is_set()
                 error = job_error_message(exc, kind)
                 with self._lock:

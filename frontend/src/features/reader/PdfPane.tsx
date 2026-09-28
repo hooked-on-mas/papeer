@@ -125,6 +125,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   }, [side, inkHost]);
   const servesToolbar = useInkPanes((s) => inkToolbarSide(s.active, s.hosts)) === side && inkHost;
   // The toolbar's keys (Ctrl+Z, Delete…) follow it when it moves to this pane from its 原文/訳文 switch.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- editor is new on every render: activate only when the toolbar comes here
   useEffect(() => { if (servesToolbar) editor.activate(); }, [servesToolbar]);
   const activate = () => {
     editor.activate();

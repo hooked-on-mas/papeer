@@ -196,7 +196,7 @@ def test_concurrent_first_opens_migrate_once(tmp_path, monkeypatch):
         start.wait()
         try:
             assert Library(root).paper(identity)["bibliography_version"] == 1
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001 - reported below, as a thread cannot fail the test
             errors.append(exc)
 
     threads = [threading.Thread(target=open_library) for _ in range(8)]

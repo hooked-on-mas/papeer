@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import cast
 import html
 import io
 from pathlib import Path
@@ -87,15 +88,15 @@ def _prepare_fonts() -> None:
     try:
         for name, family, style in FONT_FACES:
             cached_truetype(FONT_DIRECTORY / name, family, style)
-    except Exception:
-        pass  # The page that needs the faces tries again and reports the error.
+    except Exception:  # noqa: BLE001, S110 - the page that needs the faces tries again and reports the error.
+        pass
 
 
 @lru_cache(maxsize=1)
 def _serif_characters() -> frozenset[int]:
     name, family, style = FONT_FACES[0]
     with TTFont(io.BytesIO(cached_truetype(FONT_DIRECTORY / name, family, style)), lazy=True) as font:
-        return frozenset(font.getBestCmap())
+        return frozenset(cast(dict, font.getBestCmap()))
 
 
 # Math symbols the serif lacks and their nearest character in it, for searchable_text. The ceiling
@@ -277,7 +278,7 @@ def merge_wrapped_headings(blocks: list[dict], page_heights: dict[int, float] | 
         if target is None:
             result.append(dict(block))
             continue
-        target["bbox"] = list(fitz.Rect(target["bbox"]) | fitz.Rect(block["bbox"]))
+        target["bbox"] = list(fitz.Rect(target["bbox"]) | fitz.Rect(block["bbox"]))  # pyright: ignore[reportArgumentType]
         target["heading_parts"] = target.get("heading_parts", [target["id"]]) + [block["id"]]
         for key in ("translation_text", "text"):
             target[key] = target.get(key, target["text"]) + "\n" + block.get(key, block["text"])

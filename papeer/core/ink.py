@@ -15,14 +15,9 @@ from papeer.pdf.pdf_viewer import pdf_page_count
 from papeer.translation.translation_preview import read_preview, translated_page
 
 
-def _paper_folder(lib: Library, paper_id: str) -> Path:
-    lib.paper(paper_id)  # NotFound for a paper the library does not have
-    return lib.folder(paper_id)
-
-
 def check_page(lib: Library, paper_id: str, side: str, page: int) -> tuple[Path, int]:
     """The PDF that page `page` (from 1) of `side` is on and its index there; Invalid when ink cannot go on it."""
-    folder = _paper_folder(lib, paper_id)
+    folder = lib.paper_folder(paper_id)
     if page < 1:
         raise Invalid("ページが範囲外です。")
     source, index = (PaperFiles(folder).original_pdf, page - 1) if side == "original" else translated_page(folder, page - 1)
@@ -40,7 +35,7 @@ def save_capture(lib: Library, paper_id: str, side: str, page: int, box: tuple[f
     source, index = check_page(lib, paper_id, side, page)
     strokes = lib.ink(paper_id, side, page) if include_ink else None
     data = capture_png(source, index, box, strokes)
-    files = PaperFiles(_paper_folder(lib, paper_id))
+    files = PaperFiles(lib.paper_folder(paper_id))
     target = files.new_capture()
     target.parent.mkdir(exist_ok=True)
     atomic_write_bytes(target, data)
@@ -53,7 +48,7 @@ def export_annotated(lib: Library, paper_id: str, side: str, destination: str | 
     A destination must be a .pdf outside the library; it is written in one step (atomic_write_bytes).
     Without one, only the data is returned (the window then offers it as a download).
     """
-    folder = _paper_folder(lib, paper_id)
+    folder = lib.paper_folder(paper_id)
     if side == "translated":
         preview = read_preview(folder)
         if preview and not preview["complete"]:

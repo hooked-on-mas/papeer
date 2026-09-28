@@ -412,15 +412,15 @@ class PaperService:
                 # Also on KeyboardInterrupt or SystemExit: the translations taken are written first.
                 try:
                     flush()
-                except Exception:
-                    pass  # The error that stopped the run is the one to report.
+                except Exception:  # noqa: BLE001, S110 - the error that stopped the run is the one to report.
+                    pass
                 # Stopped by an error: batches answered while the run was stopping are saved but not
                 # finished, so their pages are made now (not after a cancel, which should end at once).
                 if isinstance(error, Exception) and not self.cancel.is_set():
                     try:
                         publish_ready()
-                    except Exception:
-                        pass  # The error that stopped the run is the one to report.
+                    except Exception:  # noqa: BLE001, S110 - the error that stopped the run is the one to report.
+                        pass
                 raise
             flush()
             check_cancel(self.cancel)

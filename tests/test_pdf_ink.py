@@ -358,6 +358,11 @@ def test_ink_page_capture_and_export_rules_without_the_routes(ink_env, tmp_path)
             ink.check_page(lib, identity, side, page)
     with pytest.raises(NotFound):
         ink.check_page(lib, "0" * 32, "original", 1)
+    # Library.paper_folder, which the routes use too: NotFound also for an ID that is not one.
+    assert lib.paper_folder(identity) == folder
+    for unknown in ("0" * 32, "../papers", ""):
+        with pytest.raises(NotFound, match="論文が見つかりません"):
+            lib.paper_folder(unknown)
 
     lib.save_ink(identity, "original", 1, [stroke()])
     saved = ink.save_capture(lib, identity, "original", 1, (0.1, 0.1, 0.5, 0.5), include_ink=True)

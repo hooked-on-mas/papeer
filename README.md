@@ -82,8 +82,14 @@ sidecar は `/health` 以外のすべての API と WebSocket に認証トーク
 
 ```bash
 just test   # pytest、TypeScript の型チェック、フロントエンドのテスト (node:test)
-just lint   # ruff, pyright, tsc
+just lint   # ruff, pyright, ESLint, tsc
 ```
+
+静的チェックの範囲と約束は次のとおりです。
+
+- ruff: `papeer`・`sidecar`・`tests`・`tools` に `ruff check` だけを使います（`pyproject.toml` の `[tool.ruff.lint]`）。E/F/W に加え、`except` 内の `raise` に原因を付ける B904、何でも受け止める `except Exception` を理由付きに限る BLE001・S110、ループ内で作った関数がループ変数を使う B023（`papeer`・`sidecar` のみ）を検査します。すべての例外を握りつぶすのが意図どおりの箇所（UI を止めない、後始末はベストエフォート、など）は `# noqa: BLE001 - 理由` と書きます。`ruff format` は全体には適用しません（手で揃えた書式を保ち、履歴を追いやすくするため）。
+- pyright: `papeer` と `sidecar` を検査します（`[tool.pyright]`）。PyMuPDF・fontTools の型情報が実際と合わない行が多い 4 ファイル（`math_layout.py` 16 件、`table_layout.py` 13 件、`pdf_engine.py` 13 件、`pdf_fonts.py` 10 件。2026-09 時点）だけは対象外で、一覧と件数は `pyproject.toml` にあります。
+- ESLint: React のフックの規則（`react-hooks/rules-of-hooks` と `react-hooks/exhaustive-deps`）だけを検査します（`frontend/eslint.config.js`、`pnpm lint`）。型は tsc が見ます。依存配列を足すと effect の走り方が変わる箇所は、理由を添えた `// eslint-disable-next-line react-hooks/exhaustive-deps -- 理由` にしています。
 
 pytest は `tests/conftest.py` で `LOCALAPPDATA` と `PAPEER_DATA_DIR` をテストごとの一時フォルダーに向けます。実際のデータフォルダー（`%LOCALAPPDATA%\Papeer`、`PaperDesk`、`PapeerSync`）でファイルを開いたり書き込んだりすると、そのテストは失敗します。同梱フォントの変換結果（約30秒かけて作る）だけは `PAPEER_FONT_CACHE_DIR` で `.pytest_cache` 内に置き、次回以降の実行でも使い回します。
 

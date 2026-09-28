@@ -311,7 +311,7 @@ def test_searches_at_the_same_time(lib, monkeypatch):
             try:
                 start.wait()
                 found.extend((query, as_set(library_search(lib, query))) for query in queries)
-            except BaseException as exc:  # Reported below, as a thread cannot fail the test.
+            except BaseException as exc:  # noqa: BLE001 - reported below, as a thread cannot fail the test.
                 failures.append(exc)
         threads = [threading.Thread(target=search) for _ in range(2)]
         for thread in threads:

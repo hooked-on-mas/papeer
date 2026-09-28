@@ -25,7 +25,7 @@ ASK_SCOPES = {"paper", "selected", "collection", "all"}
 @router.post("/api/papers/{paper_id}/translate")
 def translate_paper(paper_id: str, body: TranslateRequest) -> JobStarted:
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     selected_pages = None
     if body.pages:
         selected_pages = parse_page_selection(body.pages, lib.document(paper_id)["page_count"])
@@ -45,7 +45,7 @@ def translate_paper(paper_id: str, body: TranslateRequest) -> JobStarted:
 def translation_plan(paper_id: str, pages: str = "", model: str | None = None) -> dict[str, Any]:
     """What POST .../translate with the same pages and model would send to the model; nothing runs."""
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     selected_pages = parse_page_selection(pages, lib.document(paper_id)["page_count"]) if pages else None
     return plan_translation(lib, paper_id, deps.settings_for_run(model, None), selected_pages)
 
@@ -53,7 +53,7 @@ def translation_plan(paper_id: str, pages: str = "", model: str | None = None) -
 @router.post("/api/papers/{paper_id}/article")
 def generate_article(paper_id: str) -> JobStarted:
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     settings = deps.get_settings()
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict:
@@ -68,14 +68,14 @@ def generate_article(paper_id: str) -> JobStarted:
 @router.get("/api/papers/{paper_id}/messages", response_model=list[ChatMessage], response_model_exclude_unset=True)
 def get_paper_messages(paper_id: str) -> list[dict[str, Any]]:
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     return lib.messages(paper_id, with_usage=True)
 
 
 @router.post("/api/papers/{paper_id}/ask")
 def ask_paper(paper_id: str, body: AskRequest) -> JobStarted:
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     settings = deps.get_settings()
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict:
@@ -98,7 +98,7 @@ def ask_paper(paper_id: str, body: AskRequest) -> JobStarted:
 @router.post("/api/papers/{paper_id}/export")
 def export_paper(paper_id: str, body: ExportRequest) -> dict[str, str]:
     lib = deps.get_library()
-    files = PaperFiles(deps.paper_folder(lib, paper_id))
+    files = PaperFiles(lib.paper_folder(paper_id))
     dest = exports.check_export(files, body.kind, Path(body.destination), lib.root)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
@@ -119,7 +119,7 @@ def export_paper(paper_id: str, body: ExportRequest) -> dict[str, str]:
 def prepare_interleaved(paper_id: str) -> JobStarted:
     """interleaved.pdf beside the paper for an external viewer, built only when missing or out of date."""
     lib = deps.get_library()
-    files = PaperFiles(deps.paper_folder(lib, paper_id))
+    files = PaperFiles(lib.paper_folder(paper_id))
     if not files.translated_pdf.is_file():
         raise Invalid("先に日本語訳を作成してください。")
 

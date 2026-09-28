@@ -11,10 +11,11 @@ import subprocess
 import tempfile
 import threading
 import time
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, ClassVar
 
 if TYPE_CHECKING:
     from papeer.core.config import Settings
+    from papeer.providers.base import ProviderSpec
 
 
 class Cancelled(Exception):
@@ -455,8 +456,11 @@ class CliBackend:
     login_args: tuple[str, ...] = ()
     status_args: tuple[str, ...] = ()
 
-    options: dict[str, str]  # Provided by ProviderBackend.
-    spec: "object"
+    if TYPE_CHECKING:  # Provided by ProviderBackend.
+        spec: ClassVar[ProviderSpec]
+
+        @property
+        def options(self) -> dict[str, str]: ...
 
     def command(self) -> list[str]:
         return find_cli(self.options.get("cli_path", ""), self.executable, self.windows_candidates,

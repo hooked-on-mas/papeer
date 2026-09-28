@@ -54,7 +54,7 @@ fn data_directory(app: &tauri::App) -> Option<PathBuf> {
     let current = base.join("Papeer");
     let legacy = base.join("PaperDesk");
     // A stray, empty Papeer folder must not hide a PaperDesk library that holds papers.
-    let has_papers = |root: &PathBuf| std::fs::read_dir(root.join("papers")).map_or(false, |mut it| it.next().is_some());
+    let has_papers = |root: &PathBuf| std::fs::read_dir(root.join("papers")).is_ok_and(|mut it| it.next().is_some());
     Some(if (!current.exists() && legacy.is_dir()) || (has_papers(&legacy) && !has_papers(&current)) { legacy } else { current })
 }
 

@@ -338,6 +338,14 @@ class Library:
             raise ValueError("Invalid paper ID")
         return self.root / "papers" / paper_id
 
+    def paper_folder(self, paper_id: str) -> Path:
+        """The folder of a paper the library has: NotFound for any other ID, a malformed one included."""
+        try:
+            self.paper(paper_id)
+            return self.folder(paper_id)
+        except (KeyError, ValueError):
+            raise NotFound("論文が見つかりません。") from None
+
     def import_pdf(self, source: Path, collection_name: str = "") -> tuple[str, bool]:
         if source.stat().st_size > 300 * 1024 * 1024:
             raise ValueError("300MB以下のPDFを追加してください。")
@@ -463,6 +471,7 @@ class Library:
         if not values or not set(values) <= {"title", "status", "collection_name", "note", "first_author", "publication_year",
                                              "tags", "read_status", "doi", "arxiv_id", "venue"}:
             raise ValueError("Invalid fields")
+        tags: list[str] = []
         if "tags" in values:
             tags = list(dict.fromkeys(tag.strip() for tag in values["tags"] if tag.strip()))
             if len(tags) > 100 or any(len(tag) > 80 for tag in tags):

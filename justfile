@@ -28,16 +28,20 @@ test-frontend:
     pnpm typecheck
     pnpm test
 
-# Lint and type check
+# Lint and type check (README「テストと lint」)
+# ruff check only: ruff format is not applied (pyproject.toml [tool.ruff.lint])
+# pyright checks papeer and sidecar as pyproject.toml [tool.pyright] lists them (a few files are left out there)
 lint: lint-backend lint-frontend
 
 lint-backend:
     uv run ruff check papeer sidecar tests tools
-    uv run pyright sidecar
+    uv run pyright
 
+# ESLint checks the rules of React hooks only (frontend/eslint.config.js); tsc the types
 [working-directory: 'frontend']
 lint-frontend:
     pnpm typecheck
+    pnpm lint
 
 # Regenerate the API schema and the frontend's types from the sidecar (tools/export_openapi.py, README「API の型」)
 # frontend/openapi.json を app.openapi() から書き出し、openapi-typescript で frontend/src/api/schema.d.ts を作り直す

@@ -70,7 +70,7 @@ def test_concurrent_writers_use_their_own_temporary_files(tmp_path):
         try:
             for _ in range(20):
                 atomic_write_json(target, {"writer": index})
-        except Exception as exc:  # pragma: no cover - reported below
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover - reported below
             errors.append(exc)
 
     threads = [threading.Thread(target=write, args=(index,)) for index in range(4)]

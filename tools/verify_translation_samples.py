@@ -70,7 +70,7 @@ def run(snapshot: Path, output: Path):
                           translated_units=len(units), error=None)
             reports[identity] = report
             print(f"DONE {identity[:4]} scaled={report['scaled_blocks']}", flush=True)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - one paper failing is reported, the rest go on
             reports[identity] = {"source_pages": sorted(selected), "error": str(error)}
             print(f"FAILED {identity[:4]}: {error}", flush=True)
         atomic_write_json(output / "reports.json", reports)

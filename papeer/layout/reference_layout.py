@@ -6,6 +6,7 @@ translatable, including continuations lacking enough bibliographic evidence.
 from __future__ import annotations
 
 import re
+from typing import cast
 import unicodedata
 
 # Section numbers: 1-99 or Roman I-XXIX (not arbitrary letters such as "C.").
@@ -116,7 +117,7 @@ def _reading_sequence(document: dict) -> list[dict]:
     margins = sorted((b for b in sequence if b.get("reading_margin") and gutters.get(b["page"]) is not None),
                      key=lambda b: (b["page"], b["bbox"][1]))
     for block in margins:
-        gutter = gutters[block["page"]]
+        gutter = cast(float, gutters[block["page"]])  # margins holds only pages with a gutter
         x0, y0, x1, _ = block["bbox"]
         lane = 0 if x1 <= gutter + 3 else 1 if x0 >= gutter - 3 else None
         if lane is None:

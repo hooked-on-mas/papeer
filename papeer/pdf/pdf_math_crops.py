@@ -30,7 +30,7 @@ def page_glyph_bounds(page):
         if extension == "pfa":
             try:
                 fonts[name.split("+")[-1]] = _outline_bounds(page.parent.extract_font(xref)[3])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Unsupported font programs retain the original crop bounds.
                 continue
     result = {}

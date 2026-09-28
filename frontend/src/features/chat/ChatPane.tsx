@@ -183,6 +183,7 @@ export function ChatPane() {
       el?.focus();
       el?.setSelectionRange(el.value.length, el.value.length);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs for a new draft only; busy, send... are read as they are when it arrives
   }, [chatDraft, activePaperId]);
 
   const handleKeyDown =(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
