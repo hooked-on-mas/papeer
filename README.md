@@ -93,6 +93,10 @@ just lint   # ruff, pyright, ESLint, tsc
 
 pytest は `tests/conftest.py` で `LOCALAPPDATA` と `PAPEER_DATA_DIR` をテストごとの一時フォルダーに向けます。実際のデータフォルダー（`%LOCALAPPDATA%\Papeer`、`PaperDesk`、`PapeerSync`）でファイルを開いたり書き込んだりすると、そのテストは失敗します。同梱フォントの変換結果（約30秒かけて作る）だけは `PAPEER_FONT_CACHE_DIR` で `.pytest_cache` 内に置き、次回以降の実行でも使い回します。
 
+CI（`.github/workflows/ci.yml`）は push ごとに Windows で、`just lint`・`just test` と同じ検査に加えて `frontend/openapi.json` とライセンス台帳が最新か（`--check`）、`pnpm build`、Rust の `cargo fmt --check`・`cargo clippy --release --all-targets -- -D warnings`・`cargo test --release`（`lib.rs` の単体テスト）を実行します。同じリポジトリのブランチからの pull request は push したときの結果を使い、pull request として検査するのは fork からのものだけです。実際の AI は呼びません。
+
+clippy は手元では `just clippy` で CI と同じように実行できます。sidecar の exe なしで通るよう、このコマンドの間だけ `TAURI_CONFIG` で `externalBin` を外します。PowerShell で直接実行するなら `$env:TAURI_CONFIG='{"bundle":{"externalBin":[]}}'; cargo clippy --release --all-targets -- -D warnings; Remove-Item Env:TAURI_CONFIG` のように、終わったら必ず外してください（付けたまま `just build` すると sidecar の入っていないインストーラーができます）。
+
 ### API の型
 
 sidecar の API の形（ルートと、`sidecar/schemas/`・`sidecar/job_types.py` の Pydantic モデル）が、フロントエンドの型の元です。モデルやルートを変えたら `just gen-api` を実行し、次の 2 つを作り直してコミットします（食い違いは `tests/test_openapi_schema.py` が検出します）。

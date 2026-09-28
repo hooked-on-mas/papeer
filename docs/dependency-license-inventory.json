@@ -16,7 +16,7 @@
   "sourceFiles": [
     {
       "path": "uv.lock",
-      "sha256": "6e98f471ee7a8878d68b00c14bfaa9bc77e82608e8ba0f561d131f7c0e4fe3dd"
+      "sha256": "1adc110583e1e03a76d2da71accbfbe98264e8cebb043f34b0c04a2d9aaaef42"
     },
     {
       "path": "frontend/pnpm-lock.yaml",
@@ -30,12 +30,12 @@
   "summary": {
     "python": {
       "rows": 43,
-      "directRows": 12,
+      "directRows": 13,
       "unknownLicenseRows": 3,
       "scopeCounts": {
         "build": 7,
         "windows-runtime": 22,
-        "development": 16,
+        "development": 17,
         "other-platform-in-lock": 3
       }
     },
@@ -496,10 +496,13 @@
       {
         "name": "pyyaml",
         "version": "6.0.3",
-        "dependencyType": "transitive",
-        "directScopes": [],
+        "dependencyType": "direct",
+        "directScopes": [
+          "development"
+        ],
         "scopes": [
-          "windows-runtime"
+          "windows-runtime",
+          "development"
         ],
         "license": "MIT",
         "licenseEvidence": ".venv/Lib/site-packages/pyyaml-6.0.3.dist-info/METADATA",

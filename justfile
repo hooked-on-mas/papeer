@@ -43,6 +43,13 @@ lint-frontend:
     pnpm typecheck
     pnpm lint
 
+# Run clippy on the Tauri app as CI does (README「テストと lint」)
+# sidecar の exe がなくても通るよう TAURI_CONFIG で externalBin を外す。変数はこの行の PowerShell の中だけで効き、終われば消える
+# （付けたまま just build するとインストーラーに sidecar が入らないため、シェルには残さない）
+[working-directory: 'frontend/src-tauri']
+clippy:
+    $env:TAURI_CONFIG = '{"bundle":{"externalBin":[]}}'; cargo clippy --release --all-targets -- -D warnings
+
 # Regenerate the API schema and the frontend's types from the sidecar (tools/export_openapi.py, README「API の型」)
 # frontend/openapi.json を app.openapi() から書き出し、openapi-typescript で frontend/src/api/schema.d.ts を作り直す
 # API のモデルやルートを変えたら実行して両方をコミットする（一致は tests/test_openapi_schema.py で検査する）

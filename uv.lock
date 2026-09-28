@@ -291,6 +291,7 @@ dev = [
     { name = "httpx2" },
     { name = "pyright" },
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -311,6 +312,7 @@ dev = [
     { name = "httpx2", specifier = ">=2.13.1" },
     { name = "pyright", specifier = ">=1.1.380" },
     { name = "pytest", specifier = ">=8.0.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", specifier = ">=0.6.0" },
 ]
 
