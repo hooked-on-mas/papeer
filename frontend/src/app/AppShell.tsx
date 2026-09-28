@@ -29,7 +29,8 @@ import { bindReaderQueryClient, changeZoom, focusPageInput, movePage } from "../
 import { bindQueryClient, createFolder, importPdfs, normalizeCollection, renameFolder, renamePaperFile } from "./actions";
 import { useDropTarget, useFileDrop } from "./fileDrop";
 import { flushUiState, initUiStateSync } from "./uiStateSync";
-import { flushPendingSaves } from "@/lib/pendingSaves";
+import { initPaperOpenedTracking } from "./paperOpened";
+import { describeFailure, discardHeldDrafts, flushPendingSaves, heldDraftDescriptions } from "@/lib/pendingSaves";
 import { isAppClosing, setAppClosing } from "./appClosing";
 import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
 import { isJobKind, SNAPSHOT_JOBS } from "@/features/jobs/jobKinds";
@@ -83,8 +84,30 @@ function useCloseHandling(): void {
     if (window.__TAURI_INTERNALS__ === undefined) return;
     const unlisteners: Array<() => void> = [];
 
+    // Saving and asking before anything is stopped may take a while: a second press waits for the first.
+    let preparing = false;
     const handleClose = async () => {
-      if (isAppClosing()) return;
+      if (isAppClosing() || preparing) return;
+      preparing = true;
+      try {
+        await closeApp();
+      } finally {
+        preparing = false;
+      }
+    };
+
+    const closeApp = async () => {
+      // Saved, and asked about, before any job is stopped: calling the closing off here leaves them running.
+      const saveFailure = await flushPendingSaves();
+      if (saveFailure) {
+        showToast({ title: "終了を中止しました", description: describeFailure(saveFailure), tone: "error", timeout: 0 });
+        return;
+      }
+      // Values that cannot be saved as they are (論文情報): the library keeps what was saved before.
+      const held = heldDraftDescriptions();
+      if (held.length && !await askConfirm("保存できない入力があります",
+        `次の入力は保存できないため、保存済みの内容のままです。\n\n${held.join("\n\n")}\n\n直す場合は「キャンセル」を押し、メモ・整理タブで直すか元に戻してください。`,
+        "入力を破棄して終了", true, CLOSE_QUESTION)) return;
       const running = useStore.getState().activeJobs.filter(isRunning);
       const snapshot = running.some(job => isJobKind(job.kind, SNAPSHOT_JOBS));
       if (snapshot) {
@@ -98,6 +121,8 @@ function useCloseHandling(): void {
           "中止して終了", true, CLOSE_QUESTION);
         if (!ok) return;
       }
+      // Only once every question is answered: calling the closing off keeps what was typed.
+      if (held.length) discardHeldDrafts();
       setAppClosing(true);
       if (running.length) {
         useStore.getState().setStatus("処理を中止しています…終了まで少しお待ちください。");
@@ -105,11 +130,12 @@ function useCloseHandling(): void {
         // Let CLI subprocesses stop before the sidecar exits (/shutdown also waits, for a while longer).
         await waitForJobs(15_000);
       }
+      // Again: what was typed meanwhile, and what the stopped jobs left.
       const failure = await flushPendingSaves();
       if (failure) {
         setAppClosing(false);
         useStore.getState().setStatus(""); // 「処理を中止しています…」 no longer holds.
-        showToast({ title: "終了を中止しました", description: failure.message, tone: "error", timeout: 0 });
+        showToast({ title: "終了を中止しました", description: describeFailure(failure), tone: "error", timeout: 0 });
         return;
       }
       await flushUiState();
@@ -241,6 +267,7 @@ export function AppShell() {
   }, [queryClient]);
 
   useEffect(() => initUiStateSync(), []);
+  useEffect(() => initPaperOpenedTracking(), []);
 
   useEffect(() => whenIdle(() => {
     for (const component of [SummaryPane, ChatPane, NotesPane, SettingsDialog]) component.preload();

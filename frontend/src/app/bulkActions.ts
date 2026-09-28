@@ -4,8 +4,8 @@
  * its own request in turn (features/library/bulkOutcome.ts), which the automatic sync may hold back
  * and send again like any other (libraryBusy.ts); the status bar then says how many were done, and an
  * error dialog which could not be and why. One runs at a time, holding the library's reloads until it
- * reloads the library once at the end, and can be stopped (bulkState.ts). A single paper goes the way
- * it always has (actions.ts).
+ * reloads the library once at the end, and can be stopped (bulkState.ts). A single paper (its own context
+ * menu, or a selection of one) goes the way it always has (actions.ts).
  */
 import { apiRequest, ApiError } from "@/api/client";
 import { askConfirm, askText } from "@/components/AppDialogs";
@@ -15,9 +15,11 @@ import { useStore, type MoveRecord } from "@/store";
 import { bulkReport, runBulk, type BulkOutcome, type BulkStep, type BulkWording } from "@/features/library/bulkOutcome";
 import {
   deletePaper, expandToCollection, forgetPapers, listedTitle, movePaper, normalizeCollection, paper,
-  recordMoves, refreshAfterChanges, stopsAllRequests,
+  recordMoves, refreshAfterChanges, setPaperReadStatus, stopsAllRequests, tagPaper, changePaperTag,
 } from "./actions";
+import { MAX_TAG_LENGTH } from "@/features/notes/tagOptions";
 import { BULK_BUSY_MESSAGE, beginBulk, isBulkRunning } from "./bulkState";
+import { forgetDraftsOfPapers } from "@/lib/pendingSaves";
 
 /**
  * Runs `step` on each paper and reports it, then `finish` with the outcome, while the library's reloads
@@ -80,12 +82,10 @@ export async function movePapersToNewCollection(ids: string[], current: string):
 
 /** Puts the tag `tag` on the papers (`add`), or takes it off. */
 export async function tagPapers(ids: string[], tag: string, add: boolean): Promise<void> {
-  await eachPaper(ids, add ? `タグ「${tag}」を付けています` : `タグ「${tag}」を外しています`, async (id) => {
-    const tags = (await paper(id)).tags ?? [];
-    if (tags.includes(tag) === add) return "unchanged";
-    await apiRequest("PATCH", `/api/papers/${id}`, { tags: add ? [...tags, tag] : tags.filter((t) => t !== tag) });
-    return "done";
-  }, add ? {
+  if (ids.length === 1) return tagPaper(ids[0], tag, add);
+  // In each paper's turn with the changes made to it one by one (tagQueue.ts), so that neither is lost.
+  await eachPaper(ids, add ? `タグ「${tag}」を付けています` : `タグ「${tag}」を外しています`,
+    (id) => changePaperTag(id, tag, add), add ? {
     done: (n) => `${n}件の論文にタグ「${tag}」を付けました。`,
     unchanged: (n) => `${n}件にはすでに付いています。`,
     failed: (n) => `${n}件の論文にタグを付けられませんでした`,
@@ -96,8 +96,27 @@ export async function tagPapers(ids: string[], tag: string, add: boolean): Promi
   }, refreshAfterChanges);
 }
 
+/**
+ * Asks for the name of a tag, which need not exist yet, and puts it on the papers (one, from its context
+ * menu, or those selected together). A new name becomes one of the tag choices as it is saved.
+ */
+export async function tagPapersWithNew(ids: string[]): Promise<void> {
+  const typed = await askText("新しいタグ", ids.length > 1 ? `${ids.length}件の論文に付けるタグの名前` : "論文に付けるタグの名前", "");
+  const name = typed?.trim();
+  if (!name) return;
+  if (Array.from(name).length > MAX_TAG_LENGTH) {
+    showError(`タグ名は${MAX_TAG_LENGTH}文字までです。`, "タグを付けられませんでした");
+    return;
+  }
+  await tagPapers(ids, name, true);
+}
+
 /** Sets the papers' reading status. */
 export async function setPapersReadStatus(ids: string[], status: string): Promise<void> {
+  if (ids.length === 1) {
+    await setPaperReadStatus(ids[0], status);
+    return;
+  }
   await eachPaper(ids, `読書状態を「${status}」にしています`, async (id) => {
     if (((await paper(id)).read_status ?? "") === status) return "unchanged";
     await apiRequest("PATCH", `/api/papers/${id}`, { read_status: status });
@@ -147,6 +166,7 @@ export async function deletePapers(ids: string[]): Promise<boolean> {
     const s = useStore.getState();
     if (s.activePaperId !== null && gone.has(s.activePaperId)) s.setActivePaperId(null);
     for (const id of gone) clearJobFailure(id);
+    forgetDraftsOfPapers(gone);
     useStore.setState({ moveHistory: forgetPapers(useStore.getState().moveHistory, gone) });
     await refreshAfterChanges();
     return gone.size > 0;

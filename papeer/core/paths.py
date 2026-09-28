@@ -56,6 +56,11 @@ def review_cache_path(root: Path) -> Path:
     return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".review-pages.json")
 
 
+def opened_papers_path(root: Path) -> Path:
+    """When each paper of the library at `root` was last opened on this PC (see opened_papers)."""
+    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".opened.json")
+
+
 def search_index_path(root: Path) -> Path:
     """This PC's full-text index of the library at `root` (see search_index)."""
     return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".search.sqlite3")

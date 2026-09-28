@@ -10,23 +10,24 @@ import {
 } from "@dnd-kit/core";
 import {
   ArrowUpDown, BookOpen, ChevronDown, ChevronRight, CircleAlert, Copy, Download, Edit2, ExternalLink, FilePlus2, FileText, Folder,
-  FolderOpen, FolderPlus, Loader2, Save, Search, Tag, Trash2, Undo2, X,
+  FolderOpen, FolderPlus, Loader2, Plus, Save, Search, Tag, Trash2, Undo2, X,
 } from "lucide-react";
 import { paperDisplayName, useCollections, usePaperList, type PaperData } from "@/api/hooks";
 import { useStore } from "@/store";
 import {
-  ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator,
-  ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger,
+  ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuLabel, ContextMenuRadioGroup,
+  ContextMenuRadioItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   chooseNewCollection, copyBibtex, createFolder, deleteFolder, exportFolderBibtex, importPdfs, movePaper,
-  openPaperFile, openPaperFolder, renameFolder, renamePaperFile, saveOriginal, undoLabel, undoMove,
+  openPaperFile, openPaperFolder, renameFolder, renamePaperFile, saveOriginal, setPaperReadStatus, tagPaper, undoLabel, undoMove,
 } from "@/app/actions";
-import { deletePapers, movePapers, movePapersToNewCollection, setPapersReadStatus, tagPapers } from "@/app/bulkActions";
+import { deletePapers, movePapers, movePapersToNewCollection, setPapersReadStatus, tagPapers, tagPapersWithNew } from "@/app/bulkActions";
 import { useDropTarget } from "@/app/fileDrop";
+import { useShownOrganization } from "@/app/useOrganizing";
 import { usePendingImports, type PendingImport } from "@/app/pendingImports";
 import { allFolderPaths, buildTree, filterPapers, normalizeCollection, type FolderNode } from "./libraryTree";
 import {
@@ -37,7 +38,7 @@ import { requestTreeFocus, takeTreeFocus, updateTreeFocus, useTreeFocus } from "
 import {
   papersActedOn, pruneSelection, rowAfterRemovingRows, selectAllPapers, selectRange, toggleSelection,
 } from "./paperSelection";
-import { changeSelection, clearSelection, usePaperSelection } from "./selectionStore";
+import { changeSelection, clearSelection, openPaper, usePaperSelection } from "./selectionStore";
 import { stopBulk, useBulkProgress } from "@/app/bulkState";
 import { LibraryTags } from "./LibraryTags";
 import { TagChip } from "@/components/ui/TagChip";
@@ -65,21 +66,13 @@ const useDragOver = create<{ path: string | null; paperIds: ReadonlySet<string> 
 /** The keyboard focus of the rows: a ring when focused from the keyboard, in the theme's ring color. */
 const FOCUS_RING = "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring focus-visible:rounded-sm";
 
-// Choosing a folder or opening a paper (a click, Enter) ends selecting several papers: the tree has its
-// one selected row again, and a Shift range starts from the row chosen.
+// Choosing a folder or opening a paper (a click, Enter; see openPaper) ends selecting several papers: the
+// tree has its one selected row again, and a Shift range starts from the row chosen.
 function selectFolder(path: string) {
   clearSelection(folderKey(path));
   const store = useStore.getState();
   store.setSelectedFolder(path);
   store.setCurrentCollection(path);
-}
-
-function openPaper(paperId: string, collection: string) {
-  clearSelection(paperKey(paperId));
-  const store = useStore.getState();
-  store.setSelectedFolder(null);
-  store.setCurrentCollection(collection);
-  if (store.activePaperId !== paperId) store.setActivePaperId(paperId);
 }
 
 // Deleting or renaming a row removes it, and its focus would fall to the page, where the arrows turn the
@@ -455,6 +448,7 @@ export function LibrarySidebar() {
             <DropdownMenuTrigger
               className="w-8 h-8 flex items-center justify-center border rounded-md hover:bg-muted shrink-0"
               title={`並べ替え：${SORT_LABELS[sortOrder]}`}
+              aria-label={`並べ替え：${SORT_LABELS[sortOrder]}`}
             >
               <ArrowUpDown className="w-4 h-4 text-muted-foreground" />
             </DropdownMenuTrigger>
@@ -836,7 +830,8 @@ const PaperRow = memo(function PaperRow({ paper, depth, collections, onTagSelect
 
 /**
  * A paper's context menu: the paper's own items, or, for a paper in a selection of several, what can be
- * done to them all. Rendered only while the menu is open, so that the rows need not follow the selection.
+ * done to them all (the menu of a paper outside the selection is that paper's own, and leaves the
+ * selection as it is). Rendered only while the menu is open, so that the rows need not follow the selection.
  */
 function PaperMenu({ paper, collection, collections }: { paper: PaperData; collection: string; collections: string[] }) {
   const ids = useMemo(() => papersActedOn(usePaperSelection.getState(), useTreeFocus.getState().rows, paper.id), [paper.id]);
@@ -857,6 +852,7 @@ function PaperMenu({ paper, collection, collections }: { paper: PaperData; colle
           <ContextMenuItem onClick={() => chooseNewCollection(paper.id, collection)}>新しい分類を入力…</ContextMenuItem>
         </ContextMenuSubContent>
       </ContextMenuSub>
+      <PaperOrganizeItems paper={paper} />
       <ContextMenuSeparator />
       <ContextMenuItem onClick={() => renamePaperFile(paper.id)}>
         <Edit2 className="w-4 h-4 mr-2" /> ファイル名を変更…
@@ -877,6 +873,54 @@ function PaperMenu({ paper, collection, collections }: { paper: PaperData; colle
       <ContextMenuItem onClick={() => deletePaperRow(paper.id)} className="text-destructive">
         <Trash2 className="w-4 h-4 mr-2" /> ライブラリから削除
       </ContextMenuItem>
+    </>
+  );
+}
+
+/**
+ * One paper's reading status and tags, each saved as it is chosen. The tags' list stays open, so that
+ * several go on or off in a row; the marks show what was chosen at once, with the changes still being
+ * saved over the row as loaded (useShownOrganization).
+ */
+function PaperOrganizeItems({ paper }: { paper: PaperData }) {
+  const { data: tagChoices = NO_COLLECTIONS } = useTagChoices("paper");
+  const { data: statuses = NO_COLLECTIONS } = useTagChoices("status");
+  const { tags, status } = useShownOrganization(paper.id, paper.tags, paper.read_status ?? "");
+  const names = [...new Set([...tagChoices, ...tags])];
+  return (
+    <>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>
+          <BookOpen className="w-4 h-4 mr-2" /> 読書状態
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-56 max-h-[320px] overflow-y-auto">
+          <ContextMenuRadioGroup value={status} onValueChange={(value: string) => {
+            if (value !== status) void setPaperReadStatus(paper.id, value);
+          }}>
+            {!!status && !statuses.includes(status) && <ContextMenuRadioItem value={status} disabled>{status}（削除済み）</ContextMenuRadioItem>}
+            {statuses.map((name) => <ContextMenuRadioItem key={name} value={name}>{name}</ContextMenuRadioItem>)}
+          </ContextMenuRadioGroup>
+          {!statuses.length && <ContextMenuItem disabled>読書状態がありません</ContextMenuItem>}
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>
+          <Tag className="w-4 h-4 mr-2" /> タグ{tags.length ? `（${tags.length}）` : ""}
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-56 max-h-[320px] overflow-y-auto">
+          {names.map((name) => (
+            <ContextMenuCheckboxItem key={name} checked={tags.includes(name)} closeOnClick={false}
+              onCheckedChange={(checked: boolean) => void tagPaper(paper.id, name, checked)}>
+              <span className="min-w-0 break-all">{name}</span>
+            </ContextMenuCheckboxItem>
+          ))}
+          {!names.length && <ContextMenuItem disabled>タグはまだありません</ContextMenuItem>}
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => void tagPapersWithNew([paper.id])}>
+            <Plus className="w-4 h-4 mr-2" /> 新しいタグを付ける…
+          </ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
     </>
   );
 }
@@ -922,6 +966,10 @@ function SelectionMenu({ ids, paperId, collections }: { ids: string[]; paperId: 
             </ContextMenuItem>
           ))}
           {!tags.length && <ContextMenuItem disabled>タグはまだありません</ContextMenuItem>}
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => void tagPapersWithNew(ids)}>
+            <Plus className="w-4 h-4 mr-2" /> 新しいタグを付ける…
+          </ContextMenuItem>
         </ContextMenuSubContent>
       </ContextMenuSub>
       <ContextMenuSub>

@@ -54,3 +54,32 @@ export function openEditLabels(): string[] {
 export function useOpenEdit(active: boolean, label: string): void {
   useEffect(() => (active ? beginOpenEdit(label) : undefined), [active, label]);
 }
+
+/**
+ * Edits kept back because they cannot be saved as they are (a value the sidecar refuses), which saving
+ * leaves as they are: closing the app asks whether to close without them, listing `describe()`.
+ */
+type HeldDrafts = { describe: () => string[]; discard: () => void; forget: (paperIds: Iterable<string>) => void };
+
+const heldDrafts = new Set<HeldDrafts>();
+
+export function registerHeldDrafts(entry: HeldDrafts): () => void {
+  heldDrafts.add(entry);
+  return () => heldDrafts.delete(entry);
+}
+
+/** What is kept back now, a paragraph each; empty when nothing is. */
+export function heldDraftDescriptions(): string[] {
+  return [...heldDrafts].flatMap((entry) => entry.describe());
+}
+
+/** Drops the drafts of papers that were deleted, which there is nothing left to save to. */
+export function forgetDraftsOfPapers(paperIds: Iterable<string>): void {
+  const ids = [...paperIds];
+  for (const entry of heldDrafts) entry.forget(ids);
+}
+
+/** Drops what is kept back (closing without it). */
+export function discardHeldDrafts(): void {
+  for (const entry of heldDrafts) entry.discard();
+}

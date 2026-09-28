@@ -7,7 +7,7 @@ import { create } from "zustand";
 import { useStore } from "@/store";
 import { NO_SELECTION, type PaperSelection } from "./paperSelection";
 import { useTreeFocus } from "./treeFocus";
-import type { TreeRow } from "./treeKeys";
+import { paperKey, type TreeRow } from "./treeKeys";
 
 export const usePaperSelection = create<PaperSelection>(() => NO_SELECTION);
 
@@ -27,4 +27,16 @@ export function changeSelection(change: (selection: PaperSelection, rows: TreeRo
 export function clearSelection(anchor: string | null = null): void {
   const current = usePaperSelection.getState();
   if (current.ids !== null || current.anchor !== anchor) usePaperSelection.setState({ ids: null, anchor }, true);
+}
+
+/**
+ * Opens a paper as choosing its row in the library does (a click, Enter, 続きから読む): that ends
+ * selecting several papers, and the folder it is in becomes the one new PDFs go into.
+ */
+export function openPaper(paperId: string, collection: string): void {
+  clearSelection(paperKey(paperId));
+  const store = useStore.getState();
+  store.setSelectedFolder(null);
+  store.setCurrentCollection(collection);
+  if (store.activePaperId !== paperId) store.setActivePaperId(paperId);
 }

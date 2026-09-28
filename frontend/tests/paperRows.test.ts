@@ -23,6 +23,14 @@ test("the list is loaded again when the row cannot simply be replaced", () => {
   assert.equal(withPaperRow(rows, "a", { id: "a", title: "Zeta" }, "", 3), null);
   assert.deepEqual(withPaperRow(rows, "a", { id: "a", title: "Zeta" }, "", 1)?.map((row) => row.title), ["Zeta", "Beta"]);
   assert.deepEqual(withPaperRow(rows, "a", { id: "a", title: "Alpha", tags: ["x"] }, "", 2)?.[0].tags, ["x"]);
+  // Likewise a new year, author or time of opening in the orders that go by them.
+  assert.equal(withPaperRow(rows, "a", { id: "a", title: "Alpha", publication_year: "2020" }, "", 4), null);
+  assert.equal(withPaperRow(rows, "a", { id: "a", title: "Alpha", first_author: "Smith" }, "", 5), null);
+  assert.equal(withPaperRow(rows, "a", { id: "a", title: "Zeta" }, "", 5), null);
+  assert.equal(withPaperRow(rows, "a", { id: "a", title: "Alpha", last_opened_at: "2026-09-28T00:00:00.000Z" }, "", 6), null);
+  assert.ok(withPaperRow(rows, "a", { id: "a", title: "Alpha", last_opened_at: "2026-09-28T00:00:00.000Z" }, "", 4));
+  // A value missing from one and null in the other is the same.
+  assert.ok(withPaperRow(rows, "a", { id: "a", title: "Alpha", last_opened_at: null }, "", 6));
 });
 
 test("a removed paper leaves the list", () => {

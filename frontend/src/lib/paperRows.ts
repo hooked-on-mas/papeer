@@ -1,5 +1,5 @@
 import type { PaperData } from "@/api/hooks";
-import { TITLE_ORDERS } from "./librarySort.ts";
+import { orderFields } from "./librarySort.ts";
 
 /**
  * Updating one paper's row in the loaded library lists (GET /api/papers) instead of loading them again.
@@ -12,14 +12,14 @@ import { TITLE_ORDERS } from "./librarySort.ts";
 /**
  * `rows` (a list for `query` and `sort`) with the paper's row replaced by `paper`, or without it when
  * `paper` is null (removed). null when the list must be loaded again instead: the paper is not in it
- * (new, or filtered out), whether it still matches `query` is the sidecar's call, or its place in an
- * order by name may have changed.
+ * (new, or filtered out), whether it still matches `query` is the sidecar's call, or its place in the
+ * order may have changed (a value the order goes by changed: the title, year, author or when it was opened).
  */
 export function withPaperRow(rows: PaperData[], paperId: string, paper: PaperData | null, query: string, sort: number): PaperData[] | null {
   const index = rows.findIndex((row) => row.id === paperId);
   if (paper === null) return index < 0 ? rows : rows.filter((row) => row.id !== paperId);
   if (index < 0 || query.trim()) return null;
-  if (TITLE_ORDERS.has(sort) && rows[index].title !== paper.title) return null;
+  if (orderFields(sort).some((field) => (rows[index][field] ?? null) !== (paper[field] ?? null))) return null;
   // The list rows leave out the memo (papeer/core/library_list.py, paper_row).
   const row: PaperData = { ...paper };
   delete row.note;

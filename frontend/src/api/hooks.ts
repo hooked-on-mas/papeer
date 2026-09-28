@@ -34,6 +34,8 @@ export type PaperData = {
   pages?: number;
   folder_path?: string;
   created_at?: string;
+  /** When it was last opened on this PC (papeer/core/opened_papers.py), UTC ISO text; null if never. */
+  last_opened_at?: string | null;
 };
 
 export type TranslatedPageRef = { file: string; index: number; mtime: number } | null;
