@@ -26,6 +26,20 @@ struct BackendConfig {
 #[cfg(debug_assertions)]
 const DEV_TOKEN: &str = "dev_token";
 
+/// The end-to-end tests (frontend/e2e) name a folder here: the main window's WebView2 profile goes there,
+/// and the window-state plugin is left out. Debug builds only, so the tests never touch the user's
+/// %LOCALAPPDATA%\local.paperdesk (the WebView2 profile Tauri would otherwise pick through the Windows
+/// known folders, which ignore LOCALAPPDATA) nor the window position saved in %APPDATA%\local.paperdesk.
+#[cfg(debug_assertions)]
+const E2E_DIR_VARIABLE: &str = "PAPEER_E2E_DIR";
+
+#[cfg(debug_assertions)]
+fn e2e_dir() -> Option<PathBuf> {
+    std::env::var_os(E2E_DIR_VARIABLE)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
 /// A fresh token for each launch: 256 bits from the OS CSPRNG, hex-encoded.
 #[cfg(not(debug_assertions))]
 fn new_token() -> Result<String, getrandom::Error> {
@@ -109,15 +123,40 @@ pub fn run() {
     let security = &mut context.config_mut().app.security;
     security.csp = security.csp.take().map(|csp| pin_sidecar_port(csp, port));
 
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+    // Under the end-to-end tests the main window is made in setup, with its own WebView2 profile.
+    #[cfg(debug_assertions)]
+    let e2e_dir = e2e_dir();
+    #[cfg(debug_assertions)]
+    if e2e_dir.is_some() {
+        for window in &mut context.config_mut().app.windows {
+            window.create = false;
+        }
+    }
+    #[cfg(debug_assertions)]
+    let remember_window = e2e_dir.is_none();
+    #[cfg(not(debug_assertions))]
+    let remember_window = true;
+
+    let mut builder = tauri::Builder::default().plugin(tauri_plugin_shell::init());
+    if remember_window {
+        builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
+    }
+    let app = builder
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![get_backend_config])
         .setup(move |app| {
+            #[cfg(debug_assertions)]
+            if let Some(dir) = &e2e_dir {
+                for config in app.config().app.windows.clone() {
+                    tauri::WebviewWindowBuilder::from_config(app, &config)?
+                        .data_directory(dir.clone())
+                        .build()?;
+                }
+            }
+
             let show_i = MenuItem::with_id(app, "show", "開く", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;

@@ -18,6 +18,7 @@ Papeer の主な変更を記録します。形式は [Keep a Changelog](https://
 - 開発: `just clean`（`build`・`dist`・`output`・`tmp` の一覧表示と削除）と、抽出結果を比べる `tools/compare_layout.py` を追加しました。
 - 開発: 依存のライセンス台帳（`docs/dependency-license-inventory.json`）を作り直す `just licenses` を追加し、台帳を最新にしました。台帳には元にしたロックファイルの sha256 を記録し、ロックファイルだけが変わるとテストが失敗します。既知の脆弱性を調べる `just audit`（pip-audit・pnpm audit・cargo audit）と、Dependabot による週次の更新（`.github/dependabot.yml`）も追加しました。
 - 開発: 配布用 sidecar の exe を一時フォルダーで起動して確かめる `just smoke-sidecar` を追加しました（`/health` の版、認証、同梱のプロンプト、PDF の取り込みと、ローカルの代役 API による翻訳と日本語フォントでの PDF 作成、`/shutdown` と `%TEMP%\_MEI*` の後始末）。`just build-sidecar`（`just build` とリリースのワークフローも使う）は exe を作った直後に実行し、通った exe だけをアプリに同梱します。
+- 開発: 実際のアプリの画面（デバッグ版と WebView2）を CDP で操作する E2E テスト `just e2e`（`frontend/e2e`）を追加しました。ライブラリ・設定・WebView2 のプロファイルなどはすべて一時フォルダーに向け（WebView2 のプロファイルは起動直後にプロセスのコマンドラインで確かめる）、翻訳はローカルの代役 API（`tools/e2e_stub_ai.py`）で行います。CI では実行しません。
 - 翻訳後、用語辞書の原語があるのに訳語が見当たらない段落を翻訳レポートと「翻訳の確認・修正」画面に一覧するようにしました（表記揺れは許容します）。
 - 翻訳の依頼に論文のタイトルとアブストラクト（約 800 字まで）を添え、多義語などを論文の文脈に沿って訳せるようにしました。
 - 開発: `just build-app`（`just build`）の前に、同梱する sidecar と `code-version.txt` が現在のソースから作られたかを内容ハッシュで確かめる `just check-sidecar` を追加しました。

@@ -20,7 +20,7 @@
     },
     {
       "path": "frontend/pnpm-lock.yaml",
-      "sha256": "8392c737e33942edefe40b7741ccd948144de8192781314a03ad337b3cf21ab2"
+      "sha256": "52268bb7cb1355c820e49673dfcd7892af204f2900288fd6994992f1b5c0c3c7"
     },
     {
       "path": "frontend/src-tauri/Cargo.lock",
@@ -40,14 +40,14 @@
       }
     },
     "javascript": {
-      "rows": 773,
-      "directRows": 43,
+      "rows": 774,
+      "directRows": 44,
       "unknownLicenseRows": 66,
       "scopeCounts": {
         "production": 295,
-        "development": 490
+        "development": 491
       },
-      "windowsX64RelevantRows": 707,
+      "windowsX64RelevantRows": 708,
       "windowsX64RelevantUnknownLicenseRows": 0,
       "windowsX64ProductionRows": 285,
       "pnpmLicensesProdGroupedRecords": 274,
@@ -10201,6 +10201,22 @@
         "licenseEvidence": "frontend/node_modules/.pnpm/pkg-up@3.1.0/node_modules/pkg-up/package.json",
         "installedOnAuditMachine": true,
         "lockKey": "pkg-up@3.1.0",
+        "targetRelevant": true
+      },
+      {
+        "name": "playwright-core",
+        "version": "1.63.0",
+        "dependencyType": "direct",
+        "directScopes": [
+          "development"
+        ],
+        "scopes": [
+          "development"
+        ],
+        "license": "Apache-2.0",
+        "licenseEvidence": "frontend/node_modules/.pnpm/playwright-core@1.63.0/node_modules/playwright-core/package.json",
+        "installedOnAuditMachine": true,
+        "lockKey": "playwright-core@1.63.0",
         "targetRelevant": true
       },
       {
