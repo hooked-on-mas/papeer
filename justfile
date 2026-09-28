@@ -28,6 +28,14 @@ test-frontend:
     pnpm typecheck
     pnpm test
 
+# Run the end-to-end tests on the real app window (frontend/e2e, README「E2E テスト」)
+# デバッグ版の papeer.exe を作り（変更がなければすぐ終わる）、sidecar・Vite・代役 API とアプリを一時フォルダーに隔離して起動し、WebView2 を CDP で操作する
+# 実際の AI は呼ばない。開発用の sidecar（8000）・Vite（1420）が動いていれば止めてから実行する（例: just e2e --repeat 3、just e2e library）
+[working-directory: 'frontend']
+e2e *args:
+    $env:TAURI_CONFIG = '{"bundle":{"externalBin":[]}}'; cargo build --manifest-path src-tauri/Cargo.toml
+    node e2e/run.ts {{ args }}
+
 # Lint and type check (README「テストと lint」)
 # ruff check only: ruff format is not applied (pyproject.toml [tool.ruff.lint])
 # pyright checks papeer and sidecar as pyproject.toml [tool.pyright] lists them (a few files are left out there)

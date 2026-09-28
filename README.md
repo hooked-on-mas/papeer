@@ -95,6 +95,27 @@ pytest は `tests/conftest.py` で `LOCALAPPDATA` と `PAPEER_DATA_DIR` をテ�
 
 CI（`.github/workflows/ci.yml`）は push ごとに Windows で、`just lint`・`just test` と同じ検査に加えて `frontend/openapi.json` とライセンス台帳が最新か（`--check`）、`pnpm build`、Rust の `cargo fmt --check`・`cargo clippy --release --all-targets -- -D warnings`・`cargo test --release`（`lib.rs` の単体テスト）を実行します。同じリポジトリのブランチからの pull request は push したときの結果を使い、pull request として検査するのは fork からのものだけです。実際の AI は呼びません。
 
+### E2E テスト
+
+```bash
+just e2e              # すべてのシナリオ（例: just e2e library で名前に library を含むファイルだけ、just e2e --repeat 3 で 3 回続けて）
+```
+
+実際のアプリの画面（デバッグ版の `papeer.exe` と WebView2）を、playwright-core の `connectOverCDP` で操作して確かめます（`frontend/e2e`、node:test）。Windows 11 と WebView2 ランタイムが前提で、所要時間は約 5 分です（シナリオごとにライブラリ・sidecar・アプリを起動し直すため、1 本あたり 15〜40 秒。初回だけ、同梱フォントの変換に約 30 秒余計にかかります。変換結果は pytest と同じ `.pytest_cache` 内に置いて使い回します）。`just e2e` はまず `cargo build`（デバッグ版。変更がなければすぐ終わる）を行い、次に `frontend/e2e/run.ts` が共通の準備をして、シナリオごとに新しいライブラリ・sidecar・アプリを起動します。この `cargo build` は sidecar の exe なしで通るよう `just clippy` と同じく `TAURI_CONFIG` で `externalBin` を外すため、`just dev-frontend` と交互に使うとアプリ本体（`papeer` クレート）だけが作り直されます（約 40 秒）。
+
+- デバッグ版のアプリは sidecar を `127.0.0.1:8000`、画面を Vite の `1420` から読むため、`just dev-sidecar`・`just dev-frontend` を止めてから実行します（使われていれば始める前に止まります）。CDP のポートは毎回空いているものを選びます。
+- 実際のデータには触れません。守り方は次の 3 段です。
+  - 予防（アプリ側）: Tauri は `LOCALAPPDATA`・`APPDATA`・`USERPROFILE` などの環境変数を見ず、Windows の既知フォルダー（`%LOCALAPPDATA%\local.paperdesk` の WebView2 のプロファイル、`%APPDATA%\local.paperdesk\.window-state.json` のウィンドウの位置）を直接使います。そこでデバッグ版に限り、環境変数 `PAPEER_E2E_DIR` があれば、メインウィンドウの WebView2 のプロファイルをそのフォルダーに作り、ウィンドウの位置を覚えるプラグイン（window-state）を登録しません（`frontend/src-tauri/src/lib.rs`。リリース版にはこの分岐自体が入りません）。E2E はこれに実行ごとの一時フォルダーを渡すので、アプリは実際の `local.paperdesk` を読みも書きもしません。
+  - 隔離（環境変数）: ライブラリ（`PAPEER_DATA_DIR`）、`LOCALAPPDATA`・`APPDATA`・`TEMP`/`TMP`、`WEBVIEW2_USER_DATA_FOLDER`、sidecar のホームフォルダー（`USERPROFILE`・`CODEX_HOME`）はすべて実行ごとの一時フォルダーに向け、終われば消します。アプリ本体だけは `USERPROFILE` を変えません（変えると WebView2 がデバッグ用のポートを開かないためです。Tauri はホームフォルダーを使わず、アプリ自身もそこのファイルを読みません）。
+  - 検出（二重の守り）: 起動直後に WebView2 のプロセスのコマンドラインの `--user-data-dir` が一時フォルダーの中かを確かめ、違えばすぐにアプリを止めて失敗にします。起動ごとに、既知フォルダーの `local.paperdesk` の `.window-state.json` と `EBWebView\Local State` の更新時刻を比べ、変わっていれば失敗にします（テストの間に本物の Papeer を使うと、これで失敗することがあります）。アプリは必ず強制終了で止め、アプリが自分で終了する IPC（`plugin:process|exit` など）もテスト側で受け止めます。
+- 後始末: シナリオの終わりに、その一時フォルダーを名指しするプロセス（WebView2 など）がなくなるまで待ちます（20 秒を超えると残っているプロセスを表示し、180 秒を超えると失敗。強制終了した WebView2 の親プロセスは、PC が混んでいると 1 分以上残ることがあります）。次のシナリオも、前のシナリオのプロセスがなくなってから起動します。実行の最後には、この実行で起動したアプリ・sidecar・代役 API とその子プロセスを止めます。中断などで前回の実行の残り（`%TEMP%\papeer-e2e-*` を名指しするプロセスと、そのフォルダー）があれば、次の実行の始めに片付けます。
+- 実際の AI は呼びません。翻訳と用語抽出は `tools/e2e_stub_ai.py`（`tools/smoke_sidecar.py` と同じ代役 API）が `127.0.0.1` で答えます。PATH から claude・codex・agy のあるフォルダーを外し、API キーの環境変数も消します。
+- 論文は `tools/e2e_pdfs.py` が PyMuPDF で作る 2 段組の PDF（と `tests/fixtures/sample.pdf`）を、シナリオごとに API で取り込みます。
+- 失敗したシナリオの画面・ページのコンソールのエラー・sidecar とアプリのログの末尾は `tmp/e2e-results/` に残ります。
+- CI では実行しません（Windows の実機の画面が要り、時間もかかるため）。UI を変えたときや、リリースの前に手元で実行してください。
+
+シナリオ（`frontend/e2e/tests`）は、起動とライブラリの表示、右クリックでのタグの付け外し（本文付きのリクエストと論文ごとの順番待ち）、フォルダーへの移動で行がすぐ移ること、付箋の作成・編集でダイアログがすぐ閉じること、986px の窓で右パネルを開いてもページの右が欠けないこと、拡大表示で右パネルを開け閉めしても読む位置が保たれること、sidecar を止めても同期の失敗が出ず接続切れのバナーが題名に重ならないこと、代役 API での翻訳と訳文 PDF、用語抽出を閉じて開き直したときの引き継ぎ、設定の版の違いの通知と「今後表示しない」、× で閉じたときの保存できない入力の確認です。待ち合わせは画面や API の状態を待つ形にし、固定の待ち時間は「出ないこと」を確かめる短い間だけに使います。「すぐ閉じる」「すぐ移る」の時間は、CDP でのやり取りの遅れが入らないよう、ページの中の時計（クリック・通信の応答から画面が変わるまで）で測ります。
+
 clippy は手元では `just clippy` で CI と同じように実行できます。sidecar の exe なしで通るよう、このコマンドの間だけ `TAURI_CONFIG` で `externalBin` を外します。PowerShell で直接実行するなら `$env:TAURI_CONFIG='{"bundle":{"externalBin":[]}}'; cargo clippy --release --all-targets -- -D warnings; Remove-Item Env:TAURI_CONFIG` のように、終わったら必ず外してください（付けたまま `just build` すると sidecar の入っていないインストーラーができます）。
 
 ### API の型
@@ -283,6 +304,7 @@ PapeerSync/                   このPCだけの設定（同期・バックアッ
 | `PAPEER_FONT_CACHE_DIR` | 同梱フォントの変換結果の置き場所（既定 `%LOCALAPPDATA%\PapeerSync\font-cache`。pytest は `.pytest_cache` 内を使う） |
 | `PAPEER_DEV_NO_AUTH` | `1` のとき、`PAPEER_TOKEN` なしで認証なしの sidecar を起動する（開発専用。PyInstaller で作った sidecar では無視） |
 | `PAPEER_API_KEY` | API 接続で使う API キーの初期値（未設定なら `OPENAI_API_KEY`、次に `GEMINI_API_KEY`） |
+| `PAPEER_E2E_DIR` | E2E テスト専用（デバッグ版のアプリだけが読む）。メインウィンドウの WebView2 のプロファイルをこのフォルダーに作り、ウィンドウの位置を保存・復元しない（README「E2E テスト」） |
 
 ## キーボードショートカット
 
