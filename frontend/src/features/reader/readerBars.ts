@@ -127,3 +127,25 @@ export function inkToolbarSide(
 export function inkToolbarOpen({ open, tool, listOpen }: { open: boolean; tool: string; listOpen: boolean }): boolean {
   return open || tool !== "select" || listOpen;
 }
+
+/**
+ * How the writing toolbar starts when the app opens (設定「表示」の「書き込みバー」). Opening and closing
+ * it with the 書き込み button works as always afterwards; "last" brings back how it was left.
+ */
+export type InkBarStart = "closed" | "open" | "last";
+
+export const INK_BAR_STARTS: readonly { id: InkBarStart; label: string }[] = [
+  { id: "closed", label: "閉じた状態で始める" },
+  { id: "open", label: "開いた状態で始める" },
+  { id: "last", label: "前回の状態を引き継ぐ" },
+];
+
+/** A saved choice, falling back to 閉じた状態 for anything this version does not know. */
+export function inkBarStartOf(value: unknown): InkBarStart {
+  return INK_BAR_STARTS.some((item) => item.id === value) ? value as InkBarStart : "closed";
+}
+
+/** Whether the writing toolbar is open at launch, given the choice and whether it was open when last saved. */
+export function initialInkBarOpen(start: InkBarStart, savedOpen: unknown): boolean {
+  return start === "open" || (start === "last" && savedOpen === true);
+}

@@ -3,6 +3,7 @@ import { cn } from "cn";
 import { useTheme } from "../../app/ThemeProvider";
 import { useStore } from "@/store";
 import { PAGE_FILTERS, pageAppearance, type PageFilter } from "../reader/pageAppearance";
+import { INK_BAR_STARTS } from "../reader/readerBars";
 
 const THEMES = [
   { id: "light", label: "ライト", icon: Sun },
@@ -19,6 +20,8 @@ export function AppearanceSection() {
   const { theme, setTheme, dark } = useTheme();
   const pageFilter = useStore((s) => s.pageFilter);
   const setPageFilter = useStore((s) => s.setPageFilter);
+  const inkBarStart = useStore((s) => s.inkBarStart);
+  const setInkBarStart = useStore((s) => s.setInkBarStart);
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -66,7 +69,29 @@ export function AppearanceSection() {
         </p>
       </div>
 
-      <p className="text-[0.75rem] text-muted-foreground">どちらの設定もすぐに反映され、保存ボタンを押す必要はありません。</p>
+      <div className="space-y-2">
+        <h3 id="ink-bar-start-label" className="font-medium">書き込みバー</h3>
+        <div role="radiogroup" aria-labelledby="ink-bar-start-label" aria-describedby="ink-bar-start-hint" className="grid grid-cols-3 gap-2">
+          {INK_BAR_STARTS.map(({ id, label }) => (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={inkBarStart === id}
+              onClick={() => setInkBarStart(id)}
+              className={cn(optionClass(inkBarStart === id), "text-center")}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p id="ink-bar-start-hint" className="text-[0.75rem] text-muted-foreground leading-relaxed">
+          {"アプリを起動したときに、リーダーの書き込みツールバーを開いておくかどうかを選びます。次回の起動から反映されます。"}
+          {"起動したあとは、いつでもリーダーの「書き込み」ボタンで開閉できます。"}
+        </p>
+      </div>
+
+      <p className="text-[0.75rem] text-muted-foreground">どの設定もすぐに保存され、保存ボタンを押す必要はありません。</p>
     </div>
   );
 }
