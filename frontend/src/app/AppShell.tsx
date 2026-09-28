@@ -22,6 +22,7 @@ import { ChatPane, NotesPane, SummaryPane } from "./lazyPanes";
 import { StickyNotesTab } from "../features/reader/StickyNotesTab";
 import { StickyNoteDialog } from "../features/reader/StickyNoteDialog";
 import { DriveSyncHost } from "../features/settings/DriveSection";
+import { SettingsVersionNotice } from "../features/settings/VersionNoticeHost";
 import { syncDrive } from "../features/settings/driveSync";
 import { fetchDriveStatus, fetchSyncCheck } from "../features/settings/driveApi";
 import { useJobEvents } from "../features/jobs/jobEvents";
@@ -462,6 +463,7 @@ export function AppShell() {
       {(!focusMode || anyRunning) && <StatusBar />}
       {settingsMounted && <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />}
       <DriveSyncHost />
+      <SettingsVersionNotice />
       <StickyNoteDialog />
       <AppDialogs />
       <Lightbox />

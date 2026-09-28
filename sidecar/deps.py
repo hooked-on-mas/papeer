@@ -243,6 +243,11 @@ def get_settings() -> Settings:
     return Settings.load(get_data_dir())
 
 
+def get_settings_with_unknown_keys() -> tuple[Settings, list[str]]:
+    """The settings, and the keys of settings.json this version does not know (Settings.load_with_unknown_keys)."""
+    return Settings.load_with_unknown_keys(get_data_dir())
+
+
 def runtime_api_key() -> str:
     return _runtime_api_key
 

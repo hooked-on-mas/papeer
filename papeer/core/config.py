@@ -121,8 +121,18 @@ class Settings:
         time this PC loads settings; after that, values there (written by an older Papeer on another
         PC, or brought in by a restored backup) are ignored.
         """
+        return cls.load_with_unknown_keys(root)[0]
+
+    @classmethod
+    def load_with_unknown_keys(cls, root: Path) -> tuple["Settings", list[str]]:
+        """Settings.load, and the keys of settings.json this version does not know (unknown_keys).
+
+        Such keys were written by a newer Papeer, on another PC sharing the library: they are not used
+        here, and saving the settings on this PC drops them.
+        """
         device = _load_device_options(root)
-        values = _normalized(_read_library_file(root))
+        stored = _read_library_file(root)
+        values = _normalized(stored)
         library = _split_device_options(values["provider_options"])[0]
         values["provider_options"] = _merge_options(library, device)
         values["api_key"] = api_key_from_env()
@@ -133,7 +143,7 @@ class Settings:
         for options in values["provider_options"].values():
             if not valid_model(options.get("model", "")):
                 options.pop("model")
-        return cls.from_values(values)
+        return cls.from_values(values), unknown_keys(stored)
 
     def save(self, root: Path) -> None:
         """Write the library's settings.json; this PC's connection options go to the device folder."""
@@ -145,6 +155,20 @@ class Settings:
         with _device_lock:
             _write_device_options(device)
             atomic_write_json(root / "settings.json", values)
+
+
+# Top-level keys of settings.json that this version reads: the fields, and the flat per-connection ones
+# from before provider_options (_normalized moves them into it). api_key is a field, though never saved.
+_KNOWN_FILE_KEYS = frozenset(Settings.__dataclass_fields__) | frozenset(_LEGACY_OPTION_FIELDS)
+
+
+def unknown_keys(stored: dict) -> list[str]:
+    """The top-level keys of a settings.json that this version does not know, sorted.
+
+    Only the top level: a connection or option inside provider_options this version does not know
+    is kept when saving, so nothing of it is lost.
+    """
+    return sorted(key for key in stored if key not in _KNOWN_FILE_KEYS)
 
 
 def valid_model(value) -> bool:
@@ -256,8 +280,9 @@ def _load_device_options(root: Path) -> dict[str, dict[str, str]]:
             return options
         _warned.clear()
         if from_library:
-            # Take them out of the library too, so backups and sync no longer carry them.
-            values = {k: v for k, v in values.items() if k in Settings.__dataclass_fields__ and k != "api_key"}
+            # Take them out of the library too, so backups and sync no longer carry them. Keys this version
+            # does not know stay: only saving the settings drops them (Settings.load_with_unknown_keys).
+            values = {k: v for k, v in values.items() if k != "api_key"}
             values["provider_options"] = library
             atomic_write_json(root / "settings.json", values)
         return options

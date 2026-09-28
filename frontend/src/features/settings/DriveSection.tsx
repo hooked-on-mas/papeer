@@ -18,6 +18,7 @@ import { isAppClosing } from "@/app/appClosing";
 import { PublishSchedule } from "./autoSyncSchedule";
 import { describeDifference, type Counts } from "./conflictSummary";
 import { fetchDriveStatus, fetchSyncCheck, type SyncReview } from "./driveApi";
+import { VersionNoticeSetting } from "./VersionNoticeHost";
 const COUNT_LABELS: [keyof Counts, string][] = [["papers", "論文"], ["notes", "メモ"], ["stickies", "付箋"], ["ink", "書き込み（ページ）"]];
 // Told once per launch; the settings keep showing it.
 let missingLibraryShown = false;
@@ -220,6 +221,7 @@ export function DriveSection() {
       </div>}
       {data.previous_path && <p className="break-all text-xs">取り込み前のデータ：{data.previous_path}</p>}
     </>}
+    <VersionNoticeSetting />
     <p className="text-xs text-muted-foreground">PC間の転送はPC版Google Driveが行います。「今すぐ同期」の後、Google Drive側の同期完了も確認してから別PCに移ってください。別PCでは同じ同期フォルダーを指定します。変更時はライブラリ全体を保存し、履歴の分だけ容量を使います。</p>
     <Button variant="outline" onClick={() => openSettings("backup")}>バックアップ・復元を開く</Button>
   </div>;

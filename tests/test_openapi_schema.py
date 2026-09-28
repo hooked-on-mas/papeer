@@ -41,7 +41,7 @@ def test_the_schema_names_the_models_the_frontend_types_come_from():
     schemas = json.loads(export_openapi.openapi_text())["components"]["schemas"]
     for name in ("PaperRow", "Paper", "ReadingState", "TranslationReport", "TranslationPreview", "OcrPage", "StickyNote",
                  "LibraryStickyNote", "Article", "ChatMessage", "JobStarted", "JobInfo", "ServerEvent", "UsageLimits",
-                 "ProviderOption", "ProviderSpecModel", "SettingsModel-Output"):
+                 "ProviderOption", "ProviderSpecModel", "SettingsResponse", "SettingsModel"):
         assert name in schemas, name
     # A translation report keeps keys the model does not name; the frontend types say so.
     assert schemas["TranslationReport"]["additionalProperties"] is True

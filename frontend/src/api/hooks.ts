@@ -35,7 +35,7 @@ export type ReadingData = Schemas["ReadingState"];
 export type ProviderOptions = Record<string, Record<string, string>>;
 
 /** GET /api/settings; translation_concurrency 0 lets the sidecar decide (1 for a local model, else 3). */
-export type SettingsData = Schemas["SettingsModel-Output"];
+export type SettingsData = Schemas["SettingsResponse"];
 
 /** An AI connection as the sidecar describes it; the settings dialog is built from these. */
 export type ProviderSpec = Schemas["ProviderSpecModel"];

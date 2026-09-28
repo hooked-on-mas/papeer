@@ -16,32 +16,39 @@ from papeer.core import prompts
 from papeer.core.errors import Invalid
 from papeer.providers import ProviderBackend, spec_for, specs
 from sidecar import deps
+from sidecar.errors import log
 from sidecar.job_types import JobKind, JobStarted
 from sidecar.schemas.settings import (
     ProviderActionRequest,
     ProviderOption,
     ProviderSpecModel,
     SettingsModel,
+    SettingsResponse,
     UsageLimits,
 )
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
 
-@router.get("/api/settings", response_model=SettingsModel)
-def get_settings() -> SettingsModel:
-    values = asdict(deps.get_settings())
+@router.get("/api/settings", response_model=SettingsResponse)
+def get_settings() -> SettingsResponse:
+    settings, unknown = deps.get_settings_with_unknown_keys()
+    values = asdict(settings)
     values["api_key"] = deps.runtime_api_key()
-    return SettingsModel(**values)
+    return SettingsResponse(**values, unknown_keys=unknown)
 
 
 @router.put("/api/settings")
 def update_settings(body: SettingsModel) -> dict[str, str]:
     """Apply the fields the client sent; anything omitted keeps its saved value."""
-    settings = deps.get_settings().updated(body.model_dump(exclude={"api_key"}, exclude_unset=True))
+    current, unknown = deps.get_settings_with_unknown_keys()
+    settings = current.updated(body.model_dump(exclude={"api_key"}, exclude_unset=True))
     spec_for(settings.provider)
     deps.require_library_folder()
     settings.save(deps.get_data_dir())
+    if unknown:
+        # The frontend told the user beforehand (settingsVersionNotice.ts); the log keeps what was lost.
+        log.warning("settings.json の、この版が知らない項目を保存で削除しました: %s", ", ".join(unknown))
     if body.api_key is not None:
         deps.set_runtime_api_key(body.api_key)
     return {"status": "saved"}

@@ -169,7 +169,7 @@ export function useDeleteNoteTemplate() {
 export function useSaveSettings() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: async ({ settings, prompts }: { settings?: Schemas["SettingsModel-Input"]; prompts?: Record<string, string> }) => {
+    mutationFn: async ({ settings, prompts }: { settings?: Schemas["SettingsModel"]; prompts?: Record<string, string> }) => {
       if (settings) await unwrap(api.PUT("/api/settings", { body: settings }));
       if (prompts) await unwrap(api.PUT("/api/prompts", { body: prompts }));
     },
