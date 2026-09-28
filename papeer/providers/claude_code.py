@@ -8,8 +8,8 @@ import tempfile
 from papeer.core.config import REASONING_EFFORTS
 from papeer.providers.base import OptionField, ProviderBackend, ProviderSpec
 from papeer.providers.common import (
-    AnswerRejected, CliBackend, cli_failure, json_lines, lasting_cli_failure, remember_limits, run_cli_process,
-    to_int, wrap_document_prompt,
+    AnswerRejected, CliBackend, cli_exit_failure, cli_failure, json_lines, lasting_cli_failure, remember_limits,
+    run_cli_process, to_int, wrap_document_prompt,
 )
 
 _ALIASES = [("sonnet", "sonnet (最新 Claude Sonnet)"), ("opus", "opus (Claude Opus)"), ("haiku", "haiku (Claude Haiku)")]
@@ -55,11 +55,12 @@ def claude_failure(result: dict, stderr: str = "") -> RuntimeError:
     return cli_failure("Claude Code", detail, evidence, known_temporary_only=True)
 
 
-def claude_exit_failure(stderr: str, stdout: str) -> RuntimeError:
-    """The error for a nonzero exit: judged by its result event when it printed one (claude_failure)."""
+def claude_exit_failure(stderr: str, stdout: str, returncode: int) -> RuntimeError:
+    """The error for a nonzero exit: judged by its result event when it printed one (claude_failure),
+    else by what it printed about the failure (cli_exit_failure: not its status or assistant events)."""
     result = next((e for e in reversed(json_lines(stdout)) if e.get("type") == "result"), None)
     if result is None:
-        return cli_failure("Claude Code", (stderr or stdout)[-1800:], evidence=stderr + "\n" + stdout)
+        return cli_exit_failure("Claude Code", stderr, stdout, returncode)
     return claude_failure(result, stderr)
 
 

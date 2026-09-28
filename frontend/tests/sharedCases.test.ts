@@ -8,6 +8,7 @@ import { test } from "node:test";
 import {
   folderAncestors, folderName, folderParts, isInsideFolder, normalizeCollection, parentFolder, subfolderPath,
 } from "../src/lib/collectionPath.ts";
+import { errorCause } from "../src/lib/errorReports.ts";
 import { parsePageSelection } from "../src/lib/pageSelection.ts";
 import { PY_SPACE, pyStrip } from "../src/lib/pyWhitespace.ts";
 
@@ -48,6 +49,25 @@ test("a folder's parts, name, parent and subfolders", () => {
   assert.equal(parentFolder("a"), "");
   assert.equal(subfolderPath("a / b", "c"), "a / b / c");
   assert.equal(subfolderPath("", "c"), "c");
+});
+
+type CliFailures = {
+  cases: { tool: "claude" | "codex"; output: string; cause: string }[];
+  runs: { tool: "claude" | "codex"; detail: string; cause: string }[];
+};
+
+test("a failed CLI run is told with the cause the sidecar judged it by", () => {
+  const failures = fixture<CliFailures>("cli_failures.json");
+  const shown = [
+    ...failures.cases.map((c) => ({ tool: c.tool, detail: c.output, cause: c.cause })),
+    ...failures.runs,
+  ];
+  for (const c of shown) {
+    // What papeer/providers/common.py cli_failure reports: the fixed lead, then what the CLI printed.
+    const message = `${c.tool === "claude" ? "Claude Code" : "Codex"}接続に失敗しました。ログイン状態・利用枠を確認してください。\n${c.detail}`;
+    assert.equal(errorCause(message, "translate"), c.cause, c.detail);
+    assert.equal(errorCause(message), c.cause, c.detail);
+  }
 });
 
 test("PY_SPACE is exactly Python's whitespace", () => {

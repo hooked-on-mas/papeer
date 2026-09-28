@@ -7,14 +7,14 @@
  * failure with 「<ツール>接続に失敗しました。ログイン状態・利用枠を確認してください。」 and add what the
  * CLI printed, often in English ("usage limit", "not logged in"); the API connection reports
  * 「APIエラー HTTP <code>。…」 or 「APIに接続できません。…」. The patterns below follow the ones the
- * providers use to decide what not to send again (_LASTING_CLI_FAILURE, _TEMPORARY_CLI_FAILURE), so
+ * providers use to decide what not to send again (_CLI_FAILURE_CAUSES, _TEMPORARY_CLI_FAILURE), so
  * the fixed Japanese lead of a CLI failure alone never decides the cause.
  */
 import type { SettingsSection } from "@/features/settings/settingsNavigation";
 
 export type ErrorCause =
   | "login" // Not signed in, a wrong API key, or no permission.
-  | "quota" // The plan's usage limit or credit is used up.
+  | "quota" // The plan's usage limit or credit is used up, or the plan or seat does not include the use.
   | "settings" // The connection's model, URL, options or CLI path are wrong.
   | "network" // A timeout, a lost connection or a server error; trying again later may pass.
   | "connection" // An AI connection failed without saying why (login or usage limit).
@@ -59,23 +59,33 @@ const LOGIN = new RegExp([
   "not (?:logged|signed) in", "log ?in (?:required|again)", "please (?:run )?(?:/login|log ?in|sign in)",
   "unauthori[sz]ed", "authentication(?:_error| failed| error| required)", "failed to authenticate", "not authenticated",
   "invalid (?:api[ _-]?key|token|credential)", "(?:token|session|credentials?) (?:has )?expired", "forbidden",
-  "(?:status|http|code|error)\\W{0,3}40[13]\\b",
+  "(?:status|http|code|error)\\W{0,3}40[13]\\b", "sign in again",
+  // Codex: a sign-in it cannot renew, or none at all. Not "Failed to refresh token: <network error>",
+  // which passes; the lasting ones all say "could not be refreshed".
+  "could not be refreshed", "no (?:\\w+ )?credentials? (?:were |was )?found",
+  // Claude Code's error codes for it (the "error" of its events).
+  "authentication_failed", "oauth_org_not_allowed", "account_on_hold", "verification_required", "cloud_credential_error",
 ].join("|"), "i");
 
 const QUOTA = new RegExp([
-  "利用枠を使い切", "利用上限に達", "usage limit", "hit your (?:\\w+ )?limit",
+  "利用枠を使い切", "利用上限に達", "usage limit", "(?:hit|reached) your (?:[\\w'\\u2019-]+ ){0,3}limit",
   "(?:weekly|daily|monthly|session|hourly|5-hour|five-hour) limit", "limit (?:reached|exceeded)", "quota",
   "resource.?exhausted", "credit balance", "out of credits", "insufficient (?:credits?|funds|balance|quota)",
   "billing (?:hard )?limit", "billing (?:issue|error|required)", "payment required", "rate.?limit(?:ed| reached| exceeded)",
   "(?:status|http|code|error)\\W{0,3}429\\b",
+  // Claude Code's usage credits, spend limits and team budgets; a plan or seat without the usage.
+  "usage credit", "spend limit", "shared budget", "out of (?:extra )?usage", "seat type (?:does not|doesn.?t) include",
+  "usage allocation", "usage not included", "billing_error",
 ].join("|"), "i");
 
 const SETTINGS = new RegExp([
-  "モデル名を設定", "api url", "不明な接続先", "実行ファイル\\(\\.exe\\)", "agy を更新してください",
+  "モデル名を設定", "api url", "不明な接続先", "実行ファイル\\(\\.exe\\)", "の実行ファイルが見つかりません",
+  "agy を更新してください",
   "provided but not defined", "unknown (?:option|flag|argument|command|model)", "unrecognized",
   "unexpected argument", "invalid (?:model|value|argument|option)",
-  "model\\b[^\\n]{0,60}\\b(?:not found|does not exist|not supported|not available|unavailable)",
-  "not (?:a )?(?:valid|supported) model", "invalid_request", "(?:status|http|code|error)\\W{0,3}40[04]\\b",
+  // Not Codex's warning "Model metadata for `x` not found", printed for models it runs anyway.
+  "model\\b(?! metadata)[^\\n]{0,60}\\b(?:not found|does not exist|may not exist|not supported|not available|unavailable)",
+  "not (?:a )?(?:valid|supported) model", "issue with the selected model", "invalid_request", "model_not_found", "(?:status|http|code|error)\\W{0,3}40[04]\\b",
 ].join("|"), "i");
 
 const NETWORK = new RegExp([
@@ -84,7 +94,7 @@ const NETWORK = new RegExp([
   "internal server error", "bad gateway", "gateway time-?out", "service unavailable", "temporarily unavailable",
   "deadline.?exceeded", "econnreset", "econnrefused", "econnaborted", "etimedout", "epipe", "socket hang up",
   "fetch failed", "connection (?:reset|refused|closed|error|lost)", "network (?:error|is unreachable)",
-  "stream disconnected", "timed out", "timeout",
+  "stream disconnected", "timed out", "timeout", "error sending request", "server_error",
 ].join("|"), "i");
 
 const ANSWER = /回答が空|出力上限で途切れ|指定した形式のjsonを取り出せません|回答ファイルが返り|テキストの回答が返り|回答を使えません|応答形式が不正|jsonオブジェクトではありません|再翻訳の上限|翻訳の一部が欠落/i;
@@ -96,7 +106,7 @@ const CLI_FAILURE = /接続に失敗しました。ログイン状態・利用�
 const AI_MESSAGE = new RegExp([
   "^APIエラー HTTP \\d", "APIに接続できません", "APIの応答がタイムアウト", "APIとの接続が途中で切れ", "APIとの安全な接続",
   "の応答がタイムアウトしました", "未ログインです", "API接続ではモデル名を設定", "^API URL", "不明な接続先です",
-  "の実行ファイル\\(\\.exe\\)", "の回答が空でした", "出力上限で途切れ", "から回答ファイルが返り", "テキストの回答が返り",
+  "の実行ファイル\\(\\.exe\\)", "の実行ファイルが見つかりません", "の回答が空でした", "出力上限で途切れ", "から回答ファイルが返り", "テキストの回答が返り",
   "の回答を使えませんでした", "応答形式が不正", "JSONオブジェクトではありません", "再翻訳の上限", "翻訳の一部が欠落",
   "指定した形式のJSONを取り出せません", "agy を更新してください",
 ].join("|"), "m");
@@ -114,7 +124,7 @@ export const AI_JOB_KINDS: readonly string[] = ["translate", "revision", "revisi
 
 const SUMMARIES: Record<Exclude<ErrorCause, "other">, string> = {
   login: "AIサービスにログインしていないか、APIキー・権限が正しくありません。",
-  quota: "AIサービスの利用枠を使い切ったか、一時的に利用が制限されています。",
+  quota: "AIサービスの利用枠を使い切ったか、プランや一時的な制限により利用できません。",
   settings: "AI接続の設定（モデル・URL・CLIのオプション）を受け付けられませんでした。",
   network: "AIサービスとの通信に失敗しました。時間をおいて再開してください。",
   connection: "AI接続に失敗しました。ログイン状態と利用枠を確認してください。",
