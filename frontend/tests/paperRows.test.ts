@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { paperChangeEffects, withPaperRow } from "../src/lib/paperRows.ts";
+import { paperChangeEffects, withPaperCollection, withPaperRow } from "../src/lib/paperRows.ts";
 import type { PaperData } from "../src/api/hooks.ts";
 import { paperData } from "./support/paperData.ts";
 
@@ -44,4 +44,16 @@ test("a memo saved as it is typed reloads no row", () => {
   assert.deepEqual(paperChangeEffects(["note", "tags"]), { row: true, collections: false, tags: true });
   assert.deepEqual(paperChangeEffects(["collection_name"]), { row: true, collections: true, tags: false });
   assert.deepEqual(paperChangeEffects(undefined), { row: true, collections: true, tags: true });
+});
+
+test("a paper just moved shows in its new folder in place, before paper.changed brings its row", () => {
+  const next = withPaperCollection(rows, "b", "ML/Vision");
+  assert.deepEqual(next, [rows[0], { ...rows[1], collection_name: "ML/Vision" }]);
+  assert.equal(next[0], rows[0]);
+  // The row paper.changed brings then replaces it as it would have.
+  const changed = paperData({ id: "b", title: "Beta", translated_count: 0, collection_name: "ML/Vision" });
+  assert.deepEqual(withPaperRow(next, "b", changed, "", 0), [rows[0], changed]);
+  // Not in the list, or there already: the list as it is.
+  assert.equal(withPaperCollection(rows, "c", "ML"), rows);
+  assert.equal(withPaperCollection(rows, "a", ""), rows);
 });

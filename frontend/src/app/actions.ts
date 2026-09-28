@@ -19,7 +19,8 @@ import { folderAncestors, folderName, isInsideFolder, normalizeCollection, subfo
 import { bulkReport, runBulk } from "@/features/library/bulkOutcome";
 import { forgetPapers, movesRecord, undoLabel } from "@/features/library/undoHistory";
 import { LIBRARY_BUSY } from "@/lib/libraryBusy";
-import { BULK_BUSY_MESSAGE, beginBulk } from "./bulkState";
+import { BULK_BUSY_MESSAGE, beginBulk, isBulkRunning } from "./bulkState";
+import { withPaperCollection } from "@/lib/paperRows";
 import { applyTagChange, createTagQueue } from "@/lib/tagQueue";
 import { forgetDraftsOfPapers } from "@/lib/pendingSaves";
 
@@ -123,10 +124,27 @@ export async function movePaper(paperId: string, collection: string, record = tr
   const current = useStore.getState();
   if (paperId === current.activePaperId && current.selectedFolder === null) current.setCurrentCollection(destination);
   expandToCollection(destination);
+  showMoved(paperId, destination);
   // The paper as the sidecar keeps it; its row in the lists, and the folders, follow from paper.changed.
   void invalidate({ kind: "paper", paperId, collection: true });
   store.setStatus(`「${destination || "未分類"}」へ移動しました。`);
   return true;
+}
+
+/**
+ * Shows a paper that has just moved in its new folder at once, rather than half a second later, once
+ * paper.changed has brought its row (jobs/paperRefresh.ts), which then replaces the row set here. Not
+ * while an action on several papers runs: it holds the library's rows until it reloads them itself
+ * (bulkState.ts). A list still loading is left to paper.changed too, as its answer would replace the row.
+ */
+function showMoved(paperId: string, destination: string): void {
+  void showInPaper(paperId, (current) => ({ ...current, collection_name: destination }));
+  if (isBulkRunning()) return;
+  for (const [key, rows] of queryClient.getQueriesData<PaperData[]>({ queryKey: [QK.papers, "list"] })) {
+    if (!rows || queryClient.getQueryState(key)?.fetchStatus === "fetching") continue;
+    const next = withPaperCollection(rows, paperId, destination);
+    if (next !== rows) queryClient.setQueryData(key, next);
+  }
 }
 
 // --- Tags and reading status of one paper ---------------------------------------------------
