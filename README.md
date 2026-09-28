@@ -112,7 +112,7 @@ sidecar の API の形（ルートと、`sidecar/schemas/`・`sidecar/job_types.
 
 ### データベースの変更
 
-`library.sqlite3` の版は `PRAGMA user_version` で管理します。列・テーブル・索引の追加や保存値の変換は、`papeer/core/storage.py` の `MIGRATIONS` に関数を 1 つ追加して行います（約束事は同ファイルのコメント、テストは `tests/test_schema_migration.py`）。バックアップの `papeer-backup.json` と同期の世代の `revision.json` には `schema_version` と `app_version` を記録し、自分より新しい版のライブラリ・バックアップ・同期データは開かずに Papeer の更新を促します。新しい版で開いた（移行済みの）ライブラリのまま Papeer を古い版に戻すと、復元を含むすべての操作がこのエラーになるため、最新版を入れ直してください。
+`library.sqlite3` の版は `PRAGMA user_version` で管理します。列・テーブル・索引の追加や保存値の変換は、関数を `papeer/core/library_schema.py` に書き、`papeer/core/storage.py` の `MIGRATIONS` に加えて行います（約束事は `storage.py` の `MIGRATIONS` の上のコメント、テストは `tests/test_schema_migration.py`）。バックアップの `papeer-backup.json` と同期の世代の `revision.json` には `schema_version` と `app_version` を記録し、自分より新しい版のライブラリ・バックアップ・同期データは開かずに Papeer の更新を促します。新しい版で開いた（移行済みの）ライブラリのまま Papeer を古い版に戻すと、復元を含むすべての操作がこのエラーになるため、最新版を入れ直してください。
 
 ## ビルド
 

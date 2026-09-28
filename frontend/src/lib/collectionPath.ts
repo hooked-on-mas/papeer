@@ -1,6 +1,6 @@
 /**
  * Folder paths: a folder is the path "親 / 子" (" / " between the names), and "" is 未分類. The sidecar
- * keeps the same rules (papeer/core/storage.py: normalize_collection_name, collection_ancestors,
+ * keeps the same rules (papeer/core/collection_paths.py: normalize_collection_name, collection_ancestors,
  * in_collection); both are tested against tests/fixtures/collection_paths.json.
  */
 import { pyStrip } from "./pyWhitespace.ts";

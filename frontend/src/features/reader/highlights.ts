@@ -1,6 +1,6 @@
 /**
  * Highlights of text selected in the PDF. A highlight is saved as a sticky note of kind "highlight"
- * (sidecar storage._highlights): its colour, the selected text as its quote, and the rectangles it
+ * (sidecar library_schema._highlights): its colour, the selected text as its quote, and the rectangles it
  * covers as fractions of the displayed page, [x, y, width, height] like the ink. So it keeps its place
  * at any zoom, and is listed, searched and exported to the memo with the sticky notes.
  * Kept apart from React so that the rules can be tested.
