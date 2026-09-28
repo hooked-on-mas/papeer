@@ -454,7 +454,15 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
               className="mx-auto w-fit"
             >
               {numPages !== null && pageNumber > numPages ? message(missingPageMessage ?? "このページはありません。") : drawnWidth > 0 && (
-                <div className="relative" style={{ ...pageStyle, zoom: pageWidth === drawnWidth ? undefined : pageWidth / drawnWidth }}>
+                // The page's height is held while react-pdf draws it again at a new width: its box is briefly
+                // shorter meanwhile, the pane's content with it, and the browser would clamp the scroll
+                // position to the top, losing the place kept by readingPlace.ts (e.g. zoomed in, as the side
+                // panel opens). Floored, so that it never adds room below a page drawn at this width.
+                <div className="relative" style={{
+                  ...pageStyle,
+                  zoom: pageWidth === drawnWidth ? undefined : pageWidth / drawnWidth,
+                  minHeight: shapeKnown ? Math.floor(drawnWidth * layoutRatio) : undefined,
+                }}>
                   <Page
                     pageNumber={pageNumber}
                     width={drawnWidth}
