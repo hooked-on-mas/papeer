@@ -1,0 +1,41 @@
+{
+  "comment": "Folder paths as papeer/core/storage.py reads them; the library (frontend/src/lib/collectionPath.ts) must agree. normalize: the path either slash gives, stripped as Python's str.strip() does. ancestors: the folder and its parents. inside: whether a folder is the (normalized) path or below it.",
+  "normalize": [
+    {"value": "", "path": ""},
+    {"value": "ML", "path": "ML"},
+    {"value": "ML/Vision", "path": "ML / Vision"},
+    {"value": "ML\\Vision", "path": "ML / Vision"},
+    {"value": "ML / Vision", "path": "ML / Vision"},
+    {"value": " 制御工学\\\\ 読書会 / 2026 ", "path": "制御工学 / 読書会 / 2026"},
+    {"value": "a//b", "path": "a / b"},
+    {"value": " / / ", "path": ""},
+    {"value": "/a/", "path": "a"},
+    {"value": "a b / c", "path": "a b / c"},
+    {"value": "C:\\x", "path": "C: / x"},
+    {"value": "\u3000親\u3000/\u3000子\u3000", "path": "親 / 子"},
+    {"value": "\t親\n/ 子", "path": "親 / 子"},
+    {"value": " a \u001c/ b", "path": "a / b"},
+    {"value": "\u0085a", "path": "a"},
+    {"value": "\ufeffa / b", "path": "\ufeffa / b"},
+    {"value": "a\u200b", "path": "a\u200b"}
+  ],
+  "ancestors": [
+    {"value": "", "ancestors": []},
+    {"value": " / ", "ancestors": []},
+    {"value": "a", "ancestors": ["a"]},
+    {"value": "a / b / c", "ancestors": ["a", "a / b", "a / b / c"]},
+    {"value": "a\\b", "ancestors": ["a", "a / b"]}
+  ],
+  "inside": [
+    {"value": "a", "path": "a", "inside": true},
+    {"value": "a / b", "path": "a", "inside": true},
+    {"value": "a/b/c", "path": "a / b", "inside": true},
+    {"value": " a ", "path": "a", "inside": true},
+    {"value": "ab", "path": "a", "inside": false},
+    {"value": "a / bc", "path": "a / b", "inside": false},
+    {"value": "b / a", "path": "a", "inside": false},
+    {"value": "", "path": "a", "inside": false},
+    {"value": "", "path": "", "inside": true},
+    {"value": "a", "path": "", "inside": false}
+  ]
+}

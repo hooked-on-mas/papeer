@@ -8,7 +8,8 @@
  * when the saved value comes back (see withServerValues).
  */
 import type { PaperData } from "../../api/hooks.ts";
-import { normalizeCollection } from "../library/libraryTree.ts";
+import { normalizeCollection } from "../../lib/collectionPath.ts";
+import { PY_SPACE, pyStrip } from "../../lib/pyWhitespace.ts";
 
 export const META_FIELDS = ["title", "author", "year", "venue", "doi", "arxiv_id", "collection"] as const;
 export type MetaField = (typeof META_FIELDS)[number];
@@ -39,11 +40,14 @@ export function newDraft(server: MetaValues): MetaDraft {
   return { values: { ...server }, saved: { ...server }, problems: {}, rejected: {} };
 }
 
+/** A run of whitespace, where Python's str.split() splits. */
+const PY_WHITESPACE_RUN = new RegExp(`${PY_SPACE}+`);
+
 /** The value as the sidecar would keep it, as far as spaces go (Library.update, and PATCH's title). */
 export function looseValue(field: MetaField, value: string): string {
-  if (field === "venue") return value.split(/\s+/).filter(Boolean).join(" ");
+  if (field === "venue") return value.split(PY_WHITESPACE_RUN).filter(Boolean).join(" ");
   if (field === "collection") return normalizeCollection(value);
-  return value.trim();
+  return pyStrip(value);
 }
 
 /** A rule the value breaks, said before sending it; the sidecar checks the DOI and arXiv ID itself. */
@@ -80,7 +84,7 @@ export function fieldsToSend(draft: MetaDraft): { send: MetaField[]; problems: P
 
 /** PATCH /api/papers/{id}'s body for `fields`. */
 export function requestBody(fields: readonly MetaField[], values: MetaValues): Record<string, string> {
-  return Object.fromEntries(fields.map((field) => [field, field === "title" || field === "year" ? values[field].trim() : values[field]]));
+  return Object.fromEntries(fields.map((field) => [field, field === "title" || field === "year" ? pyStrip(values[field]) : values[field]]));
 }
 
 /** The draft once `fields` were saved with `sent` (the values as sent), which is then what the sidecar holds. */

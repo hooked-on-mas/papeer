@@ -14,7 +14,7 @@ from papeer.pdf.pdf_typography import fonts_need_conversion, prepare_fonts_in_ba
 import pymupdf as fitz
 from papeer.providers import ProviderBackend, check_cancel
 from papeer.core.paths import PaperFiles
-from papeer.core.storage import Library
+from papeer.core.storage import Library, in_collection, normalize_collection_name
 from papeer.core.translation_status import translation_status
 from papeer.layout.math_layout import restore_formula_text
 from papeer.layout.ocr_pages import needs_ocr_message, ocr_markdown_note
@@ -618,8 +618,8 @@ class PaperService:
         context = all_text
         selection_note = "選択した論文の全文テキストを参照しています。"
         if collection is not None:
-            paper_ids = {p["id"] for p in self.library.papers()
-                         if p["collection_name"] == collection or p["collection_name"].startswith(collection + " / ")}
+            folder = normalize_collection_name(collection)
+            paper_ids = {p["id"] for p in self.library.papers() if in_collection(p["collection_name"], folder)}
             if not paper_ids:
                 raise ValueError("指定したフォルダーに論文がありません。")
         if paper_ids is not None:

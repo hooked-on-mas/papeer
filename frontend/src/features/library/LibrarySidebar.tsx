@@ -29,7 +29,8 @@ import { deletePapers, movePapers, movePapersToNewCollection, setPapersReadStatu
 import { useDropTarget } from "@/app/fileDrop";
 import { useShownOrganization } from "@/app/useOrganizing";
 import { usePendingImports, type PendingImport } from "@/app/pendingImports";
-import { allFolderPaths, buildTree, filterPapers, normalizeCollection, type FolderNode } from "./libraryTree";
+import { allFolderPaths, buildTree, filterPapers, type FolderNode } from "./libraryTree";
+import { folderAncestors, normalizeCollection } from "@/lib/collectionPath";
 import {
   dropRowAt, folderKey, nextDropRow, paperKey, rowAfterRemoval, treeKeyAction, typeaheadMatch, visibleRows, type DropRow,
   type TreeKeyAction,
@@ -367,10 +368,10 @@ export function LibrarySidebar() {
       const paper = papers.find((p) => p.id === paperId);
       const expandedCollections = useStore.getState().expandedCollections;
       if (paper && expandedCollections !== null) {
-        const parts = normalizeCollection(paper.collection_name || "").split(" / ").filter(Boolean);
+        const ancestors = folderAncestors(paper.collection_name || "");
         const next = new Set(expandedCollections);
-        parts.forEach((_, i) => next.add(parts.slice(0, i + 1).join(" / ")));
-        if (!parts.length) next.add("");
+        ancestors.forEach((a) => next.add(a));
+        if (!ancestors.length) next.add("");
         if (next.size !== expandedCollections.length) setExpandedCollections([...next]);
       }
       if (focus) requestTreeFocus(paperKey(paperId));

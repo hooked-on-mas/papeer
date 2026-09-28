@@ -22,9 +22,23 @@ from papeer.core.paths import PaperFiles, sync_state_path
 from papeer.core.translation_status import TranslationStatus, stored_status
 
 
+# The frontend keeps the same folder rules (frontend/src/lib/collectionPath.ts): both are tested against
+# tests/fixtures/collection_paths.json.
 def normalize_collection_name(value: str) -> str:
     """Return a stable, display-friendly virtual folder path."""
     return " / ".join(part.strip() for part in re.split(r"[\\/]", value) if part.strip())
+
+
+def collection_ancestors(value: str) -> list[str]:
+    """The folder `value` and its parents, outermost first: "a / b" -> ["a", "a / b"]; none for 未分類."""
+    parts = normalize_collection_name(value).split(" / ")
+    return [" / ".join(parts[:depth]) for depth in range(1, len(parts) + 1) if parts[0]]
+
+
+def in_collection(name: str, path: str) -> bool:
+    """Whether the folder `name` is the normalized folder `path` or one of its subfolders."""
+    name = normalize_collection_name(name)
+    return name == path or name.startswith(path + " / ")
 
 
 class NewerSchemaError(ValueError):
@@ -401,8 +415,7 @@ class Library:
             raise ValueError("フォルダーを指定してください。")
         with self.connection() as db:
             rows = db.execute("SELECT rowid AS insert_order,* FROM papers").fetchall()
-        return self._oldest_first([row for row in rows if (name := normalize_collection_name(row["collection_name"])) == path
-                                   or name.startswith(path + " / ")])
+        return self._oldest_first([row for row in rows if in_collection(row["collection_name"], path)])
 
     def paper(self, paper_id: str) -> dict:
         with self.connection() as db:
@@ -420,11 +433,7 @@ class Library:
         with self.connection() as db:
             names = [row[0] for row in db.execute(
                 "SELECT name FROM collections UNION SELECT collection_name FROM papers")]
-        paths = set()
-        for name in names:
-            parts = normalize_collection_name(name).split(" / ")
-            paths.update(" / ".join(parts[:depth]) for depth in range(1, len(parts) + 1))
-        return sorted(paths - {""}, key=str.casefold)
+        return sorted({path for name in names for path in collection_ancestors(name)}, key=str.casefold)
 
     def create_collection(self, name: str) -> str:
         name = normalize_collection_name(name)
@@ -542,8 +551,7 @@ class Library:
         if not path:
             raise ValueError("未分類は削除できません。")
         def inside(name):
-            name = normalize_collection_name(name)
-            return name == path or name.startswith(path + " / ")
+            return in_collection(name, path)
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             names = [row[0] for row in db.execute("SELECT name FROM collections")]

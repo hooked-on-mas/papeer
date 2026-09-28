@@ -11,6 +11,7 @@ import { showError } from "@/components/errorDialog";
 import { askConfirm } from "@/components/AppDialogs";
 import { QK } from "@/lib/queryKeys";
 import { useOpenEdit } from "@/lib/pendingSaves";
+import { parsePageSelection } from "@/lib/pageSelection";
 import { useSessionState } from "@/lib/useSessionState";
 import { GlossaryEditor, useGlossaryEditor } from "./GlossaryEditor";
 import { setGlossaryDialogPaper, startGlossaryDraft, takeGlossaryDraft, useGlossaryDrafts } from "./glossaryDraft";
@@ -25,24 +26,6 @@ interface TranslationDialogProps {
   onOpenChange: (open: boolean) => void;
   paperId: string;
   currentPage: number;
-}
-
-/** Same rules and messages as papeer.layout.page_selection, for feedback while typing. */
-export function parsePageSelection(value: string, pageCount: number): number[] {
-  const text = value.normalize("NFKC").replace(/、/g, ",").replace(/[～~–—−]/g, "-");
-  if (!text.trim()) throw new Error("翻訳するページを入力してください。例: 1, 3-5, 8");
-  const pages = new Set<number>();
-  for (const part of text.split(",")) {
-    const match = /^\s*([0-9]+)\s*(?:-\s*([0-9]+)\s*)?$/.exec(part);
-    if (!match) throw new Error("ページ番号と範囲をカンマで区切ってください。例: 1, 3-5, 8");
-    const first = Number(match[1]);
-    const last = Number(match[2] ?? match[1]);
-    if (!(1 <= first && first <= last && last <= pageCount)) {
-      throw new Error(`1～${pageCount}ページの範囲を、小さい番号から指定してください。`);
-    }
-    for (let page = first; page <= last; page++) pages.add(page);
-  }
-  return [...pages].sort((a, b) => a - b);
 }
 
 type Scope = "all" | "current" | "custom";

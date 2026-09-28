@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { showError } from "@/components/errorDialog";
 import { useOpenEdit } from "@/lib/pendingSaves";
+import { pyStrip } from "@/lib/pyWhitespace";
 import { QK } from "@/lib/queryKeys";
 
 type Draft = { originalName: string | null; name: string; content: string; initialName: string; initialContent: string };
@@ -36,7 +37,7 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
   const contentId = useId();
   const current = templates.find(item => item.name === selected);
   const dirty = !!draft && (draft.name !== draft.initialName || draft.content !== draft.initialContent);
-  const duplicate = !!draft && !draft.originalName && templates.some(item => item.name === draft.name.trim());
+  const duplicate = !!draft && !draft.originalName && templates.some(item => item.name === pyStrip(draft.name));
 
   useEffect(() => {
     if (templates.length && !current) setSelected(templates[0].name);
@@ -78,8 +79,8 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
   };
 
   const save = async () => {
-    if (!draft || busy || duplicate || !draft.name.trim() || !draft.content.trim()) return;
-    const saved: Template = { name: draft.name.trim(), content: draft.content, builtin: false };
+    if (!draft || busy || duplicate || !pyStrip(draft.name) || !pyStrip(draft.content)) return;
+    const saved: Template = { name: pyStrip(draft.name), content: draft.content, builtin: false };
     setBusy(true);
     try {
       // Shown in the list at once, which is then loaded again (useSaveNoteTemplate).
@@ -142,7 +143,7 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
           <nav aria-label="保存済みテンプレート" className="max-h-44 shrink-0 overflow-y-auto border-b bg-muted/20 p-3 sm:max-h-none sm:w-44 sm:border-b-0 sm:border-r">
             {mode === "manage" && <div className="mb-3 space-y-1.5 border-b pb-3">
               <Button className="w-full justify-start" size="sm" disabled={busy || isPending || isError} onClick={() => beginDraft("blank")}><Plus /> 新しく作る</Button>
-              <Button className="w-full justify-start" variant="outline" size="sm" disabled={busy || isPending || isError || !note.trim()} onClick={() => beginDraft("note")}><FileText /> 今のメモから作る</Button>
+              <Button className="w-full justify-start" variant="outline" size="sm" disabled={busy || isPending || isError || !pyStrip(note)} onClick={() => beginDraft("note")}><FileText /> 今のメモから作る</Button>
             </div>}
             {isPending && <p className="p-2 text-xs text-muted-foreground">テンプレートを読み込み中…</p>}
             {isError && <div className="space-y-2 p-2 text-xs"><p className="text-destructive">テンプレートを読み込めませんでした。</p><Button size="sm" variant="outline" onClick={() => void refetch()}>再読み込み</Button></div>}
@@ -173,7 +174,7 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
           <p className="mr-auto min-w-0 text-xs text-muted-foreground" role="status">{draft ? dirty ? "未保存の変更があります" : "" : notice}</p>
           {draft ? <>
             <Button variant="outline" disabled={busy} onClick={() => void discardDraft()}>キャンセル</Button>
-            <Button disabled={busy || duplicate || !draft.name.trim() || !draft.content.trim() || (!!draft.originalName && !dirty)} onClick={() => void save()}>{busy ? "保存中…" : draft.originalName ? "変更を保存" : "テンプレートを保存"}</Button>
+            <Button disabled={busy || duplicate || !pyStrip(draft.name) || !pyStrip(draft.content) || (!!draft.originalName && !dirty)} onClick={() => void save()}>{busy ? "保存中…" : draft.originalName ? "変更を保存" : "テンプレートを保存"}</Button>
           </> : mode === "use" ? <>
             <Button variant="ghost" onClick={() => { setMode(null); openSettings("note-templates", note); }}><Settings2 /> 作成・編集する</Button>
             <Button disabled={busy || !current || isError} onClick={insert}>この内容をメモに追加</Button>

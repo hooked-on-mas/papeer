@@ -12,7 +12,8 @@ import { useStore as useZustandStore } from "zustand";
 import type { PaperData } from "@/api/hooks";
 import { invalidate, patchPaper } from "@/api/mutations";
 import { expandToCollection, recordMoves } from "@/app/actions";
-import { normalizeCollection } from "@/features/library/libraryTree";
+import { normalizeCollection } from "@/lib/collectionPath";
+import { pyStrip } from "@/lib/pyWhitespace";
 import { beginOpenEdit, registerHeldDrafts, registerPendingSaves } from "@/lib/pendingSaves";
 import { QK } from "@/lib/queryKeys";
 import { queryClient as client } from "@/lib/queryClient";
@@ -56,7 +57,7 @@ export function useMetadataDraft(paperId: string): MetaEntry | undefined {
 
 /** The paper's name for a message: as typed, else as saved. */
 function describe({ paperId, draft, fields }: HeldDraft): string {
-  const title = draft.values.title.trim() || draft.saved.title
+  const title = pyStrip(draft.values.title) || draft.saved.title
     || client.getQueryData<PaperData | null>([QK.papers, paperId])?.title || paperId;
   const why = fields.map((field) => `${META_LABELS[field]}：${draft.problems[field] || draft.failure || "未保存"}`);
   return [`「${title}」の論文情報`, ...why].join("\n");

@@ -15,10 +15,12 @@ import { clearJobFailure } from "@/features/jobs/jobFailures";
 import { useStore, type MoveRecord } from "@/store";
 import { bulkReport, runBulk, type BulkOutcome, type BulkStep, type BulkWording } from "@/features/library/bulkOutcome";
 import {
-  deletePaper, expandToCollection, forgetPapers, listedTitle, movePaper, normalizeCollection, paper,
+  deletePaper, expandToCollection, forgetPapers, listedTitle, movePaper, paper,
   recordMoves, refreshAfterChanges, setPaperReadStatus, stopsAllRequests, tagPaper, changePaperTag,
 } from "./actions";
 import { MAX_TAG_LENGTH } from "@/features/notes/tagOptions";
+import { normalizeCollection } from "@/lib/collectionPath";
+import { pyStrip } from "@/lib/pyWhitespace";
 import { BULK_BUSY_MESSAGE, beginBulk, isBulkRunning } from "./bulkState";
 import { forgetDraftsOfPapers } from "@/lib/pendingSaves";
 
@@ -103,7 +105,7 @@ export async function tagPapers(ids: string[], tag: string, add: boolean): Promi
  */
 export async function tagPapersWithNew(ids: string[]): Promise<void> {
   const typed = await askText("新しいタグ", ids.length > 1 ? `${ids.length}件の論文に付けるタグの名前` : "論文に付けるタグの名前", "");
-  const name = typed?.trim();
+  const name = typed == null ? "" : pyStrip(typed);
   if (!name) return;
   if (Array.from(name).length > MAX_TAG_LENGTH) {
     showError(`タグ名は${MAX_TAG_LENGTH}文字までです。`, "タグを付けられませんでした");

@@ -9,6 +9,7 @@
  */
 import type { PaperData } from "../../api/hooks.ts";
 import type { PendingImport } from "../../app/pendingImports.ts";
+import { folderAncestors, folderName, folderParts, isInsideFolder, normalizeCollection, parentFolder } from "../../lib/collectionPath.ts";
 
 export type FolderNode = {
   path: string;
@@ -18,17 +19,6 @@ export type FolderNode = {
   pending: PendingImport[];
   count: number;
 };
-
-/** A folder path as the library shows it: "親 / 子", from either slash. */
-export function normalizeCollection(value: string): string {
-  return value.split(/[\\/]/).map((part) => part.trim()).filter(Boolean).join(" / ");
-}
-
-/** Whether the folder `value` is `path` or one of its subfolders. */
-export function isInsideFolder(value: string, path: string): boolean {
-  const name = normalizeCollection(value);
-  return name === path || name.startsWith(path + " / ");
-}
 
 /**
  * The papers in the folder `path` and its subfolders, which deleting it moves to 未分類; null while the
@@ -73,22 +63,18 @@ export function buildTree(collections: string[], papers: PaperData[], pending: P
   // PDFs being added are always shown, so a drop never seems to have been ignored.
   const paths = new Set<string>([...grouped.keys(), ...pendingGroups.keys()].filter(Boolean));
   if (!filtered) collections.forEach((c) => paths.add(c));
-  for (const path of [...paths]) {
-    const parts = path.split(" / ");
-    for (let depth = 1; depth < parts.length; depth++) paths.add(parts.slice(0, depth).join(" / "));
-  }
-  const depths = new Map([...paths].map((path) => [path, path.split(" / ").length]));
+  for (const path of [...paths]) folderAncestors(path).forEach((ancestor) => paths.add(ancestor));
+  const depths = new Map([...paths].map((path) => [path, folderParts(path).length]));
   const nodes = new Map<string, FolderNode>();
   const roots: FolderNode[] = [];
   const ordered = [...paths].sort((a, b) => depths.get(a)! - depths.get(b)! || collator.compare(a, b));
   for (const path of ordered) {
-    const parts = path.split(" / ");
     const node: FolderNode = {
-      path, name: parts[parts.length - 1], children: [], papers: grouped.get(path) ?? [],
+      path, name: folderName(path), children: [], papers: grouped.get(path) ?? [],
       pending: pendingGroups.get(path) ?? [], count: 0,
     };
     nodes.set(path, node);
-    const parent = nodes.get(parts.slice(0, -1).join(" / "));
+    const parent = nodes.get(parentFolder(path));
     if (parent) parent.children.push(node);
     else roots.push(node);
   }

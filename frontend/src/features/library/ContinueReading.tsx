@@ -4,7 +4,7 @@ import { paperDisplayName, usePaperList } from "@/api/hooks";
 import { useStore } from "@/store";
 import { emitAppEvent } from "@/lib/appEvents";
 import { openedAgo, recentlyOpened } from "@/lib/recentPapers";
-import { normalizeCollection } from "./libraryTree";
+import { normalizeCollection } from "@/lib/collectionPath";
 import { openPaper } from "./selectionStore";
 
 /** How many papers 続きから読む offers. */

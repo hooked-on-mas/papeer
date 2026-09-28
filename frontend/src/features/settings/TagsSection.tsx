@@ -3,6 +3,7 @@ import { useTagChoiceMutation } from "@/api/mutations";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useTagChoices, type TagKind } from "@/api/tagChoices";
+import { pyStrip } from "@/lib/pyWhitespace";
 
 export function TagManager({ kind }: { kind: TagKind }) {
   const { data: names = [], isPending, isError } = useTagChoices(kind);
@@ -15,7 +16,7 @@ export function TagManager({ kind }: { kind: TagKind }) {
     setBusy(true); setError("");
     try {
       // Settles once what the change makes stale has been loaded again (useTagChoiceMutation).
-      await change.mutateAsync(remove === undefined ? { name: name.trim() } : { remove });
+      await change.mutateAsync(remove === undefined ? { name: pyStrip(name) } : { remove });
       setDeleting(null);
       if (remove === undefined) setName("");
     } catch (e) { setError(e instanceof Error ? e.message : "保存できませんでした。"); }
@@ -23,9 +24,9 @@ export function TagManager({ kind }: { kind: TagKind }) {
   };
   return <div className="space-y-3">
     <p className="text-xs text-muted-foreground">{kind === "paper" ? "削除すると、すべての論文からこのタグが外れます。論文とメモは残ります。" : kind === "status" ? "削除すると選択肢から外れます。既存の論文に付いている読書状態は残ります。" : "削除すると選択肢から外れます。作成済みの付箋と分類は残ります。"}</p>
-    <form className="flex gap-2" onSubmit={e => { e.preventDefault(); if (name.trim() && !busy) void mutate(); }}>
+    <form className="flex gap-2" onSubmit={e => { e.preventDefault(); if (pyStrip(name) && !busy) void mutate(); }}>
       <Input aria-label={kind === "paper" ? "新しいタグ名" : kind === "status" ? "新しい読書状態名" : "新しい付箋の分類名"} placeholder={kind === "paper" ? "タグ名を入力" : kind === "status" ? "読書状態を入力" : "分類名を入力"} value={name} maxLength={kind === "sticky" ? 40 : 80} disabled={busy} onChange={e => setName(e.target.value)} />
-      <Button type="submit" disabled={busy || !name.trim() || names.includes(name.trim())}>追加</Button>
+      <Button type="submit" disabled={busy || !pyStrip(name) || names.includes(pyStrip(name))}>追加</Button>
     </form>
     {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     {isPending ? <p className="text-xs">読み込み中…</p> : isError ? <p role="alert" className="text-xs text-destructive">一覧を読み込めませんでした。アプリ更新後はバックエンドを再起動してください。</p> : <div className="max-h-60 overflow-y-auto divide-y">

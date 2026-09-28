@@ -53,6 +53,7 @@ Papeer の主な変更を記録します。形式は [Keep a Changelog](https://
 - 開発: sidecar のジョブの種類を `JobKind`（`sidecar/job_types.py`）にまとめ、種類ごとの結果と `/ws/events` のイベントの形を Pydantic のモデルで決めて API のスキーマに載せました。結果が取り決めと違うジョブは失敗として扱い、ログに残します。終わったジョブは直近 50 件を保持し、`GET /api/jobs/{job_id}` で結果を取得できます。`GET /api/jobs` は実行中のジョブだけを返します。
 - 開発: フロントエンドの API の型を sidecar から作る `just gen-api` を追加しました（`tools/export_openapi.py` で `app.openapi()` を `frontend/openapi.json` に書き出し、openapi-typescript で `schema.d.ts` に変換。食い違いは pytest で検出）。論文・読書状態・翻訳レポート・付箋・チャット・利用枠などの応答を Pydantic モデルで型付けし（応答の形は変えていません）、`hooks.ts` の主なフックと `jobTypes.ts` を生成した型に移しました。
 - 開発: データを変えたときに読み直すクエリを `frontend/src/api/invalidation.ts` の対応表にまとめ、付箋・タグ・辞書・テンプレート・設定の保存を `useMutation`（`frontend/src/api/mutations.ts`）にしました。論文 1 件の変更（移動・ファイル名の変更）の後に一覧全体を読み直すのをやめ、sidecar の `paper.changed` による行の更新に任せます。API の呼び出しは `startJob` を除いて型付きクライアントに移し、翻訳の設定ダイアログから辞書の編集欄（`GlossaryEditor`）を切り出しました。
+- 開発: フォルダーのパス（`frontend/src/lib/collectionPath.ts`）とページ範囲の読み取り（`frontend/src/lib/pageSelection.ts`）を画面側で 1 か所にまとめ、sidecar と同じ規則であることを共通のテストケース（`tests/fixtures/collection_paths.json`・`page_ranges.json`）で pytest と node:test の両方から確かめるようにしました。前後の空白として扱う文字も sidecar（Python の `str.strip()`）に合わせたため、翻訳ダイアログのページ指定で U+FEFF を含む入力を誤りと表示し、U+001C〜U+001F・U+0085 を空白として受け付けるようになります（sidecar は以前からそう扱っていました）。
 
 ### Removed
 

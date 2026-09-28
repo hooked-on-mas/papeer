@@ -14,7 +14,8 @@ import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 import { queryClient } from "@/lib/queryClient";
 import { summaryQuestionKey, summaryStartQuestion } from "@/features/summary/summaryStart";
-import { countInFolder, isInsideFolder, normalizeCollection } from "@/features/library/libraryTree";
+import { countInFolder } from "@/features/library/libraryTree";
+import { folderAncestors, folderName, isInsideFolder, normalizeCollection, subfolderPath } from "@/lib/collectionPath";
 import { bulkReport, runBulk } from "@/features/library/bulkOutcome";
 import { forgetPapers, movesRecord, undoLabel } from "@/features/library/undoHistory";
 import { LIBRARY_BUSY } from "@/lib/libraryBusy";
@@ -65,8 +66,6 @@ export function recordMoves(moves: MoveRecord[]): void {
   if (record) useStore.getState().setMoveHistory([...useStore.getState().moveHistory, record]);
 }
 
-export { normalizeCollection };
-
 // --- Import ---------------------------------------------------------------------------
 
 export async function importPaths(paths: string[], collection?: string): Promise<void> {
@@ -103,10 +102,8 @@ export async function importPdfs(): Promise<void> {
 export function expandToCollection(collection: string): void {
   const { expandedCollections, setExpandedCollections } = useStore.getState();
   if (expandedCollections === null) return;
-  const parts = collection ? collection.split(" / ") : [];
-  const ancestors = parts.map((_, i) => parts.slice(0, i + 1).join(" / "));
   const next = new Set(expandedCollections);
-  ancestors.forEach((a) => next.add(a));
+  folderAncestors(collection).forEach((a) => next.add(a));
   if (!collection) next.add("");
   setExpandedCollections([...next]);
 }
@@ -371,7 +368,7 @@ export async function createFolder(parent: string | null): Promise<void> {
     showError("フォルダー名を入力してください。", "フォルダーを作成できませんでした");
     return;
   }
-  const full = parent ? `${parent} / ${name}` : name;
+  const full = subfolderPath(parent ?? "", name);
   try {
     const result = await unwrap(api.POST("/api/collections", { body: { name: full } }));
     store.setLibrarySearch("");
@@ -387,7 +384,7 @@ export async function createFolder(parent: string | null): Promise<void> {
 
 /** Asks for a new name; the folder's new path once renamed, else null. */
 export async function renameFolder(path: string): Promise<string | null> {
-  const name = await askText("フォルダー名を変更", "新しい名前", path.split(" / ").pop() ?? "");
+  const name = await askText("フォルダー名を変更", "新しい名前", folderName(path));
   if (name === null) return null;
   let destination: string;
   try {

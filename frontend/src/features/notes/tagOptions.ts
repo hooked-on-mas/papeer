@@ -4,6 +4,8 @@
  * own: saving the paper's tags adds it to the choices (Library.update in papeer/core/storage.py).
  */
 
+import { pyStrip } from "../../lib/pyWhitespace.ts";
+
 /** As Library.update refuses them. */
 export const MAX_TAG_LENGTH = 80;
 export const MAX_TAGS = 100;
@@ -17,7 +19,7 @@ export type TagOption =
  * then the typed name as a new tag unless a tag has exactly that name. Everything when nothing is typed.
  */
 export function tagOptions(choices: readonly string[], selected: readonly string[], typed: string): TagOption[] {
-  const text = typed.trim();
+  const text = pyStrip(typed);
   const wanted = text.toLocaleLowerCase();
   const names = [...new Set([...choices, ...selected])];
   const matching = wanted ? names.filter((name) => name.toLocaleLowerCase().includes(wanted)) : names;
