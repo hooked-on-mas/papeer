@@ -1,5 +1,5 @@
 {
-  "comment": "Folder paths as papeer/core/storage.py reads them; the library (frontend/src/lib/collectionPath.ts) must agree. normalize: the path either slash gives, stripped as Python's str.strip() does. ancestors: the folder and its parents. inside: whether a folder is the (normalized) path or below it.",
+  "comment": "Folder paths as papeer/core/collection_paths.py reads them; the library (frontend/src/lib/collectionPath.ts) must agree. normalize: the path either slash gives, stripped as Python's str.strip() does. ancestors: the folder and its parents. inside: whether a folder is the (normalized) path or below it.",
   "normalize": [
     {"value": "", "path": ""},
     {"value": "ML", "path": "ML"},

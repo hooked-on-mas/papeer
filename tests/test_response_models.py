@@ -105,7 +105,7 @@ def test_the_reader_state_passes_stored_files_on(library, monkeypatch):
     files.translation_cache.write_text(json.dumps({"completed_pages": {"1": {"version": "k-sha256-0123456789", "model": "m"}}}),
                                        "utf-8")
     # Pages needing OCR as a newer extraction might describe them.
-    monkeypatch.setattr("papeer.core.storage.cached_review_pages", lambda folder, count: {
+    monkeypatch.setattr("papeer.core.library_papers.cached_review_pages", lambda folder, count: {
         "required": [1], "ocr": [{"page": 1, "reason": "from-a-newer-version", "extra": 1}]})
     assert client.put("/api/ui-state", json={"reading_pages": {paper_id: 1}}).status_code == 200
 

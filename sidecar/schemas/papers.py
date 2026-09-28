@@ -15,7 +15,7 @@ class ImportRequest(BaseModel):
     collection: str | None = None
 
 
-# The keys of storage.HIGHLIGHT_COLORS.
+# The keys of library_annotations.HIGHLIGHT_COLORS.
 HighlightColor = Literal["yellow", "green", "blue", "pink", "purple"]
 PageFraction = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 
