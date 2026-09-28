@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { FileText, Loader2, MessageSquare, Send, Square, X } from "lucide-react";
 import { create } from "zustand";
-import { isRunning, paperBusy, useStore, type PassageAttachment, type PassageLocation } from "@/store";
+import { paperBusy, useStore, type PassageAttachment, type PassageLocation } from "@/store";
+import { runningPaperJob } from "@/features/jobs/jobSelectors";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { UsageLine } from "@/components/UsageLine";
-import { apiRequest } from "@/api/client";
 import { useCollections, useMessages, usePaperList } from "@/api/hooks";
-import { startJob } from "@/features/jobs/jobEvents";
+import { requestCancel, startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { showPassage } from "@/features/reader/navigation";
 import { CitationEvidence } from "./CitationEvidence";
@@ -45,7 +45,7 @@ function AttachmentChip({ passage, paperId, onRemove }: {
 }) {
   const side = passage.side === "translated" ? "訳" : "";
   return (
-    <span className="inline-flex max-w-full items-center rounded-md border bg-background text-[12px] text-muted-foreground">
+    <span className="inline-flex max-w-full items-center rounded-md border bg-background text-[0.75rem] text-muted-foreground">
       <button
         type="button"
         onClick={() => showPassage(paperId, passage)}
@@ -87,7 +87,9 @@ function toLocation({ id: _id, paperId: _paperId, ...passage }: PassageAttachmen
 
 export function ChatPane() {
   const activePaperId = useStore((state) => state.activePaperId);
-  const activeJobs = useStore((state) => state.activeJobs);
+  // The same object until its own progress event, so that other jobs' events don't render the chat.
+  const askJob = useStore((state) => runningPaperJob(state.activeJobs, state.activePaperId, ["ask"]));
+  const busy = useStore((state) => paperBusy(state.activeJobs, state.activePaperId));
   const { data: messages = [] } = useMessages(activePaperId);
   // Kept in the store: attaching passages means leaving this tab for the reader and coming back.
   const input = useStore((state) => (activePaperId && state.chatInputs[activePaperId]) || "");
@@ -106,9 +108,6 @@ export function ChatPane() {
   const [pending, setPending] = useState<{ question: string; attachments: PassageLocation[] } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  const askJob = activeJobs.find((j) => j.paper_id === activePaperId && isRunning(j) && j.kind === "ask");
-  const busy = paperBusy(activeJobs, activePaperId);
 
   // Only on a real paper switch: a StrictMode rerun on mount would drop a message from the reader.
   const shownPaperId = useRef(activePaperId);
@@ -184,6 +183,7 @@ export function ChatPane() {
       el?.focus();
       el?.setSelectionRange(el.value.length, el.value.length);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs for a new draft only; busy, send... are read as they are when it arrives
   }, [chatDraft, activePaperId]);
 
   const handleKeyDown =(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -196,8 +196,8 @@ export function ChatPane() {
   if (!activePaperId) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8 h-full">
-        <p className="text-[15px] font-medium mb-1 text-foreground">論文が選択されていません</p>
-        <p className="text-[13px]">左のライブラリから論文を選ぶか、PDF を追加してください</p>
+        <p className="text-[0.9375rem] font-medium mb-1 text-foreground">論文が選択されていません</p>
+        <p className="text-[0.8125rem]">左のライブラリから論文を選ぶか、PDF を追加してください</p>
       </div>
     );
   }
@@ -211,15 +211,15 @@ export function ChatPane() {
           {messages.length === 0 && !waiting && (
             <div className="flex flex-col items-center justify-center text-center py-12">
               <MessageSquare className="w-12 h-12 text-muted-foreground/30 mb-4" />
-              <p className="text-[15px] font-medium mb-1">本文を根拠に、チャットする</p>
-              <p className="text-[13px] text-muted-foreground">手法の違い、実験条件、限界などを聞いてみてください。</p>
-              <p className="text-[13px] text-muted-foreground">PDF で文章を選び、右クリック →「この箇所をチャットに添付」で箇所を添えられます。</p>
+              <p className="text-[0.9375rem] font-medium mb-1">本文を根拠に、チャットする</p>
+              <p className="text-[0.8125rem] text-muted-foreground">手法の違い、実験条件、限界などを聞いてみてください。</p>
+              <p className="text-[0.8125rem] text-muted-foreground">PDF で文章を選び、右クリック →「この箇所をチャットに添付」で箇所を添えられます。</p>
               <div className="flex flex-wrap justify-center gap-2 mt-5">
                 {EXAMPLE_QUESTIONS.map((q) => (
                   <button
                     key={q}
                     onClick={() => { setInput(q); inputRef.current?.focus(); }}
-                    className="text-[13px] px-3 py-1.5 border rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                    className="text-[0.8125rem] px-3 py-1.5 border rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {q}
                   </button>
@@ -230,15 +230,15 @@ export function ChatPane() {
 
           {messages.map((msg, idx) => msg.role === "user" ? (
             <div key={idx}>
-              <div className="text-[12px] font-medium text-muted-foreground mb-1">あなた</div>
-              <div className="rounded-lg bg-muted/60 border px-4 py-2.5 text-[14px] space-y-2">
+              <div className="text-[0.75rem] font-medium text-muted-foreground mb-1">あなた</div>
+              <div className="rounded-lg bg-muted/60 border px-4 py-2.5 text-[0.875rem] space-y-2">
                 <AttachmentList attachments={msg.attachments ?? []} paperId={activePaperId} />
                 <div className="whitespace-pre-wrap">{msg.content}</div>
               </div>
             </div>
           ) : (
             <div key={idx}>
-              <div className="text-[12px] font-medium text-muted-foreground mb-1">回答</div>
+              <div className="text-[0.75rem] font-medium text-muted-foreground mb-1">回答</div>
               <MarkdownRenderer content={msg.content} paperId={activePaperId} className="max-w-none" />
               <CitationEvidence content={msg.content} />
               <UsageLine usage={msg.usage} className="mt-2" />
@@ -249,20 +249,20 @@ export function ChatPane() {
             <>
               {pending && (
                 <div>
-                  <div className="text-[12px] font-medium text-muted-foreground mb-1">あなた</div>
-                  <div className="rounded-lg bg-muted/60 border px-4 py-2.5 text-[14px] space-y-2">
+                  <div className="text-[0.75rem] font-medium text-muted-foreground mb-1">あなた</div>
+                  <div className="rounded-lg bg-muted/60 border px-4 py-2.5 text-[0.875rem] space-y-2">
                     <AttachmentList attachments={pending.attachments} paperId={activePaperId} />
                     <div className="whitespace-pre-wrap">{pending.question}</div>
                   </div>
                 </div>
               )}
-              <div className="flex items-center gap-3 text-[13px] text-muted-foreground">
+              <div className="flex items-center gap-3 text-[0.8125rem] text-muted-foreground">
                 <Loader2 className="w-4 h-4 animate-spin text-primary" />
                 <span className="truncate">{askJob?.message || "回答を作成中…"}</span>
                 {askJob && (
                   <button
-                    onClick={() => apiRequest("POST", `/api/jobs/${askJob.job_id}/cancel`).catch(() => undefined)}
-                    className="flex items-center gap-1 px-2 py-1 rounded border text-[12px] hover:bg-muted"
+                    onClick={() => requestCancel(askJob.job_id).catch(() => undefined)}
+                    className="flex items-center gap-1 px-2 py-1 rounded border text-[0.75rem] hover:bg-muted"
                   >
                     <Square className="w-3 h-3" /> 中止
                   </button>
@@ -285,7 +285,7 @@ export function ChatPane() {
           <div className="flex items-end gap-2">
             <textarea
               ref={inputRef}
-              className="flex-1 min-h-[40px] rounded-lg border border-input bg-background px-3 py-2.5 text-[13px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none leading-relaxed disabled:opacity-60"
+              className="flex-1 min-h-10 rounded-lg border border-input bg-background px-3 py-2.5 text-[0.8125rem] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none leading-relaxed disabled:opacity-60"
               placeholder={attachments.length
                 ? "添付した箇所について入力（空欄のまま送ると説明を求めます）"
                 : "例：従来手法と比べた改善点と、実験の限界は？"}
@@ -296,14 +296,14 @@ export function ChatPane() {
               rows={1}
             />
             <button
-              className="flex items-center gap-1.5 justify-center rounded-lg bg-primary text-primary-foreground hover:opacity-90 h-[40px] px-4 shrink-0 disabled:opacity-50 transition-opacity text-[13px] font-medium"
+              className="flex items-center gap-1.5 justify-center rounded-lg bg-primary text-primary-foreground hover:opacity-90 h-10 px-4 shrink-0 disabled:opacity-50 transition-opacity text-[0.8125rem] font-medium"
               onClick={() => send(input)}
               disabled={busy || waiting || (!input.trim() && !attachments.length) || (scope === "selected" && !selectedIds.length)}
             >
               <Send className="w-4 h-4" /> 送信
             </button>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-x-3 mt-1.5 text-[12px] text-muted-foreground">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 mt-1.5 text-[0.75rem] text-muted-foreground">
             <label className="flex items-center gap-1.5">参照範囲
               <select className="border rounded bg-background px-1" value={scope} onChange={e => setScope(e.target.value as typeof scope)}>
                 <option value="paper">この論文</option><option value="selected">選んだ論文</option><option value="collection">フォルダー内</option>

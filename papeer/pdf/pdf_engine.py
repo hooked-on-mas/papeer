@@ -1,33 +1,30 @@
 from __future__ import annotations
 
 from collections import Counter
-import json
-import time
+from dataclasses import replace
 from pathlib import Path
-
-def safe_replace(src: Path, dst: Path) -> None:
-    for _ in range(50):
-        try:
-            src.replace(dst)
-            return
-        except PermissionError:
-            time.sleep(0.1)
-    src.replace(dst)
-
 import re
 import threading
+from typing import Callable
 
 import pymupdf as fitz
 
 from papeer.layout.math_layout import LAYOUT_VERSION, MATH_TOKEN, annotate_math_fonts, formula_only_block, layout_blocks, merge_overlapping_prose, merge_continued_prose
 from papeer.core.bibliography import extract_bibliography
+from papeer.core.fileio import atomic_output
 from papeer.layout.reference_layout import mark_references
 from papeer.pdf.pdf_math_crops import formula_crop, page_glyph_bounds
 from papeer.layout.table_layout import separate_tables, table_regions
-from papeer.layout.figure_layout import figure_regions
+from papeer.layout.figure_layout import diagram_regions, figure_regions
 from papeer.layout.algorithm_layout import separate_algorithms
-from papeer.layout.reading_flow import order_page, continuation_groups, translation_blocks, materialize_flows
-from papeer.pdf.pdf_typography import FONT_CSS, TextStyle, body_font_size, first_line_indented, font_archive, merge_wrapped_headings, reading_space, running_headers, text_html, text_style
+from papeer.layout.ocr_pages import ocr_check
+from papeer.layout.reading_flow import (order_page, continuation_groups, footnote_ids, translation_blocks, materialize_flows,
+                                        resolve_unit_joins, source_body_size)
+from papeer.translation.translation_context import request_text
+from papeer.pdf.pdf_typography import (FONT_CSS, LIGHT_TEXT_COLOR, TEXT_COLOR, TIGHT_LEADING, TextStyle, body_font_size,
+                                       character_budget, first_line_indented, font_subsets, merge_wrapped_headings,
+                                       readable_size, reading_space, running_headers, searchable_text, text_html,
+                                       text_style)
 
 
 # MuPDF must not be called concurrently from the UI and background jobs.
@@ -40,15 +37,17 @@ def extract_pdf(path: Path) -> dict:
             raise ValueError("パスワード付きPDFです。解除したコピーを追加してください。")
         if not document.page_count:
             raise ValueError("PDFにページがありません。")
-        blocks, pages, empty_pages = [], [], []
+        blocks, pages, empty_pages, ocr_pages = [], [], [], []
         for number, page in enumerate(document):
             page_blocks = []
             block_seq = 1
             items = page.get_text("rawdict", sort=True, flags=fitz.TEXTFLAGS_RAWDICT & ~fitz.TEXT_PRESERVE_IMAGES)["blocks"]
             annotate_math_fonts(items)
+            page_items = items
             items, algorithms, algorithm_regions = separate_algorithms(page, items)
             figures = figure_regions(page)
             tables = [r for r in table_regions(page) if not any(r.intersects(f) for f in figures + algorithm_regions)]
+            figures += diagram_regions(page, figures + tables + algorithm_regions)
             items, tables = separate_tables(items, tables, number + 1)
             items, figures = separate_tables(items, figures, number + 1, kind="figure")
             for item in items:
@@ -69,6 +68,9 @@ def extract_pdf(path: Path) -> dict:
                 page_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
             if not page_blocks:
                 empty_pages.append(number + 1)
+            # A garbled or scanned page (or paragraph) keeps its original and is listed for review.
+            if ocr := ocr_check(page, page_items, page_blocks):
+                ocr_pages.append({"page": number + 1, **ocr})
             blocks.extend(page_blocks)
             pages.append({"number": number + 1, "text": "\n\n".join(b["text"] for b in page_blocks),
                           "width": page.cropbox.width, "height": page.cropbox.height,
@@ -77,7 +79,7 @@ def extract_pdf(path: Path) -> dict:
         if not title or len(title) > 240:
             title = path.stem
         result = {**extract_bibliography(document), "layout_version": LAYOUT_VERSION, "title": title, "pages": pages, "blocks": blocks,
-                "empty_pages": empty_pages, "page_count": len(pages)}
+                "empty_pages": empty_pages, "ocr_pages": ocr_pages, "page_count": len(pages)}
         ordered = []
         headers = running_headers(result)
         for info in pages:
@@ -91,12 +93,66 @@ def extract_pdf(path: Path) -> dict:
         return result
 
 
-def translation_units(document: dict, limit: int = 6500) -> list[dict]:
+# Longest source text sent as one translation unit; longer blocks are split (tests lower it).
+UNIT_LIMIT = 6500
+# ". " followed by a capital: a sentence end unless the word before the period is an
+# abbreviation. A decimal ("3.5") has no space after the point. Group 1 is the word before
+# the mark, matched from its start so that checking it stays linear in the block length.
+_SENTENCE_MARK = r"""(\S*?)[.!?]["'”’)\]]*(\s+)(?=["“‘(\[]?[A-Z])"""
+_SENTENCE_END = re.compile(r"(?<!\S)" + _SENTENCE_MARK)
+# A unit that starts inside a word (after a cut at a math marker): the rest of that word.
+_SENTENCE_END_AT = re.compile(_SENTENCE_MARK)
+_ABBREVIATIONS = {
+    "al", "app", "approx", "art", "ca", "cf", "ch", "chap", "co", "col", "cor", "corp", "def", "dept",
+    "dr", "ed", "eds", "eq", "eqs", "est", "etc", "ex", "fig", "figs", "inc", "jr", "lem", "ltd",
+    "mr", "mrs", "ms", "no", "nos", "p", "pp", "prof", "prop", "ref", "refs", "resp", "sec", "secs",
+    "sect", "sr", "st", "sup", "suppl", "tab", "thm", "viz", "vol", "vols", "vs"}
+
+
+def _sentence_end(text: str, match: re.Match) -> bool:
+    if text[match.end(1)] != ".":
+        return True
+    word = match[1]
+    if match.start(1) and not text[match.start(1) - 1].isspace():
+        word = re.search(r"\S*$", text[:match.end(1)])[0]
+    word = word.lstrip("([{\"'“‘")
+    # "e.g.", "i.e.", "U.S." and initials ("J. Smith") are not sentence ends.
+    if "." in word or re.fullmatch(r"[A-Z]", word):
+        return False
+    return word.casefold() not in _ABBREVIATIONS
+
+
+def _unit_end(text: str, start: int, limit: int) -> int:
+    """End of the unit starting at start: the last sentence end within the limit, else the
+    last space, else the limit itself (never inside a math marker)."""
+    end = start + limit
+    if end >= len(text):
+        return len(text)
+    matches = list(_SENTENCE_END.finditer(text, start, end + 1))
+    if start and not text[start - 1].isspace() and (first := _SENTENCE_END_AT.match(text, start, end + 1)):
+        matches.insert(0, first)
+    sentences = [m.end() for m in matches if start < m.end() <= end and _sentence_end(text, m)]
+    if sentences:
+        return sentences[-1]
+    spaces = [m.end() for m in re.finditer(r"\s+", text[start:end])]
+    if spaces:
+        return start + spaces[-1]
+    for token in MATH_TOKEN.finditer(text, start):
+        if token.start() >= end:
+            break
+        if token.start() < end < token.end():
+            return token.start() if token.start() > start else token.end()
+    return end
+
+
+def translation_units(document: dict, limit: int | None = None) -> list[dict]:
+    limit = UNIT_LIMIT if limit is None else limit
     if limit <= 0:
         raise ValueError("翻訳単位の文字数上限は正の数にしてください。")
     units = []
     for block in translation_blocks(document):
-        if block.get("kind") in {"formula", "table", "reference", "figure", "algorithm"} or formula_only_block(block):
+        if (block.get("kind") in {"formula", "table", "reference", "figure", "algorithm"} or block.get("needs_ocr")
+                or formula_only_block(block)):
             continue
         text = block.get("translation_text", block["text"])
         # Pure page numbers and symbol-only blocks are retained verbatim.
@@ -104,13 +160,7 @@ def translation_units(document: dict, limit: int = 6500) -> list[dict]:
             continue
         start, index = 0, 0
         while start < len(text):
-            end = min(start + limit, len(text))
-            for token in MATH_TOKEN.finditer(text, start):
-                if token.start() >= end:
-                    break
-                if token.start() < end < token.end():
-                    end = token.start() if token.start() > start else token.end()
-                    break
+            end = _unit_end(text, start, limit)
             units.append({"id": f"{block['id']}_{index}", "block": block["id"],
                           "page": block["page"], "text": text[start:end],
                           **({k: block[k] for k in ("flow_pages", "flow_blocks")} if "flow_pages" in block else {})})
@@ -118,15 +168,19 @@ def translation_units(document: dict, limit: int = 6500) -> list[dict]:
     return units
 
 
-def batches(units: list[dict], limit: int = 9000):
-    batch, length = [], 0
+def batches(units: list[dict], limit: int = 9000, size: Callable[[list[dict]], int] | None = None):
+    """Split `units` into requests of at most `limit` characters, a unit larger than that alone.
+
+    `size` measures a request; by default the data of a translation request as sent (request_text),
+    so that the context and glossary a request leaves out make room for more text.
+    """
+    measure = size or (lambda batch: len(request_text(batch)))
+    batch: list[dict] = []
     for unit in units:
-        size = len(unit["text"]) + 100 + (len(json.dumps(unit["context"], ensure_ascii=False)) if unit.get("context") else 0)
-        if batch and length + size > limit:
+        if batch and measure(batch + [unit]) > limit:
             yield batch
-            batch, length = [], 0
+            batch = []
         batch.append(unit)
-        length += size
     if batch:
         yield batch
 
@@ -165,6 +219,101 @@ def _space_without_formulas(rect: fitz.Rect, formulas: list[fitz.Rect]) -> fitz.
     return max(candidates, key=lambda candidate: candidate.get_area())
 
 
+class _Background:
+    """Color under the source text, sampled from a low-resolution image of the original page.
+
+    A translated block is painted over (to hide its glyphs and the vector parts of inline math)
+    with the most frequent color just around it: the paper, a shaded box or a colored panel.
+    Where no color prevails (a gradient, a photo) the average around the block is closer than
+    any single shade or white. The page is rendered only when a block on it needs the color.
+    """
+
+    ZOOM = 1  # pixels per point
+    MARGIN = 3  # width of the sampled ring around the block, in points
+    PREVAILING = .3  # share of the ring the most frequent color needs to be used as is
+
+    def __init__(self, page: fitz.Page):
+        self.page = page
+        self.pixmap: fitz.Pixmap | None = None
+        self.samples = b""
+
+    def color(self, rect: fitz.Rect) -> tuple[float, float, float]:
+        if self.pixmap is None:
+            # Annotations (highlights, notes) are not part of the page the translation replaces.
+            self.pixmap = self.page.get_pixmap(matrix=fitz.Matrix(self.ZOOM, self.ZOOM),
+                                               colorspace=fitz.csRGB, alpha=False, annots=False)
+            self.samples = self.pixmap.samples
+        pixmap, zoom, margin = self.pixmap, self.ZOOM, self.MARGIN
+        inner = rect * zoom
+        outer = fitz.IRect(int((rect.x0 - margin) * zoom), int((rect.y0 - margin) * zoom),
+                           int((rect.x1 + margin) * zoom + 1), int((rect.y1 + margin) * zoom + 1))
+        outer &= fitz.IRect(0, 0, pixmap.width, pixmap.height)
+        counts: Counter[bytes] = Counter()
+        stride, n, samples = pixmap.stride, pixmap.n, self.samples
+        # Pixels are taken by their centers; beside the block only the left and right parts count.
+        beside = [x for x in range(outer.x0, outer.x1) if not inner.x0 <= x + .5 <= inner.x1]
+        for y in range(outer.y0, outer.y1):
+            row = y * stride
+            for x in beside if inner.y0 <= y + .5 <= inner.y1 else range(outer.x0, outer.x1):
+                offset = row + x * n
+                counts[samples[offset:offset + 3]] += 1
+        if not counts:
+            return (1, 1, 1)
+        # Group near shades (anti-aliasing, halftones), then take the commonest exact color of
+        # the commonest group, so that the paper stays exactly white.
+        groups: Counter[tuple[int, int, int]] = Counter()
+        for value, count in counts.items():
+            groups[value[0] >> 4, value[1] >> 4, value[2] >> 4] += count
+        group, share = groups.most_common(1)[0]
+        total = sum(counts.values())
+        if share < total * self.PREVAILING:
+            red, green, blue = (sum(v[i] * c for v, c in counts.items()) / total / 255 for i in range(3))
+            return (red, green, blue)
+        value = max((v for v in counts if (v[0] >> 4, v[1] >> 4, v[2] >> 4) == group), key=counts.__getitem__)
+        return (value[0] / 255, value[1] / 255, value[2] / 255)
+
+
+def _luminance(color: tuple[float, float, float]) -> float:
+    """WCAG relative luminance of an sRGB color (components 0..1)."""
+    red, green, blue = (c / 12.92 if c <= .04045 else ((c + .055) / 1.055) ** 2.4 for c in color)
+    return .2126 * red + .7152 * green + .0722 * blue
+
+
+def _hex_color(value: str) -> tuple[float, float, float]:
+    return (int(value[1:3], 16) / 255, int(value[3:5], 16) / 255, int(value[5:7], 16) / 255)
+
+
+def _light_text(fill: tuple[float, float, float]) -> bool:
+    """Whether the light translation color contrasts more with fill than the usual dark one
+    (WCAG contrast ratio of relative luminances)."""
+    background = _luminance(fill)
+
+    def contrast(text: str) -> float:
+        foreground = _luminance(_hex_color(text))
+        return (max(foreground, background) + .05) / (min(foreground, background) + .05)
+    return contrast(LIGHT_TEXT_COLOR) > contrast(TEXT_COLOR)
+
+
+def _fit(placement: fitz.Rect, markup: str, archive: fitz.Archive, bounds: fitz.Rect) -> tuple[float, float]:
+    """(remaining, scale) of the markup laid out in placement, shrunk as far as needed."""
+    with fitz.open() as probe:
+        candidate = probe.new_page(width=bounds.width, height=bounds.height)
+        return candidate.insert_htmlbox(placement, markup, archive=archive, css=FONT_CSS, scale_low=0)
+
+
+def _search_text(writer: fitz.TextWriter, font: fitz.Font | None, rect: fitz.Rect, text: str) -> None:
+    """Invisible text over a formula image, so that the formula can be found and copied:
+    one line of the bundled serif (searchable_text), as large as fits in the image's box."""
+    if font is None or not text or rect.is_empty:
+        return
+    width, height = font.text_length(text, fontsize=1), font.ascender - font.descender
+    if width <= 0 or height <= 0:
+        return
+    size = min(rect.height / height, rect.width / width)
+    baseline = rect.y0 + (rect.height - height * size) / 2 + font.ascender * size
+    writer.append((rect.x0, baseline), text, font=font, fontsize=size)
+
+
 def build_translated_pdf(source: Path, document: dict, translations: dict[str, str], output: Path,
                          page_numbers: set[int] | None = None,
                          translate_page_numbers: set[int] | None = None) -> dict:
@@ -175,7 +324,13 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
     readability_warnings = []
     preserved_margin_blocks = []
     compact_blocks = []
+    tight_leading_blocks = []
+    note_blocks = []
     preserved_label_blocks = []
+    # The cached translation blocks each laid-out block takes its text from (a warning's
+    # "source_blocks": the paragraphs to shorten). A flow member shows part of its first block.
+    sources = {member: [group["blocks"][0]] for group in document.get("continuations", [])
+               if group["blocks"][0] in translations for member in group["blocks"]}
     document, translations = materialize_flows(document, translations)
     document = dict(document, blocks=running_headers(document))
     document = dict(document, blocks=[dict(b, kind="formula", formulas=[]) if formula_only_block(b) else b
@@ -194,6 +349,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
         if len(parts) > 1 and all(part in original_blocks for part in parts):
             if all(part in translations for part in parts):
                 translations[block["id"]] = " ".join(translations[part] for part in parts)
+                sources[block["id"]] = [s for part in parts for s in sources.get(part, [part])]
             else:
                 restored.extend(original_blocks[part] for part in parts)
                 continue
@@ -219,6 +375,8 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
             target["text"] += " " + block["text"]
             target["formulas"] = target.get("formulas", []) + block.get("formulas", [])
             translations[target["id"]] += " " + translations[block["id"]]
+            sources[target["id"]] = list(dict.fromkeys(sources.get(target["id"], [target["id"]])
+                                                       + sources.get(block["id"], [block["id"]])))
     document = dict(document, blocks=merged)
     selected = set(range(1, document["page_count"] + 1)) if page_numbers is None else set(page_numbers)
     if not selected or not selected <= set(range(1, document["page_count"] + 1)):
@@ -248,8 +406,17 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 block = dict(block, regions=match["regions"])
             enriched.append(block)
         document = dict(document, blocks=enriched)
+    # Subsetting the bundled faces is fontTools work only (and, the first time on a PC, their
+    # conversion): done before PDF_LOCK so that it never holds up the viewer or another job.
+    # The serif also carries the invisible text over the formula images.
+    math_text = "".join(searchable_text(formula.get("text", "")) for block in document["blocks"]
+                        if block["id"] in translations for formula in block.get("formulas", []))
+    subsets = font_subsets("".join(translations.values()) + math_text) if translations else ()
     with PDF_LOCK, fitz.open(source) as pdf, fitz.open(source) as original:
-        fonts = font_archive("".join(translations.values())) if translations else fitz.Archive()
+        fonts = fitz.Archive()
+        for face in subsets:
+            fonts.add(face)
+        math_font = fitz.Font(fontbuffer=subsets[0][0]) if subsets else None
         by_page: dict[int, list] = {}
         for block in document["blocks"]:
             if block["id"] in translations and block.get("kind") not in {"formula", "table", "reference", "figure", "algorithm"}:
@@ -262,6 +429,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
             page.set_rotation(0)
             original[number].set_rotation(0)
             glyph_bounds = page_glyph_bounds(original[number])
+            background = _Background(original[number])
             planned = []
             # Text extraction coordinates are unrotated; the media box uses the same coordinates.
             bounds = fitz.Rect(0, 0, page.cropbox.width, page.cropbox.height)
@@ -272,6 +440,8 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
             obstacles = [fitz.Rect(item["bbox"]) for item in page.get_image_info()]
             obstacles.extend(fitz.Rect(item["rect"]) for item in page.get_drawings())
             body_size = body_font_size(page_blocks)
+            footnotes = footnote_ids(page_blocks, bounds.height)
+            source_body = source_body_size(page_blocks)
             # Preserve the full box for isolated math (including fraction bars).
             # Where it encloses prose, protect the actual equation lines instead.
             prose_rects = [fitz.Rect(b["bbox"]) for b in page_blocks if b.get("kind") not in {"formula", "table", "reference", "figure", "algorithm"}]
@@ -301,9 +471,17 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 if rect.width < 45 and rect.height > rect.width * 4 and len(block["text"]) > 25:
                     preserved_margin_blocks.append(block["id"])
                     continue
-                style = text_style(block, body_size, bounds.height)
+                style = text_style(block, body_size, bounds.height, footnote=block["id"] in footnotes,
+                                   source_body=source_body)
+                if style.role in {"note", "caption"}:
+                    note_blocks.append(block["id"])
                 overlapping = [formula for formula in display_rects if rect.intersects(formula)]
-                placement = _space_without_formulas(reading_space(block, style, page_blocks, bounds, obstacles), display_rects)
+                fill = background.color(rect)
+                light = _light_text(fill)
+                color = LIGHT_TEXT_COLOR if light else TEXT_COLOR
+                # Light text is readable only on the painted box, not on the paper around it.
+                space = rect if light else reading_space(block, style, page_blocks, bounds, obstacles)
+                placement = _space_without_formulas(space, display_rects)
                 restore_rects.extend(overlapping)
                 text = translations[block["id"]]
                 formulas = block.get("formulas", [])
@@ -312,6 +490,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 archive = fitz.Archive()
                 archive.add(fonts)
                 images = {}
+                math_ems = 0.0
                 for index, formula in enumerate(formulas):
                     source_number = formula.get('source_page', number + 1) - 1
                     source_page = original[source_number]
@@ -322,6 +501,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                     pixels = source_page.get_pixmap(matrix=fitz.Matrix(4, 4), clip=crop, alpha=False)
                     archive.add((pixels.tobytes("png"), name))
                     em = max(1, block["font_size"])
+                    math_ems += crop.width / em
                     descent = (crop.y1 - formula["baseline"]) / em
                     images[formula["token"]] = (
                         f'<img src="{name}" style="width:{crop.width / em:.4f}em;'
@@ -334,71 +514,86 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                     regions = [list(line & rect) for line in source_lines
                                if rect.contains((line.tl + line.br) / 2)]
                     block = dict(block, regions=regions)
-                markup = text_html(text, style, images, first_indent=first_line_indented(block))
-                with fitz.open() as probe:
-                    candidate = probe.new_page(width=bounds.width, height=bounds.height)
-                    remaining, scale = candidate.insert_htmlbox(placement, markup, archive=archive, css=FONT_CSS, scale_low=0)
-                # Tight, short lead-ins around equations should keep readable
-                # glyphs before sacrificing font size. Never compact paragraphs.
-                if (scale < .85 and style.role == "body" and placement.height < style.size * 3
-                        and len(MATH_TOKEN.sub("x", text)) < 160):
-                    compact = text_html(text, TextStyle("compact", style.size, 1.15), images)
-                    with fitz.open() as probe:
-                        candidate = probe.new_page(width=bounds.width, height=bounds.height)
-                        compact_remaining, compact_scale = candidate.insert_htmlbox(
-                            placement, compact, archive=archive, css=FONT_CSS, scale_low=0)
+                first_indent = first_line_indented(block)
+                markup = text_html(text, style, images, first_indent=first_indent, color=color)
+                remaining, scale = _fit(placement, markup, archive, bounds)
+                role, regular_scale = style.role, scale
+                # Before shrinking the type, tighten the leading of running text.
+                if scale < 1 and style.leading > TIGHT_LEADING and role in {"body", "runin"}:
+                    tight = replace(style, leading=TIGHT_LEADING)
+                    tight_markup = text_html(text, tight, images, first_indent=first_indent, color=color)
+                    tight_remaining, tight_scale = _fit(placement, tight_markup, archive, bounds)
+                    if tight_remaining >= 0 and tight_scale > scale:
+                        style, markup, remaining, scale = tight, tight_markup, tight_remaining, tight_scale
+                        tight_leading_blocks.append(block["id"])
+                # Tight, short lead-ins around equations (and short notes) should keep readable
+                # glyphs before sacrificing font size. Never compact paragraphs. The box height
+                # is measured in body lines, also for the smaller type of notes.
+                if (regular_scale < .85 and role in {"body", "note", "caption"}
+                        and placement.height < max(style.size, body_size) * 3 and len(MATH_TOKEN.sub("x", text)) < 160):
+                    compact_style = TextStyle("compact", style.size, 1.15)
+                    compact = text_html(text, compact_style, images, color=color)
+                    compact_remaining, compact_scale = _fit(placement, compact, archive, bounds)
                     if compact_remaining >= 0 and compact_scale > scale:
-                        markup, remaining, scale = compact, compact_remaining, compact_scale
+                        style, markup, remaining, scale = compact_style, compact, compact_remaining, compact_scale
                         compact_blocks.append(block["id"])
                 if remaining < 0:
                     raise RuntimeError("訳文を元のページ内に配置できませんでした。未完成のPDFは保存していません。")
                 scaled_blocks += int(scale < 0.60)
-                if style.size * scale < (6 if style.role == "footer" else 8):
+                minimum = readable_size(TextStyle(role, style.size, style.leading))
+                if style.size * scale < minimum:
+                    # With a rough length that would fit at the smallest readable size, so that a
+                    # shorter translation can be requested (translation review, AI 修正案);
+                    # None when the box is too small for any translation at that size.
                     readability_warnings.append({"page": number + 1, "block": block["id"],
-                        "font_size": round(style.size * scale, 2), "scale": round(scale, 3)})
+                        "font_size": round(style.size * scale, 2), "scale": round(scale, 3), "role": role,
+                        "chars": len(re.sub(r"\s", "", MATH_TOKEN.sub("", resolve_unit_joins(text)))),
+                        "char_budget": character_budget(placement, minimum, style.leading, math_ems),
+                        "source_blocks": sources.get(block["id"], [block["id"]])})
                 inline_formulas += len(formulas)
-                page.add_redact_annot(rect, fill=(1, 1, 1), cross_out=False)
+                page.add_redact_annot(rect, fill=fill, cross_out=False)
                 # In the translation's order, which the laid-out images follow; word order may differ from the source.
                 by_token = {}
                 for formula in formulas:
                     by_token.setdefault(formula["token"], []).append(formula)
                 planned.append((placement, markup, archive, [by_token[token].pop(0) for token in MATH_TOKEN.findall(text)]))
             if planned:
+                search_layer = fitz.TextWriter(page.rect)
                 page.apply_redactions(images=0, graphics=0, text=0)
                 # Redaction removes any glyph touching a text box. Restore math
                 # from a separate source document, retaining vector quality.
                 for rect in restore_rects:
-                    page.draw_rect(rect, color=None, fill=(1, 1, 1), overlay=True)
+                    page.draw_rect(rect, color=None, fill=background.color(rect), overlay=True)
                     page.show_pdf_page(rect, original, number, clip=rect)
+                # Image boxes on the page so far (each listing costs a text page); only markup
+                # with formulas adds images.
+                images_before: set[tuple] | None = None
                 for rect, markup, archive, formulas in planned:
-                    images_before = {tuple(img['bbox']) for img in page.get_image_info()}
+                    if formulas and images_before is None:
+                        images_before = {tuple(img['bbox']) for img in page.get_image_info()}
                     remaining, _ = page.insert_htmlbox(rect, markup, archive=archive, css=FONT_CSS, scale_low=0)
                     if remaining < 0:
                         raise RuntimeError("訳文の描画に失敗しました。未完成のPDFは保存していません。")
-                    if formulas:
+                    if formulas and images_before is not None:
                         images_after = page.get_image_info()
                         new_images = [img for img in images_after if tuple(img['bbox']) not in images_before]
+                        images_before = {tuple(img['bbox']) for img in images_after}
                         for img, formula in zip(_reading_order(new_images), formulas):
-                            img_rect = fitz.Rect(img['bbox'])
-                            fontsize = img_rect.height
-                            while fontsize >= 0.1:
-                                if page.insert_textbox(img_rect, formula["text"], fontsize=fontsize, render_mode=3) >= 0:
-                                    break
-                                fontsize *= 0.9
+                            _search_text(search_layer, math_font, fitz.Rect(img['bbox']), searchable_text(formula["text"]))
+                if not search_layer.text_rect.is_empty:
+                    search_layer.write_text(page, render_mode=3)
             page.set_rotation(rotation)
         if page_numbers is not None:
             pdf.select([number - 1 for number in sorted(selected)])
         pdf.set_metadata({"title": document["title"] + " - 日本語訳", "creator": "Papeer"})
-        temporary = output.with_suffix(".tmp.pdf")
-        try:
+        with atomic_output(output) as temporary:
             pdf.save(temporary, garbage=4, deflate=True)
-            safe_replace(temporary, output)
-        finally:
-            temporary.unlink(missing_ok=True)
         return {"overflow_blocks": 0, "pages": pdf.page_count, "supplements": [],
                 "scaled_blocks": scaled_blocks, "inline_formulas": inline_formulas,
                 "readability_warnings": readability_warnings, "preserved_margin_blocks": preserved_margin_blocks,
                 "compact_blocks": compact_blocks,
+                "tight_leading_blocks": tight_leading_blocks,
+                "note_blocks": note_blocks,
                 "preserved_label_blocks": preserved_label_blocks,
                 "preserved_reference_blocks": [b["id"] for b in document["blocks"]
                                                if b.get("kind") == "reference" and b["page"] in selected],
@@ -421,12 +616,8 @@ def interleaved_pdf(source: Path, translated: Path, output: Path) -> None:
             result.insert_pdf(japanese, from_page=index, to_page=index)
         result.set_metadata({"title": (original.metadata.get("title") or source.stem) + " - 原文・日本語訳（交互）",
                              "creator": "Papeer"})
-        temporary = output.with_suffix(".tmp.pdf")
-        try:
+        with atomic_output(output) as temporary:
             result.save(temporary, garbage=4, deflate=True)
-            safe_replace(temporary, output)
-        finally:
-            temporary.unlink(missing_ok=True)
 
 
 def bilingual_pdf(source: Path, translated: Path, output: Path) -> None:
@@ -441,15 +632,10 @@ def bilingual_pdf(source: Path, translated: Path, output: Path) -> None:
                 page.show_pdf_page(fitz.Rect(left.rect.width + 16, 0, page.rect.width, right.rect.height), japanese, index)
             else:
                 result.insert_pdf(japanese, from_page=index, to_page=index)
-        result.save(output, garbage=4, deflate=True)
+        with atomic_output(output) as temporary:
+            result.save(temporary, garbage=4, deflate=True)
 
 
 def page_png(path: Path, index: int, width: int = 650) -> bytes | None:
     from papeer.pdf.pdf_viewer import page_png as render_png
     return render_png(path, index, width)
-
-
-def save_json(path: Path, value: object) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), "utf-8")
-    safe_replace(temporary, path)

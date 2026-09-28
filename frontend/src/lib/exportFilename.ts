@@ -1,3 +1,5 @@
+import { folderName } from "./collectionPath.ts";
+
 type PaperIdentity = { id: string; title?: string; original_name?: string };
 
 export type PaperExportKind = "original" | "translated" | "interleaved" | "bilingual" | "markdown" | "original-annotated" | "translated-annotated";
@@ -25,4 +27,11 @@ export function paperExportFilename(paper: PaperIdentity, kind: PaperExportKind)
   const shortened = stem.slice(0, 160).replace(/[\uD800-\uDBFF]$/, "").replace(/[. ]+$/g, "");
   const extension = kind === "markdown" ? "md" : "pdf";
   return `${shortened}-${labels[kind]}.${extension}`;
+}
+
+/** The .bib file a folder's BibTeX is saved to by default: the folder's own name (the last part of its path). */
+export function bibtexFilename(folder: string): string {
+  const leaf = folderName(folder);
+  const stem = safeStem(leaf).slice(0, 160).replace(/[\uD800-\uDBFF]$/, "").replace(/[. ]+$/g, "");
+  return `${stem || "文献"}.bib`;
 }

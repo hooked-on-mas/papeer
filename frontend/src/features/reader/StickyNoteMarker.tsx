@@ -1,16 +1,16 @@
 import { useRef, useState, type PointerEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { StickyNote as StickyIcon } from "lucide-react";
-import { apiRequest } from "@/api/client";
+import { useMoveStickyNote } from "@/api/mutations";
 import { showError } from "@/components/errorDialog";
 import { noteDraft, stickyColors, stickyQuote, type StickyNote } from "./stickyNotes";
 import { deleteStickyNote, openStickyNote, useStickyNotes } from "./stickyNotesStore";
 import { useStore } from "@/store";
-import { QK } from "@/lib/queryKeys";
 
 type Position = { anchor_x: number; anchor_y: number };
 export function StickyNoteMarker({ item, movable }: { item: StickyNote; movable: boolean }) {
   const client = useQueryClient();
+  const moveNote = useMoveStickyNote();
   const selected = useStickyNotes(s => s.selectedId === item.id);
   const [position, setPosition] = useState<Position | null>(null);
   const [saving, setSaving] = useState(false);
@@ -21,10 +21,8 @@ export function StickyNoteMarker({ item, movable }: { item: StickyNote; movable:
     if (busy.current) return;
     busy.current = true; setSaving(true); setPosition(next);
     try {
-      const saved = await apiRequest<StickyNote>("PATCH", `/api/papers/${item.paper_id}/sticky-notes/${item.id}`,
-        { label: item.label, note: item.note, ...next });
-      client.setQueriesData<StickyNote[]>({ queryKey: [QK.stickyNotes] }, notes => notes?.map(note => note.id === saved.id ? { ...note, ...saved } : note));
-      await client.invalidateQueries({ queryKey: [QK.stickyNotes] });
+      // Shown where it was dropped in every list, then the lists are loaded again (useMoveStickyNote).
+      await moveNote.mutateAsync({ item, position: next });
     } catch (error) { showError(error, "付箋を移動できませんでした"); }
     finally { busy.current = false; setSaving(false); setPosition(null); }
   };
@@ -49,12 +47,13 @@ export function StickyNoteMarker({ item, movable }: { item: StickyNote; movable:
   };
   const current = position ?? item;
   const excerpt = item.note.trim() || stickyQuote(item.quote).trim();
-  const markerHeight = excerpt ? 72 : 32;
+  // In rem like its text, so that the marker grows with the UI size (lib/uiScale.ts) instead of cutting it off.
+  const markerHeight = excerpt ? "4.5rem" : "2rem";
   return <button data-sticky-note aria-label={`付箋：${item.label} ${item.note || stickyQuote(item.quote)}`} aria-pressed={selected}
     aria-busy={saving} title={`${item.label}${excerpt ? `：${excerpt}` : ""}\nドラッグで移動・ダブルクリックで編集・Deleteで削除`}
     className={`absolute z-20 overflow-hidden rounded border px-2 py-1.5 text-left shadow-sm select-none ${stickyColors[item.label] ?? stickyColors["重要"]} ${selected ? "ring-2 ring-primary ring-offset-1" : ""}`}
-    style={{ width: "min(160px, 100%)", height: markerHeight,
-      top: `max(0px, min(calc(100% - ${markerHeight}px), ${current.anchor_y * 100}%))`, left: `max(0px, min(calc(100% - 160px), ${(current.anchor_x ?? 0) * 100}%))`,
+    style={{ width: "min(10rem, 100%)", height: markerHeight,
+      top: `max(0px, min(calc(100% - ${markerHeight}), ${current.anchor_y * 100}%))`, left: `max(0px, min(calc(100% - 10rem), ${(current.anchor_x ?? 0) * 100}%))`,
       touchAction: movable ? "none" : "auto", cursor: movable ? (position ? "grabbing" : "grab") : "pointer" }}
     onClick={event => { event.stopPropagation(); useStickyNotes.setState({ selectedId: item.id }); }}
     onDoubleClick={event => { event.stopPropagation(); if (!busy.current) void openStickyNote(noteDraft(item)); }}
@@ -82,7 +81,7 @@ export function StickyNoteMarker({ item, movable }: { item: StickyNote; movable:
           error => showError(error, "付箋を削除できませんでした"));
       }
     }}>
-    <span className="flex items-center gap-1 text-[11px] font-semibold leading-4">
+    <span className="flex items-center gap-1 text-[0.75rem] font-semibold leading-4">
       <StickyIcon aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{item.label}</span>
     </span>
     {excerpt && <span className="mt-1 line-clamp-2 whitespace-pre-wrap text-xs font-normal leading-4 [overflow-wrap:anywhere]">{excerpt}</span>}

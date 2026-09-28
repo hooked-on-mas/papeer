@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+import copy
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 import pymupdf as fitz
 
+from papeer.core import exports
 from papeer.core.config import Settings
+from papeer.core.paths import PaperFiles
 from papeer.pdf.pdf_engine import batches, bilingual_pdf, interleaved_pdf, build_translated_pdf, page_png, translation_units
 from papeer.providers import Cancelled, create_provider
-from papeer.core.service import PaperService, link_citations
+from papeer.core.service import PaperService, link_citations, stored_translations
 from papeer.translation.translation import validate_translations
 from papeer.core.storage import Library, normalize_collection_name
 from papeer.layout.math_layout import MATH_TOKEN
@@ -35,6 +40,8 @@ class FakeProvider:
             raise Cancelled("test interruption")
         if schema:
             units = json.loads(data)
+            if isinstance(units, dict) and "blocks" in units:  # The first request of a batch.
+                units = units["blocks"]
             if isinstance(units, dict) and "source_parts" in units:
                 return json.dumps({"parts": [dict(part) if part["kind"] == "math" else
                     {"kind": "text", "text": "適応制御の検証結果。追従誤差を18%削減した。"}
@@ -98,18 +105,25 @@ class WorkflowTests(unittest.TestCase):
             text = "".join(p.get_text() for p in pdf)
             self.assertIn("適応制御", text)
             self.assertIn("18%", text)
+        # The interleaved PDF is no longer written by translation, only when it is asked for.
+        self.assertFalse((folder / "interleaved.pdf").exists())
+        files = PaperFiles(folder)
         with (fitz.open(folder / "original.pdf") as original,
               fitz.open(folder / "translated.pdf") as translated,
-              fitz.open(folder / "interleaved.pdf") as paired):
+              fitz.open(exports.interleaved_cache(files)) as paired):
             self.assertEqual(paired.page_count, original.page_count * 2)
             for index in range(original.page_count):
                 for offset, source in enumerate((original, translated)):
                     page = paired[2 * index + offset]
                     self.assertEqual(page.get_text(), source[index].get_text())
                     self.assertEqual(page.rect, source[index].rect)
+        with patch("papeer.core.exports.interleaved_pdf", side_effect=AssertionError("rebuilt")):
+            exports.interleaved_cache(files)  # Reused while the translation is unchanged.
         initial_calls = provider.calls
         service.translate(self.paper_id)
         self.assertEqual(provider.calls, initial_calls, "cached translation must avoid repeated AI calls")
+        # A new translated.pdf discards the paired copy built from the previous one.
+        self.assertFalse((folder / "interleaved.pdf").exists())
         self.assertTrue(page_png(folder / "translated.pdf", 0).startswith(b"\x89PNG"))
         bilingual_pdf(folder / "original.pdf", folder / "translated.pdf", self.root / "bilingual.pdf")
         with fitz.open(self.root / "bilingual.pdf") as pdf:
@@ -122,14 +136,14 @@ class WorkflowTests(unittest.TestCase):
         service = PaperService(self.library, provider, self.cancel)
         service.translate(self.paper_id, {1})
         path = self.library.folder(self.paper_id) / "translation-cache.json"
-        before = json.loads(path.read_text("utf-8"))["translations"]
+        before = stored_translations(json.loads(path.read_text("utf-8")))
         calls = provider.calls
         provider.settings.reasoning_effort = "high"
         service.translate(self.paper_id, {1})
         self.assertEqual(provider.calls, calls)
         service.translate(self.paper_id, {1, 2})
         self.assertGreater(provider.calls, calls)
-        after = json.loads(path.read_text("utf-8"))["translations"]
+        after = stored_translations(json.loads(path.read_text("utf-8")))
         self.assertTrue(all(after[key] == value for key, value in before.items()))
 
     def test_interleaved_pdf_preserves_rotation_and_existing_output_on_mismatch(self):
@@ -187,9 +201,49 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(all(len(x["text"]) <= 6500 for x in units))
         self.assertTrue(all(sum(len(x["text"]) + 100 for x in b) <= 9000 for b in batches(units)))
 
+    def test_split_block_marker_stays_inside_the_pdf_layout(self):
+        from papeer.core.reading_tools import library_search, translation_paragraphs
+        from papeer.core.search import search_paper
+        from papeer.core.service import page_translation_text
+        from papeer.layout.reading_flow import UNIT_JOINER
+        # A low limit splits the fixture's longer paragraphs into several units.
+        with patch("papeer.pdf.pdf_engine.UNIT_LIMIT", 120):
+            document = self.library.document(self.paper_id)
+            units = translation_units(document)
+            split = {u["block"] for u in units if not u["id"].endswith("_0")}
+            self.assertTrue(split)
+            PaperService(self.library, FakeProvider(), self.cancel).translate(self.paper_id)
+            folder = self.library.folder(self.paper_id)
+            files = PaperFiles(folder)
+            cache = json.loads(files.translation_cache.read_text("utf-8"))
+            self.assertTrue(stored_translations(cache))
+            self.assertNotIn(UNIT_JOINER, json.dumps(cache, ensure_ascii=False))
+            # translation.md: one paragraph per block, the parts joined like one text.
+            markdown = files.translation_md.read_text("utf-8")
+            self.assertNotIn(UNIT_JOINER, markdown)
+            sections = {block_id: text for _, block_id, text in files.translation_sections()}
+            for block_id in split:
+                self.assertNotIn("\n", sections[block_id])
+                self.assertIn("削減した。適応制御", sections[block_id])
+            # 「翻訳の確認・修正」 lists the units themselves.
+            paragraphs = translation_paragraphs(self.library, self.paper_id)
+            self.assertEqual(len(paragraphs), len(units))
+            self.assertFalse(any(UNIT_JOINER in p["text"] for p in paragraphs))
+            pages = {u["page"] for u in units if u["block"] in split}
+            for page in pages:
+                self.assertFalse(any(UNIT_JOINER in text for text in page_translation_text(folder, document, page)))
+            found = search_paper(self.library, self.paper_id, "削減した。適応制御", side="translated")
+            self.assertTrue(found["results"])
+            self.assertNotIn(UNIT_JOINER, json.dumps(found, ensure_ascii=False))
+            everywhere = library_search(self.library, "削減した。適応制御")
+            self.assertTrue(everywhere["results"])
+            self.assertNotIn(UNIT_JOINER, json.dumps(everywhere, ensure_ascii=False))
+            with fitz.open(folder / "translated.pdf") as pdf:
+                self.assertNotIn(UNIT_JOINER, "".join(p.get_text() for p in pdf))
+
     def test_cancel_keeps_completed_translation_for_next_run(self):
         folder = self.library.folder(self.paper_id)
-        document = self.library.document(self.paper_id)
+        document = copy.deepcopy(self.library.document(self.paper_id))  # The shared value is never changed in place.
         document["blocks"][0]["text"] = "Long English paragraph. " * 1500
         document["blocks"][0]["translation_text"] = document["blocks"][0]["text"]
         (folder / "document.json").write_text(json.dumps(document), "utf-8")
@@ -198,7 +252,7 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaises(Cancelled):
             PaperService(self.library, provider, self.cancel).translate(self.paper_id)
         cache = json.loads((folder / "translation-cache.json").read_text("utf-8"))
-        self.assertGreater(len(cache["translations"]), 0)
+        self.assertGreater(len(stored_translations(cache)), 0)
         self.assertFalse((folder / "translated.pdf").exists())
         from papeer.translation.translation_preview import read_preview
         self.assertNotIn(1, read_preview(folder)["pages"], "a partially translated page must not be published")
@@ -225,8 +279,8 @@ class WorkflowTests(unittest.TestCase):
                     self.assertFalse((folder / "translated.pdf").exists())
                     self.assertIn((self.paper_id, 1), notifications)
                     raise Cancelled("pause after page one")
-                units = json.loads(data)
-                self.assertEqual({u["page"] for u in units}, {1})
+                units = json.loads(data)["blocks"]
+                self.assertEqual({u["id"].split("b")[0] for u in units}, {"p1"})
                 return super().generate(instruction, data, schema)
 
         with self.assertRaises(Cancelled):
@@ -234,13 +288,17 @@ class WorkflowTests(unittest.TestCase):
                          page_ready=lambda *args: notifications.append(args)).translate(self.paper_id)
         preview_path, _ = translated_page(folder, 0)
         self.assertTrue(preview_path.exists())
-        before = json.loads((folder / "translation-cache.json").read_text("utf-8"))["translations"]
+        paused = json.loads((folder / "translation-cache.json").read_text("utf-8"))
+        before = stored_translations(paused)
         provider = FakeProvider()
         PaperService(Library(self.library.root), provider, self.cancel).translate(self.paper_id)
         remaining = [u for u in translation_units(self.library.document(self.paper_id)) if u["id"] not in before]
         self.assertEqual({u["page"] for u in remaining}, {2})
-        self.assertEqual(provider.calls, len(remaining), "only interrupted second-page units use recovery requests")
-        after = json.loads((folder / "translation-cache.json").read_text("utf-8"))["translations"]
+        # The second page's request got no answer: it is sent again as one normal request, spending no retries.
+        self.assertEqual(paused["retry_state"]["unanswered"], {u["id"]: 1 for u in remaining})
+        self.assertEqual(provider.calls, 1, "interrupted second-page units go back to a normal request")
+        self.assertEqual(json.loads((folder / "translation-cache.json").read_text("utf-8"))["retry_state"]["retry_calls"], 0)
+        after = stored_translations(json.loads((folder / "translation-cache.json").read_text("utf-8")))
         self.assertTrue(all(after[k] == v for k, v in before.items()))
         self.assertTrue(read_preview(folder)["complete"])
         self.assertEqual(translated_page(folder, 1), (folder / "translated.pdf", 1))
@@ -273,32 +331,34 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "connection failed"):
             PaperService(self.library, provider, self.cancel).translate(self.paper_id)
         cache = json.loads((folder / "translation-cache.json").read_text("utf-8"))
-        self.assertEqual(set(cache["translations"]), provider.initial_ids - {provider.missing_id})
+        self.assertEqual(set(stored_translations(cache)), provider.initial_ids - {provider.missing_id})
         self.assertEqual(cache["retry_state"]["attempts"][provider.missing_id], 2)
         self.assertEqual(cache["retry_state"]["retry_calls"], 1)
+        # The first retry went out but got no answer.
+        self.assertEqual(cache["retry_state"]["unanswered"], {provider.missing_id: 1})
         self.assertEqual((folder / "translated.pdf").read_bytes(), existing)
-        self.assertEqual(self.library.paper(self.paper_id)["status"], "翻訳途中・再開可")
+        self.assertEqual(self.library.paper(self.paper_id)["status"], "resumable")
 
         class ResumeProvider(FakeProvider):
             def generate(inner, instruction, data, schema=None):
                 payload = json.loads(data)
                 if inner.calls == 0:
-                    self.assertIn("context_parts", payload)
-                    self.assertIn("texts", payload)
+                    # The unanswered retry is sent again as it was.
+                    self.assertIn("source_parts", payload)
                 else:
-                    self.assertFalse({u["id"] for u in payload} & set(cache["translations"]))
+                    self.assertFalse({u["id"] for u in payload["blocks"]} & set(stored_translations(cache)))
                 return super().generate(instruction, data, schema)
 
         resumed = ResumeProvider()
         PaperService(self.library, resumed, self.cancel).translate(self.paper_id)
         self.assertEqual(resumed.calls, 2)
-        self.assertEqual(self.library.paper(self.paper_id)["status"], "翻訳済み")
+        self.assertEqual(self.library.paper(self.paper_id)["status"], "translated")
 
     def test_retry_limit_skips_block_continues_pages_and_persists_on_reopen(self):
         class InvalidProvider(FakeProvider):
             def generate(inner, instruction, data, schema=None):
                 payload = json.loads(data)
-                if isinstance(payload, list):
+                if "blocks" in payload:
                     answer = json.loads(super().generate(instruction, data, schema))
                     if not hasattr(inner, "missing_id"):
                         inner.missing_id = answer["translations"].pop()["id"]
@@ -311,15 +371,15 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(provider.calls, 5)  # Two pages and three retries.
         self.assertEqual(report["skipped_blocks"], [provider.missing_id])
         self.assertEqual(report["translated_pages"], [1, 2])
-        self.assertEqual(self.library.paper(self.paper_id)["status"], "一部翻訳済み")
+        self.assertEqual(self.library.paper(self.paper_id)["status"], "partial")
         folder = self.library.folder(self.paper_id)
         before = (folder / "translation-cache.json").read_bytes()
         cache = json.loads(before)
-        self.assertNotIn(provider.missing_id, cache["translations"])
+        self.assertNotIn(provider.missing_id, stored_translations(cache))
         self.assertEqual(cache["retry_state"]["retry_calls"], 3)
         self.assertEqual(cache["retry_state"]["attempts"][provider.missing_id], 4)
         units = translation_units(self.library.document(self.paper_id))
-        self.assertEqual(set(cache["translations"]), {u["id"] for u in units} - {provider.missing_id})
+        self.assertEqual(set(stored_translations(cache)), {u["id"] for u in units} - {provider.missing_id})
         source = next(u["text"] for u in units if u["id"] == provider.missing_id)
         self.assertIn(source, (folder / "translation.md").read_text("utf-8"))
         reopened = Library(self.library.root)
@@ -373,16 +433,28 @@ class WorkflowTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
-    @unittest.skipIf(os.name == "nt", "POSIX fixture for subprocess contract; Windows is covered by installer smoke tests")
     def test_codex_transport_does_not_shell_interpolate_documents(self):
-        fake = self.root / "fake-codex"
-        fake.write_text("#!/usr/bin/env python3\nimport sys,pathlib\ndata=sys.stdin.buffer.read().decode('utf-8')\n"
-                        "assert '日本語' in data\nassert '--sandbox' in sys.argv and 'read-only' in sys.argv\n"
-                        "out=sys.argv[sys.argv.index('--output-last-message')+1]\n"
-                        "pathlib.Path(out).write_text('回答',encoding='utf-8')\n", "utf-8")
-        fake.chmod(0o755)
-        settings = Settings(provider_options={"codex": {"cli_path": str(fake)}}, timeout_seconds=10)
-        result = create_provider(settings, self.cancel).generate("read", "日本語 & test `literal` $(literal)")
+        """A real process through the npm layout: codex.cmd is never run, its JS entry is, with "node".
+
+        Python stands in for node, so the entry is a Python script; the shim would exit with 9 if run.
+        """
+        shim = self.root / "npm" / "codex.cmd"
+        entry = shim.parent / "node_modules/@openai/codex/bin/codex.js"
+        entry.parent.mkdir(parents=True)
+        shim.write_text("@exit /b 9\n", "utf-8")
+        entry.write_text("import os,sys,pathlib\ndata=sys.stdin.buffer.read().decode('utf-8')\n"
+                         "assert '日本語 & test `literal` $(literal) %PATH% ^& |' in data\n"
+                         "assert '--sandbox' in sys.argv and 'read-only' in sys.argv\n"
+                         "assert 'features.plugins=false' in sys.argv\n"
+                         "assert 'PAPEER_TOKEN' not in os.environ and os.environ['KEEP_THIS'] == '1'\n"
+                         "out=sys.argv[sys.argv.index('--output-last-message')+1]\n"
+                         "pathlib.Path(out).write_text('回答',encoding='utf-8')\n", "utf-8")
+        settings = Settings(provider_options={"codex": {"cli_path": str(shim)}}, timeout_seconds=30)
+        node = lambda name, *args, **kwargs: sys.executable if name == "node" else None  # noqa: E731
+        with patch("shutil.which", side_effect=node), \
+                patch.dict(os.environ, {"PAPEER_TOKEN": "sidecar-token", "KEEP_THIS": "1"}):
+            result = create_provider(settings, self.cancel).generate(
+                "read", "日本語 & test `literal` $(literal) %PATH% ^& |")
         self.assertEqual(result, "回答")
 
 

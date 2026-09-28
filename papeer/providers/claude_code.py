@@ -8,13 +8,16 @@ import tempfile
 from papeer.core.config import REASONING_EFFORTS
 from papeer.providers.base import OptionField, ProviderBackend, ProviderSpec
 from papeer.providers.common import (
-    CliBackend, json_lines, remember_limits, run_cli_process, to_int, wrap_document_prompt,
+    AnswerRejected, CliBackend, cli_exit_failure, cli_failure, json_lines, lasting_cli_failure, remember_limits,
+    run_cli_process, to_int, wrap_document_prompt,
 )
 
 _ALIASES = [("sonnet", "sonnet (最新 Claude Sonnet)"), ("opus", "opus (Claude Opus)"), ("haiku", "haiku (Claude Haiku)")]
 _FALLBACK_MODELS = _ALIASES + [("claude-sonnet-4-6", "claude-sonnet-4-6")]
 # Values accepted by `claude --effort`.
 _FALLBACK_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
+# With --strict-mcp-config, the only MCP servers Claude Code loads: none.
+_NO_MCP_SERVERS = json.dumps({"mcpServers": {}})
 _WINDOWS = {"five_hour": "5時間枠", "seven_day": "7日枠", "seven_day_opus": "7日枠 (Opus)",
             "seven_day_sonnet": "7日枠 (Sonnet)"}
 
@@ -31,6 +34,34 @@ def claude_limit_windows(info: dict) -> list[dict]:
         windows.append({"label": _WINDOWS.get(key, key or "利用枠"), "used_percent": info["utilization"] * 100,
                         "resets_at": info.get("resetsAt")})
     return windows
+
+
+def claude_failure(result: dict, stderr: str = "") -> RuntimeError:
+    """The error for a result event that reports a failure (is_error, or no answer text).
+
+    A plan limit or a sign-in stays a lasting failure. Output the model had already written
+    (usage.output_tokens) or a run ended by one of its own limits (subtype error_max_turns,
+    error_max_budget_usd, ...) is a paid answer that cannot be used: AnswerRejected. Otherwise
+    only an API error or dropped connection known to pass (API Error 5xx/529, overloaded,
+    ECONNRESET, ...) is sent again.
+    """
+    text = result["result"] if isinstance(result.get("result"), str) else ""
+    subtype = str(result.get("subtype") or "")
+    detail = text or subtype
+    evidence = "\n".join((stderr, text, subtype))
+    usage = result["usage"] if isinstance(result.get("usage"), dict) else {}
+    if not lasting_cli_failure(evidence) and (subtype.startswith("error_max_") or to_int(usage.get("output_tokens")) > 0):
+        return AnswerRejected("Claude Codeの回答を使えませんでした。\n" + detail[-1800:])
+    return cli_failure("Claude Code", detail, evidence, known_temporary_only=True)
+
+
+def claude_exit_failure(stderr: str, stdout: str, returncode: int) -> RuntimeError:
+    """The error for a nonzero exit: judged by its result event when it printed one (claude_failure),
+    else by what it printed about the failure (cli_exit_failure: not its status or assistant events)."""
+    result = next((e for e in reversed(json_lines(stdout)) if e.get("type") == "result"), None)
+    if result is None:
+        return cli_exit_failure("Claude Code", stderr, stdout, returncode)
+    return claude_failure(result, stderr)
 
 
 def _catalog_models() -> list[dict]:
@@ -69,7 +100,12 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
             root = Path(directory)
             command = self.command() + [
                 "-p",
+                # The document is untrusted: no built-in tools, no MCP servers (--tools only covers the
+                # built-in set), no project or local settings, no skills.
                 "--tools", "",
+                "--strict-mcp-config", "--mcp-config", _NO_MCP_SERVERS,
+                "--setting-sources", "user",
+                "--disable-slash-commands",
                 "--no-session-persistence",
                 # stream-json (which needs --verbose) is the only format that also reports plan usage.
                 "--output-format", "stream-json", "--verbose",
@@ -87,6 +123,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                 timeout_seconds=self.settings.timeout_seconds,
                 tool_name=self.tool_name,
                 root=root,
+                failure=claude_exit_failure,
             )
             events = json_lines(output)
             result = next((e for e in reversed(events) if e.get("type") == "result"), None)
@@ -96,9 +133,8 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
             if result is None:
                 return output  # an older CLI that printed plain text
             if result.get("is_error") or not isinstance(result.get("result"), str):
-                detail = result.get("result") if isinstance(result.get("result"), str) else result.get("subtype", "")
-                raise RuntimeError("Claude Code接続に失敗しました。ログイン状態・利用枠を確認してください。\n" + str(detail)[-1800:])
-            usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+                raise claude_failure(result)
+            usage = result["usage"] if isinstance(result.get("usage"), dict) else {}
             cache_read = to_int(usage.get("cache_read_input_tokens"))
             self.usage.add(
                 input_tokens=to_int(usage.get("input_tokens")) + to_int(usage.get("cache_creation_input_tokens")) + cache_read,
@@ -108,7 +144,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                 cost_usd=result.get("total_cost_usd"))
             answer = result["result"].strip()
             if not answer:
-                raise RuntimeError("Claude Codeの回答が空でした。")
+                raise AnswerRejected("Claude Codeの回答が空でした。")
             return answer
 
     def list_models(self) -> list[tuple[str, str]]:
@@ -123,7 +159,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                     if m_id and m_id not in seen:
                         models.append((m_id, f"{m_id} ({m.get('name') or m_id})"))
                         seen.add(m_id)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - the list is only a help: without it, the usual models.
             pass
         return models or list(_FALLBACK_MODELS)
 
@@ -135,6 +171,6 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                     options = [(o["id"], o["id"]) for o in m.get("thinking", {}).get("effort_options", [])
                                if o.get("id") in REASONING_EFFORTS]
                     break
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - the list is only a help: without it, the usual efforts.
             pass
         return [("", "既定値（モデル・CLIに任せる）")] + (options or [(e, e) for e in _FALLBACK_EFFORTS])

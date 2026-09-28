@@ -61,17 +61,43 @@ def _draw_strokes(page, strokes, font=None):
     return font
 
 
-def annotated_pdf(source: Path, pages: dict[int, list[dict]]) -> bytes:
-    """A copy of source with the ink of each page number painted in."""
+# Like the highlighter pen's strokes: the text stays readable through it.
+HIGHLIGHT_OPACITY = 0.35
+
+
+def _draw_highlights(page, highlights):
+    """Highlights of selected text ({"color": "#rrggbb", "rects": [[x, y, width, height], ...]}), under the ink."""
+    width, height = page.rect.width, page.rect.height
+    rotation, derotation = page.rotation, page.derotation_matrix
+    page.set_rotation(0)
+    shape = page.new_shape()
+    for item in highlights:
+        color = tuple(int(item["color"][i:i + 2], 16) / 255 for i in (1, 3, 5))
+        for x, y, w, h in item["rects"]:
+            corners = [fitz.Point(px * width, py * height) * derotation
+                       for px, py in ((x, y), (x + w, y), (x + w, y + h), (x, y + h))]
+            shape.draw_polyline([*corners, corners[0]])
+            shape.finish(color=None, fill=color, width=0, closePath=True, fill_opacity=HIGHLIGHT_OPACITY)
+    shape.commit()
+    page.set_rotation(rotation)
+
+
+def annotated_pdf(source: Path, pages: dict[int, list[dict]], highlights: dict[int, list[dict]] | None = None) -> bytes:
+    """A copy of source with the highlights and the ink of each page number painted in."""
+    highlights = highlights or {}
     with PDF_LOCK, fitz.open(source) as pdf:
         font = None
-        for number, strokes in pages.items():
-            if not strokes:
+        for number in sorted(set(pages) | set(highlights)):
+            strokes, marks = pages.get(number) or [], highlights.get(number) or []
+            if not strokes and not marks:
                 continue
             if not 1 <= number <= len(pdf):
                 raise ValueError("書き込みに対応するページがありません。PDFのページ数を確認してください。")
             page = pdf[number - 1]
-            font = _draw_strokes(page, strokes, font)
+            if marks:
+                _draw_highlights(page, marks)
+            if strokes:
+                font = _draw_strokes(page, strokes, font)
         if font is not None:
             pdf.subset_fonts()
         return pdf.tobytes(garbage=3, deflate=True)

@@ -1,0 +1,173 @@
+# Checks every pushed branch and every pull request on Windows, the only platform Papeer ships for
+# (README「テストと lint」). Three jobs run side by side:
+#   python   ruff, pyright, the generated files (frontend/openapi.json, the license inventory), pytest
+#   frontend tsc, ESLint, node:test, vite build
+#   rust     cargo fmt --check, cargo clippy --release, cargo test --release (the release-only code is
+#            behind #[cfg(not(debug_assertions))] and is compiled only with --release)
+#
+# A pull request from a branch of this repository uses the result of the push of that branch; only pull
+# requests from forks are checked as pull requests. A newer push to the same branch cancels the older run;
+# on main every commit has a group of its own, so each keeps its result.
+#
+# Nothing here calls a real AI: the tests replace the CLIs and APIs, and the runner has no claude, codex
+# or agy. Actions are pinned to commit SHAs like release.yml (the version is in the comment);
+# .github/dependabot.yml moves them.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # One command per step: the runner's pwsh wrapper stops the step when that command fails.
+    shell: pwsh
+
+jobs:
+  python:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      # Test with the lock file as committed; fail instead of re-resolving.
+      UV_LOCKED: "1"
+      # The runner's console code page cannot print the Japanese messages of the tools and tests.
+      PYTHONUTF8: "1"
+      # pyright runs the copy bundled in its wheel with the Node.js set up below; skip its PyPI version lookup.
+      PYRIGHT_PYTHON_IGNORE_WARNINGS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # Node.js for pyright and for tests/test_openapi_schema.py, which makes schema.d.ts again with
+      # frontend/node_modules/openapi-typescript (the test is skipped without them).
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 12
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: uv sync
+        run: uv sync --locked
+
+      - name: pnpm install
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: ruff
+        run: uv run ruff check papeer sidecar tests tools
+
+      - name: pyright
+        run: uv run pyright
+
+      - name: frontend/openapi.json matches the sidecar
+        run: uv run python tools/export_openapi.py --check
+
+      - name: License inventory matches the lock files
+        run: uv run python tools/license_inventory.py --check
+
+      # The bundled fonts converted to TrueType (some 30 seconds to make; tests/conftest.py keeps them in
+      # pytest's cache folder). The file names carry the source's hash, so an older conversion is never used.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .pytest_cache/d/papeer-font-cache
+          key: font-cache-${{ runner.os }}-${{ hashFiles('papeer/core/assets/fonts/**', 'papeer/pdf/pdf_fonts.py', 'uv.lock') }}
+          restore-keys: font-cache-${{ runner.os }}-
+
+      - name: pytest
+        run: uv run pytest -q
+
+  frontend:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 12
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: tsc
+        run: pnpm typecheck
+
+      - name: ESLint
+        run: pnpm lint
+
+      - name: node:test
+        run: pnpm test
+
+      - name: vite build
+        run: pnpm build
+
+  rust:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      # tauri-build requires the externalBin sidecar exe, which only `just build-sidecar` makes.
+      TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+    defaults:
+      run:
+        working-directory: frontend/src-tauri
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: frontend/src-tauri -> target
+          # Branches start from main's cache; saving one per branch would soon push it out of the 10 GB.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --release --all-targets -- -D warnings
+
+      # The unit tests in lib.rs with the release-only code compiled in. Without LTO and optimization: the
+      # release profile's are for the installer, and would make this build several times slower.
+      - name: cargo test
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "256"
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
+        run: cargo test --release

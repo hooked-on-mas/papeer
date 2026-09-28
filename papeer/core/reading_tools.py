@@ -1,6 +1,8 @@
-"""Reading metadata, shared terminology and portable library snapshots."""
+"""Reading metadata (tags, statuses, note templates), shared terminology, paragraph revisions and
+portable library snapshots."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from contextlib import closing
 import json
@@ -10,22 +12,75 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import threading
+import time
+from typing import TYPE_CHECKING
 import uuid
 import zipfile
 
-from papeer.core import prompts
+from papeer.core import prompts, search_index
 from papeer.core.paths import PaperFiles
-from papeer.core.storage import Library, forget_schema
-from papeer.core.terminology import effective_glossary, apply_glossary, validate_revision
-from papeer.pdf.pdf_engine import save_json, translation_units
+from papeer import __version__
+from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, newer_papeer
+from papeer.core.terminology import effective_glossary, apply_glossary, matching_terms, validate_revision
+from papeer.core.destinations import inside_library
+from papeer.core.errors import Conflict, Invalid
+from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
+from papeer.pdf.pdf_engine import translation_units
+
+if TYPE_CHECKING:
+    from papeer.providers.base import ProviderBackend
 
 __all__ = ["effective_glossary", "validate_revision"]
 
 DEFAULT_TEMPLATE = "\n\n".join("## " + heading for heading in (
     "何を解決する論文？", "新しい点", "主な結果", "前提・限界", "自分に使えそうな点", "疑問・次に調べること"))
+# The built-in template's name: always offered first, and never saved over.
+DEFAULT_TEMPLATE_NAME = "読書メモ"
 
 
-def validate_terms(terms: list[dict]) -> list[dict[str, str]]:
+# --- Choices offered in the UI: paper tags, sticky-note labels ("sticky"), reading statuses ("status") ---
+
+def all_tags(lib: Library) -> list[str]:
+    """Every paper tag the UI offers: the saved choices and the tags papers carry, in case-insensitive order."""
+    names = set(lib.tag_choices("paper"))
+    return sorted(names | {tag for paper in lib.papers() for tag in paper["tags"]}, key=str.casefold)
+
+
+def choice_name(kind: str, value: str) -> str:
+    """The name of a new choice of `kind` ("paper", "sticky" or "status"), trimmed; Invalid when unusable."""
+    name = value.strip()
+    if not name or (kind == "sticky" and len(name) > 40):
+        raise Invalid("名前を入力してください（付箋の分類は40文字まで）。")
+    return name
+
+
+def add_choice(lib: Library, kind: str, name: str) -> None:
+    """Offer `name` (checked by choice_name) among the choices of `kind`."""
+    if kind == "status":
+        lib.add_reading_status(name)
+    else:
+        lib.add_tag_choice(kind, name)
+
+
+# --- Note templates ---
+
+def note_templates(lib: Library) -> list[dict]:
+    """The built-in template first, then the user's (by name); "builtin" tells them apart."""
+    return [{"name": DEFAULT_TEMPLATE_NAME, "content": DEFAULT_TEMPLATE, "builtin": True},
+            *[dict(row, builtin=False) for row in lib.note_templates()]]
+
+
+def template_name(name: str, content: str) -> str:
+    """The name a user's template is saved under, trimmed; Invalid when it is empty or the built-in one's,
+    or when the template has no text."""
+    name = name.strip()
+    if not name or name == DEFAULT_TEMPLATE_NAME or not content.strip():
+        raise Invalid("テンプレート名と本文を入力してください。標準名は変更できません。")
+    return name
+
+
+def validate_terms(terms: object) -> list[dict[str, str]]:
     if not isinstance(terms, list) or any(not isinstance(item, dict) or
             not isinstance(item.get("source"), str) or not isinstance(item.get("target"), str) for item in terms):
         raise ValueError("辞書には原語（source）と訳語（target）の文字列の一覧が必要です。")
@@ -61,9 +116,9 @@ def draft_glossary(lib, paper_id, provider, cancel, progress, existing):
         progress(f"専門用語の翻訳対応表を作っています… {index + 1}/{len(chunks)}")
         answer = provider.generate(
             prompts.load("glossary_draft"),
-            json.dumps({"source": chunk, "existing_terms": [t for key, t in known.items() if key in chunk.casefold()]}, ensure_ascii=False), schema)
+            json.dumps({"source": chunk, "existing_terms": matching_terms(chunk, list(known.values()))}, ensure_ascii=False), schema)
         try:
-            value = parse_json_answer(answer)
+            value = parse_json_answer(answer, schema)
         except ValueError:
             raise ValueError("AIから有効な翻訳対応表を取得できませんでした。再試行してください。") from None
         terms = value.get("terms")
@@ -75,7 +130,8 @@ def draft_glossary(lib, paper_id, provider, cancel, progress, existing):
             term = {"source": item["source"].strip(), "target": item["target"].strip()}
             key = term["source"].casefold()
             if (term["source"] and term["target"] and max(len(term["source"]), len(term["target"])) <= 100
-                    and key not in known and key in chunk.casefold()):
+                    # In the source, as a translation finds glossary terms (plural, across lines) or as a part.
+                    and key not in known and (key in chunk.casefold() or matching_terms(chunk, [term]))):
                 result.append(term)
                 known[key] = term
     check_cancel(cancel)
@@ -99,63 +155,151 @@ def translation_paragraphs(lib: Library, paper_id: str) -> list[dict]:
                  text=done[u["id"]]) for u in units if u["id"] in done]
 
 
+def _metadata_text(paper: dict) -> str:
+    return " ".join([paper["title"], paper["first_author"], paper["publication_year"], paper["original_name"],
+                     paper["collection_name"], paper.get("venue", ""), paper.get("doi", ""), paper.get("arxiv_id", ""),
+                     *paper["tags"]])
+
+
 def library_search(lib: Library, query: str, limit: int = 200) -> dict:
+    """Where `query` occurs across the library (casefolded, as a whole): at most `limit` places, one for each
+    paper's metadata, memo, page ("original") and translated section that contains it.
+
+    The most relevant papers come first, as `limit` may cut the rest: those whose metadata contain it, then
+    those whose memo does, then the others; within each group those with more pages and sections containing
+    it first (a term shorter than a trigram is not counted), then in the library's order (newest first).
+    Within a paper: metadata, memo, pages, sections. The index (search_index) says where to look; each place
+    is checked against the text itself, and papers it does not cover yet are looked through whole.
+    """
     term = query.strip().casefold()
     if not term:
         return {"results": [], "limited": False}
     if len(term) > 200:
         raise ValueError("検索語は200文字までです。")
+    papers = lib.papers()
+    index = search_index.SearchIndex(lib.root)
+    try:
+        unindexed = index.refresh(lib, search_index.BUILD_SECONDS)
+        with index.reader() as reader:
+            counts = reader.counts(term) if len(term) >= search_index.TRIGRAM else None
+            candidates = []
+            for position, paper in enumerate(papers):
+                in_metadata = term in _metadata_text(paper).casefold()
+                in_note = term in paper["note"].casefold()
+                count = counts.get(paper["id"], 0) if counts is not None else 0
+                # A short term is not counted: any paper may have it, and each is checked in turn.
+                if in_metadata or in_note or count or counts is None or paper["id"] in unindexed:
+                    candidates.append((0 if in_metadata else 1 if in_note else 2, -count, position, paper))
+            candidates.sort(key=lambda candidate: candidate[:3])
+            return _search_places(lib, term, limit, (
+                (paper, None if paper["id"] in unindexed else reader.places(term, paper["id"])) for *_, paper in candidates))
+    except (sqlite3.Error, OSError) as exc:
+        # The index is never a reason for the search to fail (an unwritable device folder, a full disk):
+        # it then looks through everything, as it did before the index. A damaged one is removed, for the
+        # next search to build again; the library's database being damaged instead costs that rebuild only.
+        if search_index.corrupt(exc):
+            index.discard()
+        return _search_places(lib, term, limit, ((paper, None) for paper in papers))
+
+
+def _search_places(lib: Library, term: str, limit: int, candidates) -> dict:
+    """library_search's results from `candidates`: (paper, places) in order, places being (side, page, section)
+    of the pages and translated sections to check, or None for all of them."""
     results = []
     def add(paper, side, page, text):
         offset = text.casefold().find(term)
         if offset >= 0:
             results.append({"paper_id": paper["id"], "title": paper["title"], "side": side, "page": page,
                             "snippet": text[max(0, offset - 45):offset + len(term) + 90].replace("\n", " ")})
-    for paper in lib.papers():
-        add(paper, "metadata", None, " ".join([paper["title"], paper["first_author"], paper["publication_year"],
-                                              paper["original_name"], paper["collection_name"], *paper["tags"]]))
-        add(paper, "note", None, paper["note"])
-        for number, text in lib.page_texts(paper["id"]):
-            add(paper, "original", number, text)
-        for page, _, text in PaperFiles(lib.folder(paper["id"])).translation_sections():
-            add(paper, "translated", page, text)
-        if len(results) >= limit:
-            return {"results": results[:limit], "limited": True}
+    with lib.connection() as db:
+        for paper, places in candidates:
+            add(paper, "metadata", None, _metadata_text(paper))
+            add(paper, "note", None, paper["note"])
+            pages = None if places is None else {page for side, page, _ in places if side == "original"}
+            if pages is None or pages:
+                for number, text in db.execute("SELECT number,text FROM pages WHERE paper_id=? ORDER BY number", (paper["id"],)):
+                    if pages is None or number in pages:
+                        add(paper, "original", number, text)
+            sections = None if places is None else {section for side, _, section in places if side == "translated"}
+            if sections is None or sections:
+                for section, (page, _, text) in enumerate(PaperFiles(lib.folder(paper["id"])).translation_sections()):
+                    if sections is None or section in sections:
+                        add(paper, "translated", page, text)
+            if len(results) >= limit:
+                return {"results": results[:limit], "limited": True}
     return {"results": results, "limited": False}
 
 
-def create_backup(lib: Library, destination: Path) -> None:
+def _stop_if_cancelled(cancel: threading.Event | None) -> None:
+    if cancel is not None:
+        from papeer.providers import check_cancel
+        check_cancel(cancel)
+
+
+# Already compressed: deflating them again takes most of a backup's time and saves a few percent at best.
+# Stored entries are part of the ZIP format since its first version, so every Papeer reads these backups.
+STORED_SUFFIXES = frozenset({".pdf", ".png", ".jpg", ".jpeg"})
+DATABASE_FILES = ("library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm")
+
+
+def create_backup(lib: Library, destination: Path, cancel: threading.Event | None = None) -> None:
+    """Write the whole library to a ZIP; a cancelled backup leaves no file behind (Cancelled is raised)."""
     destination = destination.resolve()
-    if destination.is_relative_to(lib.root.resolve()):
+    if inside_library(destination, lib.root):
         raise ValueError("バックアップはデータ保存フォルダーの外に保存してください。")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(destination.name + "." + uuid.uuid4().hex + ".tmp")
-    try:
-        with tempfile.TemporaryDirectory() as directory:
-            snapshot = Path(directory) / "library.sqlite3"
-            with lib.connection() as source, closing(sqlite3.connect(snapshot)) as target:
-                source.backup(target)
-            with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
-                archive.write(snapshot, "library.sqlite3")
-                archive.writestr("papeer-backup.json", json.dumps({"version": 1}))
-                for path in lib.root.rglob("*"):
-                    if path.is_file() and path.name not in {"library.sqlite3", "library.sqlite3-wal", "library.sqlite3-shm"}:
-                        archive.write(path, path.relative_to(lib.root).as_posix())
-        temporary.replace(destination)
-    finally:
-        temporary.unlink(missing_ok=True)
+    files = []
+    for path in lib.root.rglob("*"):
+        _stop_if_cancelled(cancel)
+        # Half-written files left by a forced exit must not travel with the backup or sync.
+        if path.is_file() and not is_temporary(path) and path.name not in DATABASE_FILES:
+            files.append(path)
+    database = sum(path.stat().st_size for path in (lib.root / name for name in DATABASE_FILES[:2]) if path.is_file())
+    # The ZIP is at most the files as they are (PDFs and images are stored, the rest shrinks) plus the
+    # database, whose snapshot also sits in the temporary folder until the ZIP is complete.
+    ensure_free_space({destination: sum(path.stat().st_size for path in files) + database,
+                       Path(tempfile.gettempdir()): database})
+    with atomic_output(destination) as temporary, tempfile.TemporaryDirectory() as directory:
+        snapshot = Path(directory) / "library.sqlite3"
+        with lib.connection() as source, closing(sqlite3.connect(snapshot)) as target:
+            source.backup(target)
+            schema_version = target.execute("PRAGMA user_version").fetchone()[0]
+        with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.write(snapshot, "library.sqlite3")
+            # "version" is the archive layout; schema_version lets an older Papeer refuse a newer library.
+            archive.writestr("papeer-backup.json", json.dumps(
+                {"version": 1, "schema_version": schema_version, "app_version": __version__}))
+            for path in files:
+                _stop_if_cancelled(cancel)
+                archive.write(path, path.relative_to(lib.root).as_posix(),
+                              zipfile.ZIP_STORED if path.suffix.lower() in STORED_SUFFIXES else zipfile.ZIP_DEFLATED)
 
 
-def restore_backup(lib: Library, source: Path) -> Path:
+# The library's settings (settings.json: connection, model, effort, ...) and the user's prompt texts.
+# A restore may keep the current ones instead of taking those in the backup.
+SETTINGS_ENTRIES = ("settings.json", "prompts")
+
+
+def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = None, *,
+                   import_settings: bool = True) -> Path:
+    """Replace the library with a validated backup and return where the old one was moved.
+
+    With import_settings=False the current settings.json and prompts are kept instead of the backup's.
+    Options tied to this PC (cli_path, base_url) are never taken from a backup either way; see config.Settings.load.
+    `cancel` is honoured only until the folders are swapped: a cancelled restore leaves the library as it was.
+    """
     root = lib.root.resolve()
     staging = root.with_name(root.name + "-restore-" + uuid.uuid4().hex)
     previous = root.with_name(root.name + "-before-restore-" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
     staging.mkdir()
     try:
         with zipfile.ZipFile(source) as archive:
+            # The restored copy is written beside the library before the two are swapped.
+            ensure_free_space({staging: sum(item.file_size for item in archive.infolist())})
             total = 0
             names = set()
             for item in archive.infolist():
+                _stop_if_cancelled(cancel)
                 name = item.filename
                 path = PurePosixPath(name)
                 normalized = "/".join(path.parts).casefold()
@@ -186,48 +330,134 @@ def restore_backup(lib: Library, source: Path) -> Path:
         if manifest.get("version") != 1 or not (staging / "library.sqlite3").is_file():
             raise ValueError("Papeerのバックアップを選択してください。")
         with closing(sqlite3.connect(staging / "library.sqlite3")) as db:
+            # Backups made before schema versioning have neither field and are at user_version 0.
+            schema_version = manifest.get("schema_version", 0)
+            if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+                raise ValueError("Papeerのバックアップを選択してください。")
+            if max(schema_version, db.execute("PRAGMA user_version").fetchone()[0]) > SCHEMA_VERSION:
+                made_by = newer_papeer(manifest.get("app_version") if schema_version > SCHEMA_VERSION else None)
+                # Neutral wording: sync validates a pulled revision through this path as well.
+                raise NewerSchemaError(f"このデータは{made_by}で作成されたため読み込めません。"
+                                       "Papeerを最新版に更新してから、もう一度お試しください。")
             if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or db.execute("PRAGMA foreign_key_check").fetchall():
                 raise ValueError("バックアップのデータベースが破損しています。")
             for paper_id, digest in db.execute("SELECT id,sha256 FROM papers"):
+                _stop_if_cancelled(cancel)
                 if not re.fullmatch(r"[0-9a-f]{32}", paper_id) or not (PaperFiles(staging / "papers" / paper_id).original_pdf).is_file():
                     raise ValueError("バックアップの論文ファイルが不足しています。")
                 with (PaperFiles(staging / "papers" / paper_id).original_pdf).open("rb") as stream:
                     if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
                         raise ValueError("バックアップの原文PDFが破損しています。")
         manifest_path.unlink()
-        root.rename(previous)
+        if not import_settings:
+            _keep_current_settings(root, staging)
+        # The last point to stop; once the folders are swapped the restore runs to the end.
+        _stop_if_cancelled(cancel)
+        _rename_folder(root, previous)
         try:
             staging.rename(root)
         except Exception:
             previous.rename(root)
             raise
-        finally:
-            forget_schema(root)
         return previous
     finally:
         if staging.exists():
             shutil.rmtree(staging)
 
 
+def _rename_folder(source: Path, target: Path, attempts: int = 50, wait: float = 0.1) -> None:
+    """Rename a folder, waiting a few seconds while Windows refuses it.
+
+    The sidecar holds no file of the library open by now (a restore waits for every request), but a
+    virus scan, the search indexer or Explorer's preview may still have one open for a moment.
+    """
+    for _ in range(attempts - 1):
+        try:
+            source.rename(target)
+            return
+        except PermissionError:
+            time.sleep(wait)
+    source.rename(target)
+
+
+def _keep_current_settings(root: Path, staging: Path) -> None:
+    """Put the library's current settings and prompts in the restored copy in place of the backup's."""
+    for name in SETTINGS_ENTRIES:
+        restored, current = staging / name, root / name
+        if restored.is_dir():
+            shutil.rmtree(restored)
+        else:
+            restored.unlink(missing_ok=True)
+        if current.is_dir():
+            shutil.copytree(current, restored)
+        elif current.is_file():
+            shutil.copy2(current, restored)
+
+
 REVISION_SCHEMA = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"],
                    "additionalProperties": False}
 
 
-def draft_revision(lib: Library, paper_id: str, paragraph: dict, instruction: str, provider, cancel) -> str:
-    """A revised translation of one paragraph following the user's instruction; not saved."""
+def draft_revision(lib: Library, paper_id: str, paragraph: dict, instruction: str, provider, cancel,
+                   char_budget: int | None = None) -> str:
+    """A revised translation of one paragraph following the user's instruction; not saved.
+
+    char_budget: about how many characters fit where the paragraph is typeset (a readability
+    warning's estimate), when the user asked for a shorter translation.
+    """
     from papeer.providers import check_cancel, parse_json_answer
 
-    answer = provider.generate(
-        prompts.load("revision_draft") + " " + instruction,
-        json.dumps({"source": paragraph["source"], "current": paragraph["text"],
-                    "glossary": effective_glossary(lib, paper_id)}, ensure_ascii=False),
-        REVISION_SCHEMA)
-    value = parse_json_answer(answer)
+    payload = {"source": paragraph["source"], "current": paragraph["text"],
+               "glossary": effective_glossary(lib, paper_id)}
+    prompt = prompts.load("revision_draft") + " " + instruction
+    if char_budget:
+        payload["max_characters"] = char_budget
+        prompt += (f" Keep the Japanese text within about {char_budget} characters, not counting math"
+                   " placeholders or spaces: it must fit the space of the original paragraph. Make it concise"
+                   " by removing redundancy, but do not drop any claim, condition, number or citation.")
+    answer = provider.generate(prompt, json.dumps(payload, ensure_ascii=False), REVISION_SCHEMA)
+    value = parse_json_answer(answer, REVISION_SCHEMA)
     if not isinstance(value.get("text"), str):
         raise ValueError("AIから修正案を取得できませんでした。再試行してください。")
     text = validate_revision(paragraph["source"], value["text"])
     check_cancel(cancel)
     return text
+
+
+def find_paragraph(lib: Library, paper_id: str, unit_id: str, expected_text: str | None = None) -> dict:
+    """The translated paragraph `unit_id` as translation_paragraphs lists it.
+
+    Invalid when the translation has no such paragraph (a glossary change re-made its units); Conflict when
+    its text is no longer `expected_text`, the one the user revised (another window changed it).
+    """
+    lib.paper_folder(paper_id)  # NotFound for a paper the library does not have
+    paragraph = next((item for item in translation_paragraphs(lib, paper_id) if item["id"] == unit_id), None)
+    if not paragraph:
+        raise Invalid("段落が見つかりません。辞書変更後は再翻訳してください。")
+    if expected_text is not None and paragraph["text"] != expected_text:
+        raise Conflict("訳文が変更されました。読み込み直してください。")
+    return paragraph
+
+
+def adopt_revision(lib: Library, paper_id: str, unit_id: str, text: str, provider: ProviderBackend,
+                   cancel: threading.Event, progress: Callable[[str], None], page_ready: Callable[[str, int], None],
+                   expected_text: str | None = None) -> dict:
+    """Use `text` (checked by validate_revision) as paragraph `unit_id`'s translation, and record the change.
+
+    The paragraph is looked up again (find_paragraph): the translation may have changed since the request.
+    Its pages are translated again with the text in place (PaperService.translate with replacements), so
+    their PDF pages are drawn anew, and the previous text goes to the revision history. Returns the
+    translation's result.
+    """
+    from papeer.core.service import PaperService
+
+    current = find_paragraph(lib, paper_id, unit_id, expected_text)
+    result = PaperService(lib, provider, cancel, progress, page_ready).translate(
+        paper_id, pages=set(current["pages"]), replacements={unit_id: text})
+    if result.get("skipped_pages"):
+        raise ValueError("修正したページのPDF生成に失敗しました。翻訳の要確認一覧から確認してください。")
+    save_revision_history(lib.folder(paper_id), unit_id, current["text"], text)
+    return result
 
 
 def revision_history(folder: Path) -> list[dict]:
@@ -239,4 +469,4 @@ def save_revision_history(folder: Path, unit_id: str, before: str, after: str) -
     history = PaperFiles.read_json(path, [])
     history.append({"id": uuid.uuid4().hex, "unit_id": unit_id, "before": before, "after": after,
                     "created_at": datetime.now().isoformat(timespec="seconds")})
-    save_json(path, history[-500:])
+    atomic_write_json(path, history[-500:])

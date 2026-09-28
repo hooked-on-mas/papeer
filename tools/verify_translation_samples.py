@@ -12,11 +12,12 @@ from pathlib import Path
 import threading
 
 from papeer.core.config import Settings, data_directory
-from papeer.pdf.pdf_engine import batches, build_translated_pdf, extract_pdf, save_json, translation_units
+from papeer.pdf.pdf_engine import batches, build_translated_pdf, extract_pdf, translation_units
+from papeer.core.fileio import atomic_write_json
 from papeer.providers import create_provider
 from papeer.translation.translation import RetryState, translate_batch
-from papeer.translation.translation_context import contextual_units
-from papeer.layout.reading_flow import unit_pages, expand_pages
+from papeer.translation.translation_context import contextual_units, paper_context
+from papeer.layout.reading_flow import unit_pages, expand_pages, join_unit_translations
 
 
 def run(snapshot: Path, output: Path):
@@ -32,7 +33,7 @@ def run(snapshot: Path, output: Path):
         print(f"EXTRACT {identity[:4]} pages {sorted(selected)}", flush=True)
         document_path = folder / "fresh-document.json"
         document = json.loads(document_path.read_text("utf-8")) if document_path.exists() else extract_pdf(folder / "original.pdf")
-        save_json(document_path, document)
+        atomic_write_json(document_path, document)
         all_units = contextual_units(document, translation_units(document))
         selected = expand_pages(all_units, selected)
         units = [u for u in all_units if unit_pages(u) & selected]
@@ -45,7 +46,7 @@ def run(snapshot: Path, output: Path):
         state = RetryState.from_cache(cache.get("retry_state"))
 
         def save():
-            save_json(cache_path, {"fingerprint": fingerprint, "translations": done, "retry_state": state.to_cache()})
+            atomic_write_json(cache_path, {"fingerprint": fingerprint, "translations": done, "retry_state": state.to_cache()})
 
         def accept(values):
             done.update(values)
@@ -55,7 +56,8 @@ def run(snapshot: Path, output: Path):
             chunks = list(batches([u for u in units if u["id"] not in done], limit=12000))
             for index, chunk in enumerate(chunks, 1):
                 print(f"TRANSLATE {identity[:4]} batch {index}/{len(chunks)} ({len(chunk)} units)", flush=True)
-                translate_batch(provider, chunk, cancel, lambda message: print(message, flush=True), accept, state, save)
+                translate_batch(provider, chunk, cancel, lambda message: print(message, flush=True), accept, state, save,
+                                paper=paper_context(document))
             missing = [u["id"] for u in units if u["id"] not in done]
             if missing:
                 raise ValueError(f"Missing sample translations: {missing}")
@@ -63,15 +65,15 @@ def run(snapshot: Path, output: Path):
             for unit in units:
                 grouped.setdefault(unit["block"], []).append(done[unit["id"]])
             report = build_translated_pdf(folder / "original.pdf", document,
-                {key: "\n".join(parts) for key, parts in grouped.items()}, output / f"{identity}.pdf", page_numbers=selected)
+                {key: join_unit_translations(parts) for key, parts in grouped.items()}, output / f"{identity}.pdf", page_numbers=selected)
             report.update(title=document["title"], source_pages=sorted(selected), model=settings.model,
                           translated_units=len(units), error=None)
             reports[identity] = report
             print(f"DONE {identity[:4]} scaled={report['scaled_blocks']}", flush=True)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - one paper failing is reported, the rest go on
             reports[identity] = {"source_pages": sorted(selected), "error": str(error)}
             print(f"FAILED {identity[:4]}: {error}", flush=True)
-        save_json(output / "reports.json", reports)
+        atomic_write_json(output / "reports.json", reports)
     return reports
 
 

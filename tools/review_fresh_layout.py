@@ -8,11 +8,12 @@ import random
 import threading
 import pymupdf as fitz
 from papeer.core.config import Settings, data_directory
-from papeer.pdf.pdf_engine import extract_pdf, translation_units, batches, build_translated_pdf, bilingual_pdf, save_json
+from papeer.pdf.pdf_engine import extract_pdf, translation_units, batches, build_translated_pdf, bilingual_pdf
+from papeer.core.fileio import atomic_write_json
 from papeer.providers import create_provider
 from papeer.translation.translation import translate_batch, RetryState
-from papeer.translation.translation_context import contextual_units
-from papeer.layout.reading_flow import unit_pages, expand_pages
+from papeer.translation.translation_context import contextual_units, paper_context
+from papeer.layout.reading_flow import unit_pages, expand_pages, join_unit_translations
 
 
 def review(papers: Path, output: Path, seed: int, count: int, cases: list[str], settings: Settings | None = None):
@@ -44,7 +45,7 @@ def review(papers: Path, output: Path, seed: int, count: int, cases: list[str], 
                     fresh_translation=True, provider=settings.provider, model=settings.model,
                     base_url=settings.base_url, reasoning_effort=settings.reasoning_effort,
                     selected=selected, results=[])
-    save_json(output/'manifest.json', manifest)
+    atomic_write_json(output/'manifest.json', manifest)
     requested = list(selected)
     manifest['requested'] = requested
     manifest['selected'] = []
@@ -55,18 +56,18 @@ def review(papers: Path, output: Path, seed: int, count: int, cases: list[str], 
         all_units = contextual_units(document, translation_units(document))
         numbers = expand_pages(all_units, {n for key,n in requested if key == identity})
         manifest['selected'].extend((identity,n) for n in sorted(numbers))
-        save_json(output/'manifest.json', manifest)
+        atomic_write_json(output/'manifest.json', manifest)
         units = [u for u in all_units if unit_pages(u) & numbers]
         print(f'{identity[:4]}: fresh translation pages {sorted(numbers)}, {len(units)} units', flush=True)
         done = {}
         state = RetryState()
         def save():
-            save_json(output/(identity[:4]+'-run.json'), dict(translations=done, retry_state=state.to_cache()))
+            atomic_write_json(output/(identity[:4]+'-run.json'), dict(translations=done, retry_state=state.to_cache()))
         def accept(values):
             done.update(values)
             save()
         for chunk in batches(units):
-            translate_batch(provider, chunk, cancel, lambda m: print(m, flush=True), accept, state, save)
+            translate_batch(provider, chunk, cancel, lambda m: print(m, flush=True), accept, state, save, paper=paper_context(document))
         missing = [u['id'] for u in units if u['id'] not in done]
         if missing:
             raise RuntimeError(f'Incomplete fresh translation: {missing}')
@@ -74,11 +75,11 @@ def review(papers: Path, output: Path, seed: int, count: int, cases: list[str], 
             label = f'{identity[:4]}-p{number}'
             page_units = [u for u in units if number in unit_pages(u)]
             values = {u['id']: done[u['id']] for u in page_units}
-            save_json(output/(label+'-translation.json'), dict(translations=values, retry_state=state.to_cache()))
+            atomic_write_json(output/(label+'-translation.json'), dict(translations=values, retry_state=state.to_cache()))
             grouped = {}
             for u in page_units: grouped.setdefault(u['block'], []).append(done[u['id']])
-            translated = {k:'\n'.join(v) for k,v in grouped.items()}
-            save_json(output/(label+'-document.json'), document)
+            translated = {k:join_unit_translations(v) for k,v in grouped.items()}
+            atomic_write_json(output/(label+'-document.json'), document)
             report = build_translated_pdf(source, document, translated, output/(label+'.pdf'), page_numbers={number})
             with fitz.open(source) as original:
                 with fitz.open() as single:
@@ -90,10 +91,10 @@ def review(papers: Path, output: Path, seed: int, count: int, cases: list[str], 
             bilingual_pdf(output/(label+'-source.pdf'), output/(label+'.pdf'), output/(label+'-comparison.pdf'))
             manifest['results'].append(dict(id=identity, page=number, source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
                 pdf_sha256=hashlib.sha256((output/(label+'.pdf')).read_bytes()).hexdigest(), report=report))
-            save_json(output/'manifest.json', manifest)
+            atomic_write_json(output/'manifest.json', manifest)
             print(f'{label}: complete; warnings={report["readability_warnings"]}', flush=True)
     manifest['complete'] = True
-    save_json(output/'manifest.json', manifest)
+    atomic_write_json(output/'manifest.json', manifest)
     return manifest
 
 if __name__ == '__main__':

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
-import { apiRequest, ApiError } from "@/api/client";
+import { api, ApiError, unwrap } from "@/api/client";
 import { useStore } from "@/store";
 import { registerPendingSaves } from "@/lib/pendingSaves";
 import { emitAppEvent } from "@/lib/appEvents";
@@ -26,7 +26,7 @@ class InkPage {
   }
   // Older sidecars silently discard unknown stroke properties. The v2 route prevents
   // a hot-reloaded editor from losing typed text or highlighter styles on an old server.
-  private get path() { return `/api/papers/${this.paperId}/ink-v2/${this.side}/${this.page}`; }
+  private get params() { return { path: { paper_id: this.paperId, side: this.side, page: this.page } }; }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getSnapshot = () => this.snapshot;
   private update(update: Partial<Snapshot>) {
@@ -39,7 +39,7 @@ class InkPage {
     this.loading = (async () => {
       try {
         this.update({ error: "" });
-        const { strokes } = await apiRequest<{ strokes: InkStroke[] }>("GET", this.path);
+        const { strokes } = await unwrap(api.GET("/api/papers/{paper_id}/ink-v2/{side}/{page}", { params: this.params })) as { strokes: InkStroke[] };
         let draft: InkStroke[] | null = null;
         try {
           const raw = localStorage.getItem(this.draftKey);
@@ -91,7 +91,7 @@ class InkPage {
       try {
         while (this.snapshot.dirty) {
           const version = this.version;
-          await apiRequest("PUT", this.path, { strokes: this.snapshot.strokes });
+          await unwrap(api.PUT("/api/papers/{paper_id}/ink-v2/{side}/{page}", { params: this.params, body: { strokes: this.snapshot.strokes } }));
           if (version === this.version) {
             try { localStorage.removeItem(this.draftKey); } catch { /* Optional journal. */ }
             this.update({ dirty: false });
@@ -120,7 +120,9 @@ export function useInkPage(paperId: string | undefined, side: InkSide, page: num
     if (!value) { value = new InkPage(paperId, side, page); pages.set(key, value); }
     return value;
   }, [paperId, side, page]);
-  const snapshot = useSyncExternalStore(entry?.subscribe ?? emptySubscribe, entry?.getSnapshot ?? emptySnapshot);
+  // The same snapshot on the server, so that the reader can be rendered there in tests (renderSmoke).
+  const getSnapshot = entry?.getSnapshot ?? emptySnapshot;
+  const snapshot = useSyncExternalStore(entry?.subscribe ?? emptySubscribe, getSnapshot, getSnapshot);
   useEffect(() => { void entry?.load(); }, [entry]);
   return { entry, ...snapshot };
 }

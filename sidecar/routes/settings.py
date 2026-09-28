@@ -13,35 +13,42 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from papeer.core import prompts
-from papeer.core.config import Settings
+from papeer.core.errors import Invalid
 from papeer.providers import ProviderBackend, spec_for, specs
 from sidecar import deps
-from sidecar.schemas import ProviderActionRequest, ProviderSpecModel, SettingsModel
+from sidecar.errors import log
+from sidecar.job_types import JobKind, JobStarted
+from sidecar.schemas.settings import (
+    ProviderActionRequest,
+    ProviderOption,
+    ProviderSpecModel,
+    SettingsModel,
+    SettingsResponse,
+    UsageLimits,
+)
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
 
-@router.get("/api/settings", response_model=SettingsModel)
-def get_settings() -> SettingsModel:
-    values = asdict(deps.get_settings())
+@router.get("/api/settings", response_model=SettingsResponse)
+def get_settings() -> SettingsResponse:
+    settings, unknown = deps.get_settings_with_unknown_keys()
+    values = asdict(settings)
     values["api_key"] = deps.runtime_api_key()
-    return SettingsModel(**values)
+    return SettingsResponse(**values, unknown_keys=unknown)
 
 
 @router.put("/api/settings")
 def update_settings(body: SettingsModel) -> dict[str, str]:
     """Apply the fields the client sent; anything omitted keeps its saved value."""
-    saved = deps.get_settings()
-    values = body.model_dump(exclude={"api_key"}, exclude_unset=True)
-    options = dict(saved.provider_options)
-    for provider, sent in values.pop("provider_options", {}).items():
-        options[provider] = {**options.get(provider, {}), **sent}
-    try:
-        settings = Settings.from_values({**asdict(saved), **values, "provider_options": options})
-        spec_for(settings.provider)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    current, unknown = deps.get_settings_with_unknown_keys()
+    settings = current.updated(body.model_dump(exclude={"api_key"}, exclude_unset=True))
+    spec_for(settings.provider)
+    deps.require_library_folder()
     settings.save(deps.get_data_dir())
+    if unknown:
+        # The frontend told the user beforehand (settingsVersionNotice.ts); the log keeps what was lost.
+        log.warning("settings.json の、この版が知らない項目を保存で削除しました: %s", ", ".join(unknown))
     if body.api_key is not None:
         deps.set_runtime_api_key(body.api_key)
     return {"status": "saved"}
@@ -60,10 +67,8 @@ def get_default_prompts() -> dict[str, str]:
 
 @router.put("/api/prompts")
 def update_prompts(body: dict[str, str]) -> dict[str, str]:
-    try:
-        prompts.save_overrides(body)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    deps.require_library_folder()
+    prompts.save_overrides(body)
     return {"status": "updated"}
 
 
@@ -75,10 +80,7 @@ def list_providers() -> list[dict[str, Any]]:
 
 def _provider_with_path(provider: str, cli_path: str | None) -> ProviderBackend:
     """A connection for listing models/efforts, using the path typed in the dialog when given."""
-    try:
-        spec_for(provider)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    spec_for(provider)  # ValueError (400) for an unknown connection
     settings = replace(deps.get_settings(), provider=provider)
     if cli_path is not None:
         settings.set_option(provider, "cli_path", cli_path)
@@ -86,21 +88,18 @@ def _provider_with_path(provider: str, cli_path: str | None) -> ProviderBackend:
 
 
 @router.get("/api/providers/{provider}/models")
-def get_provider_models(provider: str, cli_path: str | None = None) -> list[dict[str, str]]:
-    return [{"id": m, "name": name} for m, name in _provider_with_path(provider, cli_path).list_models()]
+def get_provider_models(provider: str, cli_path: str | None = None) -> list[ProviderOption]:
+    return [ProviderOption(id=m, name=name) for m, name in _provider_with_path(provider, cli_path).list_models()]
 
 
 @router.get("/api/providers/{provider}/efforts")
-def get_provider_efforts(provider: str, model: str | None = None, cli_path: str | None = None) -> list[dict[str, str]]:
+def get_provider_efforts(provider: str, model: str | None = None, cli_path: str | None = None) -> list[ProviderOption]:
     efforts = _provider_with_path(provider, cli_path).list_efforts(model or "")
-    return [{"id": e, "name": name} for e, name in efforts]
+    return [ProviderOption(id=e, name=name) for e, name in efforts]
 
 
 def _requested_provider(body: ProviderActionRequest | None) -> ProviderBackend:
-    try:
-        return deps.provider_for(deps.settings_from_request(body), api_key=body.api_key if body else None)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return deps.provider_for(deps.settings_from_request(body), api_key=body.api_key if body else None)
 
 
 @router.post("/api/providers/login")
@@ -114,11 +113,11 @@ def provider_login(body: ProviderActionRequest | None = None) -> dict[str, Any]:
     try:
         return {"message": provider.login(), "already": False}
     except (OSError, RuntimeError, ValueError) as error:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"CLIの準備エラー: {error}")
+        raise Invalid(f"CLIの準備エラー: {error}") from error
 
 
 @router.post("/api/providers/check")
-def provider_check(body: ProviderActionRequest | None = None) -> dict[str, str]:
+def provider_check(body: ProviderActionRequest | None = None) -> JobStarted:
     provider = _requested_provider(body)
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> str:
@@ -126,15 +125,17 @@ def provider_check(body: ProviderActionRequest | None = None) -> dict[str, str]:
         provider.cancel = cancel
         return provider.check()
 
-    return deps.submit_job("check", action)
+    return deps.submit_job(JobKind.CHECK, action)
 
 
-@router.get("/api/usage/limits")
+@router.get("/api/usage/limits", response_model=UsageLimits | None)
 def usage_limits() -> dict[str, Any] | None:
     """Plan usage of the connected AI, when the service reports one."""
     try:
         provider = deps.provider_for()
         limits = provider.limits()
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        # Left as an HTTPException on purpose: the AI service failed, not the request, which none of
+        # Invalid/NotFound/Conflict says. The frontend shows the detail like any other error.
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     return dict(limits, provider=provider.spec.id) if limits else None

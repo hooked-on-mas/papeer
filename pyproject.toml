@@ -8,19 +8,20 @@ dependencies = [
     "pymupdf>=1.26.0",
     "pypdfium2>=5.13.0",
     "fonttools>=4.64.0",
-    "pillow>=10.0.0",
+    "pillow>=12.1.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "pydantic>=2.8.0",
-    "python-multipart>=0.0.9",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
-    "httpx>=0.27.0",
+    "httpx2>=2.13.1",
     "ruff>=0.6.0",
     "pyright>=1.1.380",
+    # Reads the GitHub Actions workflows in tests (tests/test_ci_workflow.py, test_version.py).
+    "pyyaml>=6.0",
 ]
 build = [
     "pyinstaller>=6.16,<7",
@@ -31,8 +32,34 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W"]
+# B904: raise inside except names its cause (from exc / from None). BLE001, S110: an except Exception
+# that is meant to swallow everything says why with "# noqa: BLE001" (and S110 for a bare pass).
+# B023: a function made in a loop that uses the loop's variables; tests and tools call such callbacks
+# within the same pass of the loop, so it is checked in papeer and sidecar only.
+# ruff format is not applied: the code keeps its hand-made layout (compact rendering code, aligned
+# continuation lines), and reformatting everything would only bury the history. Only ruff check runs.
+select = ["E", "F", "W", "B904", "BLE001", "S110", "B023"]
 ignore = ["E501", "E402", "E741", "E722", "E701", "E702", "E711", "E712", "E731", "F403", "F405", "F841"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B023"]
+"tools/**" = ["B023"]
+
+[tool.pyright]
+include = ["papeer", "sidecar"]
+# Files left out of the check, with the errors pyright reported in each (2026-09, pyright 1.1.414).
+# They come from the libraries' type information, not from the code: PyMuPDF declares no __iter__ on
+# Rect/Document and a str result for page.get_text("dict"), fontTools builds its table attributes at
+# run time; math_layout also relies on a join flag that pyright cannot follow. Casting on every line of
+# the rendering code would not make it safer, so these files are not checked (the rest of papeer is).
+# Elsewhere, list(rect) / tuple(rect) of a PyMuPDF Rect (x0, y0, x1, y1) carries
+# "# pyright: ignore[reportArgumentType]", and page.get_text("dict") a cast(dict, ...).
+ignore = [
+    "papeer/layout/math_layout.py",   # 16
+    "papeer/layout/table_layout.py",  # 13
+    "papeer/pdf/pdf_engine.py",       # 13
+    "papeer/pdf/pdf_fonts.py",        # 10
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

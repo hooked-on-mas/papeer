@@ -28,14 +28,14 @@ README は本体を `AGPL-3.0-or-later` と記載し、ルートの `LICENSE` �
 
 | 領域 | ロックされた主要直接依存とライセンス |
 | --- | --- |
-| Python 本番 8 件 | `PyMuPDF 1.28.2` AGPL-3.0/商用、`pypdfium2 5.13.0` BSD-3-Clause/Apache-2.0 と内蔵依存、`fonttools 4.65.0` MIT、`Pillow 12.3.0` MIT-CMU、`FastAPI 0.141.1` MIT、`uvicorn 0.53.0` BSD-3-Clause、`pydantic 2.13.5` MIT、`python-multipart 0.0.32` Apache-2.0。 |
+| Python 本番 7 件 | `PyMuPDF 1.28.2` AGPL-3.0/商用、`pypdfium2 5.13.0` BSD-3-Clause/Apache-2.0 と内蔵依存、`fonttools 4.65.0` MIT、`Pillow 12.3.0` MIT-CMU、`FastAPI 0.141.1` MIT、`uvicorn 0.53.0` BSD-3-Clause、`pydantic 2.13.5` MIT。 |
 | JavaScript 本番 26 件 | React/React DOM、Mermaid、KaTeX、React PDF、React Markdown、TanStack Query、Zustand などの多くが MIT。`pdfjs-dist` と `class-variance-authority` は Apache-2.0、`lucide-react` は ISC、`@fontsource-variable/geist` は OFL-1.1、Tauri JS パッケージ群は MIT/Apache-2.0 の選択。正確な版と 26 件すべては別紙一覧を参照。 |
 | Rust 直接依存 | Tauri 2 と各プラグイン、Serde 系は主に MIT/Apache-2.0 の選択。Windows 向け間接依存には MPL-2.0 の 5 crate がある。 |
 | フォント・PDF 表示データ | 源ノ明朝・源ノ角ゴシックと Geist は OFL-1.1。PDF.js の CMap は同梱 LICENSE、Foxit フォントは BSD 系、Liberation フォントは GPLv2 とフォント埋込み例外の条件がある。 |
 
 JavaScript の直接依存を固定版でさらに示すと、MIT は `@base-ui/react 1.8.0`、`@dnd-kit/core 6.3.1`、`@tanstack/react-query 5.103.2`、`cn 0.4.0`、`katex 0.18.7`、`mermaid 12.0.0`、`openapi-fetch 0.17.0`、`react 19.3.0`、`react-dom 19.3.0`、`react-hotkeys-hook 5.3.3`、`react-markdown 10.1.0`、`react-pdf 11.0.0`、`react-resizable-panels 4.13.2`、`rehype-katex 7.0.1`、`remark-gfm 4.0.1`、`remark-math 6.0.0`、`zustand 5.0.15` の 17 件。Apache-2.0 は `class-variance-authority 0.7.1` と `pdfjs-dist 6.3.289`、ISC は `lucide-react 1.47.0`、OFL-1.1 は `@fontsource-variable/geist 5.3.0`。`@tauri-apps/api 2.11.1`、`plugin-dialog 2.7.3`、`plugin-notification 2.4.0`、`plugin-opener 2.5.5`、`plugin-process 2.3.1` は Apache-2.0/MIT の選択である。開発専用依存と間接依存は別紙に分けている。
 
-ロックファイル上の Python 外部依存は開発・ビルド込み **43 件**（Windows 実行時 **23 件**）、JavaScript 本番依存閉包は **295 個の name@version**（うち **285 個**が Windows x64 に該当して手元にインストール、残り 10 個は他 OS/CPU 向け optional バイナリ）、Windows 対象の Rust 外部 crate は **266 件**である。Windows x64 に該当する一覧行にはライセンス不明がない。全件の固定版・ライセンスは[依存ライセンス一覧](dependency-license-inventory.json)を参照する。これは**利用者がインストールする依存と、将来ビルドを再配布する場合の調査資料**であり、一覧の全パッケージを作者がソースリポジトリに同梱するという意味ではない。対象 OS やロックを変えた場合、再生成する。
+ロックファイル上の Python 外部依存は開発・ビルド込み **43 件**（Windows 実行時 **22 件**）、JavaScript 本番依存閉包は **294 個の name@version**（うち **284 個**が Windows x64 に該当して手元にインストール、残り 10 個は他 OS/CPU 向け optional バイナリ）、Windows 対象の Rust 外部 crate は **266 件**である。Windows x64 に該当する一覧行にはライセンス不明がない。全件の固定版・ライセンスは[依存ライセンス一覧](dependency-license-inventory.json)を参照する。これは**利用者がインストールする依存と、将来ビルドを再配布する場合の調査資料**であり、一覧の全パッケージを作者がソースリポジトリに同梱するという意味ではない。対象 OS やロックを変えた場合、`just licenses` で再生成する（台帳に記録したロックファイルの sha256 との一致をテストで検査する）。
 
 ### 特に検討が必要な依存
 
@@ -55,7 +55,7 @@ Liberation フォント 1.07.4 の上流には[編集用 SFD ソースへの案�
 
 ## 2. Codex、Claude Code、Antigravity を使う条件
 
-**リポジトリの公開と、公開後に誰かが CLI にログインして実行する行為は別**。今回の Git 追跡対象に三つの CLI のバイナリ・認証情報はない。ソースを置くだけで作者が各 AI サービスを利用した、あるいは規約に違反したとは言えない。一方、README は利用者に接続を案内しているため、実行する本人に適用される規約を正確に説明する必要がある。現コードは端末の `codex exec`、`claude -p`、`agy -p` を呼び、API 接続は利用者指定の `/chat/completions` に送る。[providers/](../papeer/providers/)、[README](../README.md)。開発者がコーディング補助に使った際の規約・生成コードの権利も、利用者が翻訳に使う際の規約とは分けて扱う。
+**リポジトリの公開と、公開後に誰かが CLI にログインして実行する行為は別**。今回の Git 追跡対象に三つの CLI のバイナリ・認証情報はない。ソースを置くだけで作者が各 AI サービスを利用した、あるいは規約に違反したとは言えない。一方、README は利用者に接続を案内しているため、実行する本人に適用される規約を正確に説明する必要がある。現コードは端末の `codex exec`、`claude -p`、`agy --print`（本文は標準入力）を呼び、API 接続は利用者指定の `/chat/completions` に送る。[providers/](../papeer/providers/)、[README](../README.md)。開発者がコーディング補助に使った際の規約・生成コードの権利も、利用者が翻訳に使う際の規約とは分けて扱う。
 
 | 接続 | 技術的な公式機能 | ローカルで実行する人への注意 |
 | --- | --- | --- |
@@ -68,7 +68,7 @@ Liberation フォント 1.07.4 の上流には[編集用 SFD ソースへの案�
 
 **データと生成物。** [OpenAI 個人向け規約](https://openai.com/policies/row-terms-of-use/)は入力の権利を利用者に残し、利用者と OpenAI の間で出力の権利を利用者に譲渡するが、入力する権利を利用者が持つことを求め、出力の非侵害・正確性を保証しない。個人プランでは学習利用のオプトアウト設定がある。OpenAI API では[データ管理文書](https://developers.openai.com/api/docs/guides/your-data)により原則として明示的な同意なしに学習へ使わず、通常の不正利用ログは最長 30 日などの条件がある。Codex の `--ephemeral` はローカルのセッション記録に関する指定で、サーバー側のゼロ保持ではない。[OpenAI Service Terms](https://openai.com/policies/service-terms/)の知財補償には入力権利欠如、出力の改変・組合せ等の除外がある。
 
-[Anthropic の商用規約](https://www.anthropic.com/legal/commercial-terms)は入力権利の維持、出力の権利移転、原則として顧客コンテンツを学習に使わないこと、条件付き知財補償を定める。[消費者規約](https://www.anthropic.com/legal/consumer-terms)は別条件であり、同じ知財補償を前提にできない。`--no-session-persistence` はローカル保存の抑制である。現 `--tools ""` は組込みツールを止めても利用者の MCP 設定や hooks の読み込みを全て止める指定ではなく、信頼できない PDF 本文がプロンプトに入る以上、送信先と利用可能なツールの境界を監査する。[Claude CLI リファレンス](https://code.claude.com/docs/en/cli-reference)、[headless 説明](https://code.claude.com/docs/en/headless)。
+[Anthropic の商用規約](https://www.anthropic.com/legal/commercial-terms)は入力権利の維持、出力の権利移転、原則として顧客コンテンツを学習に使わないこと、条件付き知財補償を定める。[消費者規約](https://www.anthropic.com/legal/consumer-terms)は別条件であり、同じ知財補償を前提にできない。`--no-session-persistence` はローカル保存の抑制である。`--tools ""` は組込みツールだけを止める指定なので、`--strict-mcp-config` と空の `--mcp-config` で MCP サーバーを読み込まず、`--setting-sources user` でプロジェクト・ローカル設定を、`--disable-slash-commands` でスキルを外している（2026-09）。利用者本人のユーザー設定（hooks を含む）は読み込むため、信頼できない PDF 本文がプロンプトに入る以上、送信先と利用可能なツールの境界は CLI の更新ごとに監査する。今後の候補として、Claude Code 2.1.283 にある `--safe-mode`（CLAUDE.md・スキル・プラグイン・hooks・MCP サーバーなどの利用者設定をまとめて無効化）への切り替えを検討する。Antigravity（`agy`）は実行ごとに MCP サーバーやプラグインを止める指定がなく、`--sandbox` 以外の制限をかけていない点も今後の課題である。[Claude CLI リファレンス](https://code.claude.com/docs/en/cli-reference)、[headless 説明](https://code.claude.com/docs/en/headless)。
 
 [個人向け Antigravity 規約](https://antigravity.google/terms) §3、§5 は Interaction の保存、製品・モデル改善、人による閲覧の可能性を明示する。設定で改善利用を抑える項目はあるが、処理に必要な送信がなくなるわけではない。開発時に AI が生成したコードも「AI 出力だから自由に配布できる」とは扱わず、既存 OSS からの実質的な転載と依存ライセンスを確認する。[OpenAI Service Terms](https://openai.com/policies/service-terms/) §4 は Codex 生成コードに第三者 OSS ライセンスがかかり得ると明記する。
 
@@ -103,6 +103,6 @@ Papeer 固有の新技術を出願する意向があるなら、**GitHub でソ�
 3. **実際に同梱する素材を確認**する。Source Han/CMap/Foxit の既存ライセンス文を維持し、Liberation 1.07.4 の GPLv2 対応ソースを確認する。アイコンの原画と合成テスト PDF の作成来歴・再配布権を記録する。
 4. **README の AI 接続案内を正す。** ソース公開自体と利用者の実行を分け、Antigravity 個人規約との衝突可能性を明示する。Codex・Claude の利用可否を一律保証せず、本人の契約プラン確認を促す。翻訳・解説・質問で送る本文、関連ページ、会話履歴、ローカル保存先を具体的に記す。[個人情報保護委員会の注意喚起](https://www.ppc.go.jp/files/pdf/230602_alert_generative_AI_service.pdf)。
 5. **特許出願の意向を公開前に決める。** OSS の公開は発明の新規性に影響する。第三者特許については、候補の登録・請求項と配布国を確認し、具体的懸念が残る場合に専門家へ FTO を依頼する。Papeer 名の商標検索も行う。
-6. **利用者が実行するコードの安全性を別途点検**する。現実装のローカル API トークンは時刻由来で URL クエリにも載り、Tauri 設定は `csp: null`、Mermaid SVG は HTML として挿入される。ソース公開のライセンス義務ではないが、利用者の PDF を扱うツールとして修正または明確な既知課題化が妥当。[Tauri の CSP 説明](https://tauri.app/security/csp/)、[OWASP のトークン指針](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
+6. **利用者が実行するコードの安全性を別途点検**する。ローカル API トークンは起動ごとに OS の乱数生成器で作る 256 bit の値に改め、トークンなしでは sidecar が起動せず、URL クエリに載る分もアクセスログに出さないようにした（2026-09）。Tauri には CSP を設定済みで、スクリプトはアプリ自身のもののみ、通信先は IPC と起動時に決めた sidecar のポート（`127.0.0.1` の 1 ポート）に限る。Mermaid は `securityLevel: "strict"` で描画し、解説・メモの Markdown は `file:` などのリンクを表示しない。sidecar の CORS は本番では Tauri のオリジンだけを許可し、書き出し・バックアップ・辞書の保存先にライブラリ内は選べない（2026-09）。ソース公開のライセンス義務ではないが、利用者の PDF を扱うツールとして今後も点検を続ける。[Tauri の CSP 説明](https://tauri.app/security/csp/)、[OWASP のトークン指針](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
 
 この文書の現状確認は Git 追跡ファイル、コード、ロックファイル、手元のビルド成果物と公開資料による。GitHub Release 等で後にバイナリを追加した場合、この結論はそのまま適用できない。

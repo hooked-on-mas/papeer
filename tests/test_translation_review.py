@@ -26,15 +26,16 @@ def test_review_only_requires_pages_with_translatable_content(tmp_path, monkeypa
     lib = Library(root)
     paper_id, _ = lib.import_pdf(source)
     monkeypatch.setenv("PAPEER_DATA_DIR", str(root))
-    monkeypatch.setenv("PAPEER_TOKEN", "")
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     with TestClient(app) as client:
         reading = client.get(f"/api/papers/{paper_id}/reading").json()
     assert reading["translation_required_pages"] == [1, 4]
     assert reading["completed_pages"] == []
     assert reading["empty_pages"] == []
 
-    from papeer.core.reading_state import translation_state
-    monkeypatch.setattr("papeer.core.reading_state.translated_page_numbers", lambda *_: [1, 4])
+    from papeer.core.library_list import translation_state
+    (lib.folder(paper_id) / "translated.pdf").write_bytes(b"%PDF-1.7")
+    (lib.folder(paper_id) / "translation-report.json").write_text(json.dumps({"translated_pages": [1, 4]}), "utf-8")
     state = translation_state(lib.folder(paper_id), 4)
     assert state["translation_required_count"] == 2
     assert state["translation_completed_required_count"] == 2

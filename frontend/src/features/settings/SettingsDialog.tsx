@@ -1,8 +1,7 @@
 import { useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { BookOpen, FileText, Keyboard, LayoutTemplate, Palette, PlugZap, StickyNote, Tags, type LucideIcon } from "lucide-react";
 import { cn } from "cn";
-import { apiRequest } from "../../api/client";
+import { useSaveSettings } from "../../api/mutations";
 import { usePaper, useSettings } from "../../api/hooks";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../../components/ui/dialog";
 import { Button } from "../../components/ui/button";
@@ -11,6 +10,7 @@ import { useStore } from "../../store";
 import { showError } from "@/components/errorDialog";
 import { ConnectionSection, useConnectionForm } from "./ConnectionSection";
 import { AppearanceSection } from "./AppearanceSection";
+import { UiScaleSection } from "./UiScaleSection";
 import { PromptsSection, usePromptsForm } from "./PromptsSection";
 import { ShortcutsSection } from "./ShortcutsSection";
 import { TagManager } from "./TagsSection";
@@ -18,7 +18,6 @@ import { BackupSection } from "./BackupSection";
 import { DriveSection } from "./DriveSection";
 import { NoteTemplates, type TemplateLeaveGuard } from "../notes/NoteTemplates";
 import { useSettingsNavigation, type SettingsSection } from "./settingsNavigation";
-import { QK } from "@/lib/queryKeys";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -27,7 +26,7 @@ interface SettingsDialogProps {
 
 const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon; description: string }[] = [
   { id: "connection", label: "AI 接続", icon: PlugZap, description: "翻訳・解説・チャットに使う AI の接続先とモデル" },
-  { id: "appearance", label: "表示", icon: Palette, description: "画面の見た目" },
+  { id: "appearance", label: "表示", icon: Palette, description: "文字の大きさと画面の見た目" },
   { id: "reading-status", label: "読書状態", icon: BookOpen, description: "読書状態の選択肢を追加・削除（自動保存）" },
   { id: "tags", label: "論文のタグ", icon: Tags, description: "論文に付けるタグを追加・削除（自動保存）" },
   { id: "sticky-labels", label: "付箋の分類", icon: StickyNote, description: "付箋の分類を追加・削除（自動保存）" },
@@ -39,7 +38,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon; descript
 ];
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const queryClient = useQueryClient();
+  const saveSettings = useSaveSettings();
   const { section, setSection, templateNote } = useSettingsNavigation();
   const activePaperId = useStore(s => s.activePaperId);
   const { data: paper } = usePaper(activePaperId);
@@ -74,12 +73,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     if (templateGuard.current && !await templateGuard.current.beforeLeave()) return;
     setSaving(true);
     try {
-      if (connection.dirty) await apiRequest("PUT", "/api/settings", connection.values());
       const promptChanges = prompts.pendingChanges();
-      if (Object.keys(promptChanges).length) await apiRequest("PUT", "/api/prompts", promptChanges);
-      // Model lists depend on the CLI path, and the plan usage on the connection.
-      await Promise.all([QK.settings, QK.prompts, QK.models, QK.efforts, QK.usageLimits].map((root) =>
-        queryClient.invalidateQueries({ queryKey: [root] })));
+      // Settles once the settings, models and plan usage have been loaded again (useSaveSettings).
+      await saveSettings.mutateAsync({
+        settings: connection.dirty ? connection.values() : undefined,
+        prompts: Object.keys(promptChanges).length ? promptChanges : undefined,
+      });
       useStore.getState().setStatus(connection.values().api_key
         ? "設定を保存しました。APIキーはこの起動中のみ保持します。"
         : "設定を保存しました。");
@@ -95,10 +94,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (next) onOpenChange(true); else void requestClose(); }}>
-      <DialogContent className="h-[640px] max-h-[calc(100vh-2rem)] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden p-0 text-[13px] sm:max-w-[900px]">
+      <DialogContent className="h-[40rem] max-h-[calc(100vh-2rem)] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden p-0 text-[0.8125rem] sm:max-w-[56.25rem]">
         <div className="flex h-full min-h-0">
-          <nav className="flex w-[176px] shrink-0 flex-col gap-0.5 overflow-y-auto border-r bg-sidebar p-3" aria-label="設定の項目">
-            <DialogTitle className="mb-2 px-2 pt-1 text-[15px] font-semibold">設定</DialogTitle>
+          <nav className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r bg-sidebar p-3" aria-label="設定の項目">
+            <DialogTitle className="mb-2 px-2 pt-1 text-[0.9375rem] font-semibold">設定</DialogTitle>
             {SECTIONS.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
@@ -121,8 +120,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
           <div className="flex min-w-0 flex-1 flex-col">
             <header className="shrink-0 px-6 pt-5 pb-4 pr-12">
-              <h2 className="text-[15px] font-semibold">{current.label}</h2>
-              <DialogDescription className="text-[12px]">{current.description}</DialogDescription>
+              <h2 className="text-[0.9375rem] font-semibold">{current.label}</h2>
+              <DialogDescription className="text-[0.75rem]">{current.description}</DialogDescription>
             </header>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5">
@@ -131,7 +130,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               ) : (
                 <>
                   {section === "connection" && <ConnectionSection form={connection} />}
-                  {section === "appearance" && <AppearanceSection />}
+                  {section === "appearance" && <div className="space-y-6"><UiScaleSection /><AppearanceSection /></div>}
                   {section === "prompts" && <PromptsSection form={prompts} />}
                   {section === "shortcuts" && <ShortcutsSection />}
                   {section === "reading-status" && <TagManager key="status" kind="status" />}
@@ -145,7 +144,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             </div>
 
             <footer className="flex shrink-0 items-center gap-2 border-t bg-muted/20 px-6 py-3">
-              {dirty && <span className="text-[12px] text-muted-foreground">未保存の変更があります</span>}
+              {dirty && <span className="text-[0.75rem] text-muted-foreground">未保存の変更があります</span>}
               <Button variant="outline" className="ml-auto" onClick={() => void requestClose()}>{dirty ? "キャンセル" : "閉じる"}</Button>
               {(dirty || section === "connection" || section === "prompts") && <Button onClick={handleSave} disabled={saving || !settings || !dirty}>
                 {saving ? "保存中…" : "保存"}

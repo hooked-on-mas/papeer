@@ -1,39 +1,14 @@
-"""What the reader and the library list show about a paper's translation."""
+"""What the reader shows about a paper's translation (the library list: library_list)."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
+import stat
 from typing import Any
 
 from papeer.core.paths import PaperFiles
 from papeer.core.service import page_translation_text
 from papeer.core.storage import Library
-from papeer.core.translation_review import cached_required_translation_pages
 from papeer.translation.translation_preview import read_preview, translated_page, translated_page_numbers
-
-
-def translation_state(folder: Path, page_count: int) -> dict[str, Any]:
-    """How much of a paper has a Japanese translation, as the library list shows it."""
-    files = PaperFiles(folder)
-    try:
-        completed = translated_page_numbers(folder, page_count)
-        preview = read_preview(folder)
-    except (OSError, ValueError, json.JSONDecodeError):
-        completed, preview = [], None
-    required = set(cached_required_translation_pages(folder, page_count))
-    try:
-        report = json.loads(files.translation_report.read_text("utf-8"))
-        has_issues = bool(report.get("skipped_blocks") or report.get("skipped_pages"))
-    except (OSError, ValueError):
-        has_issues = None
-    return {
-        "translated_count": len(completed),
-        "translation_required_count": len(required),
-        "translation_completed_required_count": len(required.intersection(completed)),
-        "translation_has_issues": has_issues,
-        "has_translated": files.translated_pdf.is_file(),
-        "translation_in_progress": bool(preview and not preview["complete"]),
-    }
 
 
 def reading_state(lib: Library, paper_id: str, last_page: int = 0) -> dict[str, Any]:
@@ -52,25 +27,33 @@ def reading_state(lib: Library, paper_id: str, last_page: int = 0) -> dict[str, 
 
     # Where the right pane finds each page: a per-page preview while translating,
     # the original for pages outside the request, or nothing while it waits.
+    # Asked again whenever a page is ready: each file (translated.pdf for every page once complete)
+    # is looked up once, not once per page.
+    files_seen: dict[Path, tuple[str, int] | None] = {}
     translated_pages: dict[str, dict[str, Any] | None] = {}
     for index in range(page_count):
         path, page_index = translated_page(folder, index, preview)
-        if path is None or not path.is_file():
+        if path is not None and path not in files_seen:
+            try:
+                found_file = path.stat()
+                files_seen[path] = ((path.relative_to(folder).as_posix(), int(found_file.st_mtime))
+                                    if stat.S_ISREG(found_file.st_mode) else None)
+            except (OSError, ValueError):
+                files_seen[path] = None
+        found = files_seen.get(path) if path is not None else None
+        if found is None:
             translated_pages[str(index + 1)] = None
         else:
-            translated_pages[str(index + 1)] = {
-                "file": path.resolve().relative_to(folder.resolve()).as_posix(),
-                "index": page_index,
-                "mtime": int(path.stat().st_mtime),
-            }
+            translated_pages[str(index + 1)] = {"file": found[0], "index": page_index, "mtime": found[1]}
 
-    # The code revision and model that produced each page, as the old reader showed.
+    # The translation key (TranslationKey.identity, or the code revision of older records)
+    # and model that produced each page, as the old reader showed.
     page_versions: dict[str, dict[str, str]] = {}
     try:
         cache = files.read_json(files.translation_cache, {})
         for number, entry in (cache.get("completed_pages") or {}).items():
             version = entry.get("version", "")
-            sha = version.split("code-sha256-")[1][:7] if "code-sha256-" in version else "不明"
+            sha = version.rsplit("sha256-", 1)[1][:7] if "sha256-" in version else "不明"
             page_versions[number] = {"sha": sha, "model": entry.get("model") or "不明"}
     except (OSError, ValueError, AttributeError):
         pass
@@ -80,6 +63,7 @@ def reading_state(lib: Library, paper_id: str, last_page: int = 0) -> dict[str, 
         "source_page_count": info["page_count"],
         "empty_pages": info["empty_pages"],
         "translation_required_pages": info["translation_required_pages"],
+        "ocr_pages": info["ocr_pages"],
         "completed_pages": completed,
         "preview": preview,
         "in_progress": in_progress,
@@ -100,22 +84,3 @@ def translation_text(lib: Library, paper_id: str, page: int) -> list[str]:
     if not files.translation_cache.is_file() and not files.translation_md.is_file():
         return []
     return page_translation_text(files.folder, lib.document(paper_id), page)
-
-
-def reading_blocks(lib: Library, paper_id: str, page: int) -> dict[str, Any]:
-    """Source blocks with their positions, and the translated blocks, of one page."""
-    document = lib.document(paper_id)
-    if not 1 <= page <= document["page_count"]:
-        raise ValueError("ページが範囲外です。")
-    source = [{"id": b["id"], "text": b["text"], "bbox": b["bbox"]}
-              for b in document["blocks"] if b["page"] == page]
-    files = PaperFiles(lib.folder(paper_id))
-    translations: list[dict[str, str]] = []
-    if files.translation_md.exists():
-        translations = [{"id": block_id, "text": text} for number, block_id, text in files.translation_sections()
-                        if number == page and text]
-    elif files.translation_cache.exists():
-        translations = [{"id": f"preview-{i}", "text": value} for i, value in
-                        enumerate(page_translation_text(files.folder, document, page))]
-    return {"source": source, "translations": translations,
-            "width": document["pages"][page - 1]["width"], "height": document["pages"][page - 1]["height"]}

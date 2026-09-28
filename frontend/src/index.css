@@ -124,7 +124,7 @@
     background-color: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
-    font-size: 13px;
+    font-size: 0.8125rem;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -135,7 +135,7 @@
 .prose {
   max-width: 72ch;
   margin: 0 auto;
-  font-size: 15px;
+  font-size: 0.9375rem;
   line-height: 1.8;
 }
 
@@ -157,7 +157,7 @@
 
 .summary-prose {
   max-width: none;
-  font-size: 15px;
+  font-size: 0.9375rem;
   line-height: 1.95;
   overflow-wrap: anywhere;
   line-break: strict;

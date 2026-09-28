@@ -3,17 +3,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import cast
 import html
+import io
 from pathlib import Path
 import re
 from statistics import median
+import threading
+import unicodedata
 
 import pymupdf as fitz
-from fontTools import subset
 from fontTools.ttLib import TTFont
 
 from papeer.layout.math_layout import MATH_TOKEN
-from papeer.pdf.pdf_fonts import truetype_subset
+from papeer.layout.reading_flow import resolve_unit_joins
+from papeer.pdf.pdf_fonts import cache_ready, cached_truetype, subset_truetype
 
 
 FONT_DIRECTORY = Path(__file__).resolve().parent.parent / "core" / "assets" / "fonts"
@@ -27,31 +31,99 @@ _NUMBERED = re.compile(r"^(\d+(?:\.\d+)*\.?|[IVX]+\.)\s+(.+)$", re.S)
 _NAMED_HEADINGS = {"abstract", "introduction", "background", "methods", "method", "results",
                    "discussion", "conclusion", "conclusions", "references", "acknowledgments",
                    "acknowledgements", "appendix", "results and limitations"}
+# "Fig. 3." / "Fig. 3.2:" / "Table II" / "TABLE I" + line break. Group 1 (the punctuation)
+# tells a caption from prose that merely starts with "Table 3 shows" or "Figure 3.2 shows";
+# without it only smaller type counts.
+_CAPTION_LABEL = re.compile(r"^(?:(?:Fig(?:ure)?|FIG(?:URE)?)\.?|Table|TABLE|Algorithm|ALGORITHM)\s*"
+                            r"(?:\d+(?:\.\d+)*|[IVX]+)[a-z]?\b(\s*[.:|](?!\d)|\s*$|\s*\n)?")
+# Fitting a translation into its box, in order: the regular leading, this tighter leading,
+# and only then smaller type (pdf_engine.build_translated_pdf).
+TIGHT_LEADING = 1.25
+
+
+# The bundled faces: the source file and the family/style that the markup (FONT_CSS) names.
+# The serif comes first; it also carries the invisible text over formula images (searchable_text).
+FONT_FACES = (("SourceHanSerifJP-Regular.otf", "PapeerSerif", "Regular"),
+              ("SourceHanSansJP-Bold.otf", "PapeerHeading", "Bold"))
+
+
+def font_subsets(text: str) -> tuple[tuple[bytes, str], ...]:
+    """(TrueType data, archive file name) of each face in FONT_FACES, cut down to the characters of text.
+
+    Only fontTools work, no MuPDF: build_translated_pdf calls it before taking PDF_LOCK.
+    The first call on a PC converts the bundled faces (pdf_fonts.cached_truetype).
+    """
+    return _font_subsets("".join(sorted(set(text + "　 "))))
 
 
 @lru_cache(maxsize=4)
 def _font_subsets(characters: str) -> tuple[tuple[bytes, str], ...]:
-    fonts = []
-    for name in ("SourceHanSerifJP-Regular.otf", "SourceHanSansJP-Bold.otf"):
-        with TTFont(FONT_DIRECTORY / name, recalcTimestamp=False) as font:
-            options = subset.Options()
-            options.layout_features = ["*"]
-            options.desubroutinize = True
-            subsetter = subset.Subsetter(options=options)
-            subsetter.populate(text=characters)
-            subsetter.subset(font)
-            family, style = ("PapeerSerif", "Regular") if "Serif" in name else ("PapeerHeading", "Bold")
-            fonts.append((truetype_subset(font, family, style), f"{family}-{style}.ttf"))
-    return tuple(fonts)
+    # Subset only our own font assets. Original PDF math fonts remain untouched.
+    return tuple((subset_truetype(cached_truetype(FONT_DIRECTORY / name, family, style), characters),
+                  f"{family}-{style}.ttf") for name, family, style in FONT_FACES)
 
 
 def font_archive(text: str) -> fitz.Archive:
-    # Subset only our own font assets. Original PDF math fonts remain untouched.
-    characters = "".join(sorted(set(text + "　 ")))
     archive = fitz.Archive()
-    for font in _font_subsets(characters):
+    for font in font_subsets(text):
         archive.add(font)
     return archive
+
+
+def fonts_need_conversion() -> bool:
+    """Whether the next font_subsets call converts a bundled face first (the first translation on a PC)."""
+    return not all(cache_ready(FONT_DIRECTORY / name, family, style) for name, family, style in FONT_FACES)
+
+
+def prepare_fonts_in_background() -> None:
+    """Have the bundled faces converted (pdf_fonts.cached_truetype) before the first page needs them.
+
+    The conversion takes half a minute, once per PC; started with a translation, it runs while
+    the first requests are out. Pages that need the faces sooner wait for it rather than convert twice.
+    """
+    threading.Thread(target=_prepare_fonts, name="papeer-fonts", daemon=True).start()
+
+
+def _prepare_fonts() -> None:
+    try:
+        for name, family, style in FONT_FACES:
+            cached_truetype(FONT_DIRECTORY / name, family, style)
+    except Exception:  # noqa: BLE001, S110 - the page that needs the faces tries again and reports the error.
+        pass
+
+
+@lru_cache(maxsize=1)
+def _serif_characters() -> frozenset[int]:
+    name, family, style = FONT_FACES[0]
+    with TTFont(io.BytesIO(cached_truetype(FONT_DIRECTORY / name, family, style)), lazy=True) as font:
+        return frozenset(cast(dict, font.getBestCmap()))
+
+
+# Math symbols the serif lacks and their nearest character in it, for searchable_text. The ceiling
+# and floor brackets become box-drawing corners of the same shape, so that the two stay apart.
+_MATH_STAND_INS = {
+    "⟨": "〈", "⟩": "〉", "∼": "〜", "∗": "*", "∘": "○", "⋆": "☆", "⋮": "︙",
+    "⋅": "·", "∙": "·", "∖": "\\", "⌈": "┌", "⌉": "┐", "⌊": "└", "⌋": "┘",
+}
+
+
+def searchable_text(text: str) -> str:
+    """A formula's text as the invisible layer over its image writes it, in the bundled serif.
+
+    A character the serif lacks becomes its stand-in (_MATH_STAND_INS: ⟨ → 〈, ∗ → *) or its
+    compatibility form where the serif has that (mathematical italic 𝑥 → x, ℝ → R, subscript ᵢ → i);
+    otherwise it is left out, since a missing glyph would be copied and found as nothing at all.
+    Whitespace runs become one space.
+    """
+    available = _serif_characters()
+    kept = []
+    for character in " ".join(text.split()):
+        if ord(character) in available:
+            kept.append(character)
+        else:
+            replacement = _MATH_STAND_INS.get(character) or unicodedata.normalize("NFKC", character)
+            kept.extend(c for c in replacement if ord(c) in available)
+    return "".join(kept).strip()
 
 
 @dataclass(frozen=True)
@@ -82,7 +154,12 @@ def running_headers(document: dict) -> list[dict]:
     return [dict(b, running_header=True) if b["id"] in repeated else b for b in document["blocks"]]
 
 
-def text_style(block: dict, body_size: float, page_height: float) -> TextStyle:
+def text_style(block: dict, body_size: float, page_height: float, *, footnote: bool = False,
+               source_body: float | None = None) -> TextStyle:
+    """footnote: reading_flow.footnote_ids found the block to be a footnote.
+    source_body: the page's body size before rounding (reading_flow.source_body_size); a
+    caption is "smaller type" relative to it. Defaults to body_size.
+    """
     if block.get("kind") == "algorithm":
         return TextStyle("algorithm", block["font_size"], 1.05)
     text = " ".join(block["text"].split())
@@ -110,6 +187,11 @@ def text_style(block: dict, body_size: float, page_height: float) -> TextStyle:
             or (block.get("page", 1) > 1 and rect.y1 < page_height * .15
                 and block["font_size"] <= body_size * .85 and len(text) < 180)):
         return TextStyle("footer", min(8, body_size * 0.85), 1.2)
+    # Footnotes and captions are set from their own (smaller) source size, not the body size:
+    # enlarged to the body size they overflow their boxes and shrink below readability.
+    own_size = round(max(6, min(body_size, block["font_size"])), 2)
+    if footnote:
+        return TextStyle("note", own_size, TIGHT_LEADING)
     if numbered and re.match(r"\d+\.\d+", numbered[1]) and re.match(r"[^.!?]{1,45}\.\s+\w", numbered[2]):
         return TextStyle("runin", body_size, 1.4)
     if short and not re.search(r"[。!?]$", text) and (
@@ -119,7 +201,38 @@ def text_style(block: dict, body_size: float, page_height: float) -> TextStyle:
         return TextStyle("section", body_size * 1.34, 1.2)
     if short and block["font_size"] >= body_size * 1.5:
         return TextStyle("title", min(26, max(17, block["font_size"])), 1.25)
+    # Checked after the headings, so that extraction (merge_wrapped_headings) sees the same roles.
+    caption = _CAPTION_LABEL.match(block["text"].strip())
+    if caption and (caption[1] is not None or block["font_size"] < (source_body or body_size) * .95):
+        return TextStyle("caption", own_size, TIGHT_LEADING)
     return TextStyle("body", body_size, 1.4)
+
+
+def readable_size(style: TextStyle) -> float:
+    """Smallest type accepted without a readability warning.
+
+    Footnotes and captions are judged against their own source size: a 7pt footnote set
+    in 7pt Japanese is as readable as the original.
+    """
+    if style.role == "footer":
+        return 6
+    if style.role in {"note", "caption"}:
+        return max(6, min(8, style.size * .85))
+    return 8
+
+
+def character_budget(rect: fitz.Rect, size: float, leading: float, math_ems: float = 0) -> int | None:
+    """About how many Japanese characters fit in rect at this size: area / (size² × leading),
+    counted in whole lines.
+
+    A full-width character is one em wide and a line is size × leading high. Inline math
+    takes math_ems ems of the lines, and 10% is kept for line-break losses (kinsoku etc.).
+    None when not even one line (or nothing besides the math) fits at this size: no shorter
+    translation would then be readable.
+    """
+    width, height = max(0, rect.width - 2), max(0, rect.height - 2)  # FONT_CSS pads the body by 1pt
+    budget = int(int(height / (size * leading)) * int(width / size) * .9 - math_ems)
+    return budget if budget > 0 else None
 
 
 def merge_wrapped_headings(blocks: list[dict], page_heights: dict[int, float] | None = None) -> list[dict]:
@@ -165,7 +278,7 @@ def merge_wrapped_headings(blocks: list[dict], page_heights: dict[int, float] | 
         if target is None:
             result.append(dict(block))
             continue
-        target["bbox"] = list(fitz.Rect(target["bbox"]) | fitz.Rect(block["bbox"]))
+        target["bbox"] = list(fitz.Rect(target["bbox"]) | fitz.Rect(block["bbox"]))  # pyright: ignore[reportArgumentType]
         target["heading_parts"] = target.get("heading_parts", [target["id"]]) + [block["id"]]
         for key in ("translation_text", "text"):
             target[key] = target.get(key, target["text"]) + "\n" + block.get(key, block["text"])
@@ -228,9 +341,11 @@ def reading_space(block: dict, style: TextStyle, blocks: list[dict], bounds: fit
     if style.role in {"footer", "section", "subsection"}:
         return rect
     source = fitz.Rect(block["bbox"]) & bounds
-    # A short equation lead-in often occupies only a fraction of its column.
-    # Infer the column from nearby prose, then stop at any same-row content.
-    if style.role == "body" and source.height < style.size * 3:
+    body_size = body_font_size([b for b in blocks if "text" in b and "font_size" in b])
+    # A short equation lead-in (or a short footnote or caption) often occupies only a fraction
+    # of its column. Infer the column from nearby prose, then stop at any same-row content.
+    # "Short" is measured in body lines, also for the smaller type of notes.
+    if style.role in {"body", "note", "caption"} and source.height < max(style.size, body_size) * 3:
         neighbors = [b for b in blocks if b["id"] != block["id"]
                      and b.get("kind", "text") == "text" and len(b.get("text", "")) > 60
                      and abs(b["bbox"][0] - source.x0) < 12
@@ -247,7 +362,6 @@ def reading_space(block: dict, style: TextStyle, blocks: list[dict], bounds: fit
             rect.x1 = min(bounds.x1, right)
     top, bottom = max(bounds.y0 + 6, source.y0 - 24), min(bounds.y1 - 6, source.y1 + 24)
     barriers = []
-    body_size = body_font_size([b for b in blocks if "text" in b and "font_size" in b])
     for other in blocks:
         if other["id"] == block["id"]:
             continue
@@ -306,14 +420,19 @@ def first_line_indented(block: dict) -> bool:
     return size * .35 <= inset <= size * 2.5
 
 
+# Translation text color, and the one used on a dark background (white text in a dark panel).
+TEXT_COLOR = "#161c24"
+LIGHT_TEXT_COLOR = "#f4f6f8"
+
+
 def text_html(text: str, style: TextStyle, images: dict[str, str], *,
-              first_indent: bool = False) -> str:
+              first_indent: bool = False, color: str = TEXT_COLOR) -> str:
     heading = style.role in {"title", "section", "subsection"}
     family = "PapeerHeading" if heading else "PapeerSerif"
     weight = "bold" if heading else "normal"
-    color = "#161c24"
     paragraphs = []
-    for index, line in enumerate(text.splitlines()):
+    # A block split into several translation units continues the same paragraph.
+    for index, line in enumerate(resolve_unit_joins(text).splitlines()):
         if not line.strip():
             continue
         content = _content(line.strip(), images)
@@ -324,7 +443,6 @@ def text_html(text: str, style: TextStyle, images: dict[str, str], *,
             if match:
                 content = ('<span style="font-family:PapeerHeading;font-weight:bold">'
                            + _content(match[1], images) + "</span>　" + _content(match[2], images))
-        # A newline can be a translation-unit split, not a new paragraph.
         # Only the source first-line geometry authorizes automatic indentation.
         indent = "1em" if style.role == "body" and not paragraphs and first_indent else "0"
         gap = ".35em" if paragraphs and style.role == "body" else "0"

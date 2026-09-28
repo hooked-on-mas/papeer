@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
 import { cachedInkPages, type InkSide } from "./inkStore";
 import { useStore } from "@/store";
 import { onAppEvent } from "@/lib/appEvents";
@@ -8,7 +8,8 @@ import { QK } from "@/lib/queryKeys";
 
 export function InkPageList({ paperId, onClose }: { paperId: string; onClose: () => void }) {
   const { data = [], error, refetch } = useQuery({ queryKey: [QK.inkPages, paperId],
-    queryFn: () => apiRequest<{ side: InkSide; page: number; count: number }[]>("GET", `/api/papers/${paperId}/ink-pages`) });
+    queryFn: async () => await unwrap(api.GET("/api/papers/{paper_id}/ink-pages", {
+      params: { path: { paper_id: paperId } } })) as { side: InkSide; page: number; count: number }[] });
   useEffect(() => {
     return onAppEvent("ink-changed", (detail) => { if (detail.paperId === paperId) void refetch(); });
   }, [paperId, refetch]);

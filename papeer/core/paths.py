@@ -5,11 +5,13 @@ so the on-disk layout is written down once.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 from typing import Any
+import uuid
 
 
 def app_env(name: str, default: str | None = None) -> str | None:
@@ -29,6 +31,46 @@ def data_directory() -> Path:
     return current
 
 
+def device_directory() -> Path:
+    """Files that belong to this PC rather than to the library: never backed up or synced.
+
+    Holds the folder-sync state and the connection options that name a program or server on
+    this PC (config.DEVICE_OPTION_KEYS). It stays under LOCALAPPDATA even when PAPEER_DATA_DIR
+    moves the library elsewhere.
+    """
+    return Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "PapeerSync"
+
+
+def log_directory() -> Path:
+    """The sidecar's log (sidecar/errors.log_to_file): this PC's, like the rest of device_directory()."""
+    return device_directory() / "logs"
+
+
+def sync_state_path(root: Path) -> Path:
+    """This PC's folder-sync state for the library at `root` (see drive_sync)."""
+    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".json")
+
+
+def fingerprint_cache_path(root: Path) -> Path:
+    """The file digests this PC remembers for the library at `root` (see drive_sync.fingerprint)."""
+    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".fingerprint.json")
+
+
+def review_cache_path(root: Path) -> Path:
+    """The pages needing translation this PC has worked out for the library at `root` (see translation_review)."""
+    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".review-pages.json")
+
+
+def opened_papers_path(root: Path) -> Path:
+    """When each paper of the library at `root` was last opened on this PC (see opened_papers)."""
+    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".opened.json")
+
+
+def search_index_path(root: Path) -> Path:
+    """This PC's full-text index of the library at `root` (see search_index)."""
+    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".search.sqlite3")
+
+
 def _has_papers(root: Path) -> bool:
     papers = root / "papers"
     return papers.is_dir() and any(papers.iterdir())
@@ -42,6 +84,9 @@ def parse_translation_sections(markdown: str) -> list[tuple[int, str, str]]:
     """(page, block id, text) for every section of a translation.md, text stripped."""
     parts = TRANSLATION_SECTION.split(markdown)
     return [(int(page), block, body.strip()) for page, block, body in zip(parts[1::3], parts[2::3], parts[3::3])]
+
+
+CAPTURE_PREFIX = "ink-capture-"
 
 
 class PaperFiles:
@@ -85,6 +130,19 @@ class PaperFiles:
     def article_usage(self) -> Path: return self.folder / "article-usage.json"
     @property
     def media(self) -> Path: return self.folder / "media"
+
+    # media/ holds two kinds of image, told apart by name. Region captures that the reader pastes into
+    # notes ("media/ink-capture-<hex>.png") belong to the user; every other PNG is a figure cut out for
+    # article.md and is replaced whenever the summary is regenerated.
+    def new_capture(self) -> Path:
+        """An unused file name in media/ for a region capture."""
+        return self.media / f"{CAPTURE_PREFIX}{uuid.uuid4().hex}.png"
+
+    def summary_images(self) -> list[Path]:
+        """The figure images of the summary, never the captures that notes refer to."""
+        if not self.media.is_dir():
+            return []
+        return [path for path in self.media.glob("*.png") if not path.name.startswith(CAPTURE_PREFIX)]
 
     def translation_sections(self) -> list[tuple[int, str, str]]:
         """Sections of the last completed translation; empty when there is none."""

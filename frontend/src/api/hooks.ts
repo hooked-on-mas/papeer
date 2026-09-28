@@ -1,110 +1,61 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, apiRequest } from "./client";
-import type { Usage, UsageLimits } from "@/lib/usage";
-import type { PassageLocation } from "@/store";
+import { api, ApiError, unwrap } from "./client";
+import type { components } from "./schema";
 import { QK } from "@/lib/queryKeys";
 
-export type PaperData = {
-  id: string;
-  title: string;
-  original_name?: string;
-  first_author?: string;
-  publication_year?: string;
-  collection_name?: string;
-  note?: string;
-  tags?: string[];
-  read_status?: string;
-  status?: string;
-  has_article?: boolean;
-  has_translated?: boolean;
-  translated_count?: number;
-  translation_required_count?: number;
-  translation_completed_required_count?: number;
-  translation_has_issues?: boolean | null;
-  translation_in_progress?: boolean;
-  pages?: number;
-  folder_path?: string;
-  created_at?: string;
-};
+type Schemas = components["schemas"];
 
-export type TranslatedPageRef = { file: string; index: number; mtime: number } | null;
+/**
+ * A paper's row as GET /api/papers lists it (PaperRow in sidecar/schemas/papers.py), with the memo
+ * when it comes from GET /api/papers/{id} (Paper): the list rows leave the memo out.
+ * status is the stored translation state, a code that storedStatusLabel (lib/paperStatus.ts) shows.
+ */
+export type PaperData = Schemas["PaperRow"] & { note?: string };
 
-export type TranslationReport = {
-  pages?: number;
-  selected_pages?: number[];
-  translated_pages?: number[];
-  skipped_pages?: number[];
-  scaled_blocks?: number;
-  readability_warnings?: { page: number }[];
-  skipped_blocks?: string[];
-  skipped_block_pages?: number[];
-  page_errors?: Record<string, string>;
-};
+export type TranslatedPageRef = Schemas["TranslatedPageRef"] | null;
 
-export type TranslationPreview = {
-  run_id: string;
-  complete: boolean;
-  pages: number[];
-  target_pages?: number[];
-  skipped_pages?: number[];
-  total_pages?: number;
-  page_errors?: Record<string, string>;
-};
+/** A paragraph typeset below the readable size because it overflowed its box (pdf_engine.build_translated_pdf). */
+export type ReadabilityWarning = Schemas["ReadabilityWarning"];
 
-export type ReadingData = {
-  page_count: number;
-  source_page_count: number;
-  empty_pages: number[];
-  translation_required_pages?: number[];
-  completed_pages: number[];
-  preview: TranslationPreview | null;
-  in_progress: boolean;
-  report: TranslationReport | null;
-  translated_pages: Record<string, TranslatedPageRef>;
-  page_versions: Record<string, { sha: string; model: string }>;
-  last_page: number;
-  has_translated: boolean;
-  has_article: boolean;
-  has_interleaved: boolean;
-  original_mtime: number;
-};
+/** translation-report.json as GET .../reading passes it on: an earlier Papeer's may lack any key. */
+export type TranslationReport = Schemas["TranslationReport"];
+
+export type GlossaryWarning = Schemas["GlossaryWarning"];
+
+export type TranslationPreview = Schemas["TranslationPreview"];
+
+/** A page needing OCR: kept as the original when its text layer is garbled or it is a scanned image,
+ * or translated except for its garbled paragraphs ("partial"). */
+export type OcrPage = Schemas["OcrPage"];
+
+/** GET /api/papers/{id}/reading (ReadingState in sidecar/schemas/papers.py). */
+export type ReadingData = Schemas["ReadingState"];
 
 /** Settings of one AI connection, by provider id: cli_path, base_url, and the model/effort last chosen. */
 export type ProviderOptions = Record<string, Record<string, string>>;
 
-export type SettingsData = {
-  provider: string;
-  model: string;
-  reasoning_effort: string;
-  timeout_seconds: number;
-  /** 0 lets the sidecar decide: 1 for a local model, else 3. */
-  translation_concurrency: number;
-  provider_options: ProviderOptions;
-  api_key?: string | null;
-};
+/** GET /api/settings; translation_concurrency 0 lets the sidecar decide (1 for a local model, else 3). */
+export type SettingsData = Schemas["SettingsResponse"];
 
 /** An AI connection as the sidecar describes it; the settings dialog is built from these. */
-export type ProviderSpec = {
-  id: string;
-  label: string;
-  description: string;
-  kind: "cli" | "http";
-  needs_login: boolean;
-  needs_api_key: boolean;
-  login_service: string;
-  fields: { key: string; label: string; placeholder: string; hint: string }[];
-};
+export type ProviderSpec = Schemas["ProviderSpecModel"];
 
-export type ProviderOption = { id: string; name: string };
+export type ProviderOption = Schemas["ProviderOption"];
 
-export type Message = { role: "user" | "assistant"; content: string; usage?: Usage | null; attachments?: PassageLocation[] };
+/** A chat message; a question has the passages sent with it, if any (PassageLocations). */
+export type Message = Schemas["ChatMessage"];
+
+/** GET /api/papers/{id}: the paper's row with its memo. */
+export function getPaper(id: string): Promise<PaperData> {
+  return unwrap(api.GET("/api/papers/{paper_id}", { params: { path: { paper_id: id } } }));
+}
 
 export function usePaper(id: string | null) {
   return useQuery({
     queryKey: [QK.papers, id],
     queryFn: async (): Promise<PaperData | null> => {
       if (!id) return null;
-      return apiRequest<PaperData>("GET", `/api/papers/${id}`);
+      return getPaper(id);
     },
     enabled: !!id,
     retry: false,
@@ -114,8 +65,7 @@ export function usePaper(id: string | null) {
 export function usePaperList(query: string, sort: number) {
   return useQuery({
     queryKey: [QK.papers, "list", query, sort],
-    queryFn: () => apiRequest<PaperData[]>(
-      "GET", `/api/papers?query=${encodeURIComponent(query)}&sort=${sort}`),
+    queryFn: (): Promise<PaperData[]> => unwrap(api.GET("/api/papers", { params: { query: { query, sort } } })),
     placeholderData: (previous) => previous,
   });
 }
@@ -123,7 +73,7 @@ export function usePaperList(query: string, sort: number) {
 export function useCollections() {
   return useQuery({
     queryKey: [QK.collections],
-    queryFn: () => apiRequest<string[]>("GET", "/api/collections"),
+    queryFn: () => unwrap(api.GET("/api/collections")),
   });
 }
 
@@ -132,31 +82,37 @@ export function useReading(id: string | null) {
     queryKey: [QK.reading, id],
     queryFn: async (): Promise<ReadingData | null> => {
       if (!id) return null;
-      return apiRequest<ReadingData>("GET", `/api/papers/${id}/reading`);
+      return unwrap(api.GET("/api/papers/{paper_id}/reading", { params: { path: { paper_id: id } } }));
     },
     enabled: !!id,
     retry: false,
   });
 }
 
+/**
+ * The paper's summary, or null when it has none. Most papers have none, so it is asked for only once the
+ * paper's reading state says there is one (has_article): the webview would log the 404 each time such a
+ * paper is opened. Loading until that state is known; asked for anyway when it could not be read.
+ */
 export function useArticle(id: string | null) {
-  return useQuery({
+  const { data: reading, isLoading: readingLoading, isError: readingFailed } = useReading(id);
+  const hasArticle = !!reading?.has_article || readingFailed;
+  const query = useQuery({
     queryKey: [QK.article, id],
     queryFn: async () => {
       if (!id) return null;
-      const res = await api.GET("/api/papers/{paper_id}/article", {
-        params: { path: { paper_id: id } },
-      });
-      // 404 means article hasn't been generated yet - return null, not an error
-      if (res.error) {
-        if (res.response?.status === 404 || (res.error as any).status === 404) return null;
-        throw new Error((res.error as any).detail || JSON.stringify(res.error));
+      try {
+        return await unwrap(api.GET("/api/papers/{paper_id}/article", { params: { path: { paper_id: id } } }));
+      } catch (error) {
+        // 404: no summary has been generated yet (or it was removed meanwhile), which is not an error.
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
       }
-      return res.data as unknown as { content: string; usage?: Usage | null };
     },
-    enabled: !!id,
+    enabled: !!id && hasArticle,
     retry: false,
   });
+  return { ...query, data: reading && !reading.has_article && !readingFailed ? null : query.data, isLoading: query.isLoading || readingLoading };
 }
 
 export function useMessages(id: string | null) {
@@ -164,7 +120,7 @@ export function useMessages(id: string | null) {
     queryKey: [QK.messages, id],
     queryFn: async (): Promise<Message[]> => {
       if (!id) return [];
-      return apiRequest<Message[]>("GET", `/api/papers/${id}/messages`);
+      return unwrap(api.GET("/api/papers/{paper_id}/messages", { params: { path: { paper_id: id } } }));
     },
     enabled: !!id,
   });
@@ -173,7 +129,7 @@ export function useMessages(id: string | null) {
 export function useSettings(enabled = true) {
   return useQuery({
     queryKey: [QK.settings],
-    queryFn: () => apiRequest<SettingsData>("GET", "/api/settings"),
+    queryFn: () => unwrap(api.GET("/api/settings")),
     enabled,
   });
 }
@@ -182,9 +138,11 @@ export function useSettings(enabled = true) {
 export function useUsageLimits(provider: string | undefined) {
   return useQuery({
     queryKey: [QK.usageLimits, provider],
-    queryFn: () => apiRequest<UsageLimits | null>("GET", "/api/usage/limits"),
+    queryFn: () => unwrap(api.GET("/api/usage/limits")),
     enabled: !!provider,
     staleTime: 5 * 60_000,
+    // Unlike the rest (App.tsx): usage goes on in other apps and devices. At most every staleTime.
+    refetchOnWindowFocus: true,
     retry: false,
   });
 }
@@ -192,7 +150,7 @@ export function useUsageLimits(provider: string | undefined) {
 export function useHealth() {
   return useQuery({
     queryKey: [QK.health],
-    queryFn: () => apiRequest<{ version: string; code_version: string }>("GET", "/health"),
+    queryFn: () => unwrap(api.GET("/health")),
     staleTime: Infinity,
   });
 }
@@ -209,7 +167,7 @@ export function paperDisplayName(paper: Pick<PaperData, "title" | "original_name
 export function useProviders() {
   return useQuery({
     queryKey: [QK.providers],
-    queryFn: () => apiRequest<ProviderSpec[]>("GET", "/api/providers"),
+    queryFn: () => unwrap(api.GET("/api/providers")),
     staleTime: Infinity,
   });
 }
@@ -221,21 +179,21 @@ export function providerLabel(providers: ProviderSpec[] | undefined, id: string 
 
 /** Models the connection offers; cliPath (unsaved in the dialog) overrides the saved path. */
 export function useProviderModels(provider: string, options: { cliPath?: string; enabled?: boolean } = {}) {
-  const path = options.cliPath === undefined ? "" : `?cli_path=${encodeURIComponent(options.cliPath)}`;
   return useQuery({
     queryKey: [QK.models, provider, options.cliPath ?? null],
-    queryFn: () => apiRequest<ProviderOption[]>("GET", `/api/providers/${provider}/models${path}`),
+    // cli_path is left out, rather than sent empty, when undefined: then the saved path is used.
+    queryFn: () => unwrap(api.GET("/api/providers/{provider}/models", {
+      params: { path: { provider }, query: { cli_path: options.cliPath } } })),
     enabled: (options.enabled ?? true) && !!provider,
     staleTime: 5 * 60_000,
   });
 }
 
 export function useProviderEfforts(provider: string, model: string, options: { cliPath?: string; enabled?: boolean } = {}) {
-  const params = new URLSearchParams({ model });
-  if (options.cliPath !== undefined) params.set("cli_path", options.cliPath);
   return useQuery({
     queryKey: [QK.efforts, provider, model, options.cliPath ?? null],
-    queryFn: () => apiRequest<ProviderOption[]>("GET", `/api/providers/${provider}/efforts?${params}`),
+    queryFn: () => unwrap(api.GET("/api/providers/{provider}/efforts", {
+      params: { path: { provider }, query: { model, cli_path: options.cliPath } } })),
     enabled: (options.enabled ?? true) && !!provider,
     staleTime: 5 * 60_000,
   });

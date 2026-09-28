@@ -9,8 +9,9 @@ import pymupdf as fitz
 import pypdfium2 as pdfium
 
 from papeer.layout.math_layout import MATH_TOKEN, restore_formula_text
-from papeer.pdf.pdf_engine import save_json, translation_units
-from papeer.layout.reading_flow import materialize_flows, translation_blocks, unit_pages
+from papeer.pdf.pdf_engine import translation_units
+from papeer.core.fileio import atomic_write_json
+from papeer.layout.reading_flow import join_unit_translations, materialize_flows, resolve_unit_joins, translation_blocks, unit_pages
 from papeer.translation.translation import validate_translations
 
 
@@ -50,7 +51,7 @@ def audit(review, papers):
             translations=defaultdict(list)
             for unit in translation_units(document):
                 if unit['id'] in values:translations[unit['block']].append(values[unit['id']])
-            translations={k:'\n'.join(v) for k,v in translations.items()}
+            translations={k:join_unit_translations(v) for k,v in translations.items()}
             rendered,assigned=materialize_flows(document,translations)
             raw={b['id']:b for b in document['blocks']}
             placed={b['id']:b for b in rendered['blocks']}
@@ -66,10 +67,10 @@ def audit(review, papers):
                 assert Counter(MATH_TOKEN.findall(joined))==expected, 'Formula loss or duplication'
                 flows.append(dict(blocks=group['blocks'],pages=group['pages'],boundary=group['boundary'],
                     source=virtual[first]['text'],
-                    japanese=restore_formula_text(joined,virtual[first]),
+                    japanese=restore_formula_text(resolve_unit_joins(joined),virtual[first]),
                     formulas=sum(expected.values()),
                     segments=[dict(block=key,page=placed[key]['page'],
-                        source=raw[key]['text'],japanese=restore_formula_text(assigned[key],placed[key]),
+                        source=raw[key]['text'],japanese=restore_formula_text(resolve_unit_joins(assigned[key]),placed[key]),
                         moved_formulas=sum(f.get('source_page',placed[key]['page'])!=placed[key]['page']
                                            for f in placed[key].get('formulas',[]))) for key in group['blocks']]))
             results.append(dict(id=identity,pages=sorted(selected),units=len(values),
@@ -81,7 +82,7 @@ def audit(review, papers):
         groups=sum(len(r['groups']) for r in results),
         joined_boundaries=sum(len(g['blocks'])-1 for r in results for g in r['groups']),
         units=sum(r['units'] for r in results),results=results)
-    save_json(review/'integrity-audit.json',result)
+    atomic_write_json(review/'integrity-audit.json',result)
     return result
 
 

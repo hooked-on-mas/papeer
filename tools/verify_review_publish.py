@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import pypdfium2 as pdfium
-from papeer.pdf.pdf_engine import save_json
+from papeer.core.fileio import atomic_write_json
 
 
 def verify(papers, review):
@@ -36,7 +36,9 @@ def verify(papers, review):
                     expected,index=review/f'{identity[:4]}-p{number}.pdf',0
                 elif preview and not preview['complete']:
                     if number in preview['pages']:
-                        expected,index=folder/'translation-pages'/preview['run_id']/f'page-{number}.pdf',0
+                        # The publish copies these pages into the backup; the library removes the run later.
+                        expected,index=backup/'translation-pages'/preview['run_id']/f'page-{number}.pdf',0
+                        if not expected.exists():expected=folder/'translation-pages'/preview['run_id']/f'page-{number}.pdf'
                     else:
                         expected,index=folder/'original.pdf',number-1
                 else:
@@ -47,7 +49,7 @@ def verify(papers, review):
                                source_unchanged=True,pixel_engine='PDFium',all_pixels_equal=True))
         finally:
             for doc in opened.values():doc.close()
-    save_json(review/'publish-verification.json',checks)
+    atomic_write_json(review/'publish-verification.json',checks)
     return checks
 
 

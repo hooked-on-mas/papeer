@@ -11,9 +11,10 @@ from collections import Counter
 import json
 from pathlib import Path
 
+from papeer.core.service import stored_translations
 from papeer.pdf.pdf_engine import build_translated_pdf, translation_units
 from papeer.layout.math_layout import MATH_TOKEN
-from papeer.layout.reading_flow import unit_pages
+from papeer.layout.reading_flow import join_unit_translations, unit_pages
 
 
 def rebuild(papers: Path, output: Path) -> dict:
@@ -30,7 +31,7 @@ def rebuild(papers: Path, output: Path) -> dict:
             (output / "reports.json").write_text(json.dumps(reports, ensure_ascii=False, indent=2), "utf-8")
             continue
         document = json.loads((folder / "document.json").read_text("utf-8"))
-        cache = json.loads((folder / "translation-cache.json").read_text("utf-8"))["translations"]
+        cache = stored_translations(json.loads((folder / "translation-cache.json").read_text("utf-8")))
         previous_path = folder / "translation-report.json"
         previous = json.loads(previous_path.read_text("utf-8")) if previous_path.exists() else {}
         units = translation_units(document)
@@ -39,7 +40,7 @@ def rebuild(papers: Path, output: Path) -> dict:
         for unit in units:
             if unit_pages(unit) & pages:
                 grouped.setdefault(unit["block"], []).append(unit)
-        translations = {key: "\n".join(cache[u["id"]] for u in units)
+        translations = {key: join_unit_translations([cache[u["id"]] for u in units])
                         for key, units in grouped.items() if all(u["id"] in cache for u in units)}
         invalid = [u["id"] for u in units if u["id"] in cache and
                    Counter(MATH_TOKEN.findall(u["text"])) != Counter(MATH_TOKEN.findall(cache[u["id"]]))]

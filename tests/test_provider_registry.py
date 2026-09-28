@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from papeer.core.config import DEFAULT_BASE_URL, Settings
+from papeer.core.config import DEFAULT_BASE_URL, Settings, device_settings_path
 from papeer.providers import BACKENDS, ProviderBackend, create_provider, spec_for, specs
 
 
@@ -53,7 +53,9 @@ def test_legacy_flat_settings_are_migrated(tmp_path: Path):
     saved = json.loads((tmp_path / "settings.json").read_text("utf-8"))
     assert not {"codex_path", "claude_path", "gemini_path", "base_url", "api_key"} & saved.keys()
     assert saved["provider"] == "antigravity"
-    assert saved["provider_options"]["antigravity"] == {"cli_path": "C:/agy.exe"}
+    # The paths and the API URL belong to this PC and are kept outside the library (tests/test_device_settings.py).
+    assert "antigravity" not in saved["provider_options"]
+    assert json.loads(device_settings_path().read_text("utf-8"))["provider_options"]["antigravity"] == {"cli_path": "C:/agy.exe"}
     assert Settings.load(tmp_path).base_url == "http://localhost:11434/v1"
 
 
