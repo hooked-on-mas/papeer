@@ -255,3 +255,14 @@ def test_restore_api_keeps_current_settings_by_default(library, tmp_path, monkey
         assert client.get("/api/settings").json()["model"] == "current-model"
         restore({"path": str(backup), "import_settings": True})
         assert client.get("/api/settings").json()["model"] == "backup-model"
+
+
+def test_settings_update_keeps_what_was_left_out_and_merges_connection_options():
+    saved = Settings(model="saved-model", timeout_seconds=300,
+                     provider_options={"codex": {"cli_path": "C:/codex.exe", "model": "m"}, "api": {"base_url": "http://x"}})
+    updated = saved.updated({"reasoning_effort": "high", "provider_options": {"codex": {"model": "n"}}})
+    assert (updated.model, updated.timeout_seconds, updated.reasoning_effort) == ("saved-model", 300, "high")
+    assert updated.provider_options == {"codex": {"cli_path": "C:/codex.exe", "model": "n"}, "api": {"base_url": "http://x"}}
+    assert saved.provider_options["codex"]["model"] == "m"  # The saved settings are left as they were.
+    with pytest.raises(ValueError):
+        saved.updated({"reasoning_effort": "extreme"})

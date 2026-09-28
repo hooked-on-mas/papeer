@@ -13,12 +13,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from papeer.core import prompts
-from papeer.core.config import Settings
 from papeer.core.errors import Invalid
 from papeer.providers import ProviderBackend, spec_for, specs
 from sidecar import deps
 from sidecar.job_types import JobKind
-from sidecar.schemas import ProviderActionRequest, ProviderSpecModel, SettingsModel
+from sidecar.schemas.settings import ProviderActionRequest, ProviderSpecModel, SettingsModel
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
@@ -33,12 +32,7 @@ def get_settings() -> SettingsModel:
 @router.put("/api/settings")
 def update_settings(body: SettingsModel) -> dict[str, str]:
     """Apply the fields the client sent; anything omitted keeps its saved value."""
-    saved = deps.get_settings()
-    values = body.model_dump(exclude={"api_key"}, exclude_unset=True)
-    options = dict(saved.provider_options)
-    for provider, sent in values.pop("provider_options", {}).items():
-        options[provider] = {**options.get(provider, {}), **sent}
-    settings = Settings.from_values({**asdict(saved), **values, "provider_options": options})
+    settings = deps.get_settings().updated(body.model_dump(exclude={"api_key"}, exclude_unset=True))
     spec_for(settings.provider)
     deps.require_library_folder()
     settings.save(deps.get_data_dir())

@@ -85,3 +85,14 @@ def test_api_stages_import_without_changing_global_dictionary(tmp_path, monkeypa
     with TestClient(runtime.app) as client:
         for action in ("import", "export"):
             assert client.post(f"/api/glossary/{action}", json={"path": str(path), "terms": []}).status_code == 401
+
+
+def test_a_file_that_cannot_be_read_or_written_is_the_users_to_fix(tmp_path):
+    from papeer.core.errors import Invalid
+
+    terms = [{"source": "control", "target": "制御"}]
+    with pytest.raises(Invalid):
+        import_glossary(tmp_path / "missing.json", [])
+    (tmp_path / "file").write_text("not a folder")
+    with pytest.raises(Invalid):
+        export_glossary(tmp_path / "file" / "glossary.json", terms, tmp_path / "library")

@@ -344,3 +344,34 @@ def test_locked_old_summary_figure_does_not_fail_the_summary(ink_env, monkeypatc
     monkeypatch.setattr(Path, "unlink", unlink)
     PaperService(lib, SummaryProvider(), threading.Event()).article(identity)
     assert not stale.exists(), "the leftover goes with the next successful summary"
+
+
+def test_ink_page_capture_and_export_rules_without_the_routes(ink_env, tmp_path):
+    from papeer.core import ink
+    from papeer.core.errors import Invalid, NotFound
+
+    _, lib, identity = ink_env
+    folder = lib.folder(identity)
+    assert ink.check_page(lib, identity, "original", 2) == (PaperFiles(folder).original_pdf, 1)
+    for side, page in (("original", 0), ("original", 3), ("translated", 1)):
+        with pytest.raises(Invalid):
+            ink.check_page(lib, identity, side, page)
+    with pytest.raises(NotFound):
+        ink.check_page(lib, "0" * 32, "original", 1)
+
+    lib.save_ink(identity, "original", 1, [stroke()])
+    saved = ink.save_capture(lib, identity, "original", 1, (0.1, 0.1, 0.5, 0.5), include_ink=True)
+    assert (saved["page"], saved["side"]) == (1, "original")
+    assert (folder / saved["file"]).read_bytes().startswith(b"\x89PNG")
+
+    data, written = ink.export_annotated(lib, identity, "original", None)
+    assert written is None and data.startswith(b"%PDF")
+    target = tmp_path / "exports" / "annotated.PDF"
+    data, written = ink.export_annotated(lib, identity, "original", str(target))
+    assert written == target.resolve() and target.read_bytes() == data
+    for refused in (lib.root / "annotated.pdf", tmp_path / "annotated.png"):
+        with pytest.raises(Invalid, match="ライブラリの外"):
+            ink.export_annotated(lib, identity, "original", str(refused))
+    with pytest.raises(Invalid, match="保存するPDF"):
+        ink.export_annotated(lib, identity, "translated", None)
+    assert not (lib.root / "annotated.pdf").exists()

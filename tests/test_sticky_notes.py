@@ -143,5 +143,5 @@ def test_invalid_highlights_are_refused(notes_env, change):
 def test_highlight_colours_match_the_request_schema():
     from typing import get_args
     from papeer.core.storage import HIGHLIGHT_COLORS
-    from sidecar.schemas import HighlightColor
+    from sidecar.schemas.papers import HighlightColor
     assert set(get_args(HighlightColor)) == set(HIGHLIGHT_COLORS)

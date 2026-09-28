@@ -101,6 +101,18 @@ class Settings:
         values = {k: v for k, v in values.items() if k in cls.__dataclass_fields__}
         return cls(**values)
 
+    def updated(self, values: dict) -> "Settings":
+        """These settings with `values` (any of the fields, as the settings dialog sends them) applied.
+
+        A field left out keeps its value; provider_options are merged key by key within each connection,
+        so the dialog may send only what it shows.
+        """
+        values = dict(values)
+        options = dict(self.provider_options)
+        for provider, sent in values.pop("provider_options", {}).items():
+            options[provider] = {**options.get(provider, {}), **sent}
+        return Settings.from_values({**asdict(self), **values, "provider_options": options})
+
     @classmethod
     def load(cls, root: Path) -> "Settings":
         """The library's settings with this PC's connection options (cli_path, base_url) laid over them.

@@ -13,7 +13,7 @@ from papeer.core.code_version import application_version
 from papeer.core.errors import NotFound
 from sidecar import deps
 from sidecar.job_types import JobInfo
-from sidecar.schemas import HealthResponse, UIStateModel
+from sidecar.schemas.system import HealthResponse, UIStateModel
 from sidecar.ui_state import load_ui_state, save_ui_state
 
 public = APIRouter()

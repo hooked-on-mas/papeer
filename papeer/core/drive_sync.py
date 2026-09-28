@@ -24,6 +24,7 @@ import uuid
 import zipfile
 
 from papeer import __version__
+from papeer.core.errors import Invalid
 from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
 from papeer.core.paths import fingerprint_cache_path, sync_state_path
 from papeer.core.reading_tools import create_backup, restore_backup
@@ -69,6 +70,18 @@ def status(root: Path) -> dict:
 
 
 def connect(root: Path, value: str) -> dict:
+    """Use the folder `value` for syncing this library; Invalid when it cannot be read or written, or holds broken data."""
+    try:
+        return _connect(root, value)
+    except OSError as exc:  # A folder that cannot be read or written: the user picks another.
+        raise Invalid(str(exc)) from exc
+    except (KeyError, json.JSONDecodeError, UnicodeError, zipfile.BadZipFile) as exc:
+        # A broken file in the sync folder: say so, rather than show a bare key such as 'heads'.
+        raise Invalid(f"同期フォルダーのデータが壊れているため読み取れませんでした（{type(exc).__name__}: {exc}）。"
+                      "別のフォルダーを選択してください。") from exc
+
+
+def _connect(root: Path, value: str) -> dict:
     if not value.strip() or not Path(value).expanduser().is_absolute():
         raise ValueError("保存先を絶対パスで指定してください。")
     target = Path(value).expanduser().resolve()
@@ -99,6 +112,14 @@ def disconnect(root: Path) -> None:
     state = read_state(root)
     state.update(connected=False, auto_sync=False)
     save_state(root, state)
+
+
+def set_auto_sync(root: Path, enabled: bool) -> dict:
+    """Turn automatic sync on or off; the status with the change."""
+    state = read_state(root)
+    state["auto_sync"] = enabled
+    save_state(root, state)
+    return status(root)
 
 
 def mark_restored(root: Path) -> None:
@@ -776,6 +797,47 @@ def check(root: Path, remote) -> dict:
     else:
         action = "none"
     return {"action": action, "local_version": version}
+
+
+def check_connected(root: Path) -> dict:
+    """check() against the folder chosen on this PC: "none" without one, "quiet" when it cannot be looked at."""
+    state = read_state(root)
+    if not state.get("connected") or not state.get("folder"):
+        return {"action": "none", "local_version": None}
+    try:
+        return check(root, FolderDrive(Path(state["folder"])))
+    except Exception:
+        # A missing folder, revisions still arriving, an unreadable file...: the sync itself reports it
+        # (and automatic sync stops until the user has looked), so leave the explaining to it.
+        return {"action": "quiet", "local_version": None}
+
+
+# What a stopped or failed sync_connected reports.
+SYNC_CANCELLED = "同期を中止しました。"
+SYNC_FAILED = "同期フォルダーを読み書きできませんでした。保存先とPC版Google Driveを確認して再試行してください。"
+
+
+def sync_connected(root: Path, cancel, progress, *, choice: str | None = None,
+                   expected_heads: list[str] | None = None, confirm: bool = False, background: bool = False) -> dict:
+    """sync() with the folder chosen on this PC; a failure is also recorded as the status's error.
+
+    The failure is raised as a ValueError with the message the user sees: a ValueError's own, else
+    SYNC_FAILED. Stopping is not a failure: nothing is recorded, so automatic sync resumes next time.
+    """
+    try:
+        state = read_state(root)
+        if not state.get("connected") or not state.get("folder"):
+            raise ValueError("同期フォルダーを指定してください。")
+        return sync(Library(root), FolderDrive(Path(state["folder"])), cancel, progress,
+                    choice=choice, expected_heads=expected_heads, confirm=confirm, background=background)
+    except Cancelled:
+        raise Cancelled(SYNC_CANCELLED) from None
+    except Exception as exc:
+        message = str(exc) if isinstance(exc, ValueError) else SYNC_FAILED
+        state = read_state(root)
+        state["error"] = message
+        save_state(root, state)
+        raise ValueError(message) from None
 
 
 def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,

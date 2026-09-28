@@ -7,6 +7,7 @@ import tempfile
 import time
 from unittest.mock import patch
 
+from fastapi.routing import iter_route_contexts
 from fastapi.testclient import TestClient
 import pymupdf as fitz
 import pytest
@@ -367,8 +368,9 @@ def test_reader_search_bookmarks_glossary_and_scoped_question(test_env):
 
 
 def test_removed_compatibility_routes_stay_removed():
-    # The window and the sidecar ship together, so no older client calls these any more.
-    routes = {(method.upper(), path) for path, item in app.openapi()["paths"].items() for method in item}
+    # The window and the sidecar ship together, so no older client calls these any more. Checked against the
+    # routes the app serves, those of the included routers too (one left out of the schema would still answer).
+    routes = {(method, route.path) for route in iter_route_contexts(app.routes) for method in route.methods or ()}
     removed = {
         ("POST", "/api/papers/upload"),  # a multipart upload; PDFs are added by path (/api/papers/import)
         ("GET", "/api/papers/{paper_id}/reading-blocks/{page}"),

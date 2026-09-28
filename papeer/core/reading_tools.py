@@ -1,4 +1,5 @@
-"""Reading metadata, shared terminology and portable library snapshots."""
+"""Reading metadata (tags, statuses, note templates), shared terminology, paragraph revisions and
+portable library snapshots."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -21,6 +22,7 @@ from papeer import __version__
 from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, newer_papeer
 from papeer.core.terminology import effective_glossary, apply_glossary, matching_terms, validate_revision
 from papeer.core.destinations import inside_library
+from papeer.core.errors import Conflict, Invalid
 from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
 from papeer.pdf.pdf_engine import translation_units
 
@@ -28,6 +30,49 @@ __all__ = ["effective_glossary", "validate_revision"]
 
 DEFAULT_TEMPLATE = "\n\n".join("## " + heading for heading in (
     "何を解決する論文？", "新しい点", "主な結果", "前提・限界", "自分に使えそうな点", "疑問・次に調べること"))
+# The built-in template's name: always offered first, and never saved over.
+DEFAULT_TEMPLATE_NAME = "読書メモ"
+
+
+# --- Choices offered in the UI: paper tags, sticky-note labels ("sticky"), reading statuses ("status") ---
+
+def all_tags(lib: Library) -> list[str]:
+    """Every paper tag the UI offers: the saved choices and the tags papers carry, in case-insensitive order."""
+    names = set(lib.tag_choices("paper"))
+    return sorted(names | {tag for paper in lib.papers() for tag in paper["tags"]}, key=str.casefold)
+
+
+def choice_name(kind: str, value: str) -> str:
+    """The name of a new choice of `kind` ("paper", "sticky" or "status"), trimmed; Invalid when unusable."""
+    name = value.strip()
+    if not name or (kind == "sticky" and len(name) > 40):
+        raise Invalid("名前を入力してください（付箋の分類は40文字まで）。")
+    return name
+
+
+def add_choice(lib: Library, kind: str, name: str) -> None:
+    """Offer `name` (checked by choice_name) among the choices of `kind`."""
+    if kind == "status":
+        lib.add_reading_status(name)
+    else:
+        lib.add_tag_choice(kind, name)
+
+
+# --- Note templates ---
+
+def note_templates(lib: Library) -> list[dict]:
+    """The built-in template first, then the user's (by name); "builtin" tells them apart."""
+    return [{"name": DEFAULT_TEMPLATE_NAME, "content": DEFAULT_TEMPLATE, "builtin": True},
+            *[dict(row, builtin=False) for row in lib.note_templates()]]
+
+
+def template_name(name: str, content: str) -> str:
+    """The name a user's template is saved under, trimmed; Invalid when it is empty or the built-in one's,
+    or when the template has no text."""
+    name = name.strip()
+    if not name or name == DEFAULT_TEMPLATE_NAME or not content.strip():
+        raise Invalid("テンプレート名と本文を入力してください。標準名は変更できません。")
+    return name
 
 
 def validate_terms(terms: list[dict]) -> list[dict[str, str]]:
@@ -372,6 +417,41 @@ def draft_revision(lib: Library, paper_id: str, paragraph: dict, instruction: st
     text = validate_revision(paragraph["source"], value["text"])
     check_cancel(cancel)
     return text
+
+
+def find_paragraph(lib: Library, paper_id: str, unit_id: str, expected_text: str | None = None) -> dict:
+    """The translated paragraph `unit_id` as translation_paragraphs lists it.
+
+    Invalid when the translation has no such paragraph (a glossary change re-made its units); Conflict when
+    its text is no longer `expected_text`, the one the user revised (another window changed it).
+    """
+    lib.paper(paper_id)  # NotFound for a paper the library does not have
+    paragraph = next((item for item in translation_paragraphs(lib, paper_id) if item["id"] == unit_id), None)
+    if not paragraph:
+        raise Invalid("段落が見つかりません。辞書変更後は再翻訳してください。")
+    if expected_text is not None and paragraph["text"] != expected_text:
+        raise Conflict("訳文が変更されました。読み込み直してください。")
+    return paragraph
+
+
+def adopt_revision(lib: Library, paper_id: str, unit_id: str, text: str, provider, cancel: threading.Event,
+                   progress, page_ready, expected_text: str | None = None) -> dict:
+    """Use `text` (checked by validate_revision) as paragraph `unit_id`'s translation, and record the change.
+
+    The paragraph is looked up again (find_paragraph): the translation may have changed since the request.
+    Its pages are translated again with the text in place (PaperService.translate with replacements), so
+    their PDF pages are drawn anew, and the previous text goes to the revision history. Returns the
+    translation's result.
+    """
+    from papeer.core.service import PaperService
+
+    current = find_paragraph(lib, paper_id, unit_id, expected_text)
+    result = PaperService(lib, provider, cancel, progress, page_ready).translate(
+        paper_id, pages=set(current["pages"]), replacements={unit_id: text})
+    if result.get("skipped_pages"):
+        raise ValueError("修正したページのPDF生成に失敗しました。翻訳の要確認一覧から確認してください。")
+    save_revision_history(lib.folder(paper_id), unit_id, current["text"], text)
+    return result
 
 
 def revision_history(folder: Path) -> list[dict]:

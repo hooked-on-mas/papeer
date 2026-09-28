@@ -40,12 +40,14 @@ papeer/        翻訳・PDF 処理・ライブラリ管理のコア (Python)
   pdf/            PDF の抽出と生成 (PyMuPDF)
   translation/    翻訳バッチ処理とプレビュー
 sidecar/          papeer を HTTP/WebSocket で公開する FastAPI サーバー
+  routes/         API のルート。入力を解釈して papeer を呼ぶだけにし、処理の中身は papeer/core に置く
+  schemas/        API のリクエスト・レスポンスのモデル（ルーターごと。ジョブの結果とイベントは job_types.py）
 frontend/         デスクトップ UI (Tauri 2 + React 19 + Tailwind v4)
   src/            React アプリ
   tests/          node:test によるフロントエンドのテスト
   src-tauri/      Tauri (Rust)。本番では sidecar を子プロセスとして起動
 tests/            pytest によるバックエンドのテスト
-tools/            開発用スクリプト (翻訳レイアウトの検証・比較、掃除、版の更新など)
+tools/            開発用スクリプト (翻訳レイアウトの検証・比較・反映、掃除、版の更新など)。exe には含めない
 docs/             仕様ドキュメント
 .github/          GitHub Actions (タグでインストーラーを作るリリース)
 ```

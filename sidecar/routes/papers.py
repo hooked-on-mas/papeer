@@ -21,7 +21,7 @@ from papeer.providers import Cancelled
 from sidecar import deps
 from sidecar.job_types import ImportItemEvent, ImportPagesEvent, JobKind
 from sidecar.jobs import ConcurrencyConflict, TurnQueue
-from sidecar.schemas import (
+from sidecar.schemas.papers import (
     BibtexExportRequest,
     BibtexRequest,
     BookmarkEditRequest,

@@ -15,7 +15,7 @@ from papeer.core.translation_plan import translation_plan as plan_translation
 from papeer.layout.page_selection import parse_page_selection
 from sidecar import deps
 from sidecar.job_types import JobKind
-from sidecar.schemas import AskRequest, ExportRequest, TranslateRequest
+from sidecar.schemas.ai_jobs import AskRequest, ExportRequest, TranslateRequest
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 

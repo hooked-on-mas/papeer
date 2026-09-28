@@ -26,7 +26,7 @@ from papeer.core.storage import Library, LibraryMissingError, NewerSchemaError, 
 from papeer.providers import ProviderBackend, check_cancel, create_provider
 from sidecar.job_types import SNAPSHOT_KINDS, JobKind, LibraryChangedEvent, PaperChangedEvent
 from sidecar.jobs import JobManager
-from sidecar.schemas import ProviderActionRequest
+from sidecar.schemas.settings import ProviderActionRequest
 
 job_manager = JobManager()
 

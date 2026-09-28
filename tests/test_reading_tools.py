@@ -530,3 +530,54 @@ def test_backup_is_never_written_inside_the_library(library):
         with pytest.raises(ValueError, match="データ保存フォルダーの外"):
             create_backup(lib, inside)
     assert not list(lib.root.rglob("backup.zip"))
+
+
+def test_choices_templates_and_revisions_without_the_routes(library):
+    from papeer.core import reading_tools as tools
+    from papeer.core.errors import Conflict, Invalid, NotFound
+
+    lib, identity = library
+    lib.update(identity, tags=["制御", "Beta"])
+    lib.add_tag_choice("paper", "alpha")
+    assert tools.all_tags(lib) == ["alpha", "Beta", "制御"]
+    assert tools.choice_name("paper", "  読了 ") == "読了"
+    assert tools.choice_name("paper", "x" * 41) == "x" * 41
+    for kind, value in (("status", "  "), ("sticky", "x" * 41)):
+        with pytest.raises(Invalid):
+            tools.choice_name(kind, value)
+    tools.add_choice(lib, "status", "精読中")
+    tools.add_choice(lib, "sticky", "要再読")
+    assert lib.reading_statuses()[-1] == "精読中" and lib.tag_choices("sticky")[-1] == "要再読"
+
+    assert tools.note_templates(lib) == [{"name": "読書メモ", "content": tools.DEFAULT_TEMPLATE, "builtin": True}]
+    assert tools.template_name(" 実験メモ ", "## 条件") == "実験メモ"
+    for name, content in (("読書メモ", "本文"), (" ", "本文"), ("実験メモ", "  ")):
+        with pytest.raises(Invalid):
+            tools.template_name(name, content)
+    lib.save_note_template("実験メモ", "## 条件")
+    assert tools.note_templates(lib)[1:] == [{"name": "実験メモ", "content": "## 条件", "builtin": False}]
+
+    provider = FakeProvider()
+    PaperService(lib, provider, threading.Event()).translate(identity)
+    paragraph = translation_paragraphs(lib, identity)[0]
+    with pytest.raises(NotFound):
+        tools.find_paragraph(lib, "0" * 32, paragraph["id"])
+    with pytest.raises(Invalid):
+        tools.find_paragraph(lib, identity, "missing")
+    with pytest.raises(Conflict):
+        tools.find_paragraph(lib, identity, paragraph["id"], "別の画面で変えた訳文")
+    assert tools.find_paragraph(lib, identity, paragraph["id"], paragraph["text"]) == paragraph
+
+    edited = validate_revision(paragraph["source"], "採用した日本語の段落。" + " ".join(MATH_TOKEN.findall(paragraph["source"])))
+    calls = len(provider.calls)
+    result = tools.adopt_revision(lib, identity, paragraph["id"], edited, provider, threading.Event(),
+                                  lambda _: None, lambda *_: None, paragraph["text"])
+    assert not result.get("skipped_pages") and len(provider.calls) == calls
+    assert tools.find_paragraph(lib, identity, paragraph["id"])["text"] == edited
+    history = tools.revision_history(lib.folder(identity))
+    assert [(item["unit_id"], item["before"], item["after"]) for item in history] == [(paragraph["id"], paragraph["text"], edited)]
+    # Adopting over the text the user no longer sees is refused, and nothing is recorded.
+    with pytest.raises(Conflict):
+        tools.adopt_revision(lib, identity, paragraph["id"], edited, provider, threading.Event(),
+                             lambda _: None, lambda *_: None, paragraph["text"])
+    assert len(tools.revision_history(lib.folder(identity))) == 1
