@@ -13,6 +13,11 @@ native parts) bypass the hook; subprocesses are protected only by the environmen
 The bundled fonts converted to TrueType (pdf_fonts.cached_truetype, some 30 seconds to make) would be
 made again under every test's fresh LOCALAPPDATA, so PAPEER_FONT_CACHE_DIR points at pytest's own cache
 folder instead: converted once, then reused by later runs, and never the real one.
+
+The Tesseract language data the OCR tests read (tessdata_fast eng and jpn, some 6.5 MB, not in the
+repository) is kept there too ("papeer-tessdata"), or taken from PAPEER_TEST_TESSDATA. It is downloaded
+(once, with papeer's own download, checked by SHA-256) only when PAPEER_TEST_DOWNLOAD_TESSDATA=1; without
+it those tests are skipped, and with it a failed download fails them (CI sets it).
 """
 from __future__ import annotations
 
@@ -28,6 +33,7 @@ import pytest
 # Must come before the environment changes below: it records the real folders.
 from _isolation import audit_hook, take_violations
 from _frozen_documents import frozen_view
+from _tessdata import prepare_tessdata
 
 pytest_plugins = ["pytester"]
 
@@ -45,10 +51,22 @@ os.environ.pop("PAPERDESK_DATA_DIR", None)
 sys.addaudithook(audit_hook)
 
 
+_tessdata_base: Path = _session_base / "tessdata"
+
+
 def pytest_configure(config):
+    global _tessdata_base
     cache = getattr(config, "cache", None)  # None with -p no:cacheprovider
     fonts = cache.mkdir("papeer-font-cache") if cache is not None else _session_base / "font-cache"
     os.environ["PAPEER_FONT_CACHE_DIR"] = str(fonts)
+    if cache is not None:
+        _tessdata_base = cache.mkdir("papeer-tessdata")
+
+
+@pytest.fixture(scope="session")
+def tessdata():
+    """A folder with the Tesseract language data of every OCR language (tests/_tessdata.py)."""
+    return prepare_tessdata(_tessdata_base, os.environ)
 
 
 @pytest.fixture(autouse=True)

@@ -128,8 +128,9 @@ def test_library_code_writes_files_only_through_fileio():
         "papeer/core/code_version.py",  # Build step writing code-version.txt.
         "papeer/providers/codex.py",  # Schema file inside a private temporary directory.
     }
-    # PyMuPDF's TextWriter.write_text(page, ...) draws on a PDF page, not into a file.
-    pattern = re.compile(r"\.write_text\((?!page\b)|\.write_bytes\(|with_suffix\([^)]*\.tmp|\bdef (save_json|safe_replace)\b")
+    # PyMuPDF's TextWriter.write_text(page, ...) draws on a PDF page, not into a file; WinRT's
+    # DataWriter.write_bytes (papeer.layout.ocr_engines, named buffer_writer) fills a buffer in memory.
+    pattern = re.compile(r"\.write_text\((?!page\b)|(?<!buffer_writer)\.write_bytes\(|with_suffix\([^)]*\.tmp|\bdef (save_json|safe_replace)\b")
     offenders = []
     for folder in ("papeer", "sidecar"):
         for path in sorted((ROOT / folder).rglob("*.py")):

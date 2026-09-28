@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "auditDate": "2026-09-28",
+  "auditDate": "2026-09-29",
   "target": "Windows 11 x64; Python 3.12; Rust x86_64-pc-windows-msvc",
   "projectLicense": "AGPL-3.0-or-later (README.md and LICENSE)",
   "method": [
@@ -16,7 +16,7 @@
   "sourceFiles": [
     {
       "path": "uv.lock",
-      "sha256": "1adc110583e1e03a76d2da71accbfbe98264e8cebb043f34b0c04a2d9aaaef42"
+      "sha256": "f88bf0f6770a9f96e2a6821c0415f33b53089f776a72b471d595f05cbe6873f5"
     },
     {
       "path": "frontend/pnpm-lock.yaml",
@@ -29,12 +29,12 @@
   ],
   "summary": {
     "python": {
-      "rows": 43,
-      "directRows": 13,
+      "rows": 50,
+      "directRows": 20,
       "unknownLicenseRows": 3,
       "scopeCounts": {
         "build": 7,
-        "windows-runtime": 22,
+        "windows-runtime": 29,
         "development": 17,
         "other-platform-in-lock": 3
       }
@@ -631,6 +631,104 @@
         ],
         "license": "BSD-3-Clause",
         "licenseEvidence": ".venv/Lib/site-packages/websockets-17.1.dist-info/METADATA",
+        "installedOnAuditMachine": true
+      },
+      {
+        "name": "winrt-runtime",
+        "version": "3.2.1",
+        "dependencyType": "direct",
+        "directScopes": [
+          "runtime"
+        ],
+        "scopes": [
+          "windows-runtime"
+        ],
+        "license": "MIT",
+        "licenseEvidence": ".venv/Lib/site-packages/winrt_runtime-3.2.1.dist-info/METADATA",
+        "installedOnAuditMachine": true
+      },
+      {
+        "name": "winrt-windows-foundation",
+        "version": "3.2.1",
+        "dependencyType": "direct",
+        "directScopes": [
+          "runtime"
+        ],
+        "scopes": [
+          "windows-runtime"
+        ],
+        "license": "MIT",
+        "licenseEvidence": ".venv/Lib/site-packages/winrt_windows_foundation-3.2.1.dist-info/METADATA",
+        "installedOnAuditMachine": true
+      },
+      {
+        "name": "winrt-windows-foundation-collections",
+        "version": "3.2.1",
+        "dependencyType": "direct",
+        "directScopes": [
+          "runtime"
+        ],
+        "scopes": [
+          "windows-runtime"
+        ],
+        "license": "MIT",
+        "licenseEvidence": ".venv/Lib/site-packages/winrt_windows_foundation_collections-3.2.1.dist-info/METADATA",
+        "installedOnAuditMachine": true
+      },
+      {
+        "name": "winrt-windows-globalization",
+        "version": "3.2.1",
+        "dependencyType": "direct",
+        "directScopes": [
+          "runtime"
+        ],
+        "scopes": [
+          "windows-runtime"
+        ],
+        "license": "MIT",
+        "licenseEvidence": ".venv/Lib/site-packages/winrt_windows_globalization-3.2.1.dist-info/METADATA",
+        "installedOnAuditMachine": true
+      },
+      {
+        "name": "winrt-windows-graphics-imaging",
+        "version": "3.2.1",
+        "dependencyType": "direct",
+        "directScopes": [
+          "runtime"
+        ],
+        "scopes": [
+          "windows-runtime"
+        ],
+        "license": "MIT",
+        "licenseEvidence": ".venv/Lib/site-packages/winrt_windows_graphics_imaging-3.2.1.dist-info/METADATA",
+        "installedOnAuditMachine": true
+      },
+      {
+        "name": "winrt-windows-media-ocr",
+        "version": "3.2.1",
+        "dependencyType": "direct",
+        "directScopes": [
+          "runtime"
+        ],
+        "scopes": [
+          "windows-runtime"
+        ],
+        "license": "MIT",
+        "licenseEvidence": ".venv/Lib/site-packages/winrt_windows_media_ocr-3.2.1.dist-info/METADATA",
+        "installedOnAuditMachine": true
+      },
+      {
+        "name": "winrt-windows-storage-streams",
+        "version": "3.2.1",
+        "dependencyType": "direct",
+        "directScopes": [
+          "runtime"
+        ],
+        "scopes": [
+          "windows-runtime"
+        ],
+        "license": "MIT",
+        "licenseEvidence": ".venv/Lib/site-packages/winrt_windows_storage_streams-3.2.1.dist-info/METADATA",
         "installedOnAuditMachine": true
       }
     ],
