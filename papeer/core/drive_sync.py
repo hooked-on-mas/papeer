@@ -28,7 +28,7 @@ from papeer import __version__
 from papeer.core.errors import Invalid
 from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
 from papeer.core.paths import fingerprint_cache_path, sync_state_path
-from papeer.core.reading_tools import create_backup, restore_backup
+from papeer.core.backup import create_backup, restore_backup
 from papeer.core.storage import (SCHEMA_VERSION, Library, NewerSchemaError, database_version, library_missing,
                                   newer_papeer)
 from papeer.providers import Cancelled, check_cancel
