@@ -207,8 +207,8 @@ class PageSelectionTests(unittest.TestCase):
 
             changed = 'code-sha256-' + 'b' * 64
             self.assertNotEqual(first['render_version'], changed)
-            with patch('papeer.core.service.loaded_version', return_value=changed), \
-                    patch('papeer.core.service.build_translated_pdf', side_effect=build):
+            with patch('papeer.core.translation_run.loaded_version', return_value=changed), \
+                    patch('papeer.core.translation_run.build_translated_pdf', side_effect=build):
                 report = service.translate(identity)
             self.assertEqual(provider.calls, calls)
             self.assertEqual(report['already_translated_pages'], report['selected_pages'])
@@ -520,7 +520,7 @@ class PageSelectionTests(unittest.TestCase):
                     raise ValueError('Synthetic destination failure')
                 return build_translated_pdf(*args, **kwargs)
             service = PaperService(library, FakeProvider(), threading.Event())
-            with patch('papeer.core.service.build_translated_pdf', side_effect=build):
+            with patch('papeer.core.translation_run.build_translated_pdf', side_effect=build):
                 report = service.translate(identity, {1})
             self.assertEqual(report['translated_pages'], [])
             self.assertEqual(report['skipped_pages'], [1, 2])
@@ -533,7 +533,7 @@ class PageSelectionTests(unittest.TestCase):
             library = Library(Path(temporary))
             identity, _ = library.import_pdf(Path(__file__).parent / 'fixtures/sample.pdf')
             service = PaperService(library, FakeProvider(), threading.Event())
-            with patch('papeer.core.service.build_translated_pdf', side_effect=OSError('disk full')):
+            with patch('papeer.core.translation_run.build_translated_pdf', side_effect=OSError('disk full')):
                 with self.assertRaisesRegex(OSError, 'disk full'):
                     service.translate(identity)
             self.assertEqual(read_preview(library.folder(identity))['skipped_pages'], [])
@@ -569,7 +569,7 @@ class PageSelectionTests(unittest.TestCase):
                             self.assertEqual(translated_page(folder, number - 1), (folder / 'original.pdf', number - 1))
 
                 service = PaperService(library, provider, threading.Event(), messages.append, ready)
-                with patch('papeer.core.service.build_translated_pdf', side_effect=build):
+                with patch('papeer.core.translation_run.build_translated_pdf', side_effect=build):
                     report = service.translate(identity)
                 self.assertEqual(attempted, [1, 2, 3])
                 self.assertEqual(report['skipped_pages'], sorted(failed))

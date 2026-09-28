@@ -1,12 +1,12 @@
 /**
  * Highlights of text selected in the PDF. A highlight is saved as a sticky note of kind "highlight"
- * (sidecar storage._highlights): its colour, the selected text as its quote, and the rectangles it
+ * (sidecar library_schema._highlights): its colour, the selected text as its quote, and the rectangles it
  * covers as fractions of the displayed page, [x, y, width, height] like the ink. So it keeps its place
  * at any zoom, and is listed, searched and exported to the memo with the sticky notes.
  * Kept apart from React so that the rules can be tested.
  */
 
-/** The colours offered, as stored (storage.HIGHLIGHT_COLORS) and shown. */
+/** The colours offered, as stored (library_annotations.HIGHLIGHT_COLORS) and shown. */
 export const HIGHLIGHT_COLORS = [
   { id: "yellow", label: "黄", rgb: "250 204 21" },
   { id: "green", label: "緑", rgb: "74 222 128" },
@@ -38,7 +38,7 @@ export interface Box {
   height: number;
 }
 
-/** As many rectangles as the sidecar keeps for one highlight (storage.MAX_HIGHLIGHT_RECTS). */
+/** As many rectangles as the sidecar keeps for one highlight (library_annotations.MAX_HIGHLIGHT_RECTS). */
 export const MAX_HIGHLIGHT_RECTS = 400;
 
 const round = (value: number) => Math.round(value * 100000) / 100000;

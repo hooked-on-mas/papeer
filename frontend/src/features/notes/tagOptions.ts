@@ -1,7 +1,7 @@
 /**
  * The tag field of 読書状態・タグ: a combobox that filters the library's tags as the name is typed, and
  * offers the typed name as a new tag when no tag has exactly that name. A new tag needs no step of its
- * own: saving the paper's tags adds it to the choices (Library.update in papeer/core/storage.py).
+ * own: saving the paper's tags adds it to the choices (Library.update in papeer/core/library_papers.py).
  */
 
 import { pyStrip } from "../../lib/pyWhitespace.ts";

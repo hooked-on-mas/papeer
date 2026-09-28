@@ -37,7 +37,7 @@ LEGACY_LABELS = {
 
 
 def stored_status(value: object) -> TranslationStatus:
-    """A papers.status value as a code: the one place that reads it (Library rows, storage._status_codes).
+    """A papers.status value as a code: the one place that reads it (Library rows, library_schema._status_codes).
 
     A legacy label becomes its code, and anything else unknown (hand-edited) NOT_TRANSLATED: the library
     list works out the rest from the saved pages.

@@ -1,6 +1,6 @@
 """A full-text index of the library's pages and translations, kept on this PC (SQLite FTS5, trigram).
 
-The library search (reading_tools.library_search) looked through every page and every translated section
+The library search (library_search.library_search) looked through every page and every translated section
 of every paper for each query: over a second for a few hundred papers whenever little or nothing matched,
 as while a word is being typed. The index tells it which papers may contain a term and how often, and
 finds the places in one paper without reading its files.

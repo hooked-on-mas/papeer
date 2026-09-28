@@ -10,7 +10,7 @@ from pathlib import Path
 from papeer.core.destinations import inside_library
 from papeer.core.errors import Invalid
 from papeer.core.fileio import atomic_write_text
-from papeer.core.reading_tools import validate_terms
+from papeer.core.glossary_draft import validate_terms
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
 

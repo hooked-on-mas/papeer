@@ -28,7 +28,7 @@ from papeer import __version__
 from papeer.core.errors import Invalid
 from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
 from papeer.core.paths import fingerprint_cache_path, sync_state_path
-from papeer.core.reading_tools import create_backup, restore_backup
+from papeer.core.backup import create_backup, restore_backup
 from papeer.core.storage import (SCHEMA_VERSION, Library, NewerSchemaError, database_version, library_missing,
                                   newer_papeer)
 from papeer.providers import Cancelled, check_cancel
@@ -163,7 +163,8 @@ def start_new_library(root: Path) -> dict:
 #
 # Each revision records how much the library holds, and this PC remembers the counts it last synced.
 # A sync that would publish, or take in, a library with far fewer items stops and asks first.
-# "stickies" counts the rows of bookmarks: sticky notes and highlights of selected text alike (storage._highlights).
+# "stickies" counts the rows of bookmarks: sticky notes and highlights of selected text alike
+# (library_schema._highlights).
 COUNT_LABELS = {"papers": "論文", "notes": "メモ", "stickies": "付箋", "ink": "書き込み"}
 # "Far fewer" is at least SHRINK_MIN_ITEMS items and at least half of a kind. The absolute floor keeps
 # ordinary deletions in a small library (1 of 2 papers) from stopping sync; the ratio keeps a clean-up
