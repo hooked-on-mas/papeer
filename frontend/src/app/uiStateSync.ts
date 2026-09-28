@@ -1,4 +1,4 @@
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
 import { useStore } from "@/store";
 import { retryUntil } from "@/lib/retry";
 import { librarySortOrder } from "@/lib/librarySort";
@@ -43,7 +43,7 @@ export async function flushUiState(): Promise<void> {
   if (serialized === lastSaved || !useStore.getState().uiStateLoaded) return;
   lastSaved = serialized;
   try {
-    await apiRequest("PUT", "/api/ui-state", body);
+    await unwrap(api.PUT("/api/ui-state", { body }));
   } catch {
     lastSaved = "";
   }
@@ -108,8 +108,8 @@ export function initUiStateSync(): () => void {
     },
   };
   void (async () => {
-    await retryUntil(() => apiRequest("GET", "/health"), retry);
-    const state = await retryUntil(() => apiRequest<UiStateFile>("GET", "/api/ui-state"), retry);
+    await retryUntil(() => unwrap(api.GET("/health")), retry);
+    const state = await retryUntil(async () => await unwrap(api.GET("/api/ui-state")) as UiStateFile, retry);
     if (disposed || !state) return;
     applyUiState(state);
     unsubscribe = useStore.subscribe((s, prev) => {

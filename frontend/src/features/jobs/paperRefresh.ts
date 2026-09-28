@@ -1,6 +1,7 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
 import { getPaper, type PaperData } from "@/api/hooks";
+import { invalidate } from "@/api/mutations";
 import { requestPaperRefresh, type PaperChanges } from "@/lib/libraryRefresh";
 import { paperChangeEffects, withPaperRow } from "@/lib/paperRows";
 import { QK } from "@/lib/queryKeys";
@@ -49,9 +50,6 @@ export function handlePaperChanged(queryClient: QueryClient, paperId: string, fi
 
 /** Reloads the papers changed together: their rows, or with many, the lists (and each paper's own query) as a whole. */
 function refreshPapers(queryClient: QueryClient, changes: PaperChanges): void {
-  if (changes.rows === "all") void queryClient.invalidateQueries({ queryKey: [QK.papers] });
-  else for (const paperId of changes.rows) void refreshPaper(queryClient, paperId);
-  if (changes.collections) void queryClient.invalidateQueries({ queryKey: [QK.collections] });
-  if (changes.tags) void queryClient.invalidateQueries({ queryKey: [QK.tags] });
-  void queryClient.invalidateQueries({ queryKey: [QK.librarySearch] });
+  if (changes.rows !== "all") for (const paperId of changes.rows) void refreshPaper(queryClient, paperId);
+  void invalidate({ kind: "papersChanged", all: changes.rows === "all", collections: changes.collections, tags: changes.tags }, queryClient);
 }

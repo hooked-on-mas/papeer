@@ -52,6 +52,7 @@ Papeer の主な変更を記録します。形式は [Keep a Changelog](https://
 - ライブラリに保存する論文の翻訳状態を、日本語の表示文字列から英字のコード（`not_translated`・`translating`・`partial`・`resumable`・`incomplete`・`translated`）にしました。表示は画面側で日本語にします（メモ欄の論文情報では、翻訳前の論文を「追加済み」ではなく「未翻訳」と表示します）。既存のライブラリは開いたときに変換し、データベースは版 4 になります（0.2.0 より後の版で、これより前のものでは開けません）。0.2.0 以前の Papeer は版を確かめずに開いて日本語の状態を書き込むことがありますが、読むときにコードとして扱います。更新後の最初の同期で各 PC が一度同期データを作りますが、内容が同じなので競合にはなりません。
 - 開発: sidecar のジョブの種類を `JobKind`（`sidecar/job_types.py`）にまとめ、種類ごとの結果と `/ws/events` のイベントの形を Pydantic のモデルで決めて API のスキーマに載せました。結果が取り決めと違うジョブは失敗として扱い、ログに残します。終わったジョブは直近 50 件を保持し、`GET /api/jobs/{job_id}` で結果を取得できます。`GET /api/jobs` は実行中のジョブだけを返します。
 - 開発: フロントエンドの API の型を sidecar から作る `just gen-api` を追加しました（`tools/export_openapi.py` で `app.openapi()` を `frontend/openapi.json` に書き出し、openapi-typescript で `schema.d.ts` に変換。食い違いは pytest で検出）。論文・読書状態・翻訳レポート・付箋・チャット・利用枠などの応答を Pydantic モデルで型付けし（応答の形は変えていません）、`hooks.ts` の主なフックと `jobTypes.ts` を生成した型に移しました。
+- 開発: データを変えたときに読み直すクエリを `frontend/src/api/invalidation.ts` の対応表にまとめ、付箋・タグ・辞書・テンプレート・設定の保存を `useMutation`（`frontend/src/api/mutations.ts`）にしました。論文 1 件の変更（移動・ファイル名の変更）の後に一覧全体を読み直すのをやめ、sidecar の `paper.changed` による行の更新に任せます。API の呼び出しは `startJob` を除いて型付きクライアントに移し、翻訳の設定ダイアログから辞書の編集欄（`GlossaryEditor`）を切り出しました。
 
 ### Removed
 

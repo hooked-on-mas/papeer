@@ -1,4 +1,4 @@
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
 import { useStore } from "@/store";
 import { createOpenTracker } from "@/lib/recentPapers";
 
@@ -10,7 +10,7 @@ import { createOpenTracker } from "@/lib/recentPapers";
  */
 export function initPaperOpenedTracking(): () => void {
   const track = createOpenTracker((paperId) => {
-    void apiRequest("POST", `/api/papers/${paperId}/opened`).catch(() => undefined);
+    void unwrap(api.POST("/api/papers/{paper_id}/opened", { params: { path: { paper_id: paperId } } })).catch(() => undefined);
   });
   track(useStore.getState().activePaperId);
   const unsubscribe = useStore.subscribe((state) => track(state.activePaperId));

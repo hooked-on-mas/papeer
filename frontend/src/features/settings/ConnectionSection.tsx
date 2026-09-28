@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Globe, Loader2, LogIn, PlugZap, RefreshCw, SquareTerminal, XCircle } from "lucide-react";
 import { cn } from "cn";
-import { apiRequest } from "../../api/client";
+import { api, unwrap } from "../../api/client";
 import {
   useProviderEfforts, useProviderModels, useProviders,
   type ProviderOptions, type ProviderSpec, type SettingsData,
@@ -103,7 +103,7 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
 
   const login = async () => {
     try {
-      const result = await apiRequest<{ message: string; already?: boolean }>("POST", "/api/providers/login", values());
+      const result = await unwrap(api.POST("/api/providers/login", { body: values() })) as { message: string; already?: boolean };
       await showMessage(result.already ? "ログイン状態" : "ログイン", result.message);
     } catch (error) {
       showError(error, "CLIの準備エラー");

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
 import { onAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 import { navigateTo } from "./navigation";
@@ -32,8 +32,8 @@ export function ReaderSearch({ paperId, search, setSearch, ownsKey, open, setOpe
   const listRef = useRef<HTMLDivElement>(null);
   const { data: found } = useQuery({
     queryKey: [QK.paperSearch, paperId, search.query, search.side],
-    queryFn: ({ signal }) => apiRequest<{ results: SearchResult[]; total: number; limited: boolean }>(
-      "GET", `/api/papers/${paperId}/search?q=${encodeURIComponent(search.query)}&side=${search.side}`, undefined, { signal }),
+    queryFn: async ({ signal }) => await unwrap(api.GET("/api/papers/{paper_id}/search", {
+      params: { path: { paper_id: paperId }, query: { q: search.query, side: search.side } }, signal })) as { results: SearchResult[]; total: number; limited: boolean },
     enabled: !!search.query.trim(),
   });
   useEffect(() => setInput(search.query), [search.query, paperId]);

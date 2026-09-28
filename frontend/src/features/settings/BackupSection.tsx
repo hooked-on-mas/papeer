@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
+import { QK } from "@/lib/queryKeys";
 import { Button } from "@/components/ui/button";
 import { askConfirm, showMessage } from "@/components/AppDialogs";
 import { shell } from "@/shell";
 import { isRunning, useStore } from "@/store";
-import { startJob } from "@/features/jobs/jobEvents";
+import { requestCancel, startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { describeFailure, flushPendingSaves } from "@/lib/pendingSaves";
 import { flushUiState, suspendUiStateSync } from "@/app/uiStateSync";
@@ -21,12 +22,12 @@ export function BackupSection() {
   const runningJob = useStore(s => s.activeJobs.find(j => isRunning(j) && (j.kind === "backup" || j.kind === "restore"))?.job_id);
   const [cancelling, setCancelling] = useState<string | null>(null);
   // What a choice between two libraries in folder sync left out; restored like any backup.
-  const sideBackups = useQuery({ queryKey: ["side-backups"],
-    queryFn: () => apiRequest<{ items: SideBackup[]; limit: number }>("GET", "/api/drive/side-backups") });
+  const sideBackups = useQuery({ queryKey: [QK.sideBackups],
+    queryFn: async () => await unwrap(api.GET("/api/drive/side-backups")) as { items: SideBackup[]; limit: number } });
   // A restore stops only before it swaps the folders; after that it runs to the end.
   const cancel = async (jobId: string) => {
     setCancelling(jobId);
-    try { await apiRequest("POST", `/api/jobs/${jobId}/cancel`); }
+    try { await requestCancel(jobId); }
     catch (error) { setCancelling(null); showError(error, "中止できませんでした"); }
   };
   /** chosen: a kept library to restore (otherwise the user picks a file). */

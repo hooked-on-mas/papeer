@@ -1,9 +1,9 @@
 import { create } from "zustand";
-import { ApiError, apiRequest } from "@/api/client";
+import { ApiError } from "@/api/client";
 import { showError } from "@/components/errorDialog";
 import { closeToast, showToast } from "@/components/toast";
 import { isRunning, useStore } from "@/store";
-import { startJob } from "@/features/jobs/jobEvents";
+import { requestCancel, startJob } from "@/features/jobs/jobEvents";
 import { flushPendingSaves, describeFailure, openEditLabels } from "@/lib/pendingSaves";
 import { askConfirm } from "@/components/AppDialogs";
 import { flushUiState, suspendUiStateSync } from "@/app/uiStateSync";
@@ -42,7 +42,7 @@ export async function cancelSync(): Promise<void> {
   if (!jobId || cancelling) return;
   useSyncState.setState({ cancelling: true });
   try {
-    await apiRequest("POST", `/api/jobs/${jobId}/cancel`);
+    await requestCancel(jobId);
   } catch (e) {
     useSyncState.setState({ cancelling: false });
     // 404: the sync has just finished by itself.

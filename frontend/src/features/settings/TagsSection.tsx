@@ -1,14 +1,12 @@
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/api/client";
+import { useTagChoiceMutation } from "@/api/mutations";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { tagChoicesEndpoint as endpoint, useTagChoices, type TagKind } from "@/api/tagChoices";
-import { QK } from "@/lib/queryKeys";
+import { useTagChoices, type TagKind } from "@/api/tagChoices";
 
 export function TagManager({ kind }: { kind: TagKind }) {
   const { data: names = [], isPending, isError } = useTagChoices(kind);
-  const client = useQueryClient();
+  const change = useTagChoiceMutation(kind);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -16,9 +14,8 @@ export function TagManager({ kind }: { kind: TagKind }) {
   const mutate = async (remove?: string) => {
     setBusy(true); setError("");
     try {
-      const value = remove ?? name.trim();
-      await apiRequest(remove === undefined ? "POST" : "DELETE", `${endpoint(kind)}${remove === undefined ? "" : `?name=${encodeURIComponent(remove)}`}`, remove === undefined ? { name: value } : undefined);
-      await Promise.all([QK.tags, QK.stickyLabels, QK.readingStatuses, QK.papers, QK.librarySearch].map(key => client.invalidateQueries({ queryKey: [key] })));
+      // Settles once what the change makes stale has been loaded again (useTagChoiceMutation).
+      await change.mutateAsync(remove === undefined ? { name: name.trim() } : { remove });
       setDeleting(null);
       if (remove === undefined) setName("");
     } catch (e) { setError(e instanceof Error ? e.message : "保存できませんでした。"); }

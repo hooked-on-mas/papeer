@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { StickyNote, ChevronDown, ClipboardPaste, Copy, Download, Eraser, MoreHorizontal, MousePointer2, PenLine, Redo2, Scan, Scissors, SquareDashed, Trash2, Type, Undo2, X } from "lucide-react";
-import { apiRequest, authToken, backendUrl } from "@/api/client";
+import { api, authToken, backendUrl, unwrap } from "@/api/client";
 import { getPaper } from "@/api/hooks";
 import { paperExportFilename } from "@/lib/exportFilename";
 import { shell, tauriShell } from "@/shell";
@@ -63,7 +63,7 @@ export function InkToolbar({ editor, disabled, onStickyNote, side, errorsOnly = 
       await flushInkSaves(paperId, side);
       const path = `/api/papers/${paperId}/ink-export`;
       if (destination) {
-        await apiRequest("POST", path, { side, destination });
+        await unwrap(api.POST("/api/papers/{paper_id}/ink-export", { params: { path: { paper_id: paperId } }, body: { side, destination } }));
       } else {
         const response = await fetch(backendUrl(path), { method: "POST", headers: {
           "Content-Type": "application/json", Authorization: `Bearer ${authToken()}`,

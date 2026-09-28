@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
+import { invalidate } from "@/api/mutations";
+import { QK } from "@/lib/queryKeys";
 import { cancelSync, confirmOpenEdits, reportSyncOutcome, runDriveSync, syncDrive, useSyncState } from "./driveSync";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -13,24 +15,9 @@ import { isRunning, useStore } from "@/store";
 import { openSettings, useSettingsNavigation } from "./settingsNavigation";
 import { openEditLabels } from "@/lib/pendingSaves";
 import { isAppClosing } from "@/app/appClosing";
-import { PublishSchedule, type SyncCheck } from "./autoSyncSchedule";
-import { describeDifference, type Counts, type LibraryDifference } from "./conflictSummary";
-
-/** diff: what differs from this PC's library; null when it could not be read (absent before it was recorded). */
-type Revision = { id: string; device: string; created: string; diff?: LibraryDifference | null };
-/** A sync that stopped to ask first (papeer/core/drive_sync.py: shrunk_kinds, mark_restored). */
-type SyncReview = {
-  reason: "shrunk" | "remote_shrunk" | "restored"; message: string;
-  before: Counts | null; after: Counts; before_label: string; after_label: string;
-  heads: string[]; // The sync folder's newest revisions when it stopped, for backing out through a choice.
-};
-type DriveStatus = {
-  connected: boolean; folder: string; auto_sync: boolean; last_sync: string | null;
-  error: string | null; conflicts: Revision[]; previous_path: string | null;
-  review: SyncReview | null; restored: boolean; library_missing: boolean;
-  /** Revisions the last choice left out but could not keep as backups (unreadable or damaged). */
-  not_set_aside: Revision[];
-};
+import { PublishSchedule } from "./autoSyncSchedule";
+import { describeDifference, type Counts } from "./conflictSummary";
+import { fetchDriveStatus, fetchSyncCheck, type SyncReview } from "./driveApi";
 const COUNT_LABELS: [keyof Counts, string][] = [["papers", "論文"], ["notes", "メモ"], ["stickies", "付箋"], ["ink", "書き込み（ページ）"]];
 // Told once per launch; the settings keep showing it.
 let missingLibraryShown = false;
@@ -75,7 +62,7 @@ export function DriveSyncHost() {
     const tick = async () => {
       if (!idle()) return;
       try {
-        const state = await apiRequest<DriveStatus>("GET", "/api/drive");
+        const state = await fetchDriveStatus();
         if (state.library_missing) {
           if (!missingLibraryShown && !useSettingsNavigation.getState().open) {
             missingLibraryShown = true;
@@ -91,7 +78,7 @@ export function DriveSyncHost() {
         if (!state.connected || !state.auto_sync || state.conflicts.length || state.error) return;
         // Cheap, and the library stays usable meanwhile: a sync (which holds it) runs only when there is
         // something to do. Hashing every file each minute is what this avoids (drive_sync.check).
-        const check = await apiRequest<SyncCheck>("GET", "/api/drive/check");
+        const check = await fetchSyncCheck();
         // Taking in another PC's library reloads the page: a sync that may do so waits while the settings
         // or a dialog holding a draft is open, and runs with the waiting screen (autoSyncSchedule.ts).
         const editing = () => useSettingsNavigation.getState().open || openEditLabels().length > 0;
@@ -104,8 +91,8 @@ export function DriveSyncHost() {
           // Another PC's library arrived: take it in now rather than a minute later, before more edits here.
           if (await syncDrive()) return; // Reloading.
         }
-        await queryClient.invalidateQueries({ queryKey: ["drive"] });
-        const after = await apiRequest<DriveStatus>("GET", "/api/drive");
+        await invalidate({ kind: "drive" }, queryClient);
+        const after = await fetchDriveStatus();
         if (after.review) await tellReview(after.review);
       } catch {
         // Told once while the automatic sync keeps failing, not every minute.
@@ -127,13 +114,13 @@ export function DriveSyncHost() {
 
 export function DriveSection() {
   const queryClient = useQueryClient();
-  const { data, error } = useQuery({ queryKey: ["drive"], queryFn: () => apiRequest<DriveStatus>("GET", "/api/drive"), refetchInterval: 3000 });
+  const { data, error } = useQuery({ queryKey: [QK.drive], queryFn: fetchDriveStatus, refetchInterval: 3000 });
   const [pending, setPending] = useState(false);
   const [folder, setFolder] = useState<string | null>(null);
   const jobsBusy = useStore(s => s.activeJobs.some(isRunning));
   const syncing = useSyncState(s => s.busy);
   const busy = pending || jobsBusy || syncing;
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ["drive"] });
+  const refresh = () => invalidate({ kind: "drive" }, queryClient);
   const chooseFolder = async () => {
     try {
       const parent = await shell.openFolder();
@@ -144,7 +131,7 @@ export function DriveSection() {
     if (!await confirmOpenEdits()) return;
     setPending(true);
     try {
-      await apiRequest("POST", "/api/drive/folder", { path: folder ?? data?.folder ?? "" });
+      await unwrap(api.POST("/api/drive/folder", { body: { path: folder ?? data?.folder ?? "" } }));
       await refresh();
       await syncDrive();
     } catch (e) { showError(e, "保存先を設定できませんでした"); }
@@ -161,7 +148,7 @@ export function DriveSection() {
   };
   const skipReview = async () => {
     try {
-      await apiRequest("DELETE", "/api/drive/review");
+      await unwrap(api.DELETE("/api/drive/review"));
       showToast({ title: "同期しませんでした", description: "自動同期を停止しています。確認後に「今すぐ同期」または自動同期を有効にしてください。", tone: "error", timeout: 0 });
     } catch (e) { showError(e, "同期設定を保存できませんでした"); }
     finally { void refresh(); }
@@ -172,7 +159,7 @@ export function DriveSection() {
       "新しいライブラリとして始める", true)) return;
     setPending(true);
     try {
-      await apiRequest("POST", "/api/drive/new-library");
+      await unwrap(api.POST("/api/drive/new-library"));
       await queryClient.invalidateQueries();
       if (data?.connected) await syncDrive();
     } catch (e) { showError(e, "新しいライブラリを作成できませんでした"); }
@@ -180,7 +167,7 @@ export function DriveSection() {
   };
   const disconnect = async () => {
     if (!await askConfirm("ローカル保存に戻す", "同期フォルダーへの保存を停止します。このPCと同期フォルダーの保存済みデータは残ります。", "フォルダー同期を停止")) return;
-    try { await apiRequest("DELETE", "/api/drive"); await refresh(); }
+    try { await unwrap(api.DELETE("/api/drive")); await refresh(); }
     catch (e) { showError(e, "フォルダー同期を停止できませんでした"); }
   };
   if (error) return <p role="alert">同期設定を読み込めませんでした。</p>;
@@ -204,7 +191,7 @@ export function DriveSection() {
     </div>
     {data.connected && <>
       <label className="flex items-center gap-2"><input type="checkbox" checked={data.auto_sync} disabled={busy}
-        onChange={e => { void apiRequest("PUT", "/api/drive", { auto_sync: e.target.checked }).then(refresh).catch(e => showError(e, "同期設定を保存できませんでした")); }} />
+        onChange={e => { void unwrap(api.PUT("/api/drive", { body: { auto_sync: e.target.checked } })).then(refresh).catch(e => showError(e, "同期設定を保存できませんでした")); }} />
         変更を自動で同期する（起動後と1分ごとに確認。編集が続いている間は最長5分まとめ、処理中は待機。他のPCのデータの取り込みは、設定画面や編集中のダイアログを閉じてから）</label>
       <p>最終フォルダー同期：{data.last_sync ? new Date(data.last_sync).toLocaleString() : "まだ同期していません"}</p>
       {data.error && <p role="alert" className="text-destructive">{data.error}</p>}

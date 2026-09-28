@@ -7,7 +7,8 @@
  * reloads the library once at the end, and can be stopped (bulkState.ts). A single paper (its own context
  * menu, or a selection of one) goes the way it always has (actions.ts).
  */
-import { apiRequest, ApiError } from "@/api/client";
+import { api, ApiError, unwrap } from "@/api/client";
+import { patchPaper } from "@/api/mutations";
 import { askConfirm, askText } from "@/components/AppDialogs";
 import { showError } from "@/components/errorDialog";
 import { clearJobFailure } from "@/features/jobs/jobFailures";
@@ -55,7 +56,7 @@ export async function movePapers(ids: string[], collection: string): Promise<boo
   const moved = await eachPaper(ids, `「${label}」へ移動中`, async (id) => {
     const previous = normalizeCollection((await paper(id)).collection_name || "");
     if (previous === destination) return "unchanged";
-    await apiRequest("PATCH", `/api/papers/${id}`, { collection: destination });
+    await patchPaper(id, { collection: destination });
     moves.push({ paperId: id, from: previous, to: destination });
     return "done";
   }, {
@@ -119,7 +120,7 @@ export async function setPapersReadStatus(ids: string[], status: string): Promis
   }
   await eachPaper(ids, `読書状態を「${status}」にしています`, async (id) => {
     if (((await paper(id)).read_status ?? "") === status) return "unchanged";
-    await apiRequest("PATCH", `/api/papers/${id}`, { read_status: status });
+    await patchPaper(id, { read_status: status });
     return "done";
   }, {
     done: (n) => `${n}件の論文の読書状態を「${status}」にしました。`,
@@ -150,7 +151,7 @@ export async function deletePapers(ids: string[]): Promise<boolean> {
   if (!ok) return false;
   const deleted = await eachPaper(ids, "削除中", async (id) => {
     try {
-      await apiRequest("DELETE", `/api/papers/${id}`);
+      await unwrap(api.DELETE("/api/papers/{paper_id}", { params: { path: { paper_id: id } } }));
     } catch (error) {
       // Already gone, which is what was asked.
       if (error instanceof ApiError && error.status === 404) return "unchanged";

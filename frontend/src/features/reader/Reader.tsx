@@ -18,7 +18,7 @@ import { pinchLevel, pinchStart } from "./zoomLevels";
 import { inkToolActive } from "./useInkEditor";
 import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 import { createScrollSync } from "./scrollSync";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
 import type { StickyNote } from "./stickyNotes";
 import type { JumpTarget } from "./PdfPane";
 import { emitAppEvent } from "@/lib/appEvents";
@@ -63,7 +63,8 @@ export function Reader() {
   const [bookmarkTarget, setBookmarkTarget] = useState<JumpTarget | null>(null);
   const { data: bookmarks = NO_NOTES } = useQuery({
     queryKey: [QK.stickyNotes, activePaperId],
-    queryFn: () => apiRequest<StickyNote[]>("GET", `/api/papers/${activePaperId}/sticky-notes`),
+    queryFn: async () => await unwrap(api.GET("/api/papers/{paper_id}/sticky-notes", {
+      params: { path: { paper_id: activePaperId as string } } })) as StickyNote[],
     enabled: !!activePaperId,
   });
   const sourceHighlights = useMemo(() => bookmarks.filter(item => item.page === currentPage && item.side === "original"), [bookmarks, currentPage]);

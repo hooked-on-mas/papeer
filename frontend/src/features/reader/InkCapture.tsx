@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiRequest, authorizedUrl } from "@/api/client";
+import { api, authorizedUrl, unwrap } from "@/api/client";
 import { useStore } from "@/store";
 import type { Bounds } from "./inkGeometry";
 import type { InkSide } from "./inkStore";
@@ -15,7 +15,8 @@ export function InkCapture({ paperId, page, side, box, onClose }: { paperId: str
     (async () => {
       if (includeInk) await flushInkSaves(paperId, side);
       if (!alive) return null;
-      return apiRequest<{ file: string }>("POST", `/api/papers/${paperId}/ink-capture-v2`, { ...box, page, side, include_ink: includeInk });
+      return await unwrap(api.POST("/api/papers/{paper_id}/ink-capture-v2", { params: { path: { paper_id: paperId } },
+        body: { ...box, page, side, include_ink: includeInk } })) as { file: string };
     })()
       .then(value => { if (alive && value) setFile(value.file); }).catch(e => { if (alive) setError(String(e.message)); });
     return () => { alive = false; };

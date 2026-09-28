@@ -4,7 +4,7 @@
  * (PdfContextMenu) and the small toolbar over a selection (SelectionToolbar).
  */
 import type { QueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
 import { showError } from "@/components/errorDialog";
 import { citationLink } from "@/lib/markdownUrl";
 import { cleanPdfSelection, quoteForNote, restoreFormulas } from "@/lib/pdfSelection";
@@ -37,7 +37,7 @@ export function selectedRange(area: HTMLElement | null): Range | null {
 /** The translated PDF shows inline math as images; take the passage with its math from the translation text. */
 async function translatedPassage(raw: string, paperId: string, page: number): Promise<string> {
   try {
-    const { blocks } = await apiRequest<{ blocks: string[] }>("GET", `/api/papers/${paperId}/translation-text/${page}`);
+    const { blocks } = await unwrap(api.GET("/api/papers/{paper_id}/translation-text/{page}", { params: { path: { paper_id: paperId, page } } }));
     return restoreFormulas(raw, blocks) ?? cleanPdfSelection(raw);
   } catch {
     return cleanPdfSelection(raw);

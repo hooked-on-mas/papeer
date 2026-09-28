@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, ChevronDown, NotebookPen, Search, StickyNote as StickyIcon, Trash2 } from "lucide-react";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
+import type { components } from "@/api/schema";
 import { useTagChoices } from "@/api/tagChoices";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useStore } from "@/store";
@@ -43,7 +44,7 @@ export function StickyNotesTab() {
   const listRef = useRef<HTMLDivElement>(null);
   const client = useQueryClient();
   const { data: notes = [], isPending, isError, refetch } = useQuery({
-    queryKey: [QK.stickyNotes, "all"], queryFn: () => apiRequest<StickyNote[]>("GET", "/api/sticky-notes"),
+    queryKey: [QK.stickyNotes, "all"], queryFn: async () => await unwrap(api.GET("/api/sticky-notes")) as StickyNote[],
   });
   const visible = filterStickyNotes(notes, paperId ?? "", { ...filters, scope: effectiveScope });
   const scoped = notes.filter(item => effectiveScope === "all" || item.paper_id === paperId);
@@ -71,7 +72,9 @@ export function StickyNotesTab() {
     if (!item || busy) return;
     useStickyNotes.setState({ busy: true }); setError("");
     try {
-      await apiRequest("POST", `/api/papers/${item.paper_id}/sticky-notes`, item);
+      // Sent as it was listed: the sidecar takes the fields a new note has and leaves the rest.
+      await unwrap(api.POST("/api/papers/{paper_id}/sticky-notes", { params: { path: { paper_id: item.paper_id } },
+        body: item as components["schemas"]["BookmarkRequest"] }));
       useStickyNotes.setState(s => ({ deleted: s.deleted.slice(0, -1) }));
       await refreshStickyNotes(client); setMessage("付箋を戻しました。");
     } catch (e) { setError(e instanceof Error ? e.message : "付箋を戻せませんでした。"); }

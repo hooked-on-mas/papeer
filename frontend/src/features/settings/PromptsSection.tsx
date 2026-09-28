@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
-import { apiRequest } from "../../api/client";
+import { api, unwrap } from "../../api/client";
 import { Button } from "../../components/ui/button";
 import { NativeSelect } from "../../components/ui/native-select";
 import { QK } from "@/lib/queryKeys";
@@ -20,12 +20,12 @@ const PROMPT_LABELS: Record<string, string> = {
 export function usePromptsForm(open: boolean) {
   const { data: saved } = useQuery({
     queryKey: [QK.prompts],
-    queryFn: () => apiRequest<Record<string, string>>("GET", "/api/prompts"),
+    queryFn: () => unwrap(api.GET("/api/prompts")),
     enabled: open,
   });
   const { data: defaults } = useQuery({
     queryKey: [QK.promptDefaults],
-    queryFn: () => apiRequest<Record<string, string>>("GET", "/api/prompts/defaults"),
+    queryFn: () => unwrap(api.GET("/api/prompts/defaults")),
     enabled: open,
     staleTime: Infinity,
   });

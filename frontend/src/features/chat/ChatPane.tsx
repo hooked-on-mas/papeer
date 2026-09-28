@@ -5,9 +5,8 @@ import { paperBusy, useStore, type PassageAttachment, type PassageLocation } fro
 import { runningPaperJob } from "@/features/jobs/jobSelectors";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { UsageLine } from "@/components/UsageLine";
-import { apiRequest } from "@/api/client";
 import { useCollections, useMessages, usePaperList } from "@/api/hooks";
-import { startJob } from "@/features/jobs/jobEvents";
+import { requestCancel, startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { showPassage } from "@/features/reader/navigation";
 import { CitationEvidence } from "./CitationEvidence";
@@ -261,7 +260,7 @@ export function ChatPane() {
                 <span className="truncate">{askJob?.message || "回答を作成中…"}</span>
                 {askJob && (
                   <button
-                    onClick={() => apiRequest("POST", `/api/jobs/${askJob.job_id}/cancel`).catch(() => undefined)}
+                    onClick={() => requestCancel(askJob.job_id).catch(() => undefined)}
                     className="flex items-center gap-1 px-2 py-1 rounded border text-[0.75rem] hover:bg-muted"
                   >
                     <Square className="w-3 h-3" /> 中止

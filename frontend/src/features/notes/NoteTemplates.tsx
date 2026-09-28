@@ -1,8 +1,9 @@
 import { openSettings } from "@/features/settings/settingsNavigation";
 import { useEffect, useId, useImperativeHandle, useRef, useState, type Ref } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Check, Copy, FileText, LayoutTemplate, Pencil, Plus, Settings2, Trash2 } from "lucide-react";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
+import { useDeleteNoteTemplate, useSaveNoteTemplate, type NoteTemplate as Template } from "@/api/mutations";
 import { askConfirm } from "@/components/AppDialogs";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -10,18 +11,18 @@ import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { showError } from "@/components/errorDialog";
 import { useOpenEdit } from "@/lib/pendingSaves";
+import { QK } from "@/lib/queryKeys";
 
-type Template = { name: string; content: string; builtin: boolean };
 type Draft = { originalName: string | null; name: string; content: string; initialName: string; initialContent: string };
-const queryKey = ["note-templates"];
 
 export type TemplateLeaveGuard = { beforeLeave: () => Promise<boolean> };
 
 export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { note: string; onInsert: (content: string) => void; embedded?: boolean; leaveRef?: Ref<TemplateLeaveGuard> }) {
-  const client = useQueryClient();
   const { data: templates = [], isPending, isError, refetch } = useQuery({
-    queryKey, queryFn: () => apiRequest<Template[]>("GET", "/api/note-templates"),
+    queryKey: [QK.noteTemplates], queryFn: async () => await unwrap(api.GET("/api/note-templates")) as Template[],
   });
+  const saveTemplate = useSaveNoteTemplate();
+  const deleteTemplate = useDeleteNoteTemplate();
   const [mode, setMode] = useState<"use" | "manage" | null>(embedded ? "manage" : null);
   // Embedded in the settings, which automatic sync waits for anyway.
   useOpenEdit(!embedded && mode !== null, "メモのテンプレート");
@@ -81,12 +82,11 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
     const saved: Template = { name: draft.name.trim(), content: draft.content, builtin: false };
     setBusy(true);
     try {
-      await apiRequest("PUT", "/api/note-templates", { name: saved.name, content: saved.content });
-      client.setQueryData<Template[]>(queryKey, old => [...(old ?? []).filter(item => item.name !== saved.name), saved]);
+      // Shown in the list at once, which is then loaded again (useSaveNoteTemplate).
+      await saveTemplate.mutateAsync(saved);
       setSelected(saved.name);
       setDraft(null);
       setNotice(`「${saved.name}」を保存しました。他の論文でも使えます。`);
-      void client.invalidateQueries({ queryKey });
     } catch (error) { showError(error, "テンプレートを保存できませんでした"); }
     finally { setBusy(false); }
   };
@@ -96,10 +96,8 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
     setBusy(true);
     try {
       if (!await askConfirm("テンプレートを削除", `「${current.name}」を削除しますか？ 挿入済みのメモはそのまま残ります。`, "削除", true)) return;
-      await apiRequest("DELETE", `/api/note-templates/${encodeURIComponent(current.name)}`);
-      client.setQueryData<Template[]>(queryKey, old => old?.filter(item => item.name !== current.name) ?? []);
+      await deleteTemplate.mutateAsync(current.name);
       setNotice(`「${current.name}」を削除しました。`);
-      void client.invalidateQueries({ queryKey });
     } catch (error) { showError(error, "テンプレートを削除できませんでした"); }
     finally { setBusy(false); }
   };

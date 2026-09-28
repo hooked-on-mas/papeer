@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Eye, FolderOpen, NotebookPen, Pencil } from "lucide-react";
 import { useStore } from "@/store";
-import { apiRequest } from "@/api/client";
+import { invalidate, patchPaper } from "@/api/mutations";
 import { useCollections, usePaper, useReading, type PaperData, type ReadingData } from "@/api/hooks";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { openPaperFolder } from "@/app/actions";
@@ -103,8 +103,8 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
       // Update the cache first so reopening the tab mid-save shows the new text.
       queryClient.setQueryData<PaperData | null>([QK.papers, paperId], (old) => old ? { ...old, note: text } : old);
       try {
-        await apiRequest("PATCH", `/api/papers/${paperId}`, { note: text });
-        queryClient.invalidateQueries({ queryKey: [QK.librarySearch] });
+        await patchPaper(paperId, { note: text });
+        void invalidate({ kind: "note" }, queryClient);
         savedNote.current = text;
         if (latestNote.current === text) setNoteState("saved");
       } catch (error) {

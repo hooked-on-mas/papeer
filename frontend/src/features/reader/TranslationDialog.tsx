@@ -1,21 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { apiRequest } from "@/api/client";
-import { providerLabel, useProviderEfforts, useProviderModels, useProviders, useReading, useSettings } from "@/api/hooks";
-import { startJob } from "@/features/jobs/jobEvents";
+import { api, unwrap } from "@/api/client";
+import { providerLabel, useProviderEfforts, useProviderModels, useProviders, useReading, useSettings, type ReadingData } from "@/api/hooks";
+import { requestCancel, startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { askConfirm } from "@/components/AppDialogs";
-import { GlossaryTransfer } from "./GlossaryTransfer";
 import { QK } from "@/lib/queryKeys";
 import { useOpenEdit } from "@/lib/pendingSaves";
+import { useSessionState } from "@/lib/useSessionState";
+import { GlossaryEditor, useGlossaryEditor } from "./GlossaryEditor";
 import { setGlossaryDialogPaper, startGlossaryDraft, takeGlossaryDraft, useGlossaryDrafts } from "./glossaryDraft";
 import {
   draftResultMessage, glossaryKey, glossaryReviewSkip, isResuming, mergeDraftTerms, normalizeTerms, readReviewedGlossary,
-  recordReviewedGlossary, retranslationWarning, reviewSkipMessage, startButtonLabel, translationTargetText, type Term,
+  recordReviewedGlossary, retranslationWarning, reviewSkipMessage, startButtonLabel, translationTargetText,
   type TranslationPlan,
 } from "./translationStart";
 
@@ -44,16 +45,38 @@ export function parsePageSelection(value: string, pageCount: number): number[] {
   return [...pages].sort((a, b) => a - b);
 }
 
+type Scope = "all" | "current" | "custom";
+
+/** What the dialog asks for this time, from its opening on (useSessionState). */
+type Choices = {
+  /** The pages to translate; null until chosen, or until the paper's previous request is known. */
+  request: { scope: Scope; customRange: string } | null;
+  /** "" for the connection's settings. */
+  model: string;
+  effort: string;
+  /** The terms were checked in this dialog: starting applies the candidates and records the check. */
+  reviewed: boolean;
+  /** glossaryKey of the glossary this paper was last translated with after a check (translationStart.ts). */
+  reviewedKey: string | null;
+  draftMessage: string;
+};
+
+/** Reopen with the previous request, as the old dialog did: its pages, unless they were all of them. */
+function previousRequest(reading: ReadingData, pageCount: number): { scope: Scope; customRange: string } {
+  const previous = reading.preview?.target_pages;
+  return previous?.length && previous.length !== pageCount ? { scope: "custom", customRange: previous.join(", ") } : { scope: "all", customRange: "" };
+}
+
 export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: TranslationDialogProps) {
-  const queryClient = useQueryClient();
   useOpenEdit(open, "翻訳の設定・辞書");
-  const [scope, setScope] = useState<"all" | "current" | "custom">("all");
-  const [customRange, setCustomRange] = useState("");
-  const [model, setModel] = useState("");
-  const [effort, setEffort] = useState("");
+  const session = open ? paperId : null;
+  const [choices, choose] = useSessionState<Choices>(session, () => ({
+    request: null, model: "", effort: "", reviewed: false, draftMessage: "",
+    reviewedKey: readReviewedGlossary(() => globalThis.localStorage, paperId),
+  }));
+  const { model, effort } = choices;
   const [starting, setStarting] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [draftMessage, setDraftMessage] = useState("");
   // The AI's check for unregistered terms runs as a job that outlives the dialog (glossaryDraft).
   const draft = useGlossaryDrafts((s) => s.drafts[paperId]);
   const generating = draft?.status === "running";
@@ -62,83 +85,38 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     setGlossaryDialogPaper(paperId);
     return () => setGlossaryDialogPaper(null);
   }, [open, paperId]);
-  useEffect(() => { setDraftMessage(""); }, [open, paperId]);
   // Closing stays possible while the AI checks the terms; only saving and starting hold the dialog.
   const holding = starting || saving;
   const busy = holding || generating;
-  const [glossary, setGlossary] = useState<Term[]>([]);
-  const [glossaryDirty, setGlossaryDirty] = useState(false);
-  // The terms were checked in this dialog: starting applies the candidates and records the check.
-  const [glossaryReviewed, setGlossaryReviewed] = useState(false);
-  const [reviewedKey, setReviewedKey] = useState<string | null>(null);
-  const [glossaryOpen, setGlossaryOpen] = useState(false);
-  const [newSources, setNewSources] = useState<Set<string>>(new Set());
-  const [glossarySearch, setGlossarySearch] = useState("");
-  const [glossaryView, setGlossaryView] = useState<"all" | "new" | "existing">("all");
-  const savedSnapshot = useRef<Term[]>([]);
-  useEffect(() => {
-    setGlossaryReviewed(false); setNewSources(new Set()); setGlossarySearch(""); setGlossaryView("all");
-    setGlossaryOpen(false);
-    if (open) setReviewedKey(readReviewedGlossary(() => globalThis.localStorage, paperId));
-  }, [open, paperId]);
 
   const { data: settings } = useSettings();
   const { data: reading } = useReading(open ? paperId : null);
-  const { data: savedGlossary } = useQuery({
-    queryKey: [QK.glossary],
-    queryFn: () => apiRequest<Term[]>("GET", "/api/glossary"),
-    enabled: open,
-  });
-  // The paper whose glossary list has been reset since the dialog opened: until then the list
-  // may still hold the previous opening's edits.
-  const [listReadyFor, setListReadyFor] = useState<string | null>(null);
+  const glossary = useGlossaryEditor(session);
+  const savedGlossary = glossary.saved;
+  // Show a finished check here, also one that finished while the dialog was closed. The list is this
+  // opening's already (started over during the render): without unsaved edits, the saved glossary.
   useEffect(() => {
-    if (open) { setGlossaryDirty(false); setGlossary(savedGlossary ?? []); }
-    setListReadyFor(open ? paperId : null);
-  }, [open, paperId]);
-  useEffect(() => { if (savedGlossary && !glossaryDirty) { setGlossary(savedGlossary); savedSnapshot.current = savedGlossary; } }, [savedGlossary, glossaryDirty, paperId]);
-  // Show a finished check here, also one that finished while the dialog was closed. After the
-  // effect above: without unsaved edits the list is (being set to) the saved glossary.
-  useEffect(() => {
-    if (!open || listReadyFor !== paperId || !savedGlossary || draft?.status !== "done") return;
+    if (!open || !savedGlossary || draft?.status !== "done") return;
     const terms = takeGlossaryDraft(paperId);
     if (!terms) return;
-    setGlossaryReviewed(true);
     // Only candidates the list does not have yet (the user may have added some meanwhile) count as new.
-    const { glossary: merged, added } = mergeDraftTerms(glossaryDirty ? glossary : savedGlossary, terms);
-    if (added.length) {
-      setGlossary(merged);
-      setNewSources(values => new Set([...values, ...added.map(t => t.source)]));
-      setGlossaryDirty(true);
-      setGlossaryView("new"); setGlossarySearch(""); setGlossaryOpen(true);
-    }
-    setDraftMessage(draftResultMessage(added.length));
-  }, [open, paperId, listReadyFor, draft, savedGlossary]);
+    const { glossary: merged, added } = mergeDraftTerms(glossary.terms, terms);
+    if (added.length) glossary.addCandidates(merged, added, { expand: true });
+    choose({ reviewed: true, draftMessage: draftResultMessage(added.length) });
+  }, [open, paperId, draft, savedGlossary]);
   const provider = settings?.provider ?? "";
   const pageCount = reading?.source_page_count ?? reading?.page_count ?? 0;
+  // Once the paper is loaded; a choice made before that stays.
+  if (open && reading && !choices.request) choose({ request: previousRequest(reading, pageCount) });
+  const { scope, customRange } = choices.request ?? { scope: "all" as Scope, customRange: "" };
+  const setRequest = (change: Partial<{ scope: Scope; customRange: string }>) =>
+    choose((c) => ({ request: { ...(c.request ?? { scope, customRange }), ...change } }));
 
   // The saved connection settings (CLI path included) apply; only model and effort change here.
   const { data: providers } = useProviders();
   const { data: models = [], isFetching: loadingModels } = useProviderModels(provider, { enabled: open });
   const effectiveModel = model || settings?.model || "";
   const { data: efforts = [] } = useProviderEfforts(provider, effectiveModel, { enabled: open });
-
-  useEffect(() => {
-    if (!open) return;
-    setModel("");
-    setEffort("");
-    // Reopen with the previous request, as the old dialog did.
-    const previous = reading?.preview?.target_pages;
-    if (previous?.length && previous.length !== pageCount) {
-      setScope("custom");
-      setCustomRange(previous.join(", "));
-    } else {
-      setScope("all");
-      setCustomRange("");
-    }
-  }, [open, paperId, !!reading]);
-
-  useEffect(() => setEffort(""), [model]);
 
   const selection = useMemo((): { pages: number[] | null; error: string | null } => {
     if (!pageCount) return { pages: null, error: null };
@@ -156,15 +134,16 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   const pagesParam = scope === "all" ? "" : (selection.pages?.join(",") ?? "");
   const { data: plan, isFetching: planFetching } = useQuery({
     queryKey: [QK.translationPlan, paperId, pagesParam, model],
-    queryFn: () => apiRequest<TranslationPlan>("GET",
-      `/api/papers/${paperId}/translation-plan?${new URLSearchParams({ pages: pagesParam, ...(model ? { model } : {}) })}`),
+    queryFn: async () => await unwrap(api.GET("/api/papers/{paper_id}/translation-plan", {
+      params: { path: { paper_id: paperId }, query: { pages: pagesParam, ...(model ? { model } : {}) } } })) as TranslationPlan,
     enabled: open && !!selection.pages?.length,
     retry: false,
   });
-  const currentKey = glossaryKey(glossaryDirty ? glossary : savedGlossary ?? []);
+  const currentKey = glossaryKey(glossary.terms);
   // A plan being refetched (after a glossary save or a finished run) may be out of date.
   const skip = glossaryReviewSkip({
-    plan: planFetching ? undefined : plan, glossaryDirty, resuming: isResuming(reading?.preview, selection.pages), reviewedKey, currentKey,
+    plan: planFetching ? undefined : plan, glossaryDirty: glossary.dirty, resuming: isResuming(reading?.preview, selection.pages),
+    reviewedKey: choices.reviewedKey, currentKey,
   });
   const warning = retranslationWarning(planFetching ? undefined : plan);
 
@@ -173,12 +152,12 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     const pages = scope === "all" ? "" : selection.pages.join(",");
     setStarting(true);
     try {
-      if (glossaryDirty) await saveGlossary();
+      if (glossary.dirty) await glossary.save();
       await startJob(`/api/papers/${paperId}/translate`,
         { pages, model: model || undefined, effort: effort || undefined },
         { kind: "translate", paperId });
       // The next start skips the check while the glossary stays as it is now.
-      if (glossaryReviewed) recordReviewedGlossary(() => globalThis.localStorage, paperId, currentKey);
+      if (choices.reviewed) recordReviewedGlossary(() => globalThis.localStorage, paperId, currentKey);
       onOpenChange(false);
     } catch (error) {
       showError(error, "翻訳を開始できませんでした");
@@ -187,23 +166,12 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     }
   };
 
-  const saveGlossary = async () => {
-    const terms = normalizeTerms(glossary);
-    await apiRequest("PUT", "/api/glossary", { terms, expected_terms: savedSnapshot.current });
-    savedSnapshot.current = terms;
-    await queryClient.invalidateQueries({ queryKey: [QK.glossary] });
-    await queryClient.invalidateQueries({ queryKey: [QK.effectiveGlossary] });
-    // A term changes the source of the pages that contain it, so their saved translations.
-    await queryClient.invalidateQueries({ queryKey: [QK.translationPlan, paperId] });
-    setGlossaryDirty(false);
-  };
-
   const generateGlossary = async () => {
     if (busy || !savedGlossary) return;
-    setDraftMessage("");
+    choose({ draftMessage: "" });
     try {
       await startGlossaryDraft(paperId, {
-        terms: normalizeTerms(glossary),
+        terms: normalizeTerms(glossary.terms),
         model: model || undefined, effort: effort || undefined,
       });
     } catch (error) {
@@ -217,7 +185,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   return (
     <Dialog open={open} onOpenChange={async next => {
       if (!next && holding) return;
-      if (!next && glossaryDirty && !await askConfirm("辞書の変更を破棄", "保存していない辞書の変更を破棄しますか？", "破棄")) return;
+      if (!next && glossary.dirty && !await askConfirm("辞書の変更を破棄", "保存していない辞書の変更を破棄しますか？", "破棄")) return;
       onOpenChange(next);
     }}>
       <DialogContent className="sm:max-w-xl max-h-[calc(100vh-2rem)] overflow-y-auto">
@@ -228,14 +196,14 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
         <div className="grid gap-4 py-1">
           <div className="grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2">
             <label className="text-[0.8125rem]">モデル</label>
-            <NativeSelect value={model} onChange={(e) => setModel(e.target.value)} disabled={loadingModels && !models.length}>
+            <NativeSelect value={model} onChange={(e) => choose({ model: e.target.value, effort: "" })} disabled={loadingModels && !models.length}>
               <option value="">AI接続の設定と同じ</option>
               {models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </NativeSelect>
             {efforts.length > 0 && (
               <>
                 <label className="text-[0.8125rem]">推論の強さ (effort)</label>
-                <NativeSelect value={effort} onChange={(e) => setEffort(e.target.value)}>
+                <NativeSelect value={effort} onChange={(e) => choose({ effort: e.target.value })}>
                   <option value="">AI接続の設定と同じ</option>
                   {efforts.filter((e) => e.id).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </NativeSelect>
@@ -253,14 +221,14 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
               + "モデルを変更すると指定ページを再翻訳します。指定外のページは以前の訳文のまま残ります。"}
           </p>
           <div className="grid gap-2">
-            <NativeSelect value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}>
+            <NativeSelect value={scope} onChange={(e) => setRequest({ scope: e.target.value as Scope })}>
               <option value="all">全ページ</option>
               <option value="current">現在のページ（{Math.min(currentPage, pageCount || currentPage)}ページ）</option>
               <option value="custom">ページを指定</option>
             </NativeSelect>
             <Input
               value={customRange}
-              onChange={(e) => setCustomRange(e.target.value)}
+              onChange={(e) => setRequest({ customRange: e.target.value })}
               placeholder="例: 1, 3-5, 8"
               disabled={scope !== "custom"}
               onKeyDown={(e) => { if (e.key === "Enter") handleStart(); }}
@@ -269,64 +237,29 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
               {selection.error ?? (selection.pages ? translationTargetText(selection.pages.length, planFetching ? undefined : plan) : "")}
             </p>
           </div>
-          <details className="border rounded p-2 text-[0.75rem]" open={glossaryOpen} onToggle={e => setGlossaryOpen(e.currentTarget.open)}>
-            <summary className="cursor-pointer font-medium">全論文共通の専門用語辞書（{glossary.length}件）</summary>
-            <p className="text-muted-foreground my-2">用語を確認すると、翻訳前にAIがこの論文から共通辞書にない専門用語のうち、訳語が定まっていない語や訳し方に迷う語だけを日本語訳の案と一緒に抽出します。「モデル予測制御」のように訳語が一つに決まる語は候補に含めません。候補を確認・修正して追加すると、今後のすべての論文で使えます。過去の登録語もここで確認・修正できます。辞書の変更は各論文を次に翻訳するときに反映されます。</p>
-            <fieldset disabled={busy} className="min-w-0">
-            <Button onClick={generateGlossary} disabled={!savedGlossary || !settings}>
-              {generating ? "AIが対応表を作成中…" : "AIで未登録の専門用語を確認"}
-            </Button>
-            <p className="text-muted-foreground my-2">{glossary.length ? "過去の登録語を含む共通辞書です。今回の追加候補には「新規」と表示します。" : "上で選択したモデルを使用します。生成した対応表は保存するまで翻訳に適用されません。"}</p>
-            <div className="flex gap-1 my-2">
-              <Button variant={glossaryView === "new" ? "default" : "outline"} onClick={() => setGlossaryView("new")}>今回の追加候補</Button>
-              <Button variant={glossaryView === "existing" ? "default" : "outline"} onClick={() => setGlossaryView("existing")}>過去の登録語</Button>
-              <Button variant={glossaryView === "all" ? "default" : "outline"} onClick={() => setGlossaryView("all")}>すべて</Button>
-            </div>
-            <Input aria-label="共通辞書を検索" placeholder="原語・日本語訳を検索" value={glossarySearch} onChange={e => setGlossarySearch(e.target.value)} className="mb-2" />
-            <div className="grid grid-cols-[1fr_1fr_auto] gap-1 mb-1"><span>原語</span><span>日本語訳</span><span className="w-12" /></div>
-            <div className="max-h-60 overflow-auto space-y-1">
-              {glossary.map((item, index) => ({ item, index })).filter(({ item }) =>
-                (glossaryView === "all" || newSources.has(item.source) === (glossaryView === "new")) &&
-                `${item.source} ${item.target}`.toLocaleLowerCase().includes(glossarySearch.toLocaleLowerCase())).map(({ item, index }) => <div key={index} className="flex items-center gap-1">
-                {newSources.has(item.source) && <span className="text-primary shrink-0">新規</span>}
-                <Input aria-label={`原語 ${index + 1}`} placeholder="原語" value={item.source} onChange={e => { if (newSources.has(item.source)) setNewSources(values => { const next = new Set(values); next.delete(item.source); next.add(e.target.value); return next; }); setGlossary(values => values.map((v, i) => i === index ? { ...v, source: e.target.value } : v)); setGlossaryDirty(true); }} />
-                <Input aria-label={`訳語 ${index + 1}`} placeholder="訳語" value={item.target} onChange={e => { setGlossary(values => values.map((v, i) => i === index ? { ...v, target: e.target.value } : v)); setGlossaryDirty(true); }} />
-                <Button variant="outline" onClick={() => { setGlossary(values => values.filter((_, i) => i !== index)); setGlossaryDirty(true); }}>削除</Button>
-              </div>)}
-            </div>
-            <div className="flex gap-2 mt-2">
-              <Button variant="outline" onClick={() => { setGlossary(values => [...values, { source: "", target: "" }]); setGlossaryView("all"); setGlossarySearch(""); setNewSources(values => new Set([...values, ""])); setGlossaryDirty(true); }}>手動で用語を追加</Button>
-              <Button variant="outline" disabled={!glossaryDirty || busy} onClick={async () => { setSaving(true); try { await saveGlossary(); } catch (error) { showError(error, "辞書を保存できませんでした"); } finally { setSaving(false); } }}>辞書を保存</Button>
-            </div>
-            </fieldset>
-            <GlossaryTransfer key={`${paperId}-${open}`} terms={glossary} disabled={busy || !savedGlossary}
-              onPending={setSaving} onImport={(terms, added) => {
-                setGlossary(terms); setGlossaryDirty(true);
-                setNewSources(values => new Set([...values, ...added.map(t => t.source)]));
-                setGlossaryView("new"); setGlossarySearch("");
-              }} />
-          </details>
+          <GlossaryEditor editor={glossary} transferKey={`${paperId}-${open}`} busy={busy} generating={generating}
+            canGenerate={!!savedGlossary && !!settings} onGenerate={() => void generateGlossary()} onPending={setSaving} />
           <div role="status" className="grid gap-1 text-[0.75rem]">
             {generating ? <div className="flex items-center gap-2">
               <p className="text-muted-foreground flex-1">AIが未登録の専門用語を抽出しています。閉じても抽出は続き、終わったらお知らせします。</p>
               {draft.jobId && <Button variant="outline" onClick={() => {
-                apiRequest("POST", `/api/jobs/${draft.jobId}/cancel`).catch(error => showError(error, "抽出を中止できませんでした"));
+                if (draft.jobId) requestCancel(draft.jobId).catch(error => showError(error, "抽出を中止できませんでした"));
               }}>抽出を中止</Button>}
-            </div> : <p className="text-muted-foreground">{glossaryReviewed ? draftMessage : reviewSkipMessage(skip)}</p>}
+            </div> : <p className="text-muted-foreground">{choices.reviewed ? choices.draftMessage : reviewSkipMessage(skip)}</p>}
             {warning && <p className="text-amber-700 dark:text-amber-400">{warning}</p>}
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" disabled={holding} onClick={async () => {
-            if (glossaryDirty && !await askConfirm("辞書の変更を破棄", "保存していない辞書の変更を破棄しますか？", "破棄")) return;
+            if (glossary.dirty && !await askConfirm("辞書の変更を破棄", "保存していない辞書の変更を破棄しますか？", "破棄")) return;
             onOpenChange(false);
           }}>{generating ? "閉じる" : "キャンセル"}</Button>
-          {!glossaryReviewed && !skip && <Button variant="outline" onClick={generateGlossary}
+          {!choices.reviewed && !skip && <Button variant="outline" onClick={generateGlossary}
             disabled={!selection.pages?.length || busy || !savedGlossary || !settings}>
             {generating ? "用語を抽出中…" : "用語を確認してから翻訳"}
           </Button>}
           <Button onClick={handleStart} disabled={!selection.pages?.length || busy || !savedGlossary}>
-            {startButtonLabel({ reviewed: glossaryReviewed, skip })}
+            {startButtonLabel({ reviewed: choices.reviewed, skip })}
           </Button>
         </DialogFooter>
       </DialogContent>

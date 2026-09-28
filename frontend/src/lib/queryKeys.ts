@@ -1,6 +1,7 @@
 /**
  * First elements of the TanStack Query keys. Queries and invalidations use these names,
- * so a refresh after a job cannot miss a query through a typo.
+ * so a refresh after a job cannot miss a query through a typo. What a change makes stale is listed
+ * in one place, api/invalidation.ts.
  */
 export const QK = {
   papers: "papers",
@@ -29,4 +30,7 @@ export const QK = {
   citationExcerpts: "citation-excerpts",
   readingStatuses: "reading-statuses",
   stickyLabels: "sticky-labels",
+  noteTemplates: "note-templates",
+  drive: "drive",
+  sideBackups: "side-backups",
 } as const;

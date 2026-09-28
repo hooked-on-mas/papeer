@@ -1,11 +1,10 @@
 import { useSettingsNavigation } from "../features/settings/settingsNavigation";
 import { useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { useHotkeys } from "react-hotkeys-hook";
 import { FilePlus2, Settings2 } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
 import { showToast } from "@/components/toast";
 import { usePaper } from "@/api/hooks";
 import { AppDialogs, askConfirm } from "@/components/AppDialogs";
@@ -24,9 +23,10 @@ import { StickyNotesTab } from "../features/reader/StickyNotesTab";
 import { StickyNoteDialog } from "../features/reader/StickyNoteDialog";
 import { DriveSyncHost } from "../features/settings/DriveSection";
 import { syncDrive } from "../features/settings/driveSync";
+import { fetchDriveStatus, fetchSyncCheck } from "../features/settings/driveApi";
 import { useJobEvents } from "../features/jobs/jobEvents";
-import { bindReaderQueryClient, changeZoom, focusPageInput, movePage } from "../features/reader/navigation";
-import { bindQueryClient, createFolder, importPdfs, normalizeCollection, renameFolder, renamePaperFile } from "./actions";
+import { changeZoom, focusPageInput, movePage } from "../features/reader/navigation";
+import { createFolder, importPdfs, normalizeCollection, renameFolder, renamePaperFile } from "./actions";
 import { useDropTarget, useFileDrop } from "./fileDrop";
 import { flushUiState, initUiStateSync } from "./uiStateSync";
 import { initPaperOpenedTracking } from "./paperOpened";
@@ -61,7 +61,7 @@ async function waitForJobs(timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const jobs = await apiRequest<{ running: boolean }[]>("GET", "/api/jobs");
+      const jobs = await unwrap(api.GET("/api/jobs"));
       if (!jobs.some((j) => j.running)) return;
     } catch {
       return;
@@ -126,7 +126,7 @@ function useCloseHandling(): void {
       setAppClosing(true);
       if (running.length) {
         useStore.getState().setStatus("処理を中止しています…終了まで少しお待ちください。");
-        await apiRequest("POST", "/api/jobs/cancel-all").catch(() => undefined);
+        await unwrap(api.POST("/api/jobs/cancel-all")).catch(() => undefined);
         // Let CLI subprocesses stop before the sidecar exits (/shutdown also waits, for a while longer).
         await waitForJobs(15_000);
       }
@@ -142,11 +142,11 @@ function useCloseHandling(): void {
       // Syncing right after the user stopped a sync (or a backup) would only start it over; the next launch syncs.
       if (!snapshot) {
         try {
-          const drive = await apiRequest<{ connected: boolean; auto_sync: boolean; review: unknown; library_missing: boolean }>("GET", "/api/drive");
+          const drive = await fetchDriveStatus();
           // Like the automatic sync: not while a review waits for the user, nor over a missing data folder.
           // Unchanged since the last sync (drive_sync.check): closing need not hash and copy the library.
           const check = drive.connected && drive.auto_sync && !drive.review && !drive.library_missing
-            && await apiRequest<{ action: string }>("GET", "/api/drive/check");
+            && await fetchSyncCheck();
           if (check && check.action !== "none" && await syncDrive()) {
             setAppClosing(false);
             return;
@@ -162,7 +162,7 @@ function useCloseHandling(): void {
       try {
         // Answers once the sidecar's jobs have stopped; the sidecar then exits by itself and Tauri
         // waits for that before the app ends (killing it is the last resort, src-tauri/src/sidecar.rs).
-        await apiRequest("POST", "/shutdown");
+        await unwrap(api.POST("/shutdown"));
       } catch {
         // The sidecar may already be gone.
       }
@@ -257,14 +257,8 @@ export function AppShell() {
   // Mounted from the first opening on, so that it can play its closing animation.
   const [settingsMounted, setSettingsMounted] = useState(isSettingsOpen);
   if (isSettingsOpen && !settingsMounted) setSettingsMounted(true);
-  const queryClient = useQueryClient();
   const { data: activePaper, error: activePaperError } = usePaper(activePaperId);
   const lastCollectionPaper = useRef<string | null>(null);
-
-  useEffect(() => {
-    bindQueryClient(queryClient);
-    bindReaderQueryClient(queryClient);
-  }, [queryClient]);
 
   useEffect(() => initUiStateSync(), []);
   useEffect(() => initPaperOpenedTracking(), []);

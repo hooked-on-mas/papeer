@@ -94,7 +94,9 @@ sidecar の API の形（ルートと、`sidecar/schemas/`・`sidecar/job_types.
 - `frontend/openapi.json`: `tools/export_openapi.py` が `app.openapi()` から書き出します（sidecar は `/openapi.json` を配信しません）。
 - `frontend/src/api/schema.d.ts`: その JSON を openapi-typescript（`frontend/package.json` の `gen-api`）で変換したものです。`--default-non-nullable false` を付け、TypeScript の省略可能なキー（`?:`）はスキーマの `required` のとおりにします。既定値があっても必ず送る応答モデルは `json_schema_serialization_defaults_required=True`（`sidecar/job_types.py` の `Sent` など）で必須にします。
 
-フロントエンドは `api.GET(...)` などの型付きクライアントを `unwrap()` で読みます（`frontend/src/api/client.ts`。失敗は `apiRequest` と同じ `ApiError`）。型の名前は `components["schemas"]["モデル名"]` で、`hooks.ts`・`jobTypes.ts` の型はその別名です。まだ移していない呼び出しは型なしの `apiRequest` のままです。
+フロントエンドは `api.GET(...)` などの型付きクライアントを `unwrap()` で読みます（`frontend/src/api/client.ts`。失敗は `apiRequest` と同じ `ApiError`）。型の名前は `components["schemas"]["モデル名"]` で、`hooks.ts`・`jobTypes.ts` の型はその別名です。型なしの `apiRequest` が残るのは、ジョブのルートを文字列で受け取る `startJob`（`frontend/src/features/jobs/jobEvents.ts`）だけです。応答モデルのないルートは `unwrap(...) as 型` で読みます。
+
+データを変えたときに読み直すクエリは `frontend/src/api/invalidation.ts` の対応表に一か所でまとめ、`frontend/src/api/mutations.ts` の `useMutation` フックと `invalidate()` がそれを使います（クエリキーは `frontend/src/lib/queryKeys.ts` の `QK` を通します）。`PATCH /api/papers/{id}` の後は論文そのものだけを読み直し、一覧の行は sidecar の `paper.changed` で更新します。
 
 応答モデル（`response_model`）は、モデルにないキーを捨て、型の違う値を 500 にします。そのため、応答の形を変えずに付けること（`tests/test_response_models.py` でルートの返す値と比べています）。以前の版が書いたファイル（翻訳レポートなど）や外部のサービスから来る値は `Stored[...]`（`sidecar/schemas/common.py`）にして、形だけを型に書き、検証せずにそのまま返します。一覧の行のようにキーが欠けうる応答は `response_model_exclude_unset=True` で、渡されたキーだけを返します。
 
