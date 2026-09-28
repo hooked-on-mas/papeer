@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use tauri::ipc::CapabilityBuilder;
-use tauri::utils::config::{Csp, CspDirectiveSources};
-use tauri::Manager;
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{TrayIconBuilder, MouseButton, TrayIconEvent};
+use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
+use tauri::utils::config::{Csp, CspDirectiveSources};
 use tauri::Emitter;
+use tauri::Manager;
 
 #[cfg(not(debug_assertions))]
 mod sidecar;
@@ -39,7 +39,10 @@ fn get_backend_config(state: tauri::State<BackendConfig>) -> (u16, String) {
 
 /// Mirrors `papeer.core.config.data_directory` in the sidecar.
 fn data_directory(app: &tauri::App) -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("PAPEER_DATA_DIR").or_else(|| std::env::var_os("PAPERDESK_DATA_DIR")).filter(|v| !v.is_empty()) {
+    if let Some(dir) = std::env::var_os("PAPEER_DATA_DIR")
+        .or_else(|| std::env::var_os("PAPERDESK_DATA_DIR"))
+        .filter(|v| !v.is_empty())
+    {
         let dir = PathBuf::from(dir);
         let dir = match dir.strip_prefix("~") {
             Ok(rest) => app.path().home_dir().ok()?.join(rest),
@@ -54,8 +57,17 @@ fn data_directory(app: &tauri::App) -> Option<PathBuf> {
     let current = base.join("Papeer");
     let legacy = base.join("PaperDesk");
     // A stray, empty Papeer folder must not hide a PaperDesk library that holds papers.
-    let has_papers = |root: &PathBuf| std::fs::read_dir(root.join("papers")).is_ok_and(|mut it| it.next().is_some());
-    Some(if (!current.exists() && legacy.is_dir()) || (has_papers(&legacy) && !has_papers(&current)) { legacy } else { current })
+    let has_papers = |root: &PathBuf| {
+        std::fs::read_dir(root.join("papers")).is_ok_and(|mut it| it.next().is_some())
+    };
+    Some(
+        if (!current.exists() && legacy.is_dir()) || (has_papers(&legacy) && !has_papers(&current))
+        {
+            legacy
+        } else {
+            current
+        },
+    )
 }
 
 /// tauri.conf.json names the sidecar as `http://127.0.0.1:*` (and `ws://`), since a release build learns
@@ -123,7 +135,11 @@ pub fn run() {
                         }
                     })
                     .on_tray_icon_event(|tray, event| {
-                        if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            ..
+                        } = event
+                        {
                             let app = tray.app_handle();
                             if let Some(window) = app.get_webview_window("main") {
                                 let is_visible = window.is_visible().unwrap_or(false);
@@ -142,9 +158,13 @@ pub fn run() {
             #[cfg(debug_assertions)]
             let token = DEV_TOKEN.to_string();
             #[cfg(not(debug_assertions))]
-            let token = new_token().map_err(|e| format!("sidecar の認証トークンを作れませんでした: {e}"))?;
+            let token = new_token()
+                .map_err(|e| format!("sidecar の認証トークンを作れませんでした: {e}"))?;
 
-            app.manage(BackendConfig { port, token: token.clone() });
+            app.manage(BackendConfig {
+                port,
+                token: token.clone(),
+            });
 
             // The frontend opens paper folders and PDFs in external apps. Limit that to the
             // sidecar's data directory so a script in the webview cannot launch arbitrary files.
@@ -153,7 +173,11 @@ pub fn run() {
                 app.add_capability(
                     CapabilityBuilder::new("open-data-directory")
                         .window("main")
-                        .permission_scoped("opener:allow-open-path", vec![serde_json::json!({ "path": scope })], vec![]),
+                        .permission_scoped(
+                            "opener:allow-open-path",
+                            vec![serde_json::json!({ "path": scope })],
+                            vec![],
+                        ),
                 )?;
             }
 
@@ -161,7 +185,6 @@ pub fn run() {
             app.manage(sidecar::spawn(app, port, &token)?);
             Ok(())
         })
-        
         .build(context)
         .expect("error while building tauri application");
 
@@ -186,11 +209,14 @@ mod tests {
     fn csp_names_only_the_sidecar_port() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json");
-        let csp: Csp = serde_json::from_value(config["app"]["security"]["csp"].clone()).expect("csp");
+        let csp: Csp =
+            serde_json::from_value(config["app"]["security"]["csp"].clone()).expect("csp");
         let pinned = pin_sidecar_port(csp, 51234).to_string();
         assert!(!pinned.contains("127.0.0.1:*"), "{pinned}");
-        let directives: HashMap<&str, &str> =
-            pinned.split(';').filter_map(|d| d.trim().split_once(' ')).collect();
+        let directives: HashMap<&str, &str> = pinned
+            .split(';')
+            .filter_map(|d| d.trim().split_once(' '))
+            .collect();
         assert!(directives["connect-src"].contains("http://127.0.0.1:51234"));
         assert!(directives["connect-src"].contains("ws://127.0.0.1:51234"));
         assert!(directives["connect-src"].contains("ipc:"));
