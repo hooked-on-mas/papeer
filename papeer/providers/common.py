@@ -477,8 +477,18 @@ class CliBackend:
             return False
 
     def login(self) -> str:
-        flags: dict = {"creationflags": subprocess.CREATE_NEW_CONSOLE} if os.name == "nt" else {}
-        subprocess.Popen(self.command() + list(self.login_args), env=child_env(), **flags)
+        command = self.command() + list(self.login_args)
+        if os.name == "nt":
+            # Outside the app's job for the sidecar (frontend/src-tauri/src/job.rs), which ends its
+            # processes as the app exits: the sign-in console and the browser it opens may stay open.
+            # A job that does not let processes leave refuses it; then the console starts inside.
+            try:
+                subprocess.Popen(command, env=child_env(),
+                                 creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_BREAKAWAY_FROM_JOB)
+            except PermissionError:
+                subprocess.Popen(command, env=child_env(), creationflags=subprocess.CREATE_NEW_CONSOLE)
+        else:
+            subprocess.Popen(command, env=child_env())
         service = getattr(self.spec, "login_service", "") or self.tool_name
         return f"開いたブラウザーで{service}にログイン後、「接続を確認」を押してください。"
 

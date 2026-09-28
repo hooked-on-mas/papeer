@@ -305,6 +305,26 @@ class ProvidersTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "未ログイン"):
                 provider.check()
 
+    @unittest.skipUnless(os.name == "nt", "Windows job objects")
+    def test_cli_sign_in_console_starts_outside_the_apps_job(self):
+        # The app's job ends the sidecar's processes as the app exits; the sign-in console and its browser
+        # may stay. A job that does not let processes leave refuses the flag: the console starts inside it.
+        import subprocess
+        leave = subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_BREAKAWAY_FROM_JOB
+        for refused in (False, True):
+            with self.subTest(refused=refused):
+                flags = []
+
+                def popen(command, env=None, creationflags=0):
+                    flags.append(creationflags)
+                    if refused and creationflags & subprocess.CREATE_BREAKAWAY_FROM_JOB:
+                        raise PermissionError(13, "Access is denied")
+                    return Mock()
+
+                with cli(CodexProvider), patch(POPEN, side_effect=popen):
+                    CodexProvider(Settings()).login()
+                self.assertEqual(flags, [leave, subprocess.CREATE_NEW_CONSOLE] if refused else [leave])
+
 
 class CliSafetyTests(unittest.TestCase):
     """What an untrusted document can reach through a CLI: tools, MCP servers, the sidecar token, cmd.exe."""

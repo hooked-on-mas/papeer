@@ -24,7 +24,7 @@
     },
     {
       "path": "frontend/src-tauri/Cargo.lock",
-      "sha256": "0ed7704bb4bc9c7299353de887020d753628af50878d752c964cf97a18e8f0b5"
+      "sha256": "4d3a4702a0f7c9fdf01747c5be125e293c2f126c1f2c8dda66a97c4109fec64f"
     }
   ],
   "summary": {
@@ -75,7 +75,7 @@
     },
     "rust": {
       "rows": 266,
-      "directRows": 12,
+      "directRows": 13,
       "unknownLicenseRows": 0,
       "scopeCounts": {
         "normal-graph": 247,
@@ -15190,8 +15190,10 @@
       {
         "name": "windows-sys",
         "version": "0.61.2",
-        "dependencyType": "transitive",
-        "directScopes": [],
+        "dependencyType": "direct",
+        "directScopes": [
+          "runtime"
+        ],
         "scopes": [
           "normal-graph"
         ],

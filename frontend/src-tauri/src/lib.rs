@@ -8,6 +8,8 @@ use tauri::utils::config::{Csp, CspDirectiveSources};
 use tauri::Emitter;
 use tauri::Manager;
 
+#[cfg(any(test, not(debug_assertions)))]
+mod job;
 #[cfg(not(debug_assertions))]
 mod sidecar;
 
