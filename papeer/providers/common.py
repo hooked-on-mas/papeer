@@ -352,12 +352,15 @@ def run_cli_process(
                     raise TransientError(f"{tool_name}の応答がタイムアウトしました。途中結果は保存されています。",
                                          after_sending=True)
                 cancel.wait(0.15)
-            check_cancel(cancel)
+            # The CLI has ended by itself: an answer it wrote is kept even when the job was cancelled
+            # meanwhile. It is paid for, and the caller records it before it stops (see
+            # OpenAICompatProvider._fetch). A failed run during a cancel still ends as cancelled.
             stdout.seek(0)
             out_text = stdout.read().decode("utf-8", "replace").strip()
             stderr.seek(0)
             err_text = stderr.read().decode("utf-8", "replace").strip()
             if process.returncode:
+                check_cancel(cancel)
                 if failure is not None:
                     raise failure(err_text, out_text)
                 # Shown: stderr, else stdout. Judged: both, as a CLI may print a warning to stderr

@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from email.message import Message
 from email.utils import format_datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import io
 import json
 import os
@@ -11,6 +12,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError, URLError
+from urllib.request import Request
 
 from papeer.core.config import Settings
 from papeer.providers import AnswerRejected, Cancelled, ProviderBackend, ProviderSpec, create_provider, parse_json_answer
@@ -641,6 +643,65 @@ class TransportRetryTests(unittest.TestCase):
         self.assertTrue(caught.exception.timed_out)
         self.assertTrue(caught.exception.after_sending)  # The CLI had the request: past its deadline, not unsent.
         self.assertIn("タイムアウト", str(caught.exception))
+
+    def test_cli_answer_that_came_as_the_job_was_cancelled_is_kept(self):
+        # The CLI ended by itself as the cancel came: its answer is paid for and goes to the caller, which
+        # records it before it stops (translation would otherwise send the same request again on resuming).
+        cancel = threading.Event()
+        cancel.set()
+
+        def ended(returncode):
+            def popen(command, cwd=None, stdin=None, stdout=None, stderr=None, **kwargs):
+                stdout.write(b"answer")
+                stdout.flush()
+                return Mock(poll=Mock(return_value=returncode), returncode=returncode)
+            return popen
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(POPEN, side_effect=ended(0)):
+                self.assertEqual(run_cli_process(["cli"], b"", cancel, 60, "CLI", Path(directory)),
+                                 ("answer", "answer"))
+            # A run that failed brings no answer: it ends as cancelled, as before.
+            with patch(POPEN, side_effect=ended(1)), self.assertRaises(Cancelled):
+                run_cli_process(["cli"], b"", cancel, 60, "CLI", Path(directory))
+
+    def test_api_answer_that_came_as_the_job_was_cancelled_is_kept(self):
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(handler):
+                handler.rfile.read(int(handler.headers["Content-Length"]))
+                requests.append(1)
+                body = json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": "訳文"}}]}).encode()
+                handler.send_response(200)
+                handler.send_header("Content-Type", "application/json")
+                handler.send_header("Content-Length", str(len(body)))
+                handler.end_headers()
+                handler.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        cancel = threading.Event()
+        settings = Settings(provider="api", model="m",
+                            provider_options={"api": {"base_url": f"http://127.0.0.1:{server.server_port}/v1"}})
+        provider = create_provider(settings, cancel)
+        # The cancel comes once the response has been read, before the request's thread hands it over.
+        with patch.object(OpenAICompatProvider, "_remember_limits", side_effect=lambda headers: cancel.set()):
+            started = time.monotonic()
+            self.assertEqual(provider.generate("i", "d"), "訳文")
+        self.assertTrue(cancel.is_set())
+        self.assertLess(time.monotonic() - started, 0.45)  # Handed over at once, not at the next half-second check.
+        # A request not sent yet is not sent once the job is cancelled.
+        with self.assertRaises(Cancelled):
+            provider._fetch(Request(f"http://127.0.0.1:{server.server_port}/v1/chat/completions", data=b"{}"))
+        self.assertEqual(len(requests), 1)
 
     def test_api_timeouts_and_dropped_connections_are_sent_again(self):
         body = json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": "訳文"}}]}).encode()
