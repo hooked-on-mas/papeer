@@ -72,6 +72,21 @@ def create_backup(lib: Library, destination: Path, cancel: threading.Event | Non
                               zipfile.ZIP_STORED if path.suffix.lower() in STORED_SUFFIXES else zipfile.ZIP_DEFLATED)
 
 
+# Names Windows keeps for devices: a file so named cannot be created in any folder.
+_RESERVED_NAMES = frozenset({"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)],
+                             *[f"LPT{i}" for i in range(1, 10)]})
+
+
+def unsafe_path(name: str) -> bool:
+    """Whether a path given for a file of the library (a backup's entry, another PC's) must not be written.
+
+    It must be relative, stay inside the library, use "/" only, and be a name Windows can create.
+    """
+    path = PurePosixPath(name)
+    return (path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name or not path.parts
+            or any(part.endswith((".", " ")) or part.split(".")[0].upper() in _RESERVED_NAMES for part in path.parts))
+
+
 # The library's settings (settings.json: connection, model, effort, ...) and the user's prompt texts.
 # A restore may keep the current ones instead of taking those in the backup.
 SETTINGS_ENTRIES = ("settings.json", "prompts")
@@ -101,12 +116,8 @@ def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = 
                 path = PurePosixPath(name)
                 normalized = "/".join(path.parts).casefold()
                 total += item.file_size
-                if (path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name
-                        or not path.parts or (item.external_attr >> 16) & 0o170000 == 0o120000
-                        or total > 20 * 1024**3 or normalized in names
-                        or any(part.endswith((".", " ")) or part.split(".")[0].upper() in
-                               {"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)], *[f"LPT{i}" for i in range(1, 10)]}
-                               for part in path.parts)):
+                if (unsafe_path(name) or (item.external_attr >> 16) & 0o170000 == 0o120000
+                        or total > 20 * 1024**3 or normalized in names):
                     raise ValueError("バックアップに不正なパスまたは大きすぎるデータが含まれます。")
                 names.add(normalized)
                 target = staging.joinpath(*path.parts)

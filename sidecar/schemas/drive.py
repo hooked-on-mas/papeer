@@ -19,3 +19,14 @@ class SyncRequest(BaseModel):
 
 class OptionsRequest(BaseModel):
     auto_sync: bool
+
+
+class HistorySettingsRequest(BaseModel):
+    # How many of the newest states to keep, and for how many days Papeer was used the last state of each.
+    recent: int
+    days: int
+
+
+class LegacyRemoveRequest(BaseModel):
+    # Paths as GET /api/history/legacy listed them, confirmed by the user.
+    paths: list[str]
