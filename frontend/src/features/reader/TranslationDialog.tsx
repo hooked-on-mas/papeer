@@ -7,6 +7,8 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { api, unwrap } from "@/api/client";
 import { providerLabel, useProviderEfforts, useProviderModels, useProviders, useReading, useSettings, type ReadingData } from "@/api/hooks";
 import { requestCancel, startJob } from "@/features/jobs/jobEvents";
+import { jobCount, runningPaperJob } from "@/features/jobs/jobSelectors";
+import { useStore } from "@/store";
 import { showError } from "@/components/errorDialog";
 import { askConfirm } from "@/components/AppDialogs";
 import { QK } from "@/lib/queryKeys";
@@ -62,7 +64,15 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   const [saving, setSaving] = useState(false);
   // The AI's check for unregistered terms runs as a job that outlives the dialog (glossaryDraft).
   const draft = useGlossaryDrafts((s) => s.drafts[paperId]);
-  const generating = draft?.status === "running";
+  // Also a check this window did not start or has forgotten (it went on through a reload), from the job list.
+  const draftJobId = useStore((s) => runningPaperJob(s.activeJobs, paperId, ["glossary-draft"])?.job_id);
+  const generating = draft?.status === "running" || !!draftJobId;
+  const cancelDraftId = (draft?.status === "running" ? draft.jobId : null) ?? draftJobId ?? null;
+  // How far the check has got (「1/2」, a request per part of the paper), from its progress events.
+  const draftCount = useStore((s) => generating ? jobCount(runningPaperJob(s.activeJobs, paperId, ["glossary-draft"])) : "");
+  // Any job of the paper still running (a translation, a check that went on through a reload): the sidecar
+  // would refuse another with 409.
+  const paperJobRunning = useStore((s) => !!runningPaperJob(s.activeJobs, paperId));
   useEffect(() => {
     if (!open) return;
     setGlossaryDialogPaper(paperId);
@@ -70,7 +80,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   }, [open, paperId]);
   // Closing stays possible while the AI checks the terms; only saving and starting hold the dialog.
   const holding = starting || saving;
-  const busy = holding || generating;
+  const busy = holding || generating || paperJobRunning;
 
   const { data: settings } = useSettings();
   const { data: reading } = useReading(open ? paperId : null);
@@ -225,9 +235,10 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
             canGenerate={!!savedGlossary && !!settings} onGenerate={() => void generateGlossary()} onPending={setSaving} />
           <div role="status" className="grid gap-1 text-[0.75rem]">
             {generating ? <div className="flex items-center gap-2">
-              <p className="text-muted-foreground flex-1">AIが未登録の専門用語を抽出しています。閉じても抽出は続き、終わったらお知らせします。</p>
-              {draft.jobId && <Button variant="outline" onClick={() => {
-                if (draft.jobId) requestCancel(draft.jobId).catch(error => showError(error, "抽出を中止できませんでした"));
+              <p className="text-muted-foreground flex-1">
+                {`AIが未登録の専門用語を抽出しています${draftCount ? `（${draftCount}）` : ""}。閉じても抽出は続き、終わったらお知らせします。`}</p>
+              {cancelDraftId && <Button variant="outline" onClick={() => {
+                requestCancel(cancelDraftId).catch(error => showError(error, "抽出を中止できませんでした"));
               }}>抽出を中止</Button>}
             </div> : <p className="text-muted-foreground">{choices.reviewed ? choices.draftMessage : reviewSkipMessage(skip)}</p>}
             {warning && <p className="text-amber-700 dark:text-amber-400">{warning}</p>}

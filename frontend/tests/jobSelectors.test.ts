@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { shallow } from "zustand/shallow";
 import {
-  anyJobRunning, paperBusy, paperJobState, runningPaperJob, statusJob, upsertJob,
+  anyJobRunning, jobCount, paperBusy, paperJobState, runningPaperJob, statusJob, upsertJob,
 } from "../src/features/jobs/jobSelectors.ts";
 import { TRANSLATION_JOBS } from "../src/features/jobs/jobKinds.ts";
 import type { Job } from "../src/store/index.ts";
@@ -107,4 +107,19 @@ test("the status bar follows the paper on screen, and background jobs only by th
   assert.deepEqual(statusJob(store.getState().activeJobs, "a"), { job: undefined, running: 1 });
   add({ job_id: "s1", paper_id: null, kind: "drive-sync", status: "running" });
   assert.equal(statusJob(store.getState().activeJobs, "a").job?.job_id, "s1");
+});
+
+test("the translation dialog opens while the paper's terms are checked, not while another job runs", () => {
+  const checking = [{ job_id: "1", paper_id: "a", kind: "glossary-draft" as const, status: "running" as const }];
+  assert.equal(paperBusy(checking, "a"), true);
+  assert.equal(paperBusy(checking, "a", ["glossary-draft"]), false);
+  assert.equal(paperBusy([...checking, { job_id: "2", paper_id: "a", kind: "article" as const, status: "running" as const }], "a", ["glossary-draft"]), true);
+});
+
+test("a job's progress reads as done/total once it has counted", () => {
+  assert.equal(jobCount({ job_id: "1", done: 1, total: 2 }), "1/2");
+  assert.equal(jobCount({ job_id: "1", done: 0, total: 2 }), "0/2");
+  assert.equal(jobCount({ job_id: "1", message: "準備中..." }), "");
+  assert.equal(jobCount({ job_id: "1", done: null, total: null }), "");
+  assert.equal(jobCount(undefined), "");
 });
