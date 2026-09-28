@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
+import { invalidate } from "@/api/mutations";
 import { useReading } from "@/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -47,9 +48,9 @@ function PaperReview({ paperId }: { paperId: string }) {
   const hasIssues = issues.length > 0 || glossaryWarnings.length > 0;
   const view = hasIssues ? tab : "edit";
   const { data: paragraphs = [], isFetching, isError } = useQuery({ queryKey: [QK.paragraphs, paperId],
-    queryFn: () => apiRequest<Paragraph[]>("GET", `/api/papers/${paperId}/paragraphs`), enabled: open && view === "edit" });
+    queryFn: async () => await unwrap(api.GET("/api/papers/{paper_id}/paragraphs", { params: { path: { paper_id: paperId } } })) as Paragraph[], enabled: open && view === "edit" });
   const { data: history = [] } = useQuery({ queryKey: [QK.revisions, paperId],
-    queryFn: () => apiRequest<Revision[]>("GET", `/api/papers/${paperId}/revisions`), enabled: open && view === "edit" });
+    queryFn: async () => await unwrap(api.GET("/api/papers/{paper_id}/revisions", { params: { path: { paper_id: paperId } } })) as Revision[], enabled: open && view === "edit" });
   useEffect(() => {
     return onAppEvent("open-paragraph-editor", selection => { setOpen(true); setTab("edit"); setTarget(selection); setUnmatched(false); });
   }, []);
@@ -88,8 +89,7 @@ function PaperReview({ paperId }: { paperId: string }) {
           if (event.kind === "revision-draft") setText(event.result.text);
           else {
             setSelected(null); setText("");
-            client.invalidateQueries({ queryKey: [QK.paragraphs, paperId] });
-            client.invalidateQueries({ queryKey: [QK.revisions, paperId] });
+            void invalidate({ kind: "translationRevised", paperId }, client);
           }
         });
     } catch (error) { setPending(false); showError(error, "翻訳の修正を実行できませんでした"); }

@@ -2,7 +2,7 @@ import { useTagChoices } from "@/api/tagChoices";
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { create } from "zustand";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
 import {
   DndContext, DragOverlay, KeyboardSensor, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors,
   type Announcements, type ClientRect, type CollisionDetection, type DragEndEvent, type DragOverEvent, type DragStartEvent,
@@ -29,7 +29,8 @@ import { deletePapers, movePapers, movePapersToNewCollection, setPapersReadStatu
 import { useDropTarget } from "@/app/fileDrop";
 import { useShownOrganization } from "@/app/useOrganizing";
 import { usePendingImports, type PendingImport } from "@/app/pendingImports";
-import { allFolderPaths, buildTree, filterPapers, normalizeCollection, type FolderNode } from "./libraryTree";
+import { allFolderPaths, buildTree, filterPapers, type FolderNode } from "./libraryTree";
+import { folderAncestors, normalizeCollection } from "@/lib/collectionPath";
 import {
   dropRowAt, folderKey, nextDropRow, paperKey, rowAfterRemoval, treeKeyAction, typeaheadMatch, visibleRows, type DropRow,
   type TreeKeyAction,
@@ -174,8 +175,8 @@ export function LibrarySidebar() {
   const { data: searchResults, isFetching: searching, isError: searchError } = useQuery({
     queryKey: [QK.librarySearch, librarySearch],
     // Typing on stops the request of the previous words (their results would only be thrown away).
-    queryFn: ({ signal }) => apiRequest<{ results: LibraryHit[]; limited: boolean }>(
-      "GET", `/api/library-search?q=${encodeURIComponent(librarySearch)}`, undefined, { signal }),
+    queryFn: async ({ signal }) => await unwrap(api.GET("/api/library-search", {
+      params: { query: { q: librarySearch } }, signal })) as { results: LibraryHit[]; limited: boolean },
     enabled: !!librarySearch.trim(),
   });
   // Memoized, as is the tree built from it: a new list each render would render every row again.
@@ -367,10 +368,10 @@ export function LibrarySidebar() {
       const paper = papers.find((p) => p.id === paperId);
       const expandedCollections = useStore.getState().expandedCollections;
       if (paper && expandedCollections !== null) {
-        const parts = normalizeCollection(paper.collection_name || "").split(" / ").filter(Boolean);
+        const ancestors = folderAncestors(paper.collection_name || "");
         const next = new Set(expandedCollections);
-        parts.forEach((_, i) => next.add(parts.slice(0, i + 1).join(" / ")));
-        if (!parts.length) next.add("");
+        ancestors.forEach((a) => next.add(a));
+        if (!ancestors.length) next.add("");
         if (next.size !== expandedCollections.length) setExpandedCollections([...next]);
       }
       if (focus) requestTreeFocus(paperKey(paperId));

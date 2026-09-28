@@ -2,6 +2,7 @@ import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Check, Plus } from "lucide-react";
 import { TagChip } from "@/components/ui/TagChip";
 import { movedOption, tagOptions, tagProblem, type TagOption } from "./tagOptions";
+import { pyStrip } from "@/lib/pyWhitespace";
 
 /**
  * The paper's tags as a combobox (the ARIA pattern: focus stays in the input, ↑↓ move among the options,
@@ -58,7 +59,7 @@ export function TagCombobox({ choices, selected, labelledBy, onToggle }: {
     } else if (e.key === "Enter") {
       e.preventDefault();
       // The option moved to, or, while typing, the first: the best matching tag, or the new one.
-      const option = options[activeOption >= 0 ? activeOption : text.trim() ? 0 : -1];
+      const option = options[activeOption >= 0 ? activeOption : pyStrip(text) ? 0 : -1];
       if (option) choose(option);
       else setOpen(true);
     } else if (e.key === "Escape") {

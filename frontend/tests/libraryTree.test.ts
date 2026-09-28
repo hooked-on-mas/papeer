@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allFolderPaths, buildTree, countInFolder, filterPapers, isInsideFolder, normalizeCollection, type FolderNode } from "../src/features/library/libraryTree.ts";
+import { allFolderPaths, buildTree, countInFolder, filterPapers, type FolderNode } from "../src/features/library/libraryTree.ts";
+import { isInsideFolder, normalizeCollection } from "../src/lib/collectionPath.ts";
 import type { PaperData } from "../src/api/hooks.ts";
 import { paperData } from "./support/paperData.ts";
 import type { PendingImport } from "../src/app/pendingImports.ts";

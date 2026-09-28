@@ -28,16 +28,27 @@ test-frontend:
     pnpm typecheck
     pnpm test
 
-# Lint and type check
+# Lint and type check (README「テストと lint」)
+# ruff check only: ruff format is not applied (pyproject.toml [tool.ruff.lint])
+# pyright checks papeer and sidecar as pyproject.toml [tool.pyright] lists them (a few files are left out there)
 lint: lint-backend lint-frontend
 
 lint-backend:
     uv run ruff check papeer sidecar tests tools
-    uv run pyright sidecar
+    uv run pyright
 
+# ESLint checks the rules of React hooks only (frontend/eslint.config.js); tsc the types
 [working-directory: 'frontend']
 lint-frontend:
     pnpm typecheck
+    pnpm lint
+
+# Run clippy on the Tauri app as CI does (README「テストと lint」)
+# sidecar の exe がなくても通るよう TAURI_CONFIG で externalBin を外す。変数はこの行の PowerShell の中だけで効き、終われば消える
+# （付けたまま just build するとインストーラーに sidecar が入らないため、シェルには残さない）
+[working-directory: 'frontend/src-tauri']
+clippy:
+    $env:TAURI_CONFIG = '{"bundle":{"externalBin":[]}}'; cargo clippy --release --all-targets -- -D warnings
 
 # Regenerate the API schema and the frontend's types from the sidecar (tools/export_openapi.py, README「API の型」)
 # frontend/openapi.json を app.openapi() から書き出し、openapi-typescript で frontend/src/api/schema.d.ts を作り直す

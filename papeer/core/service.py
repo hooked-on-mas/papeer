@@ -14,7 +14,7 @@ from papeer.pdf.pdf_typography import fonts_need_conversion, prepare_fonts_in_ba
 import pymupdf as fitz
 from papeer.providers import ProviderBackend, check_cancel
 from papeer.core.paths import PaperFiles
-from papeer.core.storage import Library
+from papeer.core.storage import Library, in_collection, normalize_collection_name
 from papeer.core.translation_status import translation_status
 from papeer.layout.math_layout import restore_formula_text
 from papeer.layout.ocr_pages import needs_ocr_message, ocr_markdown_note
@@ -412,15 +412,15 @@ class PaperService:
                 # Also on KeyboardInterrupt or SystemExit: the translations taken are written first.
                 try:
                     flush()
-                except Exception:
-                    pass  # The error that stopped the run is the one to report.
+                except Exception:  # noqa: BLE001, S110 - the error that stopped the run is the one to report.
+                    pass
                 # Stopped by an error: batches answered while the run was stopping are saved but not
                 # finished, so their pages are made now (not after a cancel, which should end at once).
                 if isinstance(error, Exception) and not self.cancel.is_set():
                     try:
                         publish_ready()
-                    except Exception:
-                        pass  # The error that stopped the run is the one to report.
+                    except Exception:  # noqa: BLE001, S110 - the error that stopped the run is the one to report.
+                        pass
                 raise
             flush()
             check_cancel(self.cancel)
@@ -618,8 +618,8 @@ class PaperService:
         context = all_text
         selection_note = "選択した論文の全文テキストを参照しています。"
         if collection is not None:
-            paper_ids = {p["id"] for p in self.library.papers()
-                         if p["collection_name"] == collection or p["collection_name"].startswith(collection + " / ")}
+            folder = normalize_collection_name(collection)
+            paper_ids = {p["id"] for p in self.library.papers() if in_collection(p["collection_name"], folder)}
             if not paper_ids:
                 raise ValueError("指定したフォルダーに論文がありません。")
         if paper_ids is not None:

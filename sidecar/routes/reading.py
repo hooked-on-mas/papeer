@@ -118,13 +118,13 @@ def put_global_glossary(body: GlobalGlossaryRequest):
 @router.get("/api/papers/{paper_id}/effective-glossary")
 def effective_glossary(paper_id: str):
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     return tools.effective_glossary(lib, paper_id)
 
 @router.post("/api/papers/{paper_id}/glossary-draft")
 def glossary_draft(paper_id: str, body: GlossaryDraftRequest) -> JobStarted:
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     existing = tools.validate_terms(body.terms)
     settings = deps.settings_for_run(body.model, body.effort)
     def action(cancel, progress, _page_ready):
@@ -134,12 +134,12 @@ def glossary_draft(paper_id: str, body: GlossaryDraftRequest) -> JobStarted:
 @router.get("/api/papers/{paper_id}/paragraphs")
 def paragraphs(paper_id: str):
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     return tools.translation_paragraphs(lib, paper_id)
 
 @router.get("/api/papers/{paper_id}/revisions")
 def revisions(paper_id: str):
-    return tools.revision_history(deps.paper_folder(deps.get_library(), paper_id))
+    return tools.revision_history(deps.get_library().paper_folder(paper_id))
 
 @router.post("/api/papers/{paper_id}/revision-draft")
 def draft_revision(paper_id: str, body: RevisionRequest) -> JobStarted:
@@ -169,7 +169,7 @@ def adopt_revision(paper_id: str, body: RevisionRequest) -> JobStarted:
 @router.get("/api/papers/{paper_id}/citation-excerpts")
 def citation_excerpts(paper_id: str, page: int):
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     if not 1 <= page <= lib.paper(paper_id)["pages"]:
         raise Invalid("ページが範囲外です。")
     return {"text": lib.page_text(paper_id, page)[:6000]}
@@ -204,7 +204,7 @@ def restore(body: RestoreRequest) -> JobStarted:
         # The backup may be older than what the sync folder holds: the next sync asks before publishing it.
         try:
             drive_sync.mark_restored(lib.root)
-        except Exception as exc:  # The restore itself has succeeded; a missing mark must not report it as failed.
+        except Exception as exc:  # noqa: BLE001 - the restore itself has succeeded; a missing mark must not report it as failed.
             print(f"警告: 復元後の同期確認の印を保存できませんでした: {exc!r}", file=sys.stderr)
         deps.library_changed()
         return {"previous_path": str(previous)}

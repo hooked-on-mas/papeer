@@ -177,3 +177,14 @@ class ReviewPublishTests(unittest.TestCase):
             with (folder/'original.pdf').open('ab') as stream: stream.write(b'\nchanged')
             with self.assertRaises(ValueError): apply_review(root/'papers',root/'review')
             self.assertEqual(before,(folder/'translated.pdf').read_bytes())
+
+
+def test_apply_layout_review_runs_as_a_script():
+    # `python tools/apply_layout_review.py` puts only tools/ on sys.path; the script adds the repository.
+    import subprocess
+    import sys
+    root = Path(__file__).resolve().parents[1]
+    done = subprocess.run([sys.executable, str(root / 'tools' / 'apply_layout_review.py'), '--help'],
+                          cwd=root / 'tools', capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert '--review' in done.stdout

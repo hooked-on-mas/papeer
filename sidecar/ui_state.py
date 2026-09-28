@@ -26,7 +26,7 @@ def migrate_window_ini(ini_path: Path) -> dict[str, Any]:
     parser = configparser.ConfigParser()
     try:
         parser.read(str(ini_path), encoding="utf-8")
-    except Exception:
+    except (OSError, ValueError, configparser.Error):  # Unreadable, not UTF-8 or not an ini file.
         return state
 
     reading_pages: dict[str, int] = {}
@@ -79,7 +79,7 @@ def load_ui_state(data_dir: Path) -> dict[str, Any]:
             if isinstance(state, dict) and "reading_anchors" in state:
                 state["reading_anchors"] = valid_anchors(state["reading_anchors"])
             return state
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Possibly only locked for a moment (e.g. a virus scan): fall back to defaults
             # for this request without overwriting the saved reading positions.
             return migrate_window_ini(data_dir / "window.ini")

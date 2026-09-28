@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { ApiError, apiRequest, authToken, backendPort } from "@/api/client";
+import { api, ApiError, apiRequest, authToken, backendPort, unwrap } from "@/api/client";
+import { invalidate } from "@/api/mutations";
 import { getPaper, paperDisplayName, type PaperData } from "@/api/hooks";
 import type { JobInfo, JobStarted, ServerEvent } from "@/api/jobTypes";
 import { isRunning, useStore, type Job } from "@/store";
@@ -62,7 +63,15 @@ export function showStartedJob(jobId: string, meta: { kind: JobKind; paperId: st
   });
 }
 
-/** Start a sidecar job and show it as running before the first progress event. */
+/** POST /api/jobs/{id}/cancel: asks the job to stop (it ends with job.finished, cancelled); 404 when it has ended already. */
+export function requestCancel(jobId: string): Promise<unknown> {
+  return unwrap(api.POST("/api/jobs/{job_id}/cancel", { params: { path: { job_id: jobId } } }));
+}
+
+/**
+ * Start a sidecar job and show it as running before the first progress event. `path` is any of the
+ * sidecar's job routes (answering JobStarted), which is why this one request stays untyped (apiRequest).
+ */
 export async function startJob<K extends JobKind>(
   path: string,
   body: unknown,
@@ -83,7 +92,7 @@ export async function cancelVisibleJobs(): Promise<boolean> {
     setStatus("現在表示中の論文で実行中の処理はありません。他の論文の処理は、ステータスバーの処理一覧から個別に中止できます。");
     return false;
   }
-  await Promise.all(targets.map((j) => apiRequest("POST", `/api/jobs/${j.job_id}/cancel`).catch(() => undefined)));
+  await Promise.all(targets.map((j) => requestCancel(j.job_id).catch(() => undefined)));
   markCancelling(targets.map((j) => j.job_id));
   return true;
 }
@@ -118,7 +127,7 @@ function forgetEndedCancels(running: string[]): void {
 /** Cancel one job, whichever paper it belongs to (the status bar's job list); false if the request failed. */
 export async function cancelJob(jobId: string): Promise<boolean> {
   try {
-    await apiRequest("POST", `/api/jobs/${jobId}/cancel`);
+    await requestCancel(jobId);
     markCancelling([jobId]);
     return true;
   } catch (error) {
@@ -261,7 +270,7 @@ async function settleEndedJob(jobId: string, meta: JobMeta | null, queryClient: 
   const handled = (id: string) => recentlyFinished.has(id);
   let event: JobFinished | null;
   try {
-    const settled = settledJob(await apiRequest<JobInfo>("GET", `/api/jobs/${jobId}`), handled);
+    const settled = settledJob(await unwrap(api.GET("/api/jobs/{job_id}", { params: { path: { job_id: jobId } } })) as JobInfo, handled);
     if (settled && "running" in settled) useStore.getState().addJob(settled.running);
     event = settled && "finished" in settled ? settled.finished : null;
   } catch (error) {
@@ -298,7 +307,7 @@ export function useJobEvents(): void {
 
     const refreshJobs = async () => {
       try {
-        const serverJobs = await apiRequest<JobInfo[]>("GET", "/api/jobs");
+        const serverJobs = await unwrap(api.GET("/api/jobs")) as JobInfo[];
         // Not those whose job.finished came first on the new stream.
         const running = stillRunning(serverJobs, (id) => recentlyFinished.has(id));
         const runningIds = running.map((j) => j.job_id);
@@ -327,11 +336,7 @@ export function useJobEvents(): void {
       ws.onopen = () => {
         // Events sent while the stream was down are lost: the running jobs are read again (and those that
         // ended meanwhile asked about), and what a missed library.changed would have refreshed is refreshed now.
-        if (useConnection.getState().everConnected) {
-          for (const root of [QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.reading]) {
-            queryClient.invalidateQueries({ queryKey: [root] });
-          }
-        }
+        if (useConnection.getState().everConnected) void invalidate({ kind: "reconnected" }, queryClient);
         wasOpen = true;
         markConnected();
         void refreshJobs();
@@ -352,10 +357,7 @@ export function useJobEvents(): void {
             message: data.message, done: data.done, total: data.total, status: "running",
           });
         } else if (data.type === "job.page_ready") {
-          if (data.paper_id) {
-            queryClient.invalidateQueries({ queryKey: [QK.reading, data.paper_id] });
-            queryClient.invalidateQueries({ queryKey: [QK.paperSearch, data.paper_id] });
-          }
+          if (data.paper_id) void invalidate({ kind: "pageTranslated", paperId: data.paper_id }, queryClient);
         } else if (data.type === "job.finished") {
           store.removeJob(data.job_id);
           handleFinished(data, queryClient);
@@ -363,17 +365,12 @@ export function useJobEvents(): void {
           handlePaperChanged(queryClient, data.paper_id, data.fields ?? undefined);
         } else if (data.type === "library.changed") {
           // Once the events stop coming, and not while an action on several papers runs (libraryRefresh.ts).
-          requestLibraryRefresh(() => {
-            for (const root of [QK.papers, QK.collections, QK.librarySearch, QK.tags]) {
-              queryClient.invalidateQueries({ queryKey: [root] });
-            }
-          });
+          requestLibraryRefresh(() => void invalidate({ kind: "library" }, queryClient));
         } else if (data.type === "import.pages") {
           setPendingPages(data.pages);
         } else if (data.type === "import.item") {
           // Keep the placeholder until the real row is in the list, so nothing flickers.
-          queryClient.invalidateQueries({ queryKey: [QK.collections] });
-          queryClient.invalidateQueries({ queryKey: [QK.papers] }).finally(() => removePendingImports([data.path]));
+          void invalidate({ kind: "folders" }, queryClient).finally(() => removePendingImports([data.path]));
         }
       };
       ws.onclose = () => {

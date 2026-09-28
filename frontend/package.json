@@ -10,6 +10,7 @@
     "tauri": "tauri",
     "test": "node --test \"tests/*.test.*\"",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests",
+    "lint": "eslint --max-warnings 0 .",
     "gen-api": "openapi-typescript openapi.json --default-non-nullable false -o src/api/schema.d.ts"
   },
   "engines": {
@@ -50,7 +51,10 @@
     "@types/node": "^26.6.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@typescript-eslint/parser": "^8.70.1",
     "@vitejs/plugin-react": "^6.0.2",
+    "eslint": "^10.11.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "openapi-typescript": "^7.13.0",
     "shadcn": "^4.21.0",
     "tailwindcss": "^4.3.3",

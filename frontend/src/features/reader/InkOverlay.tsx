@@ -116,6 +116,7 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
     pending.current = null; active.current = null;
     if (frame.current !== null) cancelAnimationFrame(frame.current);
     if (gesture && !["select", "capture"].includes(gesture.mode) && (gesture.mode === "draw" || gesture.result !== gesture.base)) gesture.commit(resultOf(gesture, ratio));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on unmount only: with ratio, a change of it would commit the gesture in progress
   }, []);
   const point = (event: { clientX: number; clientY: number }, clamp = true, rect = root.current!.getBoundingClientRect()): Point => {
     const x = (event.clientX - rect.left) / rect.width, y = (event.clientY - rect.top) / rect.height;

@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import re
 import sqlite3
-from typing import NamedTuple
+from typing import NamedTuple, cast
 import unicodedata
 
 from papeer.core.errors import Conflict
@@ -247,7 +247,7 @@ def kept_glossary_warnings(warnings: list, units: dict[str, dict]) -> list[dict]
     now written, stay (a term removed or given another rendering since then goes)."""
     kept = []
     for item in warnings if isinstance(warnings, list) else []:
-        unit = units.get(item.get("unit")) if isinstance(item, dict) else None
+        unit = units.get(cast(str, item.get("unit"))) if isinstance(item, dict) else None  # No id finds none.
         if unit is None:
             continue
         current = {(term["source"], term["target"]) for term in unit.get("glossary", [])}

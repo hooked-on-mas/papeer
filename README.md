@@ -82,10 +82,20 @@ sidecar は `/health` 以外のすべての API と WebSocket に認証トーク
 
 ```bash
 just test   # pytest、TypeScript の型チェック、フロントエンドのテスト (node:test)
-just lint   # ruff, pyright, tsc
+just lint   # ruff, pyright, ESLint, tsc
 ```
 
+静的チェックの範囲と約束は次のとおりです。
+
+- ruff: `papeer`・`sidecar`・`tests`・`tools` に `ruff check` だけを使います（`pyproject.toml` の `[tool.ruff.lint]`）。E/F/W に加え、`except` 内の `raise` に原因を付ける B904、何でも受け止める `except Exception` を理由付きに限る BLE001・S110、ループ内で作った関数がループ変数を使う B023（`papeer`・`sidecar` のみ）を検査します。すべての例外を握りつぶすのが意図どおりの箇所（UI を止めない、後始末はベストエフォート、など）は `# noqa: BLE001 - 理由` と書きます。`ruff format` は全体には適用しません（手で揃えた書式を保ち、履歴を追いやすくするため）。
+- pyright: `papeer` と `sidecar` を検査します（`[tool.pyright]`）。PyMuPDF・fontTools の型情報が実際と合わない行が多い 4 ファイル（`math_layout.py` 16 件、`table_layout.py` 13 件、`pdf_engine.py` 13 件、`pdf_fonts.py` 10 件。2026-09 時点）だけは対象外で、一覧と件数は `pyproject.toml` にあります。
+- ESLint: React のフックの規則（`react-hooks/rules-of-hooks` と `react-hooks/exhaustive-deps`）だけを検査します（`frontend/eslint.config.js`、`pnpm lint`）。型は tsc が見ます。依存配列を足すと effect の走り方が変わる箇所は、理由を添えた `// eslint-disable-next-line react-hooks/exhaustive-deps -- 理由` にしています。
+
 pytest は `tests/conftest.py` で `LOCALAPPDATA` と `PAPEER_DATA_DIR` をテストごとの一時フォルダーに向けます。実際のデータフォルダー（`%LOCALAPPDATA%\Papeer`、`PaperDesk`、`PapeerSync`）でファイルを開いたり書き込んだりすると、そのテストは失敗します。同梱フォントの変換結果（約30秒かけて作る）だけは `PAPEER_FONT_CACHE_DIR` で `.pytest_cache` 内に置き、次回以降の実行でも使い回します。
+
+CI（`.github/workflows/ci.yml`）は push ごとに Windows で、`just lint`・`just test` と同じ検査に加えて `frontend/openapi.json` とライセンス台帳が最新か（`--check`）、`pnpm build`、Rust の `cargo fmt --check`・`cargo clippy --release --all-targets -- -D warnings`・`cargo test --release`（`lib.rs` の単体テスト）を実行します。同じリポジトリのブランチからの pull request は push したときの結果を使い、pull request として検査するのは fork からのものだけです。実際の AI は呼びません。
+
+clippy は手元では `just clippy` で CI と同じように実行できます。sidecar の exe なしで通るよう、このコマンドの間だけ `TAURI_CONFIG` で `externalBin` を外します。PowerShell で直接実行するなら `$env:TAURI_CONFIG='{"bundle":{"externalBin":[]}}'; cargo clippy --release --all-targets -- -D warnings; Remove-Item Env:TAURI_CONFIG` のように、終わったら必ず外してください（付けたまま `just build` すると sidecar の入っていないインストーラーができます）。
 
 ### API の型
 
@@ -94,7 +104,9 @@ sidecar の API の形（ルートと、`sidecar/schemas/`・`sidecar/job_types.
 - `frontend/openapi.json`: `tools/export_openapi.py` が `app.openapi()` から書き出します（sidecar は `/openapi.json` を配信しません）。
 - `frontend/src/api/schema.d.ts`: その JSON を openapi-typescript（`frontend/package.json` の `gen-api`）で変換したものです。`--default-non-nullable false` を付け、TypeScript の省略可能なキー（`?:`）はスキーマの `required` のとおりにします。既定値があっても必ず送る応答モデルは `json_schema_serialization_defaults_required=True`（`sidecar/job_types.py` の `Sent` など）で必須にします。
 
-フロントエンドは `api.GET(...)` などの型付きクライアントを `unwrap()` で読みます（`frontend/src/api/client.ts`。失敗は `apiRequest` と同じ `ApiError`）。型の名前は `components["schemas"]["モデル名"]` で、`hooks.ts`・`jobTypes.ts` の型はその別名です。まだ移していない呼び出しは型なしの `apiRequest` のままです。
+フロントエンドは `api.GET(...)` などの型付きクライアントを `unwrap()` で読みます（`frontend/src/api/client.ts`。失敗は `apiRequest` と同じ `ApiError`）。型の名前は `components["schemas"]["モデル名"]` で、`hooks.ts`・`jobTypes.ts` の型はその別名です。型なしの `apiRequest` が残るのは、ジョブのルートを文字列で受け取る `startJob`（`frontend/src/features/jobs/jobEvents.ts`）だけです。応答モデルのないルートは `unwrap(...) as 型` で読みます。
+
+データを変えたときに読み直すクエリは `frontend/src/api/invalidation.ts` の対応表に一か所でまとめ、`frontend/src/api/mutations.ts` の `useMutation` フックと `invalidate()` がそれを使います（クエリキーは `frontend/src/lib/queryKeys.ts` の `QK` を通します）。`PATCH /api/papers/{id}` の後は論文そのものだけを読み直し、一覧の行は sidecar の `paper.changed` で更新します。
 
 応答モデル（`response_model`）は、モデルにないキーを捨て、型の違う値を 500 にします。そのため、応答の形を変えずに付けること（`tests/test_response_models.py` でルートの返す値と比べています）。以前の版が書いたファイル（翻訳レポートなど）や外部のサービスから来る値は `Stored[...]`（`sidecar/schemas/common.py`）にして、形だけを型に書き、検証せずにそのまま返します。一覧の行のようにキーが欠けうる応答は `response_model_exclude_unset=True` で、渡されたキーだけを返します。
 

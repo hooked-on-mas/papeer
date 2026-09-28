@@ -1,21 +1,15 @@
-import type { QueryClient } from "@tanstack/react-query";
 import type { ReadingData } from "@/api/hooks";
 import { useStore, type PassageLocation } from "@/store";
 import { QK } from "@/lib/queryKeys";
+import { queryClient } from "@/lib/queryClient";
 import { edgePage, steppedPage } from "./pageTurn";
 import { goBack, goForward, rememberPlace, type HistoryEntry } from "./readerHistory";
 import { summaryPlacement } from "./sidePanel";
 import { stepZoom } from "./zoomLevels";
 
-let queryClient: QueryClient | null = null;
-
-export function bindReaderQueryClient(client: QueryClient): void {
-  queryClient = client;
-}
-
 function reading(): ReadingData | null | undefined {
   const id = useStore.getState().activePaperId;
-  return id ? queryClient?.getQueryData<ReadingData>([QK.reading, id]) : null;
+  return id ? queryClient.getQueryData<ReadingData>([QK.reading, id]) : null;
 }
 
 export function pageCount(): number {

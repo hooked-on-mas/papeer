@@ -1,8 +1,9 @@
 import { openSettings } from "@/features/settings/settingsNavigation";
 import { useEffect, useId, useImperativeHandle, useRef, useState, type Ref } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Check, Copy, FileText, LayoutTemplate, Pencil, Plus, Settings2, Trash2 } from "lucide-react";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
+import { useDeleteNoteTemplate, useSaveNoteTemplate, type NoteTemplate as Template } from "@/api/mutations";
 import { askConfirm } from "@/components/AppDialogs";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -10,18 +11,19 @@ import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { showError } from "@/components/errorDialog";
 import { useOpenEdit } from "@/lib/pendingSaves";
+import { pyStrip } from "@/lib/pyWhitespace";
+import { QK } from "@/lib/queryKeys";
 
-type Template = { name: string; content: string; builtin: boolean };
 type Draft = { originalName: string | null; name: string; content: string; initialName: string; initialContent: string };
-const queryKey = ["note-templates"];
 
 export type TemplateLeaveGuard = { beforeLeave: () => Promise<boolean> };
 
 export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { note: string; onInsert: (content: string) => void; embedded?: boolean; leaveRef?: Ref<TemplateLeaveGuard> }) {
-  const client = useQueryClient();
   const { data: templates = [], isPending, isError, refetch } = useQuery({
-    queryKey, queryFn: () => apiRequest<Template[]>("GET", "/api/note-templates"),
+    queryKey: [QK.noteTemplates], queryFn: async () => await unwrap(api.GET("/api/note-templates")) as Template[],
   });
+  const saveTemplate = useSaveNoteTemplate();
+  const deleteTemplate = useDeleteNoteTemplate();
   const [mode, setMode] = useState<"use" | "manage" | null>(embedded ? "manage" : null);
   // Embedded in the settings, which automatic sync waits for anyway.
   useOpenEdit(!embedded && mode !== null, "メモのテンプレート");
@@ -35,7 +37,7 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
   const contentId = useId();
   const current = templates.find(item => item.name === selected);
   const dirty = !!draft && (draft.name !== draft.initialName || draft.content !== draft.initialContent);
-  const duplicate = !!draft && !draft.originalName && templates.some(item => item.name === draft.name.trim());
+  const duplicate = !!draft && !draft.originalName && templates.some(item => item.name === pyStrip(draft.name));
 
   useEffect(() => {
     if (templates.length && !current) setSelected(templates[0].name);
@@ -77,16 +79,15 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
   };
 
   const save = async () => {
-    if (!draft || busy || duplicate || !draft.name.trim() || !draft.content.trim()) return;
-    const saved: Template = { name: draft.name.trim(), content: draft.content, builtin: false };
+    if (!draft || busy || duplicate || !pyStrip(draft.name) || !pyStrip(draft.content)) return;
+    const saved: Template = { name: pyStrip(draft.name), content: draft.content, builtin: false };
     setBusy(true);
     try {
-      await apiRequest("PUT", "/api/note-templates", { name: saved.name, content: saved.content });
-      client.setQueryData<Template[]>(queryKey, old => [...(old ?? []).filter(item => item.name !== saved.name), saved]);
+      // Shown in the list at once, which is then loaded again (useSaveNoteTemplate).
+      await saveTemplate.mutateAsync(saved);
       setSelected(saved.name);
       setDraft(null);
       setNotice(`「${saved.name}」を保存しました。他の論文でも使えます。`);
-      void client.invalidateQueries({ queryKey });
     } catch (error) { showError(error, "テンプレートを保存できませんでした"); }
     finally { setBusy(false); }
   };
@@ -96,10 +97,8 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
     setBusy(true);
     try {
       if (!await askConfirm("テンプレートを削除", `「${current.name}」を削除しますか？ 挿入済みのメモはそのまま残ります。`, "削除", true)) return;
-      await apiRequest("DELETE", `/api/note-templates/${encodeURIComponent(current.name)}`);
-      client.setQueryData<Template[]>(queryKey, old => old?.filter(item => item.name !== current.name) ?? []);
+      await deleteTemplate.mutateAsync(current.name);
       setNotice(`「${current.name}」を削除しました。`);
-      void client.invalidateQueries({ queryKey });
     } catch (error) { showError(error, "テンプレートを削除できませんでした"); }
     finally { setBusy(false); }
   };
@@ -144,7 +143,7 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
           <nav aria-label="保存済みテンプレート" className="max-h-44 shrink-0 overflow-y-auto border-b bg-muted/20 p-3 sm:max-h-none sm:w-44 sm:border-b-0 sm:border-r">
             {mode === "manage" && <div className="mb-3 space-y-1.5 border-b pb-3">
               <Button className="w-full justify-start" size="sm" disabled={busy || isPending || isError} onClick={() => beginDraft("blank")}><Plus /> 新しく作る</Button>
-              <Button className="w-full justify-start" variant="outline" size="sm" disabled={busy || isPending || isError || !note.trim()} onClick={() => beginDraft("note")}><FileText /> 今のメモから作る</Button>
+              <Button className="w-full justify-start" variant="outline" size="sm" disabled={busy || isPending || isError || !pyStrip(note)} onClick={() => beginDraft("note")}><FileText /> 今のメモから作る</Button>
             </div>}
             {isPending && <p className="p-2 text-xs text-muted-foreground">テンプレートを読み込み中…</p>}
             {isError && <div className="space-y-2 p-2 text-xs"><p className="text-destructive">テンプレートを読み込めませんでした。</p><Button size="sm" variant="outline" onClick={() => void refetch()}>再読み込み</Button></div>}
@@ -175,7 +174,7 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
           <p className="mr-auto min-w-0 text-xs text-muted-foreground" role="status">{draft ? dirty ? "未保存の変更があります" : "" : notice}</p>
           {draft ? <>
             <Button variant="outline" disabled={busy} onClick={() => void discardDraft()}>キャンセル</Button>
-            <Button disabled={busy || duplicate || !draft.name.trim() || !draft.content.trim() || (!!draft.originalName && !dirty)} onClick={() => void save()}>{busy ? "保存中…" : draft.originalName ? "変更を保存" : "テンプレートを保存"}</Button>
+            <Button disabled={busy || duplicate || !pyStrip(draft.name) || !pyStrip(draft.content) || (!!draft.originalName && !dirty)} onClick={() => void save()}>{busy ? "保存中…" : draft.originalName ? "変更を保存" : "テンプレートを保存"}</Button>
           </> : mode === "use" ? <>
             <Button variant="ghost" onClick={() => { setMode(null); openSettings("note-templates", note); }}><Settings2 /> 作成・編集する</Button>
             <Button disabled={busy || !current || isError} onClick={insert}>この内容をメモに追加</Button>

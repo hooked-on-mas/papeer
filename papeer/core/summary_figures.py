@@ -26,7 +26,7 @@ def summary_figures(page: fitz.Page, blocks: list[dict], number: int) -> list[di
         label = CAPTION.match(caption)
         if label is None or not caption[label.end():].strip(" .:;–—-"):
             continue
-        key = tuple(location)
+        key = tuple(location)  # pyright: ignore[reportArgumentType]
         if key in groups:
             groups[key]["rect"] |= rect
         else:

@@ -149,7 +149,7 @@ class CodexProvider(CliBackend, ProviderBackend):
                     if slug:
                         name = item.get("display_name") or slug
                         models.append((slug, f"{slug} — {name}" if name != slug else slug))
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - the list is only a help: without it, the usual models.
             pass
         return models or list(_FALLBACK_MODELS)
 

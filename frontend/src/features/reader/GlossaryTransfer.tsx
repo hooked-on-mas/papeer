@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { showError } from "@/components/errorDialog";
 import { shell } from "@/shell";
@@ -27,12 +27,12 @@ export function GlossaryTransfer({ terms, disabled, onPending, onImport }: {
       if (!path) return;
       const entries = terms.filter(t => t.source.trim() || t.target.trim());
       if (importing) {
-        const result = await apiRequest<ImportResult>("POST", "/api/glossary/import", { path, terms: entries });
+        const result = await unwrap(api.POST("/api/glossary/import", { body: { path, terms: entries } })) as ImportResult;
         if (result.added.length) onImport(result.terms, result.added);
         setConflicts(result.conflicts);
         setMessage(`${result.added.length}件を追加候補として読み込みました。重複${result.skipped}件は既存の訳語を保持しました。確認・修正後に「辞書を保存」で反映できます。`);
       } else {
-        const result = await apiRequest<{ count: number }>("POST", "/api/glossary/export", { path, terms: entries });
+        const result = await unwrap(api.POST("/api/glossary/export", { body: { path, terms: entries } })) as { count: number };
         setMessage(`${result.count}件の辞書を保存しました：${path}`);
       }
     } catch (error) {

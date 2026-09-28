@@ -1,4 +1,8 @@
-"""Parse one-based PDF page ranges without expanding unchecked ranges."""
+"""Parse one-based PDF page ranges without expanding unchecked ranges.
+
+The translation dialog checks what is typed by the same rules (frontend/src/lib/pageSelection.ts); both
+are tested against tests/fixtures/page_ranges.json, and this side decides.
+"""
 import re
 import unicodedata
 

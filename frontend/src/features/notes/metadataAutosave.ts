@@ -9,13 +9,14 @@
  * close without it, naming the papers and fields (registerHeldDrafts).
  */
 import { useStore as useZustandStore } from "zustand";
-import type { QueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/api/client";
 import type { PaperData } from "@/api/hooks";
+import { invalidate, patchPaper } from "@/api/mutations";
 import { expandToCollection, recordMoves } from "@/app/actions";
-import { normalizeCollection } from "@/features/library/libraryTree";
+import { normalizeCollection } from "@/lib/collectionPath";
+import { pyStrip } from "@/lib/pyWhitespace";
 import { beginOpenEdit, registerHeldDrafts, registerPendingSaves } from "@/lib/pendingSaves";
 import { QK } from "@/lib/queryKeys";
+import { queryClient as client } from "@/lib/queryClient";
 import { useStore } from "@/store";
 import { createMetadataSaver, type HeldDraft, type MetaEntry } from "./metadataSaver";
 import { META_LABELS } from "./paperMetadata";
@@ -24,22 +25,16 @@ import { META_LABELS } from "./paperMetadata";
  * save of a title or year may move the paper's row in the library. */
 export const SAVE_DELAY_MS = 800;
 
-let client: QueryClient | null = null;
-
-/** The client the saves use to load the paper again; set by the form. */
-export function bindMetadataClient(queryClient: QueryClient): void {
-  client = queryClient;
-}
-
 const saver = createMetadataSaver({
   delay: SAVE_DELAY_MS,
   patch: async (paperId, body) => {
     // A load of the paper still under way would answer with the values from before this save.
-    await client?.cancelQueries({ queryKey: [QK.papers, paperId], exact: true });
-    return apiRequest("PATCH", `/api/papers/${paperId}`, body);
+    await client.cancelQueries({ queryKey: [QK.papers, paperId], exact: true });
+    return patchPaper(paperId, body);
   },
   saved: (paperId, fields, sent, before) => {
-    if (fields.includes("collection")) {
+    const moved = fields.includes("collection");
+    if (moved) {
       const from = normalizeCollection(before);
       const to = normalizeCollection(sent.collection);
       if (from !== to) recordMoves([{ paperId, from, to }]);
@@ -47,11 +42,10 @@ const saver = createMetadataSaver({
       if (store.selectedFolder === null && store.activePaperId === paperId) store.setCurrentCollection(to);
       expandToCollection(to);
       if (from !== to) store.setStatus(`「${to || "未分類"}」へ移動しました。`);
-      void client?.invalidateQueries({ queryKey: [QK.collections] });
     }
-    // The paper as the sidecar keeps it (a DOI pasted as a link comes back bare); the library's row
-    // follows from the paper.changed event.
-    void client?.invalidateQueries({ queryKey: [QK.papers, paperId], exact: true });
+    // The paper as the sidecar keeps it (a DOI pasted as a link comes back bare), and the folders when it
+    // moved; the library's row follows from the paper.changed event.
+    void invalidate({ kind: "paper", paperId, collection: moved });
   },
 });
 
@@ -63,8 +57,8 @@ export function useMetadataDraft(paperId: string): MetaEntry | undefined {
 
 /** The paper's name for a message: as typed, else as saved. */
 function describe({ paperId, draft, fields }: HeldDraft): string {
-  const title = draft.values.title.trim() || draft.saved.title
-    || client?.getQueryData<PaperData | null>([QK.papers, paperId])?.title || paperId;
+  const title = pyStrip(draft.values.title) || draft.saved.title
+    || client.getQueryData<PaperData | null>([QK.papers, paperId])?.title || paperId;
   const why = fields.map((field) => `${META_LABELS[field]}：${draft.problems[field] || draft.failure || "未保存"}`);
   return [`「${title}」の論文情報`, ...why].join("\n");
 }

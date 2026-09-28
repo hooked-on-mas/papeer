@@ -42,19 +42,20 @@ export const api = createClient<paths>({
   fetch: async (request) => {
     const url = new URL(request.url);
     url.port = backendPort().toString();
-    const newRequest = new Request(url.toString(), request);
+    const headers = new Headers(request.headers);
     const token = authToken();
-    if (token) {
-      newRequest.headers.set("Authorization", `Bearer ${token}`);
-    }
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    // The body read out and sent as it is, rather than a Request made from this one: its body
+    // would be a stream, which a browser takes only with the `duplex` option, and could be sent once only.
+    const payload = request.body === null ? undefined : await request.arrayBuffer();
     // Like apiRequest: one refused while the automatic sync runs in the background is sent again after it.
     const { response } = await sendWhenLibraryFree(async () => {
       let response: Response;
       try {
-        response = await fetch(newRequest.clone());
+        response = await fetch(url, { method: request.method, headers, body: payload, signal: request.signal });
       } catch (error) {
         // As apiRequest: a stopped request rejects with its AbortError, an unreachable sidecar with an ApiError.
-        if (newRequest.signal.aborted) throw error;
+        if (request.signal.aborted) throw error;
         throw new ApiError("バックエンドに接続できませんでした。", 0);
       }
       const body = response.status === 409 ? await response.clone().json().catch(() => null) : null;

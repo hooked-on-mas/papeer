@@ -79,7 +79,8 @@ def bundle_version(root: Path) -> str:
 
 def application_version() -> str:
     if getattr(sys, "frozen", False):
-        value = (Path(sys._MEIPASS) / "code-version.txt").read_text("utf-8").strip()
+        # PyInstaller sets sys._MEIPASS (the unpacked bundle) in a frozen app.
+        value = (Path(sys._MEIPASS) / "code-version.txt").read_text("utf-8").strip()  # pyright: ignore[reportAttributeAccessIssue]
         if not re.fullmatch(r"code-sha256-[0-9a-f]{64}", value):
             raise ValueError("アプリのコードバージョンが不正です。再ビルドしてください。")
         return value

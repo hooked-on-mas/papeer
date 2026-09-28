@@ -5,6 +5,7 @@ The caller must hold exclusive library access throughout sync().
 """
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from contextlib import ExitStack, closing, contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -236,8 +237,8 @@ def conflict_differences(root: Path, remote, heads: list[dict], cancel) -> dict[
                 result[head["id"]] = library_difference(root / "library.sqlite3", database)
             except Cancelled:
                 raise
-            except Exception:
-                result[head["id"]] = None  # Still arriving, damaged...: the choice is offered without it.
+            except Exception:  # noqa: BLE001 - still arriving, damaged...: the choice is offered without it.
+                result[head["id"]] = None
     return result
 
 
@@ -360,7 +361,7 @@ def _remove_side_backup(path: Path) -> None:
     path.with_suffix(".json").unlink(missing_ok=True)
 
 
-def prune_side_backups(root: Path, keep: int = SIDE_BACKUP_LIMIT, new: list[Path] = ()) -> None:
+def prune_side_backups(root: Path, keep: int = SIDE_BACKUP_LIMIT, new: Sequence[Path] = ()) -> None:
     """Remove all but the newest `keep`. The ones just set aside (`new`) always stay and count toward them."""
     folder = side_backup_folder(root)
     if not folder.is_dir():
@@ -806,7 +807,7 @@ def check_connected(root: Path) -> dict:
         return {"action": "none", "local_version": None}
     try:
         return check(root, FolderDrive(Path(state["folder"])))
-    except Exception:
+    except Exception:  # noqa: BLE001 - see below
         # A missing folder, revisions still arriving, an unreadable file...: the sync itself reports it
         # (and automatic sync stops until the user has looked), so leave the explaining to it.
         return {"action": "quiet", "local_version": None}
@@ -817,7 +818,7 @@ SYNC_CANCELLED = "同期を中止しました。"
 SYNC_FAILED = "同期フォルダーを読み書きできませんでした。保存先とPC版Google Driveを確認して再試行してください。"
 
 
-def sync_connected(root: Path, cancel, progress, *, choice: str | None = None,
+def sync_connected(root: Path, cancel: threading.Event, progress: Callable[[str], None], *, choice: str | None = None,
                    expected_heads: list[str] | None = None, confirm: bool = False, background: bool = False) -> dict:
     """sync() with the folder chosen on this PC; a failure is also recorded as the status's error.
 
@@ -832,7 +833,7 @@ def sync_connected(root: Path, cancel, progress, *, choice: str | None = None,
                     choice=choice, expected_heads=expected_heads, confirm=confirm, background=background)
     except Cancelled:
         raise Cancelled(SYNC_CANCELLED) from None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - recorded as the status's error and raised again
         message = str(exc) if isinstance(exc, ValueError) else SYNC_FAILED
         state = read_state(root)
         state["error"] = message

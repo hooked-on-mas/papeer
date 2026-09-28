@@ -7,7 +7,7 @@ import { useStore, ZOOM_FIT_PAGE } from "@/store";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { apiRequest } from "@/api/client";
+import { useAddGlossaryTerm } from "@/api/mutations";
 import { showError } from "@/components/errorDialog";
 import { changeZoom, movePage } from "./navigation";
 import { askText } from "@/components/AppDialogs";
@@ -15,7 +15,6 @@ import { attachPassage, capturePassage, explainPassage, highlightPassage, quoteP
 import { highlightColor } from "./highlights";
 import { useStickyNotes } from "./stickyNotesStore";
 import { emitAppEvent } from "@/lib/appEvents";
-import { QK } from "@/lib/queryKeys";
 
 /**
  * Replaces the webview's browser menu (戻る, 印刷, 検査…) over a PDF page:
@@ -24,6 +23,7 @@ import { QK } from "@/lib/queryKeys";
  */
 export function PdfContextMenu({ translated, children }: { translated: boolean; children: React.ReactNode }) {
   const queryClient = useQueryClient();
+  const addTerm = useAddGlossaryTerm();
   const areaRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState(false);
   // Taken when the menu opens, so the translation text is usually loaded before an item is chosen.
@@ -73,13 +73,8 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
               const target = await askText("共通辞書に登録", `「${source}」の訳語`);
               if (!target?.trim()) return;
               try {
-                const terms = await apiRequest<{ source: string; target: string }[]>("GET", "/api/glossary");
-                await apiRequest("PUT", "/api/glossary", { expected_terms: terms, terms: [...terms.filter(t => t.source.toLocaleLowerCase() !== source.trim().toLocaleLowerCase()), { source: source.trim(), target: target.trim() }] });
-                queryClient.invalidateQueries({ queryKey: [QK.glossary] });
-                queryClient.invalidateQueries({ queryKey: [QK.effectiveGlossary] });
-                queryClient.invalidateQueries({ queryKey: [QK.paragraphs] });
-                // A new term changes which saved translations the translation dialog can reuse.
-                queryClient.invalidateQueries({ queryKey: [QK.translationPlan] });
+                // Saved; what the glossary changes (which saved translations can be reused…) is loaded again after.
+                await addTerm.mutateAsync({ source: source.trim(), target: target.trim() });
                 useStore.getState().setStatus("共通辞書に登録しました。すべての論文の次の翻訳から適用します。");
               } catch (error) { showError(error, "用語を登録できませんでした"); }
             })}>

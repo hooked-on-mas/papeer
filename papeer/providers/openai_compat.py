@@ -50,7 +50,7 @@ def error_body(error: HTTPError) -> str:
     """The start of an error response's body ("" when there is none). It can be read only once."""
     try:
         return error.read(8192).decode("utf-8", "replace")
-    except Exception:
+    except Exception:  # noqa: BLE001 - only a detail of the error being reported
         return ""
 
 

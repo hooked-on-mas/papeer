@@ -135,10 +135,11 @@ export function useInkEditor(paperId: string | undefined, side: InkSide, page: n
   const keyHandler = useRef(keyDown);
   keyHandler.current = keyDown;
   useEffect(() => {
+    const self = owner.current;
     const listener = (event: KeyboardEvent) => {
       // A clicked Cut/Delete button becomes disabled and loses focus to body.
       // Remember the active pane so Undo still works, without hijacking other panels.
-      if (activeEditor !== owner.current || !scopeRef.current) return;
+      if (activeEditor !== self || !scopeRef.current) return;
       // Not while another tab is shown, where the reader stays mounted but hidden.
       if (!onScreen(scopeRef.current)) return;
       // The writing toolbar sits outside the pane, and serves the active one.
@@ -147,7 +148,7 @@ export function useInkEditor(paperId: string | undefined, side: InkSide, page: n
       keyHandler.current(event);
     };
     window.addEventListener("keydown", listener, true);
-    return () => { window.removeEventListener("keydown", listener, true); if (activeEditor === owner.current) activeEditor = null; };
+    return () => { window.removeEventListener("keydown", listener, true); if (activeEditor === self) activeEditor = null; };
   }, []);
   return { ink, tool, setTool, lastPen, lastRange, preferences, strokes, selected, selectedIds, setSelectedIds, selection, visible, setVisible, locked, setLocked,
     listOpen, setListOpen, change, replaceSelected, transformSelected, remove, copy, cut,

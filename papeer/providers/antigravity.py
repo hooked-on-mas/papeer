@@ -101,7 +101,7 @@ class AntigravityProvider(CliBackend, ProviderBackend):
                 # Sent again only for a status or error known to pass (UNAVAILABLE, DEADLINE_EXCEEDED, 503, ...).
                 raise cli_failure(self.tool_name, str(detail), f"{result.get('status')}\n{detail}",
                                   known_temporary_only=True)
-            usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+            usage = result["usage"] if isinstance(result.get("usage"), dict) else {}
             self.usage.add(input_tokens=to_int(usage.get("input_tokens")),
                            cached_tokens=to_int(usage.get("cache_read_tokens")),
                            output_tokens=to_int(usage.get("output_tokens")),
@@ -124,7 +124,7 @@ class AntigravityProvider(CliBackend, ProviderBackend):
                     m_id, _, m_desc = line.partition("\t")
                     m_id, m_desc = m_id.strip(), m_desc.strip()
                     models.append((m_id, f"{m_id} ({m_desc})" if m_desc else m_id))
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - the list is only a help: without it, the usual models.
             pass
         return models or list(_FALLBACK_MODELS)
 

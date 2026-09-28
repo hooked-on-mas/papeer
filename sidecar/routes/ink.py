@@ -13,7 +13,7 @@ router = APIRouter(dependencies=[Depends(deps.verify_token)])
 @router.get("/api/papers/{paper_id}/ink-pages")
 def ink_pages(paper_id: str):
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     return lib.ink_pages(paper_id)
 
 @router.post("/api/papers/{paper_id}/ink-capture-v2")

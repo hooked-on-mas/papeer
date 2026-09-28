@@ -1,15 +1,14 @@
 import { openSettings, useSettingsNavigation } from "@/features/settings/settingsNavigation";
 import { useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { ApiError, apiRequest } from "@/api/client";
+import { ApiError } from "@/api/client";
+import { useSaveStickyNote } from "@/api/mutations";
 import { paperDisplayName, usePaper } from "@/api/hooks";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useStore } from "@/store";
 import { useTagChoices } from "@/api/tagChoices";
 import { AnnotationTextEditor } from "./AnnotationTextEditor";
-import { stickyQuote, type StickyNote } from "./stickyNotes";
+import { stickyQuote } from "./stickyNotes";
 import { openStickyNote, useStickyNotes } from "./stickyNotesStore";
-import { QK } from "@/lib/queryKeys";
 import { useOpenEdit } from "@/lib/pendingSaves";
 
 /** One small editor shared by PDF markers, selections, and the sticky-notes tab. */
@@ -21,7 +20,7 @@ export function StickyNoteDialog() {
   useOpenEdit(!!draft, "付箋");
   const { data: labels = [] } = useTagChoices("sticky");
   const [error, setError] = useState("");
-  const client = useQueryClient();
+  const saveNote = useSaveStickyNote();
   const { data: paper } = usePaper(draft?.paperId ?? null);
   useEffect(() => setError(""), [draft]);
   // A highlight needs no label ("" is 分類なし); a sticky note always has one.
@@ -34,12 +33,12 @@ export function StickyNoteDialog() {
     if (!item || saving) return;
     useStickyNotes.setState({ busy: true }); setError("");
     try {
-      const base = `/api/papers/${item.paperId}/sticky-notes`;
-      const saved = await apiRequest<StickyNote>(item.id ? "PATCH" : "POST", item.id ? `${base}/${item.id}` : base,
-        { page: item.page, side: item.side, quote: item.quote, anchor_y: item.anchorY, anchor_x: item.anchorX ?? 0, label: item.label ?? labels[0] ?? "未分類", note: item.note ?? "" });
+      const saved = await saveNote.mutateAsync({ paperId: item.paperId, id: item.id, fields:
+        { page: item.page, side: item.side, quote: item.quote, anchor_y: item.anchorY, anchor_x: item.anchorX ?? 0, label: item.label ?? labels[0] ?? "未分類", note: item.note ?? "" } });
       useStickyNotes.setState({ draft: null, dirty: false, selectedId: saved.id });
       useStore.getState().setStatus("付箋を保存しました。");
-      await Promise.all([client.invalidateQueries({ queryKey: [QK.stickyNotes] }), client.invalidateQueries({ queryKey: [QK.librarySearch] })]);
+      // Closed already; another save or delete waits until the notes have been loaded again, as before.
+      await saveNote.refreshed();
     } catch (e) {
       setError(e instanceof ApiError && e.status === 404 && e.message === "Not Found"
         ? "起動中のバックエンドが付箋の保存に対応していません。バックエンドを再起動してから、もう一度「確定」を押してください。入力内容は保持しています。"

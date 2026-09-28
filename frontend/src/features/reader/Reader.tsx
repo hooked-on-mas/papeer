@@ -18,7 +18,7 @@ import { pinchLevel, pinchStart } from "./zoomLevels";
 import { inkToolActive } from "./useInkEditor";
 import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 import { createScrollSync } from "./scrollSync";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
 import type { StickyNote } from "./stickyNotes";
 import type { JumpTarget } from "./PdfPane";
 import { emitAppEvent } from "@/lib/appEvents";
@@ -26,6 +26,7 @@ import { QK } from "@/lib/queryKeys";
 
 // Stable while the notes are loading or failed: a new array would redraw the text layer on every render.
 const NO_NOTES: StickyNote[] = [];
+const NO_PAGES: number[] = [];
 
 /**
  * Where the view is on the page in `pane`, as JumpTarget.anchor_y takes it: jumping there again
@@ -63,7 +64,8 @@ export function Reader() {
   const [bookmarkTarget, setBookmarkTarget] = useState<JumpTarget | null>(null);
   const { data: bookmarks = NO_NOTES } = useQuery({
     queryKey: [QK.stickyNotes, activePaperId],
-    queryFn: () => apiRequest<StickyNote[]>("GET", `/api/papers/${activePaperId}/sticky-notes`),
+    queryFn: async () => await unwrap(api.GET("/api/papers/{paper_id}/sticky-notes", {
+      params: { path: { paper_id: activePaperId as string } } })) as StickyNote[],
     enabled: !!activePaperId,
   });
   const sourceHighlights = useMemo(() => bookmarks.filter(item => item.page === currentPage && item.side === "original"), [bookmarks, currentPage]);
@@ -74,6 +76,8 @@ export function Reader() {
   const readerRef = useRef<HTMLDivElement>(null);
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
+  // A fresh one for each page of each paper.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the page and paper are what start it over
   const syncScroll = useMemo(() => createScrollSync(), [activePaperId, currentPage]);
   // The pane the pointer was last over, which the paging keys scroll.
   const activePane = useRef<"left" | "right">("left");
@@ -99,7 +103,7 @@ export function Reader() {
   useEffect(() => { outlineDoc.current = null; setOutline(null); }, [activePaperId]);
 
   const pageCount = reading?.page_count ?? 0;
-  const completed = reading?.completed_pages ?? [];
+  const completed = reading?.completed_pages ?? NO_PAGES;
   // A paper opens where its page was last left (paperAnchors, saved in ui-state.json), from the top otherwise.
   // Until the view has moved there, the scrolls to the top of the page on the way are not kept (recordAnchor).
   const restoringAnchor = useRef(false);

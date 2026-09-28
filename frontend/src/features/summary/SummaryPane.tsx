@@ -2,7 +2,7 @@ import { FileDown, Loader2, RefreshCw, ScrollText, Square } from "lucide-react";
 import { paperBusy, useStore } from "../../store";
 import { runningPaperJob } from "@/features/jobs/jobSelectors";
 import { useArticle } from "../../api/hooks";
-import { apiRequest } from "../../api/client";
+import { requestCancel } from "@/features/jobs/jobEvents";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { UsageLine } from "@/components/UsageLine";
 import { exportMarkdown, generateArticle } from "@/app/actions";
@@ -55,7 +55,7 @@ export function SummaryPane() {
           <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0" />
           <span className="truncate flex-1">{job.message || "サマリーを作成中…"}</span>
           <button
-            onClick={() => apiRequest("POST", `/api/jobs/${job.job_id}/cancel`).catch(() => undefined)}
+            onClick={() => requestCancel(job.job_id).catch(() => undefined)}
             className="flex items-center gap-1 px-2 py-1 rounded border text-[0.75rem] hover:bg-muted"
           >
             <Square className="w-3 h-3" /> 中止

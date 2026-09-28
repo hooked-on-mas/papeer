@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+from typing import cast
 from papeer.core.paths import PaperFiles
 
 RUN_NAME = re.compile(r"[0-9a-f]{32}")
@@ -29,8 +30,7 @@ _UNREAD = object()
 
 def translated_page(folder: Path, index: int, preview: dict | None | object = _UNREAD) -> tuple[Path | None, int]:
     """(file, page index in it) shown for a page; pass read_preview()'s result when calling for many pages."""
-    if preview is _UNREAD:
-        preview = read_preview(folder)
+    preview = cast("dict | None", read_preview(folder) if preview is _UNREAD else preview)
     if preview and not preview["complete"]:
         if index + 1 not in preview["pages"]:
             if index + 1 in preview.get("skipped_pages", []):

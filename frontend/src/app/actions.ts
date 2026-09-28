@@ -1,6 +1,6 @@
-import type { QueryClient } from "@tanstack/react-query";
-import { apiRequest, ApiError } from "@/api/client";
-import type { PaperData, ReadingData } from "@/api/hooks";
+import { api, ApiError, unwrap } from "@/api/client";
+import { getPaper, type PaperData, type ReadingData } from "@/api/hooks";
+import { invalidate, patchPaper } from "@/api/mutations";
 import { askConfirm, askText, showMessage } from "@/components/AppDialogs";
 import { showStartedJob, startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
@@ -12,8 +12,10 @@ import { addPendingImports, removePendingImports, usePendingImports } from "./pe
 import { showSaved } from "./savedNotice";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
+import { queryClient } from "@/lib/queryClient";
 import { summaryQuestionKey, summaryStartQuestion } from "@/features/summary/summaryStart";
-import { countInFolder, isInsideFolder, normalizeCollection } from "@/features/library/libraryTree";
+import { countInFolder } from "@/features/library/libraryTree";
+import { folderAncestors, folderName, isInsideFolder, normalizeCollection, subfolderPath } from "@/lib/collectionPath";
 import { bulkReport, runBulk } from "@/features/library/bulkOutcome";
 import { forgetPapers, movesRecord, undoLabel } from "@/features/library/undoHistory";
 import { LIBRARY_BUSY } from "@/lib/libraryBusy";
@@ -21,35 +23,24 @@ import { BULK_BUSY_MESSAGE, beginBulk } from "./bulkState";
 import { applyTagChange, createTagQueue } from "@/lib/tagQueue";
 import { forgetDraftsOfPapers } from "@/lib/pendingSaves";
 
-let queryClient: QueryClient | null = null;
-
-export function bindQueryClient(client: QueryClient): void {
-  queryClient = client;
-}
-
 /** Reloads the library (each paper's own query too); the promise settles once the lists shown have been fetched again. */
-export function refreshLibrary(): Promise<unknown> {
-  return Promise.all([
-    queryClient?.invalidateQueries({ queryKey: [QK.papers] }),
-    queryClient?.invalidateQueries({ queryKey: [QK.collections] }),
-  ]);
+export function refreshLibrary(): Promise<void> {
+  return invalidate({ kind: "folders" });
 }
 
-export async function paper(id: string): Promise<PaperData> {
-  return apiRequest<PaperData>("GET", `/api/papers/${id}`);
-}
+export const paper = getPaper;
 
 /**
  * Reloads what the library.changed event reloads (jobEvents.ts): the lists, the library's search and the
  * tag choices. For actions on several papers, which hold that event's reloads until they are done.
  */
-export function refreshAfterChanges(): Promise<unknown> {
-  return Promise.all([refreshLibrary(), ...[QK.librarySearch, QK.tags].map((key) => queryClient?.invalidateQueries({ queryKey: [key] }))]);
+export function refreshAfterChanges(): Promise<void> {
+  return invalidate({ kind: "library" });
 }
 
 /** The paper's name as the library last listed it, for messages about papers that may be gone. */
 export function listedTitle(paperId: string): string {
-  for (const [, data] of queryClient?.getQueriesData<PaperData[]>({ queryKey: [QK.papers, "list"] }) ?? []) {
+  for (const [, data] of queryClient.getQueriesData<PaperData[]>({ queryKey: [QK.papers, "list"] })) {
     const found = data?.find((p) => p.id === paperId);
     if (found) return found.title || found.original_name || paperId;
   }
@@ -75,8 +66,6 @@ export function recordMoves(moves: MoveRecord[]): void {
   if (record) useStore.getState().setMoveHistory([...useStore.getState().moveHistory, record]);
 }
 
-export { normalizeCollection };
-
 // --- Import ---------------------------------------------------------------------------
 
 export async function importPaths(paths: string[], collection?: string): Promise<void> {
@@ -96,8 +85,7 @@ export async function importPaths(paths: string[], collection?: string): Promise
   try {
     // Rows still pending at the end (failure, cancel, lost events) go once the list has caught up.
     await startJob("/api/papers/import", { paths: pdfs, collection: destination }, { kind: "import", paperId: null },
-      () => void Promise.resolve(queryClient?.invalidateQueries({ queryKey: [QK.papers] }))
-        .finally(() => removePendingImports(pdfs)));
+      () => void invalidate({ kind: "imported" }).finally(() => removePendingImports(pdfs)));
   } catch (error) {
     removePendingImports(pdfs);
     showError(error, "PDFを追加できませんでした");
@@ -114,10 +102,8 @@ export async function importPdfs(): Promise<void> {
 export function expandToCollection(collection: string): void {
   const { expandedCollections, setExpandedCollections } = useStore.getState();
   if (expandedCollections === null) return;
-  const parts = collection ? collection.split(" / ") : [];
-  const ancestors = parts.map((_, i) => parts.slice(0, i + 1).join(" / "));
   const next = new Set(expandedCollections);
-  ancestors.forEach((a) => next.add(a));
+  folderAncestors(collection).forEach((a) => next.add(a));
   if (!collection) next.add("");
   setExpandedCollections([...next]);
 }
@@ -128,7 +114,7 @@ export async function movePaper(paperId: string, collection: string, record = tr
   try {
     const previous = normalizeCollection((await paper(paperId)).collection_name || "");
     if (previous === destination) return false;
-    await apiRequest("PATCH", `/api/papers/${paperId}`, { collection: destination });
+    await patchPaper(paperId, { collection: destination });
     if (record) recordMoves([{ paperId, from: previous, to: destination }]);
   } catch (error) {
     showError(error, "分類を変更できませんでした");
@@ -137,8 +123,8 @@ export async function movePaper(paperId: string, collection: string, record = tr
   const current = useStore.getState();
   if (paperId === current.activePaperId && current.selectedFolder === null) current.setCurrentCollection(destination);
   expandToCollection(destination);
-  refreshLibrary();
-  queryClient?.invalidateQueries({ queryKey: [QK.papers, paperId] });
+  // The paper as the sidecar keeps it; its row in the lists, and the folders, follow from paper.changed.
+  void invalidate({ kind: "paper", paperId, collection: true });
   store.setStatus(`「${destination || "未分類"}」へ移動しました。`);
   return true;
 }
@@ -167,7 +153,7 @@ export function currentOrganizing(): number {
 // Tags are sent as differences, each applied in its turn to the tags the sidecar holds (tagQueue.ts).
 const tagQueue = createTagQueue({
   read: async (paperId) => (await paper(paperId)).tags ?? [],
-  write: async (paperId, tags) => { await apiRequest("PATCH", `/api/papers/${paperId}`, { tags }); },
+  write: async (paperId, tags) => { await patchPaper(paperId, { tags }); },
   onWaitingChange: organizingChanged,
 });
 
@@ -189,7 +175,6 @@ export function changePaperTag(paperId: string, tag: string, add: boolean): Prom
  * it cannot answer with the paper as it was afterwards.
  */
 async function showInPaper(paperId: string, change: (paper: PaperData) => PaperData): Promise<void> {
-  if (!queryClient) return;
   await queryClient.cancelQueries({ queryKey: [QK.papers, paperId], exact: true });
   const before = queryClient.getQueryData<PaperData | null>([QK.papers, paperId]);
   if (before) queryClient.setQueryData<PaperData>([QK.papers, paperId], change(before));
@@ -205,7 +190,7 @@ export async function tagPaper(paperId: string, tag: string, add: boolean, { qui
   void showInPaper(paperId, (current) => ({ ...current, tags: applyTagChange(current.tags ?? [], change) }));
   try {
     if (await task === "done") {
-      void queryClient?.invalidateQueries({ queryKey: [QK.tags] });
+      void invalidate({ kind: "paperTags" });
       if (!quiet) useStore.getState().setStatus(add ? `タグ「${tag}」を付けました。` : `タグ「${tag}」を外しました。`);
     }
   } catch (error) {
@@ -213,7 +198,7 @@ export async function tagPaper(paperId: string, tag: string, add: boolean, { qui
     void showInPaper(paperId, (current) => ({ ...current, tags: applyTagChange(current.tags ?? [], { name: tag, add: !add }) }));
     showError(error, add ? "タグを付けられませんでした" : "タグを外せませんでした");
   } finally {
-    void queryClient?.invalidateQueries({ queryKey: [QK.papers, paperId], exact: true });
+    void invalidate({ kind: "paper", paperId });
   }
 }
 
@@ -230,7 +215,7 @@ export function shownStatus(paperId: string, status: string): string {
 /** Sets one paper's reading status (メモ・整理, its context menu); `quiet` as for tagPaper. Whether it was saved. */
 export async function setPaperReadStatus(paperId: string, status: string, { quiet = false } = {}): Promise<boolean> {
   const task = (statusTurns.get(paperId) ?? Promise.resolve()).catch(() => undefined)
-    .then(() => apiRequest("PATCH", `/api/papers/${paperId}`, { read_status: status }));
+    .then(() => patchPaper(paperId, { read_status: status }));
   statusTurns.set(paperId, task);
   waitingStatuses.set(paperId, { status, count: (waitingStatuses.get(paperId)?.count ?? 0) + 1 });
   organizingChanged();
@@ -250,7 +235,7 @@ export async function setPaperReadStatus(paperId: string, status: string, { quie
     showError(error, "読書状態を変更できませんでした");
     return false;
   } finally {
-    void queryClient?.invalidateQueries({ queryKey: [QK.papers, paperId], exact: true });
+    void invalidate({ kind: "paper", paperId });
   }
 }
 
@@ -279,7 +264,7 @@ async function undoLastMove(): Promise<void> {
   }
   if ("kind" in last) {
     try {
-      const result = await apiRequest<{ name: string }>("POST", `/api/collections/restore/${last.token}`);
+      const result = await unwrap(api.POST("/api/collections/restore/{undo_token}", { params: { path: { undo_token: last.token } } }));
       removeRecord();
       expandToCollection(result.name);
       useStore.getState().setSelectedFolder(result.name);
@@ -341,7 +326,7 @@ async function undoMovesOf(record: MovePapersRecord, run: { signal: AbortSignal;
       if (error instanceof ApiError && error.status === 404) return "unchanged";
       throw error;
     }
-    await apiRequest("PATCH", `/api/papers/${move.paperId}`, { collection: move.from });
+    await patchPaper(move.paperId, { collection: move.from });
     return "done";
   }, { stopsAll: stopsAllRequests, progress: run.progress, signal: run.signal });
   const left = new Set([...outcome.failed.map((f) => f.item), ...outcome.notRun]);
@@ -383,9 +368,9 @@ export async function createFolder(parent: string | null): Promise<void> {
     showError("フォルダー名を入力してください。", "フォルダーを作成できませんでした");
     return;
   }
-  const full = parent ? `${parent} / ${name}` : name;
+  const full = subfolderPath(parent ?? "", name);
   try {
-    const result = await apiRequest<{ name: string }>("POST", "/api/collections", { name: full });
+    const result = await unwrap(api.POST("/api/collections", { body: { name: full } }));
     store.setLibrarySearch("");
     expandToCollection(result.name);
     store.setSelectedFolder(result.name);
@@ -399,11 +384,11 @@ export async function createFolder(parent: string | null): Promise<void> {
 
 /** Asks for a new name; the folder's new path once renamed, else null. */
 export async function renameFolder(path: string): Promise<string | null> {
-  const name = await askText("フォルダー名を変更", "新しい名前", path.split(" / ").pop() ?? "");
+  const name = await askText("フォルダー名を変更", "新しい名前", folderName(path));
   if (name === null) return null;
   let destination: string;
   try {
-    destination = (await apiRequest<{ name: string }>("PATCH", "/api/collections/rename", { old_name: path, new_name: name })).name;
+    destination = (await unwrap(api.PATCH("/api/collections/rename", { body: { old_name: path, new_name: name } }))).name;
   } catch (error) {
     showError(error, "名前を変更できませんでした");
     return null;
@@ -421,7 +406,6 @@ export async function renameFolder(path: string): Promise<string | null> {
     expandedCollections: s.expandedCollections?.map(mapped) ?? null,
   });
   refreshLibrary();
-  queryClient?.invalidateQueries({ queryKey: [QK.papers] });
   s.setStatus(`「${path}」を「${destination}」に変更しました。`);
   return destination;
 }
@@ -443,7 +427,7 @@ export async function deleteFolder(path: string, papers: PaperData[] | null): Pr
   let moved: string[] = [];
   let token: string;
   try {
-    const result = await apiRequest<{ moved: string[]; undo_token: string }>("DELETE", `/api/collections/${encodeURIComponent(path)}`);
+    const result = await unwrap(api.DELETE("/api/collections/{name}", { params: { path: { name: path } } })) as { moved?: string[]; undo_token: string };
     moved = result.moved ?? [];
     token = result.undo_token;
   } catch (error) {
@@ -475,8 +459,9 @@ export async function renamePaperFile(paperId: string): Promise<void> {
   const name = await askText("ファイル名を変更", "新しいファイル名（.pdfは自動で付きます）", current.original_name || current.title);
   if (name === null) return;
   try {
-    const result = await apiRequest<{ name: string }>("POST", `/api/papers/${paperId}/rename`, { new_title: name });
-    refreshLibrary();
+    const result = await unwrap(api.POST("/api/papers/{paper_id}/rename", { params: { path: { paper_id: paperId } }, body: { new_title: name } }));
+    // Its row in the lists follows from paper.changed.
+    void invalidate({ kind: "paper", paperId });
     useStore.getState().setStatus(`ファイル名を「${result.name}」に変更しました。取り込み元のファイル名は変更されません。`);
   } catch (error) {
     showError(error, "名前を変更できませんでした");
@@ -496,7 +481,7 @@ export async function deletePaper(paperId: string): Promise<boolean> {
     `「${current.title}」をライブラリから削除しますか？\n訳文・サマリー・チャット履歴・メモも削除され、元に戻せません。`, "削除", true);
   if (!ok) return false;
   try {
-    await apiRequest("DELETE", `/api/papers/${paperId}`);
+    await unwrap(api.DELETE("/api/papers/{paper_id}", { params: { path: { paper_id: paperId } } }));
   } catch (error) {
     showError(error, "削除できませんでした");
     return false;
@@ -542,7 +527,7 @@ export async function saveOriginal(paperId: string): Promise<void> {
     const current = await paper(paperId);
     const destination = await shell.saveFile(paperExportFilename(current, "original"), [{ name: "PDF", extensions: ["pdf"] }]);
     if (!destination) return;
-    await apiRequest("POST", `/api/papers/${paperId}/export`, { kind: "original", destination });
+    await exportRequest(paperId, "original", destination);
     showSaved("原文PDFを保存しました", destination);
   } catch (error) {
     showError(error, "保存できませんでした");
@@ -566,7 +551,8 @@ async function copyWhenReady(text: Promise<string>): Promise<void> {
  * data; after `ready` (the paper's details being saved), which the copy waits for within the click.
  */
 export async function copyBibtex(paperIds: string[], ready: Promise<unknown> = Promise.resolve()): Promise<void> {
-  const request = ready.then(() => apiRequest<{ text: string; count: number }>("POST", "/api/papers/bibtex", { paper_ids: paperIds }));
+  const request = ready.then(async () =>
+    await unwrap(api.POST("/api/papers/bibtex", { body: { paper_ids: paperIds } })) as { text: string; count: number });
   request.catch(() => undefined); // Reported below, not as an unhandled rejection.
   try {
     try {
@@ -587,7 +573,7 @@ export async function exportFolderBibtex(path: string): Promise<void> {
   try {
     const destination = await shell.saveFile(bibtexFilename(path), [{ name: "BibTeX", extensions: ["bib"] }]);
     if (!destination) return;
-    const result = await apiRequest<{ count: number }>("POST", "/api/collections/bibtex", { collection: path, destination });
+    const result = await unwrap(api.POST("/api/collections/bibtex", { body: { collection: path, destination } })) as { count: number };
     useStore.getState().setStatus(`${result.count}件の論文の BibTeX を保存しました：${destination}`);
   } catch (error) {
     showError(error, "BibTeX を保存できませんでした");
@@ -596,8 +582,13 @@ export async function exportFolderBibtex(path: string): Promise<void> {
 
 export type PdfExportKind = "translated" | "interleaved" | "bilingual";
 
+/** POST /api/papers/{id}/export: saved at once, or (a PDF to typeset) a job. */
+function exportRequest(paperId: string, kind: PdfExportKind | "original" | "markdown", destination: string) {
+  return unwrap(api.POST("/api/papers/{paper_id}/export", { params: { path: { paper_id: paperId } }, body: { kind, destination } }));
+}
+
 export async function exportPdf(paperId: string, kind: PdfExportKind): Promise<void> {
-  const reading = queryClient?.getQueryData<ReadingData>([QK.reading, paperId]);
+  const reading = queryClient.getQueryData<ReadingData>([QK.reading, paperId]);
   if (reading?.in_progress) {
     await showMessage("翻訳途中", "指定したページの翻訳が終わると書き出せます。完了したページはアプリ内で確認できます。");
     return;
@@ -610,7 +601,7 @@ export async function exportPdf(paperId: string, kind: PdfExportKind): Promise<v
     const current = await paper(paperId);
     const destination = await shell.saveFile(paperExportFilename(current, kind), [{ name: "PDF", extensions: ["pdf"] }]);
     if (!destination) return;
-    const result = await apiRequest<{ job_id?: string; destination?: string }>("POST", `/api/papers/${paperId}/export`, { kind, destination });
+    const result: { job_id?: string; destination?: string } = await exportRequest(paperId, kind, destination);
     if (result.job_id) {
       showStartedJob(result.job_id, { kind: "export", paperId });
     } else {
@@ -622,7 +613,7 @@ export async function exportPdf(paperId: string, kind: PdfExportKind): Promise<v
 }
 
 export async function exportMarkdown(paperId: string): Promise<void> {
-  const reading = queryClient?.getQueryData<ReadingData>([QK.reading, paperId]);
+  const reading = queryClient.getQueryData<ReadingData>([QK.reading, paperId]);
   if (reading && !reading.has_article) {
     await showMessage("未作成", "先に解説を作成してください。");
     return;
@@ -631,7 +622,7 @@ export async function exportMarkdown(paperId: string): Promise<void> {
     const current = await paper(paperId);
     const destination = await shell.saveFile(paperExportFilename(current, "markdown"), [{ name: "Markdown", extensions: ["md"] }]);
     if (!destination) return;
-    await apiRequest("POST", `/api/papers/${paperId}/export`, { kind: "markdown", destination });
+    await exportRequest(paperId, "markdown", destination);
     showSaved("サマリーを保存しました", destination);
   } catch (error) {
     showError(error, "Markdownを保存できませんでした");

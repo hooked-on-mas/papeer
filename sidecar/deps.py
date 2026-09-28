@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable, Iterator
 from fastapi import Header, HTTPException, Query, status
 
 from papeer.core.config import Settings, api_key_from_env
-from papeer.core.errors import Conflict, NotFound
+from papeer.core.errors import Conflict
 from papeer.core.paths import app_env, data_directory
 from papeer.core.storage import Library, LibraryMissingError, NewerSchemaError, library_missing, missing_library_message
 from papeer.providers import ProviderBackend, check_cancel, create_provider
@@ -214,14 +214,6 @@ def require_library_folder() -> None:
     root = get_data_dir()
     if library_missing(root):
         raise Conflict(missing_library_message(root))
-
-
-def paper_folder(lib: Library, paper_id: str) -> Path:
-    try:
-        lib.paper(paper_id)
-        return lib.folder(paper_id)
-    except (KeyError, ValueError):
-        raise NotFound("論文が見つかりません。") from None
 
 
 # --- Jobs ---

@@ -1,10 +1,9 @@
 import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Copy, Undo2 } from "lucide-react";
 import type { PaperData } from "@/api/hooks";
 import { copyBibtex } from "@/app/actions";
 import { Input } from "@/components/ui/input";
-import { bindMetadataClient, flushDraft, hideDraft, revertField, showDraft, typeField, useMetadataDraft } from "./metadataAutosave";
+import { flushDraft, hideDraft, revertField, showDraft, typeField, useMetadataDraft } from "./metadataAutosave";
 import { metaValues, unsavedFields, type MetaField } from "./paperMetadata";
 
 const FIELDS: { field: MetaField; label: string; placeholder: string; maxLength?: number; spellCheck?: boolean }[] = [
@@ -23,14 +22,12 @@ const FIELDS: { field: MetaField; label: string; placeholder: string; maxLength?
  * whether to close without it.
  */
 export function PaperMetadataForm({ paper, collections }: { paper: PaperData; collections: string[] }) {
-  const queryClient = useQueryClient();
   const paperId = paper.id;
   const server = useMemo(() => metaValues(paper), [paper]);
   const draft = useMetadataDraft(paperId);
   const [focused, setFocused] = useState<MetaField | null>(null);
   const id = useId();
 
-  useEffect(() => bindMetadataClient(queryClient), [queryClient]);
   useEffect(() => showDraft(paperId, server), [paperId, server]);
   useEffect(() => () => void hideDraft(paperId).catch(() => undefined), [paperId]);
 

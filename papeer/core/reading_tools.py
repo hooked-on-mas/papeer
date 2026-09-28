@@ -2,6 +2,7 @@
 portable library snapshots."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from contextlib import closing
 import json
@@ -13,6 +14,7 @@ import sqlite3
 import tempfile
 import threading
 import time
+from typing import TYPE_CHECKING
 import uuid
 import zipfile
 
@@ -25,6 +27,9 @@ from papeer.core.destinations import inside_library
 from papeer.core.errors import Conflict, Invalid
 from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
 from papeer.pdf.pdf_engine import translation_units
+
+if TYPE_CHECKING:
+    from papeer.providers.base import ProviderBackend
 
 __all__ = ["effective_glossary", "validate_revision"]
 
@@ -75,7 +80,7 @@ def template_name(name: str, content: str) -> str:
     return name
 
 
-def validate_terms(terms: list[dict]) -> list[dict[str, str]]:
+def validate_terms(terms: object) -> list[dict[str, str]]:
     if not isinstance(terms, list) or any(not isinstance(item, dict) or
             not isinstance(item.get("source"), str) or not isinstance(item.get("target"), str) for item in terms):
         raise ValueError("辞書には原語（source）と訳語（target）の文字列の一覧が必要です。")
@@ -425,7 +430,7 @@ def find_paragraph(lib: Library, paper_id: str, unit_id: str, expected_text: str
     Invalid when the translation has no such paragraph (a glossary change re-made its units); Conflict when
     its text is no longer `expected_text`, the one the user revised (another window changed it).
     """
-    lib.paper(paper_id)  # NotFound for a paper the library does not have
+    lib.paper_folder(paper_id)  # NotFound for a paper the library does not have
     paragraph = next((item for item in translation_paragraphs(lib, paper_id) if item["id"] == unit_id), None)
     if not paragraph:
         raise Invalid("段落が見つかりません。辞書変更後は再翻訳してください。")
@@ -434,8 +439,9 @@ def find_paragraph(lib: Library, paper_id: str, unit_id: str, expected_text: str
     return paragraph
 
 
-def adopt_revision(lib: Library, paper_id: str, unit_id: str, text: str, provider, cancel: threading.Event,
-                   progress, page_ready, expected_text: str | None = None) -> dict:
+def adopt_revision(lib: Library, paper_id: str, unit_id: str, text: str, provider: ProviderBackend,
+                   cancel: threading.Event, progress: Callable[[str], None], page_ready: Callable[[str, int], None],
+                   expected_text: str | None = None) -> dict:
     """Use `text` (checked by validate_revision) as paragraph `unit_id`'s translation, and record the change.
 
     The paragraph is looked up again (find_paragraph): the translation may have changed since the request.

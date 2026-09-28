@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
-import { apiRequest } from "@/api/client";
+import { api, unwrap } from "@/api/client";
 import { onAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 import { navigateTo } from "./navigation";
@@ -32,14 +32,15 @@ export function ReaderSearch({ paperId, search, setSearch, ownsKey, open, setOpe
   const listRef = useRef<HTMLDivElement>(null);
   const { data: found } = useQuery({
     queryKey: [QK.paperSearch, paperId, search.query, search.side],
-    queryFn: ({ signal }) => apiRequest<{ results: SearchResult[]; total: number; limited: boolean }>(
-      "GET", `/api/papers/${paperId}/search?q=${encodeURIComponent(search.query)}&side=${search.side}`, undefined, { signal }),
+    queryFn: async ({ signal }) => await unwrap(api.GET("/api/papers/{paper_id}/search", {
+      params: { path: { paper_id: paperId }, query: { q: search.query, side: search.side } }, signal })) as { results: SearchResult[]; total: number; limited: boolean },
     enabled: !!search.query.trim(),
   });
   useEffect(() => setInput(search.query), [search.query, paperId]);
   useEffect(() => {
     const timer = setTimeout(() => setSearch({ ...search, query: input }), 250);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- with search, each search set would start the timer again, forever
   }, [input, search.side, paperId]);
   useEffect(() => {
     return onAppEvent("open-reader-search", () => {
@@ -48,7 +49,7 @@ export function ReaderSearch({ paperId, search, setSearch, ownsKey, open, setOpe
       inputRef.current?.focus();
       inputRef.current?.select();
     });
-  }, []);
+  }, [setOpen]);
 
   const showResult = (index: number, results: SearchResult[]) => {
     const item = results[index];
@@ -62,6 +63,7 @@ export function ReaderSearch({ paperId, search, setSearch, ownsKey, open, setOpe
     const delta = pendingStep.current;
     pendingStep.current = 0;
     showResult(stepSearchResult(-1, found.results.length, delta), found.results);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showResult is new on every render; the results arriving are what matter
   }, [found, search.query, search.side]);
   useEffect(() => {
     if (current >= 0) listRef.current?.children[current]?.scrollIntoView({ block: "nearest" });

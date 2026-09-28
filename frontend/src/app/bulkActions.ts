@@ -7,17 +7,20 @@
  * reloads the library once at the end, and can be stopped (bulkState.ts). A single paper (its own context
  * menu, or a selection of one) goes the way it always has (actions.ts).
  */
-import { apiRequest, ApiError } from "@/api/client";
+import { api, ApiError, unwrap } from "@/api/client";
+import { patchPaper } from "@/api/mutations";
 import { askConfirm, askText } from "@/components/AppDialogs";
 import { showError } from "@/components/errorDialog";
 import { clearJobFailure } from "@/features/jobs/jobFailures";
 import { useStore, type MoveRecord } from "@/store";
 import { bulkReport, runBulk, type BulkOutcome, type BulkStep, type BulkWording } from "@/features/library/bulkOutcome";
 import {
-  deletePaper, expandToCollection, forgetPapers, listedTitle, movePaper, normalizeCollection, paper,
+  deletePaper, expandToCollection, forgetPapers, listedTitle, movePaper, paper,
   recordMoves, refreshAfterChanges, setPaperReadStatus, stopsAllRequests, tagPaper, changePaperTag,
 } from "./actions";
 import { MAX_TAG_LENGTH } from "@/features/notes/tagOptions";
+import { normalizeCollection } from "@/lib/collectionPath";
+import { pyStrip } from "@/lib/pyWhitespace";
 import { BULK_BUSY_MESSAGE, beginBulk, isBulkRunning } from "./bulkState";
 import { forgetDraftsOfPapers } from "@/lib/pendingSaves";
 
@@ -55,7 +58,7 @@ export async function movePapers(ids: string[], collection: string): Promise<boo
   const moved = await eachPaper(ids, `「${label}」へ移動中`, async (id) => {
     const previous = normalizeCollection((await paper(id)).collection_name || "");
     if (previous === destination) return "unchanged";
-    await apiRequest("PATCH", `/api/papers/${id}`, { collection: destination });
+    await patchPaper(id, { collection: destination });
     moves.push({ paperId: id, from: previous, to: destination });
     return "done";
   }, {
@@ -102,7 +105,7 @@ export async function tagPapers(ids: string[], tag: string, add: boolean): Promi
  */
 export async function tagPapersWithNew(ids: string[]): Promise<void> {
   const typed = await askText("新しいタグ", ids.length > 1 ? `${ids.length}件の論文に付けるタグの名前` : "論文に付けるタグの名前", "");
-  const name = typed?.trim();
+  const name = typed == null ? "" : pyStrip(typed);
   if (!name) return;
   if (Array.from(name).length > MAX_TAG_LENGTH) {
     showError(`タグ名は${MAX_TAG_LENGTH}文字までです。`, "タグを付けられませんでした");
@@ -119,7 +122,7 @@ export async function setPapersReadStatus(ids: string[], status: string): Promis
   }
   await eachPaper(ids, `読書状態を「${status}」にしています`, async (id) => {
     if (((await paper(id)).read_status ?? "") === status) return "unchanged";
-    await apiRequest("PATCH", `/api/papers/${id}`, { read_status: status });
+    await patchPaper(id, { read_status: status });
     return "done";
   }, {
     done: (n) => `${n}件の論文の読書状態を「${status}」にしました。`,
@@ -150,7 +153,7 @@ export async function deletePapers(ids: string[]): Promise<boolean> {
   if (!ok) return false;
   const deleted = await eachPaper(ids, "削除中", async (id) => {
     try {
-      await apiRequest("DELETE", `/api/papers/${id}`);
+      await unwrap(api.DELETE("/api/papers/{paper_id}", { params: { path: { paper_id: id } } }));
     } catch (error) {
       // Already gone, which is what was asked.
       if (error instanceof ApiError && error.status === 404) return "unchanged";

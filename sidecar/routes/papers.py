@@ -121,7 +121,7 @@ def import_papers(body: ImportRequest) -> JobStarted:
 @router.get("/api/papers/{paper_id}", response_model=Paper, response_model_exclude_unset=True)
 def get_paper(paper_id: str) -> dict[str, Any]:
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     paper = lib.paper(paper_id)
     return {**paper_row(lib, paper), "note": paper["note"]}
 
@@ -129,7 +129,7 @@ def get_paper(paper_id: str) -> dict[str, Any]:
 @router.patch("/api/papers/{paper_id}")
 def update_paper(paper_id: str, body: UpdatePaperRequest) -> dict[str, str]:
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     if body.title is not None and not body.title.strip():
         raise Invalid("タイトルを入力してください。")
     fields = {"title": body.title.strip() if body.title is not None else None, "first_author": body.author,
@@ -148,7 +148,7 @@ def update_paper(paper_id: str, body: UpdatePaperRequest) -> dict[str, str]:
 def paper_opened(paper_id: str) -> dict[str, Any]:
     """The reader opened the paper: remembered on this PC for 最近開いた順, and 未読 becomes 読書中 (mark_opened)."""
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     result = mark_opened(lib, paper_id)
     deps.paper_changed(paper_id, result["fields"])
     return result
@@ -166,7 +166,7 @@ def rename_paper(paper_id: str, body: RenamePaperRequest) -> dict[str, str]:
 def delete_paper(paper_id: str) -> dict[str, str]:
     with deps.job_manager.idle("処理中のジョブがあるため削除できません。", paper_id):
         lib = deps.get_library()
-        deps.paper_folder(lib, paper_id)
+        lib.paper_folder(paper_id)
         lib.delete_paper(paper_id)
     deps.library_changed()
     return {"status": "deleted"}
@@ -185,7 +185,7 @@ def papers_bibtex(body: BibtexRequest) -> dict[str, Any]:
 @router.get("/api/papers/{paper_id}/reading", response_model=ReadingState)
 def get_reading_info(paper_id: str) -> dict[str, Any]:
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     last_page = load_ui_state(deps.get_data_dir()).get("reading_pages", {}).get(paper_id, 0)
     return reading_state.reading_state(lib, paper_id, last_page)
 
@@ -193,21 +193,21 @@ def get_reading_info(paper_id: str) -> dict[str, Any]:
 @router.get("/api/papers/{paper_id}/translation-text/{page}")
 def get_translation_text(paper_id: str, page: int) -> dict[str, list[str]]:
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     return {"blocks": reading_state.translation_text(lib, paper_id, page)}
 
 
 @router.get("/api/papers/{paper_id}/search")
 def search_paper(paper_id: str, q: str = "", side: str = "original") -> dict[str, Any]:
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     return search.search_paper(lib, paper_id, q, side)
 
 
 @router.get("/api/papers/{paper_id}/article", response_model=Article)
 def get_paper_article(paper_id: str) -> dict[str, Any]:
     lib = deps.get_library()
-    files = PaperFiles(deps.paper_folder(lib, paper_id))
+    files = PaperFiles(lib.paper_folder(paper_id))
     if not files.article_md.is_file():
         raise NotFound("サマリー記事がまだ生成されていません。")
     return {"content": files.article_md.read_text("utf-8"), "usage": files.read_json(files.article_usage)}
@@ -224,7 +224,7 @@ SAFE_PAGE_NAME = re.compile(r"^translation-pages/([0-9a-f]{32})/page-(\d+)\.pdf$
 def stream_paper_file(paper_id: str, file_path: str, request: Request) -> Response:
     """A paper's PDF, with HTTP Range support so pdf.js can fetch only the parts it needs."""
     lib = deps.get_library()
-    folder = deps.paper_folder(lib, paper_id).resolve()
+    folder = lib.paper_folder(paper_id).resolve()
 
     normalized = file_path.replace("\\", "/")
     if not (SAFE_FILE_NAME.match(normalized) or SAFE_PAGE_NAME.match(normalized)):
@@ -286,7 +286,7 @@ def stream_paper_file(paper_id: str, file_path: str, request: Request) -> Respon
 @router.get("/api/papers/{paper_id}/media/{name}")
 def get_paper_media(paper_id: str, name: str) -> FileResponse:
     lib = deps.get_library()
-    media = PaperFiles(deps.paper_folder(lib, paper_id).resolve()).media
+    media = PaperFiles(lib.paper_folder(paper_id).resolve()).media
     if not re.fullmatch(r"^[a-zA-Z0-9_\-\.]+\.png$", name):
         raise Invalid("不正な画像名です。")
     media_file = (media / name).resolve()
@@ -301,7 +301,7 @@ def get_paper_media(paper_id: str, name: str) -> FileResponse:
 def _paper_library(paper_id: str):
     """The library, once the paper is known to exist (404 otherwise, as for its other routes)."""
     lib = deps.get_library()
-    deps.paper_folder(lib, paper_id)
+    lib.paper_folder(paper_id)
     return lib
 
 

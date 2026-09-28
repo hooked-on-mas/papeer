@@ -34,7 +34,7 @@ before(async () => {
     root: path(".."),
     logLevel: "error",
     appType: "custom",
-    server: { middlewareMode: true, hmr: false, watch: null },
+    server: { middlewareMode: true, hmr: false, ws: false, watch: null },
     resolve: {
       alias: [
         { find: /^react-pdf\/.*\.css$/, replacement: path("./support/reactPdfStub.mjs") },
@@ -58,6 +58,7 @@ before(async () => {
     useInkPanes: (await load("/src/features/reader/useInkEditor.ts")).useInkPanes,
     SelectionToolbarView: (await load("/src/features/reader/SelectionToolbar.tsx")).SelectionToolbarView,
     StickyNotesTab: (await load("/src/features/reader/StickyNotesTab.tsx")).StickyNotesTab,
+    glossaryEditor: await load("/src/features/reader/GlossaryEditor.tsx"),
     LibrarySidebar: (await load("/src/features/library/LibrarySidebar.tsx")).LibrarySidebar,
     useTreeFocus: (await load("/src/features/library/treeFocus.ts")).useTreeFocus,
     usePaperSelection: (await load("/src/features/library/selectionStore.ts")).usePaperSelection,
@@ -206,6 +207,21 @@ test("the sticky-notes tab lists a highlight by its colour and offers to write t
   assert.match(html, /<mark[^>]*>the energy term<\/mark>/);
   assert.match(html, /メモに書き出す/);
   assert.match(html, /aria-label="付箋・ハイライトで絞り込み"/);
+});
+
+test("the translation dialog's glossary shows the saved glossary until it is edited", () => {
+  const { React, glossaryEditor: { GlossaryEditor, useGlossaryEditor } } = modules;
+  function Glossary() {
+    const editor = useGlossaryEditor("p1");
+    assert.equal(editor.dirty, false);
+    return React.createElement(GlossaryEditor, { editor, transferKey: "p1-true", busy: false, generating: false,
+      canGenerate: true, onGenerate: () => {}, onPending: () => {} });
+  }
+  const html = render(React.createElement(Glossary), {}, {}, [[["glossary"], [{ source: "observer", target: "オブザーバ" }]]]);
+  assert.match(html, /全論文共通の専門用語辞書（(<!-- -->)?1(<!-- -->)?件）/);
+  assert.match(html, /value="observer"/);
+  assert.match(html, /value="オブザーバ"/);
+  assert.match(html, /AIで未登録の専門用語を確認/);
 });
 
 const libraryPapers = [

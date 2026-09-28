@@ -167,9 +167,10 @@ def translation_blocks(document):
         if b['id'] not in groups: result.append(b);continue
         group=groups[b['id']];members=[lookup[k] for k in group['blocks']]
         # Remove only visual line-end hyphenation between block fragments.
+        # (join is called right away, in this pass of the loop: B023 does not apply.)
         def join(key):
-            value=members[0].get(key,members[0]['text']).rstrip()
-            for member in members[1:]:
+            value=members[0].get(key,members[0]['text']).rstrip()  # noqa: B023
+            for member in members[1:]:  # noqa: B023
                 following=member.get(key,member['text']).lstrip()
                 if re.search(r'[A-Za-z]-$',value) and re.match('[a-z]',following): value=value[:-1]+following
                 else: value+='\n'+following

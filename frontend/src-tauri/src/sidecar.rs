@@ -50,7 +50,11 @@ pub struct Sidecar {
     token: String,
 }
 
-pub fn spawn(app: &tauri::App, port: u16, token: &str) -> Result<Sidecar, Box<dyn std::error::Error>> {
+pub fn spawn(
+    app: &tauri::App,
+    port: u16,
+    token: &str,
+) -> Result<Sidecar, Box<dyn std::error::Error>> {
     let (mut events, child) = app
         .shell()
         .sidecar("sidecar")?
@@ -69,7 +73,12 @@ pub fn spawn(app: &tauri::App, port: u16, token: &str) -> Result<Sidecar, Box<dy
         }
         signal.set();
     });
-    Ok(Sidecar { child: Mutex::new(Some(child)), exited, port, token: token.to_string() })
+    Ok(Sidecar {
+        child: Mutex::new(Some(child)),
+        exited,
+        port,
+        token: token.to_string(),
+    })
 }
 
 impl Sidecar {
@@ -92,7 +101,10 @@ impl Sidecar {
         }
         let deadline = Instant::now() + SIDECAR_EXIT_TIMEOUT;
         request_shutdown(self.port, &self.token, SIDECAR_EXIT_TIMEOUT);
-        if !self.exited.wait(deadline.saturating_duration_since(Instant::now())) {
+        if !self
+            .exited
+            .wait(deadline.saturating_duration_since(Instant::now()))
+        {
             let _ = child.kill();
         }
     }

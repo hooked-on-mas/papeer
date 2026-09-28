@@ -92,7 +92,7 @@ def _formula_regions(blocks: list[dict]) -> list[Box]:
         if block.get("kind") == "formula":
             regions.extend(block.get("regions") or [block["bbox"]])
         regions.extend(f["bbox"] for f in block.get("formulas", []))
-    return [tuple(fitz.Rect(r)) for r in regions]
+    return [tuple(fitz.Rect(r)) for r in regions]  # pyright: ignore[reportArgumentType]
 
 
 def _line_chars(line: dict, regions: list[Box]) -> list[tuple[str, bool] | None]:

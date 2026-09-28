@@ -45,11 +45,11 @@ def claude_failure(result: dict, stderr: str = "") -> RuntimeError:
     only an API error or dropped connection known to pass (API Error 5xx/529, overloaded,
     ECONNRESET, ...) is sent again.
     """
-    text = result.get("result") if isinstance(result.get("result"), str) else ""
+    text = result["result"] if isinstance(result.get("result"), str) else ""
     subtype = str(result.get("subtype") or "")
     detail = text or subtype
     evidence = "\n".join((stderr, text, subtype))
-    usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+    usage = result["usage"] if isinstance(result.get("usage"), dict) else {}
     if not lasting_cli_failure(evidence) and (subtype.startswith("error_max_") or to_int(usage.get("output_tokens")) > 0):
         return AnswerRejected("Claude Codeの回答を使えませんでした。\n" + detail[-1800:])
     return cli_failure("Claude Code", detail, evidence, known_temporary_only=True)
@@ -133,7 +133,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                 return output  # an older CLI that printed plain text
             if result.get("is_error") or not isinstance(result.get("result"), str):
                 raise claude_failure(result)
-            usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+            usage = result["usage"] if isinstance(result.get("usage"), dict) else {}
             cache_read = to_int(usage.get("cache_read_input_tokens"))
             self.usage.add(
                 input_tokens=to_int(usage.get("input_tokens")) + to_int(usage.get("cache_creation_input_tokens")) + cache_read,
@@ -158,7 +158,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                     if m_id and m_id not in seen:
                         models.append((m_id, f"{m_id} ({m.get('name') or m_id})"))
                         seen.add(m_id)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - the list is only a help: without it, the usual models.
             pass
         return models or list(_FALLBACK_MODELS)
 
@@ -170,6 +170,6 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                     options = [(o["id"], o["id"]) for o in m.get("thinking", {}).get("effort_options", [])
                                if o.get("id") in REASONING_EFFORTS]
                     break
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - the list is only a help: without it, the usual efforts.
             pass
         return [("", "既定値（モデル・CLIに任せる）")] + (options or [(e, e) for e in _FALLBACK_EFFORTS])

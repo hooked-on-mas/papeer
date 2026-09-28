@@ -28,7 +28,7 @@ def remove_unused_translation_runs() -> None:
     """Page previews of translations that stopped when the app was forced to close; see remove_unused_translation_runs."""
     try:
         translation_preview.remove_unused_translation_runs(deps.get_data_dir())
-    except Exception as exc:  # Never a reason not to start (an odd library folder included): the next launch tries again.
+    except Exception as exc:  # noqa: BLE001 - never a reason not to start (an odd library folder included): the next launch tries again.
         print(f"警告: 翻訳の一時ファイルを掃除できませんでした: {exc!r}", file=sys.stderr)
 
 
@@ -194,7 +194,7 @@ async def ws_events(websocket: WebSocket, token: str | None = Query(None)) -> No
             if send_task in done:
                 event = await send_task
                 await websocket.send_text(json.dumps(event, ensure_ascii=False))
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - the window went away mid-send: the listener is removed below.
         pass
     finally:
         manager.remove_listener(queue)
