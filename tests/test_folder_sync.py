@@ -189,3 +189,76 @@ def test_open_library_refuses_a_malformed_revision(tmp_path):
     with pytest.raises(ValueError, match="ID"):
         with sync.FolderDrive(folder).open_library("../x"):
             pass
+
+
+def test_broken_or_unwritable_sync_folder_is_refused_for_the_user(tmp_path, monkeypatch):
+    from papeer.core.errors import Invalid
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    lib = Library(tmp_path / "data")
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / ("0" * 32 + ".papeer-sync")).write_bytes(b"not a zip archive")
+    with pytest.raises(Invalid, match="壊れているため"):
+        sync.connect(lib.root, str(broken))
+    (tmp_path / "a-file").write_text("not a folder")
+    with pytest.raises(Invalid):
+        sync.connect(lib.root, str(tmp_path / "a-file"))
+    assert not sync.status(lib.root)["connected"]
+
+
+def test_auto_sync_option_and_check_of_the_chosen_folder(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    lib = Library(tmp_path / "data")
+    assert sync.check_connected(lib.root) == {"action": "none", "local_version": None}
+    sync.connect(lib.root, str(tmp_path / "drive"))
+    assert sync.set_auto_sync(lib.root, False)["auto_sync"] is False
+    assert sync.read_state(lib.root)["auto_sync"] is False
+    assert sync.set_auto_sync(lib.root, True)["auto_sync"] is True
+    assert sync.check_connected(lib.root)["action"] in {"none", "quiet"}
+
+    def unreadable(root, remote):
+        raise OSError("the folder is still arriving")
+    monkeypatch.setattr(sync, "check", unreadable)
+    assert sync.check_connected(lib.root) == {"action": "quiet", "local_version": None}
+
+
+def test_sync_of_the_chosen_folder_records_its_failure(tmp_path, monkeypatch):
+    from papeer.providers import Cancelled
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    lib = Library(tmp_path / "data")
+    never = threading.Event()
+    with pytest.raises(ValueError, match="同期フォルダーを指定してください"):
+        sync.sync_connected(lib.root, never, lambda _: None)
+    assert sync.status(lib.root)["error"] == "同期フォルダーを指定してください。"
+
+    folder = tmp_path / "drive"
+    sync.connect(lib.root, str(folder))
+    assert sync.status(lib.root)["error"] is None
+    assert sync.sync_connected(lib.root, never, lambda _: None)["status"] == "synced"
+    shutil.rmtree(folder)
+    with pytest.raises(ValueError, match="見つかりません") as failed:
+        sync.sync_connected(lib.root, never, lambda _: None)
+    assert sync.status(lib.root)["error"] == str(failed.value)
+    folder.mkdir()
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("disk gone")
+    monkeypatch.setattr(sync, "sync", broken)
+    with pytest.raises(ValueError) as failed:
+        sync.sync_connected(lib.root, never, lambda _: None)
+    assert str(failed.value) == sync.SYNC_FAILED == sync.status(lib.root)["error"]
+
+    # Stopping is not a failure: the last error stays as it was, and nothing new is recorded.
+    sync.set_auto_sync(lib.root, True)
+    state = sync.read_state(lib.root)
+    state["error"] = None
+    sync.save_state(lib.root, state)
+
+    def stopped(*_args, **_kwargs):
+        raise Cancelled("中止")
+    monkeypatch.setattr(sync, "sync", stopped)
+    with pytest.raises(Cancelled, match=sync.SYNC_CANCELLED):
+        sync.sync_connected(lib.root, never, lambda _: None)
+    assert sync.status(lib.root)["error"] is None

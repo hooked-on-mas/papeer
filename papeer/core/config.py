@@ -101,6 +101,18 @@ class Settings:
         values = {k: v for k, v in values.items() if k in cls.__dataclass_fields__}
         return cls(**values)
 
+    def updated(self, values: dict) -> "Settings":
+        """These settings with `values` (any of the fields, as the settings dialog sends them) applied.
+
+        A field left out keeps its value; provider_options are merged key by key within each connection,
+        so the dialog may send only what it shows.
+        """
+        values = dict(values)
+        options = dict(self.provider_options)
+        for provider, sent in values.pop("provider_options", {}).items():
+            options[provider] = {**options.get(provider, {}), **sent}
+        return Settings.from_values({**asdict(self), **values, "provider_options": options})
+
     @classmethod
     def load(cls, root: Path) -> "Settings":
         """The library's settings with this PC's connection options (cli_path, base_url) laid over them.
@@ -198,7 +210,16 @@ def _read_library_file(root: Path) -> dict:
     return json.loads(path.read_text("utf-8")) if path.exists() else {}
 
 
+# The device-file warnings already printed: Settings.load runs on almost every request, and a broken or
+# unwritable device file would otherwise print the same warning each time. Cleared once it is usable again.
+_warned: set[str] = set()
+
+
 def _warn(message: str) -> None:
+    """Print a warning about the device file, once for as long as the same problem lasts."""
+    if message in _warned:
+        return
+    _warned.add(message)
     print(f"警告: {message}", file=sys.stderr)
 
 
@@ -221,6 +242,7 @@ def _load_device_options(root: Path) -> dict[str, dict[str, str]]:
             _warn(f"PCごとの設定（{path}）の形式が不正なため、CLIのパスとAPI URLは既定値を使います。")
             return {}
         if device.get("migrated"):
+            _warned.clear()  # Readable again: a later problem is worth a warning.
             return _stored_device_options(device)
         # Read the library again under the lock, so a save in between is not overwritten with older values.
         stored = _read_library_file(root)
@@ -232,6 +254,7 @@ def _load_device_options(root: Path) -> dict[str, dict[str, str]]:
         except OSError as exc:
             _warn(f"PCごとの設定（{path}）を保存できませんでした。次回もう一度移行します: {exc!r}")
             return options
+        _warned.clear()
         if from_library:
             # Take them out of the library too, so backups and sync no longer carry them.
             values = {k: v for k, v in values.items() if k in Settings.__dataclass_fields__ and k != "api_key"}

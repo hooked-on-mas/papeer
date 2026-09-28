@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { paperTranslationStatus, storedStatusLabel } from "../src/lib/paperStatus.ts";
 import type { OcrPage, PaperData, ReadingData } from "../src/api/hooks.ts";
+import { paperData } from "./support/paperData.ts";
 
-const paper: PaperData = { id: "paper", title: "Paper", pages: 12, translated_count: 0 };
+const paper: PaperData = paperData({ id: "paper", title: "Paper", pages: 12, translated_count: 0 });
 
 test("distinguishes untranslated, partial, completed, and incomplete text", () => {
   assert.equal(paperTranslationStatus(paper, false).status, "untranslated");

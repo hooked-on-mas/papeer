@@ -139,12 +139,10 @@ def check_health(body: Any, expected_version: str, expected_code: str) -> None:
                            "exe が古い可能性があります。`just build-sidecar` で作り直してください。")
 
 
-def job_outcome(jobs: Any, job_id: str) -> dict[str, Any] | None:
-    """The finished job, None while it runs; SmokeFailure when it failed, was cancelled or is gone."""
-    listed = jobs if isinstance(jobs, list) else []
-    job = next((item for item in listed if isinstance(item, dict) and item.get("job_id") == job_id), None)
-    if job is None:
-        raise SmokeFailure(f"ジョブ {job_id} がジョブ一覧にありません。")
+def job_outcome(job: Any, job_id: str) -> dict[str, Any] | None:
+    """The finished job from GET /api/jobs/{job_id}, None while it runs; SmokeFailure when it failed or was cancelled."""
+    if not isinstance(job, dict) or job.get("job_id") != job_id:
+        raise SmokeFailure(f"ジョブ {job_id} の応答が不正です: {job!r}")
     if job.get("running"):
         return None
     if job.get("status") != "succeeded":
@@ -365,11 +363,11 @@ class Smoke:
             time.sleep(0.25)
 
     def wait_for_job(self, job_id: str) -> dict[str, Any]:
-        # Finished jobs stay in the list for 5 s (sidecar/jobs.py), far longer than one poll.
+        # The sidecar keeps the last finished jobs (FINISHED_JOBS_KEPT in sidecar/jobs.py).
         deadline = time.monotonic() + JOB_TIMEOUT
         while True:
             self.alive()
-            job = job_outcome(self.client.call("GET", "/api/jobs"), job_id)
+            job = job_outcome(self.client.call("GET", f"/api/jobs/{job_id}"), job_id)
             if job is not None:
                 return job
             if time.monotonic() > deadline:

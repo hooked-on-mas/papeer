@@ -150,15 +150,21 @@ def parse_json_answer(text: str, schema: dict | None = None) -> dict:
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
     if fenced:
         text = fenced[1]
+    unusable = "AIの応答から指定した形式のJSONを取り出せませんでした。"
     try:
         value = json.loads(text)
     except ValueError:
+        # Reported in words (a plain ValueError), not as json's English JSONDecodeError, which the sidecar
+        # treats as a bug when a job fails on it (sidecar/errors.py).
         start, end = text.find("{"), text.rfind("}")
         if start < 0 or end <= start:
-            raise
-        value = json.loads(text[start:end + 1])
+            raise ValueError(unusable) from None
+        try:
+            value = json.loads(text[start:end + 1])
+        except ValueError:
+            raise ValueError(unusable) from None
         if not isinstance(value, dict) or (schema is not None and not matches_schema(value, schema)):
-            raise ValueError("AIの応答から指定した形式のJSONを取り出せませんでした。") from None
+            raise ValueError(unusable) from None
     if not isinstance(value, dict):
         raise ValueError("AIの応答がJSONオブジェクトではありません。")
     return value

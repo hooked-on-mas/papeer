@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pymupdf as fitz
 from papeer.core.exports import interleaved_cache
 from papeer.core.paths import PaperFiles
-from papeer.core.review_publish import REVIEW_BACKUPS_KEPT, apply_review, prune_review_backups
+from tools.review_publish import REVIEW_BACKUPS_KEPT, apply_review, prune_review_backups
 from papeer.translation.translation_preview import remove_unused_runs, translated_page_numbers, translated_page
 from papeer.pdf.pdf_engine import extract_pdf, translation_units
 from papeer.core import fileio
@@ -161,7 +161,7 @@ class ReviewPublishTests(unittest.TestCase):
             root=Path(temporary); folder=self.prepare(root)
             receipts=[]
             for _ in range(REVIEW_BACKUPS_KEPT+2):
-                with patch('papeer.core.review_publish.datetime') as clock:
+                with patch('tools.review_publish.datetime') as clock:
                     clock.now.return_value=datetime(2026,9,1,tzinfo=timezone.utc)+timedelta(minutes=len(receipts))
                     receipts+=apply_review(root/'papers',root/'review')
             backups=sorted(p.name for p in (folder/'review-backups').iterdir())

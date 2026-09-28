@@ -7,8 +7,9 @@ import {
   selectRange, toggleSelection, type PaperSelection,
 } from "../src/features/library/paperSelection.ts";
 import type { PaperData } from "../src/api/hooks.ts";
+import { paperData } from "./support/paperData.ts";
 
-const paper = (id: string, collection_name = ""): PaperData => ({ id, title: id, collection_name });
+const paper = (id: string, collection_name = ""): PaperData => paperData({ id, collection_name });
 
 // Bio (closed) > b1; ML > Vision > v1; ML > m1, m2; 未分類 > u1, u2.
 const papers = [paper("m1", "ML"), paper("m2", "ML"), paper("v1", "ML / Vision"), paper("b1", "Bio"), paper("u1"), paper("u2")];

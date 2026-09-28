@@ -42,7 +42,7 @@ def test_legacy_notes_migrate_and_new_positions_survive_reopen(notes_env):
         assert items[0]["anchor_x"] == .8
         assert items[0]["anchor_y"] == .65
         assert client.get(f"/api/papers/{alpha}/sticky-notes").json()[0]["id"] == old["id"]
-        assert client.get(f"/api/papers/{beta}/bookmarks").json()[0]["id"] == new.json()["id"]
+        assert client.get(f"/api/papers/{beta}/sticky-notes").json()[0]["id"] == new.json()["id"]
     assert Library(lib.root).bookmarks(beta)[0]["anchor_x"] == .8
 
 
@@ -143,5 +143,5 @@ def test_invalid_highlights_are_refused(notes_env, change):
 def test_highlight_colours_match_the_request_schema():
     from typing import get_args
     from papeer.core.storage import HIGHLIGHT_COLORS
-    from sidecar.schemas import HighlightColor
+    from sidecar.schemas.papers import HighlightColor
     assert set(get_args(HighlightColor)) == set(HIGHLIGHT_COLORS)

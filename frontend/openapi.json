@@ -8,6 +8,7 @@
     "/shutdown": {
       "post": {
         "summary": "Shutdown",
+        "description": "Stop every job, wait for them (bounded), answer, then exit.\n\nThe caller waits for this response, so by the time it arrives nothing is writing any more;\nnew jobs are refused from the first moment.",
         "operationId": "shutdown_shutdown_post",
         "parameters": [
           {
@@ -50,9 +51,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
+                  "additionalProperties": true,
                   "title": "Response Shutdown Shutdown Post"
                 }
               }
@@ -210,6 +209,7 @@
     "/api/jobs": {
       "get": {
         "summary": "Get Jobs",
+        "description": "The running jobs; how a finished one ended is GET /api/jobs/{job_id}.",
         "operationId": "get_jobs_api_jobs_get",
         "parameters": [
           {
@@ -253,8 +253,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "$ref": "#/components/schemas/JobInfo"
                   },
                   "title": "Response Get Jobs Api Jobs Get"
                 }
@@ -323,6 +322,78 @@
                     "type": "integer"
                   },
                   "title": "Response Cancel All Jobs Api Jobs Cancel All Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}": {
+      "get": {
+        "summary": "Get Job",
+        "description": "A running job, or one of the last finished ones (jobs.FINISHED_JOBS_KEPT) with its result or error.",
+        "operationId": "get_job_api_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobInfo"
                 }
               }
             }
@@ -459,7 +530,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SettingsModel"
+                  "$ref": "#/components/schemas/SettingsModel-Output"
                 }
               }
             }
@@ -519,7 +590,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SettingsModel"
+                "$ref": "#/components/schemas/SettingsModel-Input"
               }
             }
           }
@@ -901,10 +972,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    }
+                    "$ref": "#/components/schemas/ProviderOption"
                   },
                   "title": "Response Get Provider Models Api Providers  Provider  Models Get"
                 }
@@ -1011,10 +1079,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    }
+                    "$ref": "#/components/schemas/ProviderOption"
                   },
                   "title": "Response Get Provider Efforts Api Providers  Provider  Efforts Get"
                 }
@@ -1176,11 +1241,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Provider Check Api Providers Check Post"
+                  "$ref": "#/components/schemas/JobStarted"
                 }
               }
             }
@@ -1245,8 +1306,7 @@
                 "schema": {
                   "anyOf": [
                     {
-                      "type": "object",
-                      "additionalProperties": true
+                      "$ref": "#/components/schemas/UsageLimits"
                     },
                     {
                       "type": "null"
@@ -1273,6 +1333,7 @@
     "/api/papers": {
       "get": {
         "summary": "List Papers",
+        "description": "Every paper's row (without the memo); `sort` is a LibrarySort.",
         "operationId": "list_papers_api_papers_get",
         "parameters": [
           {
@@ -1336,8 +1397,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "$ref": "#/components/schemas/PaperRow"
                   },
                   "title": "Response List Papers Api Papers Get"
                 }
@@ -1411,106 +1471,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Import Papers Api Papers Import Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/papers/upload": {
-      "post": {
-        "tags": [
-          "Papers"
-        ],
-        "summary": "Upload Paper",
-        "operationId": "upload_paper_api_papers_upload_post",
-        "parameters": [
-          {
-            "name": "collection",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Collection"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_upload_paper_api_papers_upload_post"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Upload Paper Api Papers Upload Post"
+                  "$ref": "#/components/schemas/JobStarted"
                 }
               }
             }
@@ -1581,9 +1542,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Paper Api Papers  Paper Id  Get"
+                  "$ref": "#/components/schemas/Paper"
                 }
               }
             }
@@ -1757,6 +1716,78 @@
         }
       }
     },
+    "/api/papers/{paper_id}/opened": {
+      "post": {
+        "summary": "Paper Opened",
+        "description": "The reader opened the paper: remembered on this PC for \u6700\u8fd1\u958b\u3044\u305f\u9806, and \u672a\u8aad becomes \u8aad\u66f8\u4e2d (mark_opened).",
+        "operationId": "paper_opened_api_papers__paper_id__opened_post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperOpened"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/papers/{paper_id}/rename": {
       "post": {
         "summary": "Rename Paper",
@@ -1842,6 +1873,81 @@
         }
       }
     },
+    "/api/papers/bibtex": {
+      "post": {
+        "summary": "Papers Bibtex",
+        "description": "BibTeX entries of the papers, to copy; made from the library's own data (nothing is looked up online).",
+        "operationId": "papers_bibtex_api_papers_bibtex_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BibtexRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Papers Bibtex Api Papers Bibtex Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/papers/{paper_id}/reading": {
       "get": {
         "summary": "Get Reading Info",
@@ -1895,9 +2001,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Reading Info Api Papers  Paper Id  Reading Get"
+                  "$ref": "#/components/schemas/ReadingState"
                 }
               }
             }
@@ -1985,88 +2089,6 @@
                     }
                   },
                   "title": "Response Get Translation Text Api Papers  Paper Id  Translation Text  Page  Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/papers/{paper_id}/reading-blocks/{page}": {
-      "get": {
-        "summary": "Get Reading Blocks",
-        "operationId": "get_reading_blocks_api_papers__paper_id__reading_blocks__page__get",
-        "parameters": [
-          {
-            "name": "paper_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Paper Id"
-            }
-          },
-          {
-            "name": "page",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Page"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Reading Blocks Api Papers  Paper Id  Reading Blocks  Page  Get"
                 }
               }
             }
@@ -2230,9 +2252,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Paper Article Api Papers  Paper Id  Article Get"
+                  "$ref": "#/components/schemas/Article"
                 }
               }
             }
@@ -2301,11 +2321,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Generate Article Api Papers  Paper Id  Article Post"
+                  "$ref": "#/components/schemas/JobStarted"
                 }
               }
             }
@@ -2526,167 +2542,9 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "$ref": "#/components/schemas/LibraryStickyNote"
                   },
                   "title": "Response Get Sticky Notes Api Sticky Notes Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/papers/{paper_id}/bookmarks": {
-      "get": {
-        "summary": "Get Bookmarks",
-        "operationId": "get_bookmarks_api_papers__paper_id__bookmarks_get",
-        "parameters": [
-          {
-            "name": "paper_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Paper Id"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": true
-                  },
-                  "title": "Response Get Bookmarks Api Papers  Paper Id  Bookmarks Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "summary": "Add Bookmark",
-        "operationId": "add_bookmark_api_papers__paper_id__bookmarks_post",
-        "parameters": [
-          {
-            "name": "paper_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Paper Id"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BookmarkRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Add Bookmark Api Papers  Paper Id  Bookmarks Post"
                 }
               }
             }
@@ -2759,8 +2617,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "$ref": "#/components/schemas/StickyNote"
                   },
                   "title": "Response Get Bookmarks Api Papers  Paper Id  Sticky Notes Get"
                 }
@@ -2841,183 +2698,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Add Bookmark Api Papers  Paper Id  Sticky Notes Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/papers/{paper_id}/bookmarks/{bookmark_id}": {
-      "delete": {
-        "summary": "Delete Bookmark",
-        "operationId": "delete_bookmark_api_papers__paper_id__bookmarks__bookmark_id__delete",
-        "parameters": [
-          {
-            "name": "paper_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Paper Id"
-            }
-          },
-          {
-            "name": "bookmark_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Bookmark Id"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "boolean"
-                  },
-                  "title": "Response Delete Bookmark Api Papers  Paper Id  Bookmarks  Bookmark Id  Delete"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "summary": "Update Bookmark",
-        "operationId": "update_bookmark_api_papers__paper_id__bookmarks__bookmark_id__patch",
-        "parameters": [
-          {
-            "name": "paper_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Paper Id"
-            }
-          },
-          {
-            "name": "bookmark_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Bookmark Id"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BookmarkEditRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Update Bookmark Api Papers  Paper Id  Bookmarks  Bookmark Id  Patch"
+                  "$ref": "#/components/schemas/StickyNote"
                 }
               }
             }
@@ -3189,171 +2870,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Update Bookmark Api Papers  Paper Id  Sticky Notes  Bookmark Id  Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/papers/{paper_id}/glossary": {
-      "get": {
-        "summary": "Get Glossary",
-        "operationId": "get_glossary_api_papers__paper_id__glossary_get",
-        "parameters": [
-          {
-            "name": "paper_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Paper Id"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  },
-                  "title": "Response Get Glossary Api Papers  Paper Id  Glossary Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "summary": "Put Glossary",
-        "operationId": "put_glossary_api_papers__paper_id__glossary_put",
-        "deprecated": true,
-        "parameters": [
-          {
-            "name": "paper_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Paper Id"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GlossaryRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "integer"
-                  },
-                  "title": "Response Put Glossary Api Papers  Paper Id  Glossary Put"
+                  "$ref": "#/components/schemas/StickyNote"
                 }
               }
             }
@@ -3587,6 +3104,81 @@
         }
       }
     },
+    "/api/collections/bibtex": {
+      "post": {
+        "summary": "Export Collection Bibtex",
+        "description": "Save the BibTeX entries of a folder's papers (with its subfolders') to a .bib file outside the library.",
+        "operationId": "export_collection_bibtex_api_collections_bibtex_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BibtexExportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Export Collection Bibtex Api Collections Bibtex Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/collections/{name}": {
       "delete": {
         "summary": "Delete Collection",
@@ -3643,6 +3235,81 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Delete Collection Api Collections  Name  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/collections/restore/{undo_token}": {
+      "post": {
+        "summary": "Restore Collection",
+        "operationId": "restore_collection_api_collections_restore__undo_token__post",
+        "parameters": [
+          {
+            "name": "undo_token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Undo Token"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Restore Collection Api Collections Restore  Undo Token  Post"
                 }
               }
             }
@@ -3723,11 +3390,107 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/papers/{paper_id}/translation-plan": {
+      "get": {
+        "summary": "Translation Plan",
+        "description": "What POST .../translate with the same pages and model would send to the model; nothing runs.",
+        "operationId": "translation_plan_api_papers__paper_id__translation_plan_get",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "pages",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Pages"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
                   "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Translate Paper Api Papers  Paper Id  Translate Post"
+                  "additionalProperties": true,
+                  "title": "Response Translation Plan Api Papers  Paper Id  Translation Plan Get"
                 }
               }
             }
@@ -3800,8 +3563,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "$ref": "#/components/schemas/ChatMessage"
                   },
                   "title": "Response Get Paper Messages Api Papers  Paper Id  Messages Get"
                 }
@@ -3884,11 +3646,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Ask Paper Api Papers  Paper Id  Ask Post"
+                  "$ref": "#/components/schemas/JobStarted"
                 }
               }
             }
@@ -4045,11 +3803,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Prepare Interleaved Api Papers  Paper Id  Interleaved Post"
+                  "$ref": "#/components/schemas/JobStarted"
                 }
               }
             }
@@ -5324,7 +5078,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
               }
             }
           },
@@ -5541,7 +5297,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
               }
             }
           },
@@ -5620,7 +5378,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
               }
             }
           },
@@ -5768,7 +5528,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
               }
             }
           },
@@ -5828,7 +5590,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BackupRequest"
+                "$ref": "#/components/schemas/RestoreRequest"
               }
             }
           }
@@ -5838,7 +5600,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
               }
             }
           },
@@ -5928,85 +5692,6 @@
       "post": {
         "summary": "Capture",
         "operationId": "capture_api_papers__paper_id__ink_capture_v2_post",
-        "parameters": [
-          {
-            "name": "paper_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Paper Id"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/InkCaptureRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/papers/{paper_id}/ink-capture": {
-      "post": {
-        "summary": "Capture",
-        "operationId": "capture_api_papers__paper_id__ink_capture_post",
         "parameters": [
           {
             "name": "paper_id",
@@ -6272,196 +5957,6 @@
         }
       }
     },
-    "/api/papers/{paper_id}/ink/{side}/{page}": {
-      "get": {
-        "summary": "Get Ink",
-        "operationId": "get_ink_api_papers__paper_id__ink__side___page__get",
-        "parameters": [
-          {
-            "name": "paper_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Paper Id"
-            }
-          },
-          {
-            "name": "side",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "enum": [
-                "original",
-                "translated"
-              ],
-              "type": "string",
-              "title": "Side"
-            }
-          },
-          {
-            "name": "page",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Page"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "summary": "Put Ink",
-        "operationId": "put_ink_api_papers__paper_id__ink__side___page__put",
-        "parameters": [
-          {
-            "name": "paper_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Paper Id"
-            }
-          },
-          {
-            "name": "side",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "enum": [
-                "original",
-                "translated"
-              ],
-              "type": "string",
-              "title": "Side"
-            }
-          },
-          {
-            "name": "page",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Page"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/InkPageRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/papers/{paper_id}/ink-export": {
       "post": {
         "summary": "Export Ink",
@@ -6541,6 +6036,578 @@
         }
       }
     },
+    "/api/drive": {
+      "get": {
+        "summary": "Drive Status",
+        "operationId": "drive_status_api_drive_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Disconnect",
+        "operationId": "disconnect_api_drive_delete",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Options",
+        "operationId": "options_api_drive_put",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OptionsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/drive/folder": {
+      "post": {
+        "summary": "Select Folder",
+        "operationId": "select_folder_api_drive_folder_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/drive/review": {
+      "delete": {
+        "summary": "Dismiss Review",
+        "description": "\u300c\u540c\u671f\u3057\u306a\u3044\u300d on a sync that stopped for review: automatic sync stops until turned on again.",
+        "operationId": "dismiss_review_api_drive_review_delete",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/drive/new-library": {
+      "post": {
+        "summary": "Start New Library",
+        "description": "The data folder of a synced library is gone and the user chose to start a new, empty one.",
+        "operationId": "start_new_library_api_drive_new_library_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/drive/side-backups": {
+      "get": {
+        "summary": "Side Backups",
+        "description": "The libraries a choice between two left out (drive_sync.side_backups), restored through POST /api/restore.",
+        "operationId": "side_backups_api_drive_side_backups_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/drive/check": {
+      "get": {
+        "summary": "Check",
+        "description": "Whether the automatic sync has anything to do, and whether it would reload the page (drive_sync.check).\n\nUnlike a sync it does not hold the library, so the user's edits go on while it looks. Being an\nordinary library request, a sync or backup waits for it to finish, and it is refused while one runs.",
+        "operationId": "check_api_drive_check_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/drive/sync": {
+      "post": {
+        "summary": "Sync",
+        "operationId": "sync_api_drive_sync_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health",
@@ -6562,6 +6629,55 @@
   },
   "components": {
     "schemas": {
+      "Article": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content",
+          "usage"
+        ],
+        "title": "Article",
+        "description": "GET /api/papers/{paper_id}/article: the summary article, and what generating it used (None if unknown)."
+      },
+      "ArticleResult": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "ArticleResult"
+      },
       "AskAttachment": {
         "properties": {
           "page": {
@@ -6679,6 +6795,29 @@
         ],
         "title": "AskRequest"
       },
+      "AskResult": {
+        "properties": {
+          "answer": {
+            "type": "string",
+            "title": "Answer"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "answer"
+        ],
+        "title": "AskResult"
+      },
       "BackupRequest": {
         "properties": {
           "path": {
@@ -6692,33 +6831,80 @@
         ],
         "title": "BackupRequest"
       },
-      "Body_upload_paper_api_papers_upload_post": {
+      "BackupResult": {
         "properties": {
-          "file": {
+          "path": {
             "type": "string",
-            "contentMediaType": "application/octet-stream",
-            "title": "File"
+            "title": "Path"
           }
         },
         "type": "object",
         "required": [
-          "file"
+          "path"
         ],
-        "title": "Body_upload_paper_api_papers_upload_post"
+        "title": "BackupResult"
+      },
+      "BibtexExportRequest": {
+        "properties": {
+          "collection": {
+            "type": "string",
+            "title": "Collection"
+          },
+          "destination": {
+            "type": "string",
+            "title": "Destination"
+          }
+        },
+        "type": "object",
+        "required": [
+          "collection",
+          "destination"
+        ],
+        "title": "BibtexExportRequest"
+      },
+      "BibtexRequest": {
+        "properties": {
+          "paper_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Paper Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "paper_ids"
+        ],
+        "title": "BibtexRequest"
       },
       "BookmarkEditRequest": {
         "properties": {
           "label": {
-            "type": "string",
-            "maxLength": 40,
-            "title": "Label",
-            "default": "重要"
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
           },
           "note": {
-            "type": "string",
-            "maxLength": 1000,
-            "title": "Note",
-            "default": ""
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
           },
           "anchor_x": {
             "anyOf": [
@@ -6745,6 +6931,24 @@
               }
             ],
             "title": "Anchor Y"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "yellow",
+                  "green",
+                  "blue",
+                  "pink",
+                  "purple"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
           }
         },
         "type": "object",
@@ -6767,7 +6971,7 @@
           "label": {
             "type": "string",
             "title": "Label",
-            "default": "重要"
+            "default": "\u91cd\u8981"
           },
           "note": {
             "type": "string",
@@ -6787,6 +6991,67 @@
             "minimum": 0.0,
             "title": "Anchor X",
             "default": 0
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "note",
+              "highlight"
+            ],
+            "title": "Kind",
+            "default": "note"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "yellow",
+                  "green",
+                  "blue",
+                  "pink",
+                  "purple"
+                ]
+              },
+              {
+                "type": "string",
+                "const": ""
+              }
+            ],
+            "title": "Color",
+            "default": ""
+          },
+          "rects": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "number",
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                },
+                {
+                  "type": "number",
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                },
+                {
+                  "type": "number",
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                },
+                {
+                  "type": "number",
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                }
+              ],
+              "type": "array",
+              "maxItems": 4,
+              "minItems": 4
+            },
+            "type": "array",
+            "maxItems": 400,
+            "title": "Rects"
           }
         },
         "type": "object",
@@ -6796,6 +7061,107 @@
           "quote"
         ],
         "title": "BookmarkRequest"
+      },
+      "ChatMessage": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage"
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/ChatPassage"
+            },
+            "type": "array",
+            "title": "Attachments"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role",
+          "content",
+          "usage"
+        ],
+        "title": "ChatMessage",
+        "description": "A message of the paper's chat (Library.messages). Answered with response_model_exclude_unset: a question\nwithout attached passages has no attachments key. The usage and passages are JSON in the database."
+      },
+      "ChatPassage": {
+        "properties": {
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "original",
+              "translated"
+            ],
+            "title": "Side"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "anchor_y": {
+            "type": "number",
+            "title": "Anchor Y"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "raw": {
+            "type": "string",
+            "title": "Raw"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page",
+          "side",
+          "text",
+          "anchor_y"
+        ],
+        "title": "ChatPassage",
+        "description": "A passage as a question stored it (an AskAttachment, its text shortened: PaperService.ask). Messages\nsaved before the offsets into the text layer were sent lack start, end and raw."
       },
       "CreateCollectionRequest": {
         "properties": {
@@ -6809,6 +7175,85 @@
           "name"
         ],
         "title": "CreateCollectionRequest"
+      },
+      "DriveSyncResult": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "synced",
+              "deferred",
+              "conflict",
+              "review"
+            ],
+            "title": "Status"
+          },
+          "reloaded": {
+            "type": "boolean",
+            "title": "Reloaded",
+            "default": false
+          },
+          "previous_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Path"
+          },
+          "set_aside": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Set Aside"
+          },
+          "not_set_aside": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Not Set Aside"
+          },
+          "conflicts": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conflicts"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "DriveSyncResult",
+        "description": "drive_sync.sync: \"synced\", or why it did not (yet): \"deferred\", \"conflict\", \"review\"."
       },
       "ExportRequest": {
         "properties": {
@@ -6828,6 +7273,41 @@
           "destination"
         ],
         "title": "ExportRequest"
+      },
+      "ExportResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "interleaved",
+              "bilingual"
+            ],
+            "title": "Kind"
+          },
+          "destination": {
+            "type": "string",
+            "title": "Destination"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "destination"
+        ],
+        "title": "ExportResult"
+      },
+      "FolderRequest": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "FolderRequest"
       },
       "GlobalGlossaryRequest": {
         "properties": {
@@ -6897,6 +7377,22 @@
         "type": "object",
         "title": "GlossaryDraftRequest"
       },
+      "GlossaryDraftResult": {
+        "properties": {
+          "terms": {
+            "items": {
+              "$ref": "#/components/schemas/GlossaryTerm"
+            },
+            "type": "array",
+            "title": "Terms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "terms"
+        ],
+        "title": "GlossaryDraftResult"
+      },
       "GlossaryFileRequest": {
         "properties": {
           "path": {
@@ -6922,24 +7418,56 @@
         ],
         "title": "GlossaryFileRequest"
       },
-      "GlossaryRequest": {
+      "GlossaryTerm": {
         "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "target"
+        ],
+        "title": "GlossaryTerm"
+      },
+      "GlossaryWarning": {
+        "properties": {
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          },
+          "excerpt": {
+            "type": "string",
+            "title": "Excerpt"
+          },
           "terms": {
             "items": {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/GlossaryTerm"
             },
             "type": "array",
             "title": "Terms"
           }
         },
+        "additionalProperties": true,
         "type": "object",
         "required": [
+          "page",
+          "unit",
+          "excerpt",
           "terms"
         ],
-        "title": "GlossaryRequest"
+        "title": "GlossaryWarning",
+        "description": "A paragraph whose translation lacks the rendering of a glossary term found in the source."
       },
       "HTTPValidationError": {
         "properties": {
@@ -6972,6 +7500,7 @@
         },
         "type": "object",
         "required": [
+          "status",
           "version",
           "code_version"
         ],
@@ -7003,6 +7532,27 @@
           "paths"
         ],
         "title": "ImportRequest"
+      },
+      "ImportResult": {
+        "properties": {
+          "paper_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Paper Ids"
+          },
+          "added": {
+            "type": "integer",
+            "title": "Added"
+          }
+        },
+        "type": "object",
+        "required": [
+          "paper_ids",
+          "added"
+        ],
+        "title": "ImportResult"
       },
       "InkCaptureRequest": {
         "properties": {
@@ -7183,6 +7733,740 @@
         ],
         "title": "InkStroke"
       },
+      "InterleavedResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "interleaved",
+            "title": "Kind"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "path"
+        ],
+        "title": "InterleavedResult"
+      },
+      "JobInfo": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/JobKind"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Done"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "default": "running"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running",
+            "default": true
+          },
+          "cancelled": {
+            "type": "boolean",
+            "title": "Cancelled",
+            "default": false
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TranslateResult"
+              },
+              {
+                "$ref": "#/components/schemas/RevisionDraftResult"
+              },
+              {
+                "$ref": "#/components/schemas/GlossaryDraftResult"
+              },
+              {
+                "$ref": "#/components/schemas/ArticleResult"
+              },
+              {
+                "$ref": "#/components/schemas/AskResult"
+              },
+              {
+                "$ref": "#/components/schemas/ImportResult"
+              },
+              {
+                "$ref": "#/components/schemas/ExportResult"
+              },
+              {
+                "$ref": "#/components/schemas/InterleavedResult"
+              },
+              {
+                "$ref": "#/components/schemas/BackupResult"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreResult"
+              },
+              {
+                "$ref": "#/components/schemas/DriveSyncResult"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "paper_id",
+          "kind",
+          "message",
+          "done",
+          "total",
+          "status",
+          "running",
+          "cancelled",
+          "result",
+          "error"
+        ],
+        "title": "JobInfo",
+        "description": "A job as GET /api/jobs/{job_id} tells it, running or finished (JobManager keeps the last ones)."
+      },
+      "JobKind": {
+        "type": "string",
+        "enum": [
+          "translate",
+          "revision",
+          "revision-draft",
+          "glossary-draft",
+          "article",
+          "ask",
+          "check",
+          "import",
+          "export",
+          "interleaved",
+          "backup",
+          "restore",
+          "drive-sync"
+        ],
+        "title": "JobKind",
+        "description": "The kinds of background jobs; the names are what the frontend receives (jobKinds.ts)."
+      },
+      "JobStarted": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id"
+        ],
+        "title": "JobStarted",
+        "description": "The answer of a route that starts a job: follow it with GET /api/jobs/{job_id} or the events."
+      },
+      "LibraryStickyNote": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "paper_id": {
+            "type": "string",
+            "title": "Paper Id"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "original",
+              "translated"
+            ],
+            "title": "Side"
+          },
+          "quote": {
+            "type": "string",
+            "title": "Quote"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          },
+          "anchor_y": {
+            "type": "number",
+            "title": "Anchor Y"
+          },
+          "anchor_x": {
+            "type": "number",
+            "title": "Anchor X"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "color": {
+            "type": "string",
+            "title": "Color"
+          },
+          "rects": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array",
+              "maxItems": 4,
+              "minItems": 4
+            },
+            "type": "array",
+            "title": "Rects"
+          },
+          "paper_title": {
+            "type": "string",
+            "title": "Paper Title"
+          },
+          "paper_name": {
+            "type": "string",
+            "title": "Paper Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "paper_id",
+          "page",
+          "side",
+          "quote",
+          "label",
+          "note",
+          "anchor_y",
+          "anchor_x",
+          "created_at",
+          "kind",
+          "color",
+          "rects",
+          "paper_title",
+          "paper_name"
+        ],
+        "title": "LibraryStickyNote",
+        "description": "GET /api/sticky-notes: with the paper's title and file name, for the list across the library."
+      },
+      "LimitWindow": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "used_percent": {
+            "type": "number",
+            "title": "Used Percent"
+          },
+          "resets_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resets At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "used_percent",
+          "resets_at"
+        ],
+        "title": "LimitWindow",
+        "description": "One window of the plan's usage, as the service reports it (resets_at: seconds since the epoch)."
+      },
+      "OcrPage": {
+        "properties": {
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "garbled",
+              "image",
+              "partial"
+            ],
+            "title": "Reason"
+          },
+          "garbled_ratio": {
+            "type": "number",
+            "title": "Garbled Ratio"
+          },
+          "garbled_paragraphs": {
+            "type": "integer",
+            "title": "Garbled Paragraphs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page",
+          "reason"
+        ],
+        "title": "OcrPage",
+        "description": "A page needing OCR (papeer.layout.ocr_pages): kept as the original when its text layer is garbled or it\nis a scanned image, or translated except for its garbled paragraphs (\"partial\")."
+      },
+      "OptionsRequest": {
+        "properties": {
+          "auto_sync": {
+            "type": "boolean",
+            "title": "Auto Sync"
+          }
+        },
+        "type": "object",
+        "required": [
+          "auto_sync"
+        ],
+        "title": "OptionsRequest"
+      },
+      "PageVersion": {
+        "properties": {
+          "sha": {
+            "type": "string",
+            "title": "Sha"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sha",
+          "model"
+        ],
+        "title": "PageVersion",
+        "description": "The translation key's short hash (or \"\u4e0d\u660e\") and the model that translated a page."
+      },
+      "Paper": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "original_name": {
+            "type": "string",
+            "title": "Original Name"
+          },
+          "pages": {
+            "type": "integer",
+            "title": "Pages"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TranslationStatus"
+          },
+          "collection_name": {
+            "type": "string",
+            "title": "Collection Name"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "read_status": {
+            "type": "string",
+            "title": "Read Status"
+          },
+          "first_author": {
+            "type": "string",
+            "title": "First Author"
+          },
+          "publication_year": {
+            "type": "string",
+            "title": "Publication Year"
+          },
+          "bibliography_version": {
+            "type": "integer",
+            "title": "Bibliography Version"
+          },
+          "doi": {
+            "type": "string",
+            "title": "Doi"
+          },
+          "arxiv_id": {
+            "type": "string",
+            "title": "Arxiv Id"
+          },
+          "venue": {
+            "type": "string",
+            "title": "Venue"
+          },
+          "last_opened_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Opened At"
+          },
+          "folder_path": {
+            "type": "string",
+            "title": "Folder Path",
+            "default": ""
+          },
+          "has_article": {
+            "type": "boolean",
+            "title": "Has Article",
+            "default": false
+          },
+          "translated_count": {
+            "type": "integer",
+            "title": "Translated Count",
+            "default": 0
+          },
+          "translation_required_count": {
+            "type": "integer",
+            "title": "Translation Required Count",
+            "default": 0
+          },
+          "translation_completed_required_count": {
+            "type": "integer",
+            "title": "Translation Completed Required Count",
+            "default": 0
+          },
+          "translation_ocr_count": {
+            "type": "integer",
+            "title": "Translation Ocr Count",
+            "default": 0
+          },
+          "translation_has_issues": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Has Issues"
+          },
+          "has_translated": {
+            "type": "boolean",
+            "title": "Has Translated",
+            "default": false
+          },
+          "translation_in_progress": {
+            "type": "boolean",
+            "title": "Translation In Progress",
+            "default": false
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "sha256",
+          "title",
+          "original_name",
+          "pages",
+          "status",
+          "collection_name",
+          "created_at",
+          "tags",
+          "read_status",
+          "first_author",
+          "publication_year",
+          "bibliography_version",
+          "doi",
+          "arxiv_id",
+          "venue",
+          "note"
+        ],
+        "title": "Paper",
+        "description": "GET /api/papers/{paper_id}: the paper's row with its memo, which the list leaves out."
+      },
+      "PaperOpened": {
+        "properties": {
+          "last_opened_at": {
+            "type": "string",
+            "title": "Last Opened At"
+          },
+          "started_reading": {
+            "type": "boolean",
+            "title": "Started Reading"
+          },
+          "fields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Fields"
+          }
+        },
+        "type": "object",
+        "required": [
+          "last_opened_at",
+          "started_reading",
+          "fields"
+        ],
+        "title": "PaperOpened",
+        "description": "POST /api/papers/{paper_id}/opened (opened_papers.mark_opened): the time recorded on this PC, whether\nan unread paper became \u8aad\u66f8\u4e2d, and the fields that changed as paper.changed names them."
+      },
+      "PaperRow": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "original_name": {
+            "type": "string",
+            "title": "Original Name"
+          },
+          "pages": {
+            "type": "integer",
+            "title": "Pages"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TranslationStatus"
+          },
+          "collection_name": {
+            "type": "string",
+            "title": "Collection Name"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "read_status": {
+            "type": "string",
+            "title": "Read Status"
+          },
+          "first_author": {
+            "type": "string",
+            "title": "First Author"
+          },
+          "publication_year": {
+            "type": "string",
+            "title": "Publication Year"
+          },
+          "bibliography_version": {
+            "type": "integer",
+            "title": "Bibliography Version"
+          },
+          "doi": {
+            "type": "string",
+            "title": "Doi"
+          },
+          "arxiv_id": {
+            "type": "string",
+            "title": "Arxiv Id"
+          },
+          "venue": {
+            "type": "string",
+            "title": "Venue"
+          },
+          "last_opened_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Opened At"
+          },
+          "folder_path": {
+            "type": "string",
+            "title": "Folder Path",
+            "default": ""
+          },
+          "has_article": {
+            "type": "boolean",
+            "title": "Has Article",
+            "default": false
+          },
+          "translated_count": {
+            "type": "integer",
+            "title": "Translated Count",
+            "default": 0
+          },
+          "translation_required_count": {
+            "type": "integer",
+            "title": "Translation Required Count",
+            "default": 0
+          },
+          "translation_completed_required_count": {
+            "type": "integer",
+            "title": "Translation Completed Required Count",
+            "default": 0
+          },
+          "translation_ocr_count": {
+            "type": "integer",
+            "title": "Translation Ocr Count",
+            "default": 0
+          },
+          "translation_has_issues": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Has Issues"
+          },
+          "has_translated": {
+            "type": "boolean",
+            "title": "Has Translated",
+            "default": false
+          },
+          "translation_in_progress": {
+            "type": "boolean",
+            "title": "Translation In Progress",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "sha256",
+          "title",
+          "original_name",
+          "pages",
+          "status",
+          "collection_name",
+          "created_at",
+          "tags",
+          "read_status",
+          "first_author",
+          "publication_year",
+          "bibliography_version",
+          "doi",
+          "arxiv_id",
+          "venue"
+        ],
+        "title": "PaperRow",
+        "description": "A paper as GET /api/papers lists it: its papers row (Library._paper) and what library_list.paper_row adds.\n\nAnswered with response_model_exclude_unset, so a row keeps exactly the keys it was given: the fields\nwith defaults are the ones a row may lack. What paper_row adds is missing from the row of a paper whose\nID is not a folder's name (a hand-edited database), except last_opened_at: library_rows gives every row\nthat one, None when the paper was never opened on this PC (papeer/core/opened_papers.py).\nThe row's columns have no default, so a column added to the papers table fails the tests until named here."
+      },
       "ProviderActionRequest": {
         "properties": {
           "provider": {
@@ -7251,6 +8535,54 @@
         "title": "ProviderActionRequest",
         "description": "Optional unsaved settings from the dialog; omitted fields use the saved settings."
       },
+      "ProviderField": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "placeholder": {
+            "type": "string",
+            "title": "Placeholder"
+          },
+          "hint": {
+            "type": "string",
+            "title": "Hint"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "placeholder",
+          "hint"
+        ],
+        "title": "ProviderField",
+        "description": "A connection-specific setting the settings dialog shows (providers.base.OptionField)."
+      },
+      "ProviderOption": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "ProviderOption",
+        "description": "A model or reasoning effort the connection offers: its id, and the name shown."
+      },
       "ProviderSpecModel": {
         "properties": {
           "id": {
@@ -7267,6 +8599,10 @@
           },
           "kind": {
             "type": "string",
+            "enum": [
+              "cli",
+              "http"
+            ],
             "title": "Kind"
           },
           "needs_login": {
@@ -7283,10 +8619,7 @@
           },
           "fields": {
             "items": {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/ProviderField"
             },
             "type": "array",
             "title": "Fields"
@@ -7303,7 +8636,189 @@
           "login_service",
           "fields"
         ],
-        "title": "ProviderSpecModel"
+        "title": "ProviderSpecModel",
+        "description": "An AI connection as GET /api/providers describes it (providers.base.ProviderSpec)."
+      },
+      "ReadabilityWarning": {
+        "properties": {
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "block": {
+            "type": "string",
+            "title": "Block"
+          },
+          "font_size": {
+            "type": "number",
+            "title": "Font Size"
+          },
+          "scale": {
+            "type": "number",
+            "title": "Scale"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "chars": {
+            "type": "integer",
+            "title": "Chars"
+          },
+          "char_budget": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Char Budget"
+          },
+          "source_blocks": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Blocks"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "page"
+        ],
+        "title": "ReadabilityWarning",
+        "description": "A paragraph typeset below the readable size because it overflowed its box (pdf_engine.build_translated_pdf).\nReports written before the length estimate have only page, block, font_size and scale."
+      },
+      "ReadingState": {
+        "properties": {
+          "page_count": {
+            "type": "integer",
+            "title": "Page Count"
+          },
+          "source_page_count": {
+            "type": "integer",
+            "title": "Source Page Count"
+          },
+          "empty_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Empty Pages"
+          },
+          "translation_required_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Translation Required Pages"
+          },
+          "ocr_pages": {
+            "items": {
+              "$ref": "#/components/schemas/OcrPage"
+            },
+            "type": "array",
+            "title": "Ocr Pages"
+          },
+          "completed_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Completed Pages"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TranslationPreview"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview"
+          },
+          "in_progress": {
+            "type": "boolean",
+            "title": "In Progress"
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TranslationReport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report"
+          },
+          "translated_pages": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TranslatedPageRef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Translated Pages"
+          },
+          "page_versions": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PageVersion"
+            },
+            "type": "object",
+            "title": "Page Versions"
+          },
+          "last_page": {
+            "type": "integer",
+            "title": "Last Page"
+          },
+          "has_translated": {
+            "type": "boolean",
+            "title": "Has Translated"
+          },
+          "has_article": {
+            "type": "boolean",
+            "title": "Has Article"
+          },
+          "has_interleaved": {
+            "type": "boolean",
+            "title": "Has Interleaved"
+          },
+          "original_mtime": {
+            "type": "integer",
+            "title": "Original Mtime"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_count",
+          "source_page_count",
+          "empty_pages",
+          "translation_required_pages",
+          "ocr_pages",
+          "completed_pages",
+          "preview",
+          "in_progress",
+          "report",
+          "translated_pages",
+          "page_versions",
+          "last_page",
+          "has_translated",
+          "has_article",
+          "has_interleaved",
+          "original_mtime"
+        ],
+        "title": "ReadingState",
+        "description": "Everything the reader needs to show the original and the translation page by page (reading_state.reading_state)."
       },
       "RenameCollectionRequest": {
         "properties": {
@@ -7336,6 +8851,55 @@
         ],
         "title": "RenamePaperRequest"
       },
+      "RestoreRequest": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "import_settings": {
+            "type": "boolean",
+            "title": "Import Settings",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "RestoreRequest"
+      },
+      "RestoreResult": {
+        "properties": {
+          "previous_path": {
+            "type": "string",
+            "title": "Previous Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "previous_path"
+        ],
+        "title": "RestoreResult"
+      },
+      "RevisionDraftResult": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "unit_id": {
+            "type": "string",
+            "title": "Unit Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "unit_id"
+        ],
+        "title": "RevisionDraftResult"
+      },
       "RevisionRequest": {
         "properties": {
           "unit_id": {
@@ -7351,7 +8915,7 @@
             "type": "string",
             "maxLength": 2000,
             "title": "Instruction",
-            "default": "自然な日本語にしてください。"
+            "default": "\u81ea\u7136\u306a\u65e5\u672c\u8a9e\u306b\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
           },
           "expected_text": {
             "anyOf": [
@@ -7363,6 +8927,19 @@
               }
             ],
             "title": "Expected Text"
+          },
+          "char_budget": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 50000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Char Budget"
           }
         },
         "type": "object",
@@ -7371,7 +8948,7 @@
         ],
         "title": "RevisionRequest"
       },
-      "SettingsModel": {
+      "SettingsModel-Input": {
         "properties": {
           "provider": {
             "type": "string",
@@ -7420,9 +8997,207 @@
             "title": "Api Key"
           }
         },
-        "additionalProperties": true,
         "type": "object",
         "title": "SettingsModel"
+      },
+      "SettingsModel-Output": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "default": "codex"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "default": "gpt-5.6-sol"
+          },
+          "reasoning_effort": {
+            "type": "string",
+            "title": "Reasoning Effort",
+            "default": ""
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "title": "Timeout Seconds",
+            "default": 900
+          },
+          "translation_concurrency": {
+            "type": "integer",
+            "title": "Translation Concurrency",
+            "default": 0
+          },
+          "provider_options": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Provider Options"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "model",
+          "reasoning_effort",
+          "timeout_seconds",
+          "translation_concurrency",
+          "provider_options",
+          "api_key"
+        ],
+        "title": "SettingsModel"
+      },
+      "StickyNote": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "paper_id": {
+            "type": "string",
+            "title": "Paper Id"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "original",
+              "translated"
+            ],
+            "title": "Side"
+          },
+          "quote": {
+            "type": "string",
+            "title": "Quote"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          },
+          "anchor_y": {
+            "type": "number",
+            "title": "Anchor Y"
+          },
+          "anchor_x": {
+            "type": "number",
+            "title": "Anchor X"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "color": {
+            "type": "string",
+            "title": "Color"
+          },
+          "rects": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array",
+              "maxItems": 4,
+              "minItems": 4
+            },
+            "type": "array",
+            "title": "Rects"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "paper_id",
+          "page",
+          "side",
+          "quote",
+          "label",
+          "note",
+          "anchor_y",
+          "anchor_x",
+          "created_at",
+          "kind",
+          "color",
+          "rects"
+        ],
+        "title": "StickyNote",
+        "description": "A sticky note or highlight (a bookmarks row, Library._bookmark).\n\nkind and color are plain text: a newer Papeer on another PC may store values this one does not know\n(the database is synced)."
+      },
+      "SyncRequest": {
+        "properties": {
+          "choice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice"
+          },
+          "expected_heads": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Heads"
+          },
+          "confirm": {
+            "type": "boolean",
+            "title": "Confirm",
+            "default": false
+          },
+          "background": {
+            "type": "boolean",
+            "title": "Background",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "SyncRequest"
       },
       "TagRequest": {
         "properties": {
@@ -7499,6 +9274,298 @@
         },
         "type": "object",
         "title": "TranslateRequest"
+      },
+      "TranslateResult": {
+        "properties": {
+          "pages": {
+            "type": "integer",
+            "title": "Pages"
+          },
+          "requested_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Requested Pages"
+          },
+          "selected_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Selected Pages"
+          },
+          "already_translated_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Already Translated Pages"
+          },
+          "preserved_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Preserved Pages"
+          },
+          "translated_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Translated Pages"
+          },
+          "untranslated_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Untranslated Pages"
+          },
+          "skipped_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Skipped Pages"
+          },
+          "skipped_blocks": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Skipped Blocks"
+          },
+          "skipped_block_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Skipped Block Pages"
+          },
+          "page_errors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Page Errors"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "pages",
+          "requested_pages",
+          "selected_pages",
+          "already_translated_pages",
+          "preserved_pages",
+          "translated_pages",
+          "untranslated_pages",
+          "skipped_pages",
+          "skipped_blocks",
+          "skipped_block_pages",
+          "page_errors",
+          "model"
+        ],
+        "title": "TranslateResult",
+        "description": "translate and revision: the run's translation-report.json (PaperService.translate).\n\nOnly what the frontend reads is named; the rest of the report (warnings, counts of preserved\nblocks, ...) is kept as it is."
+      },
+      "TranslatedPageRef": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "title": "File"
+          },
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "mtime": {
+            "type": "integer",
+            "title": "Mtime"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file",
+          "index",
+          "mtime"
+        ],
+        "title": "TranslatedPageRef",
+        "description": "Where the right pane finds a page: the file (relative to the paper's folder), the page in it, its time."
+      },
+      "TranslationPreview": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "complete": {
+            "type": "boolean",
+            "title": "Complete"
+          },
+          "pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Pages"
+          },
+          "target_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Target Pages"
+          },
+          "skipped_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Skipped Pages"
+          },
+          "total_pages": {
+            "type": "integer",
+            "title": "Total Pages"
+          },
+          "page_errors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Page Errors"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "run_id",
+          "complete",
+          "pages"
+        ],
+        "title": "TranslationPreview",
+        "description": "translation-preview.json: the pages of the translation in progress (or the last one) made so far."
+      },
+      "TranslationReport": {
+        "properties": {
+          "pages": {
+            "type": "integer",
+            "title": "Pages"
+          },
+          "requested_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Requested Pages"
+          },
+          "selected_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Selected Pages"
+          },
+          "translated_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Translated Pages"
+          },
+          "skipped_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Skipped Pages"
+          },
+          "scaled_blocks": {
+            "type": "integer",
+            "title": "Scaled Blocks"
+          },
+          "readability_warnings": {
+            "items": {
+              "$ref": "#/components/schemas/ReadabilityWarning"
+            },
+            "type": "array",
+            "title": "Readability Warnings"
+          },
+          "skipped_blocks": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Skipped Blocks"
+          },
+          "skipped_block_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Skipped Block Pages"
+          },
+          "page_errors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Page Errors"
+          },
+          "glossary_warnings": {
+            "items": {
+              "$ref": "#/components/schemas/GlossaryWarning"
+            },
+            "type": "array",
+            "title": "Glossary Warnings"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "TranslationReport",
+        "description": "translation-report.json of the last translation (PaperService.translate). Only what the frontend\nreads is named; a report has more (the code versions, counts of preserved blocks, ...), and those of\nearlier versions may lack any of it."
+      },
+      "TranslationStatus": {
+        "type": "string",
+        "enum": [
+          "not_translated",
+          "translating",
+          "partial",
+          "resumable",
+          "incomplete",
+          "translated"
+        ],
+        "title": "TranslationStatus"
       },
       "UIStateModel": {
         "properties": {
@@ -7618,10 +9685,133 @@
               }
             ],
             "title": "Read Status"
+          },
+          "doi": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doi"
+          },
+          "arxiv_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arxiv Id"
+          },
+          "venue": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Venue"
           }
         },
         "type": "object",
         "title": "UpdatePaperRequest"
+      },
+      "Usage": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "calls": {
+            "type": "integer",
+            "title": "Calls"
+          },
+          "measured_calls": {
+            "type": "integer",
+            "title": "Measured Calls"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens"
+          },
+          "cached_tokens": {
+            "type": "integer",
+            "title": "Cached Tokens"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens"
+          },
+          "reasoning_tokens": {
+            "type": "integer",
+            "title": "Reasoning Tokens"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "model",
+          "calls",
+          "measured_calls",
+          "input_tokens",
+          "cached_tokens",
+          "output_tokens",
+          "reasoning_tokens"
+        ],
+        "title": "Usage",
+        "description": "The tokens a job used, when the AI connection tells (providers.common.UsageMeter.report)."
+      },
+      "UsageLimits": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/LimitWindow"
+            },
+            "type": "array",
+            "title": "Windows"
+          },
+          "checked_at": {
+            "type": "number",
+            "title": "Checked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "windows",
+          "checked_at"
+        ],
+        "title": "UsageLimits",
+        "description": "GET /api/usage/limits: the connected AI's plan usage (providers.common.remember_limits).\nThe windows come from the service (a CLI's output or an API's headers), so they are passed on as they are."
       },
       "ValidationError": {
         "properties": {
@@ -7662,6 +9852,448 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "ImportItemEvent": {
+        "description": "One PDF has been added (or was in the library already).",
+        "properties": {
+          "type": {
+            "const": "import.item",
+            "default": "import.item",
+            "title": "Type",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "paper_id": {
+            "title": "Paper Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "path",
+          "paper_id"
+        ],
+        "title": "ImportItemEvent",
+        "type": "object"
+      },
+      "ImportPagesEvent": {
+        "description": "The page counts of the PDFs being added, keyed by the path as sent (None: not readable).",
+        "properties": {
+          "type": {
+            "const": "import.pages",
+            "default": "import.pages",
+            "title": "Type",
+            "type": "string"
+          },
+          "pages": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Pages",
+            "type": "object"
+          }
+        },
+        "required": [
+          "type",
+          "pages"
+        ],
+        "title": "ImportPagesEvent",
+        "type": "object"
+      },
+      "JobFinishedEvent": {
+        "description": "The job as it ended; the same as GET /api/jobs/{job_id} answers afterwards.",
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Paper Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/JobKind"
+          },
+          "message": {
+            "default": "",
+            "title": "Message",
+            "type": "string"
+          },
+          "done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Done"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Total"
+          },
+          "status": {
+            "default": "running",
+            "enum": [
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "running": {
+            "default": true,
+            "title": "Running",
+            "type": "boolean"
+          },
+          "cancelled": {
+            "default": false,
+            "title": "Cancelled",
+            "type": "boolean"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TranslateResult"
+              },
+              {
+                "$ref": "#/components/schemas/RevisionDraftResult"
+              },
+              {
+                "$ref": "#/components/schemas/GlossaryDraftResult"
+              },
+              {
+                "$ref": "#/components/schemas/ArticleResult"
+              },
+              {
+                "$ref": "#/components/schemas/AskResult"
+              },
+              {
+                "$ref": "#/components/schemas/ImportResult"
+              },
+              {
+                "$ref": "#/components/schemas/ExportResult"
+              },
+              {
+                "$ref": "#/components/schemas/InterleavedResult"
+              },
+              {
+                "$ref": "#/components/schemas/BackupResult"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreResult"
+              },
+              {
+                "$ref": "#/components/schemas/DriveSyncResult"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Result"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          },
+          "type": {
+            "const": "job.finished",
+            "default": "job.finished",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "paper_id",
+          "kind",
+          "message",
+          "done",
+          "total",
+          "status",
+          "running",
+          "cancelled",
+          "result",
+          "error",
+          "type"
+        ],
+        "title": "JobFinishedEvent",
+        "type": "object"
+      },
+      "JobPageReadyEvent": {
+        "description": "A page of a translation in progress is ready to show.",
+        "properties": {
+          "type": {
+            "const": "job.page_ready",
+            "default": "job.page_ready",
+            "title": "Type",
+            "type": "string"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "type",
+          "paper_id",
+          "page"
+        ],
+        "title": "JobPageReadyEvent",
+        "type": "object"
+      },
+      "JobProgressEvent": {
+        "properties": {
+          "type": {
+            "const": "job.progress",
+            "default": "job.progress",
+            "title": "Type",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/JobKind"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Done"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "type",
+          "job_id",
+          "paper_id",
+          "kind",
+          "message",
+          "done",
+          "total"
+        ],
+        "title": "JobProgressEvent",
+        "type": "object"
+      },
+      "JobStartedEvent": {
+        "properties": {
+          "type": {
+            "const": "job.started",
+            "default": "job.started",
+            "title": "Type",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/JobKind"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "job_id",
+          "paper_id",
+          "kind",
+          "message"
+        ],
+        "title": "JobStartedEvent",
+        "type": "object"
+      },
+      "LibraryChangedEvent": {
+        "properties": {
+          "type": {
+            "const": "library.changed",
+            "default": "library.changed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "LibraryChangedEvent",
+        "type": "object"
+      },
+      "PaperChangedEvent": {
+        "description": "One paper changed; `fields`: the columns written, None when anything about it may have.",
+        "properties": {
+          "type": {
+            "const": "paper.changed",
+            "default": "paper.changed",
+            "title": "Type",
+            "type": "string"
+          },
+          "paper_id": {
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "fields": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fields"
+          }
+        },
+        "required": [
+          "type",
+          "paper_id",
+          "fields"
+        ],
+        "title": "PaperChangedEvent",
+        "type": "object"
+      },
+      "ServerEvent": {
+        "discriminator": {
+          "mapping": {
+            "import.item": "#/components/schemas/ImportItemEvent",
+            "import.pages": "#/components/schemas/ImportPagesEvent",
+            "job.finished": "#/components/schemas/JobFinishedEvent",
+            "job.page_ready": "#/components/schemas/JobPageReadyEvent",
+            "job.progress": "#/components/schemas/JobProgressEvent",
+            "job.started": "#/components/schemas/JobStartedEvent",
+            "library.changed": "#/components/schemas/LibraryChangedEvent",
+            "paper.changed": "#/components/schemas/PaperChangedEvent"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/JobStartedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/JobProgressEvent"
+          },
+          {
+            "$ref": "#/components/schemas/JobPageReadyEvent"
+          },
+          {
+            "$ref": "#/components/schemas/JobFinishedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/LibraryChangedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/PaperChangedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ImportPagesEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ImportItemEvent"
+          }
+        ]
       }
     }
   }

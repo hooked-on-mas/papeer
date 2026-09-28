@@ -10,6 +10,7 @@ import sqlite3
 import threading
 import uuid
 
+from papeer.core.errors import NotFound
 from papeer.core.fileio import atomic_write_json, atomic_write_text
 from papeer.core.shared_json import read_shared_json, remember
 from papeer.pdf.pdf_engine import PDF_LOCK, extract_pdf
@@ -323,7 +324,7 @@ class Library:
             raise ValueError("Invalid paper ID")
         return self.root / "papers" / paper_id
 
-    def import_pdf(self, source: Path, collection_name: str = "", original_name: str = "") -> tuple[str, bool]:
+    def import_pdf(self, source: Path, collection_name: str = "") -> tuple[str, bool]:
         if source.stat().st_size > 300 * 1024 * 1024:
             raise ValueError("300MB以下のPDFを追加してください。")
         with source.open("rb") as stream:
@@ -344,7 +345,7 @@ class Library:
             with self.connection() as db:
                 db.execute("""INSERT INTO papers(id,sha256,title,original_name,pages,status,collection_name,first_author,
                            publication_year,doi,arxiv_id,venue,bibliography_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)""",
-                           (paper_id, digest, info["title"], original_name or source.name, info["page_count"],
+                           (paper_id, digest, info["title"], source.name, info["page_count"],
                             TranslationStatus.NOT_TRANSLATED.value, normalize_collection_name(collection_name),
                             info["first_author"], info["publication_year"],
                             info.get("doi", ""), info.get("arxiv_id", ""), info.get("venue", "")))
@@ -379,7 +380,7 @@ class Library:
         return [Library._paper({k: row[k] for k in row.keys() if k != "insert_order"}) for row in rows]
 
     def papers_by_id(self, paper_ids: list[str]) -> list[dict]:
-        """The papers `paper_ids`, oldest first (_oldest_first); raises KeyError for a missing one."""
+        """The papers `paper_ids`, oldest first (_oldest_first); raises NotFound (a KeyError) for a missing one."""
         wanted = list(dict.fromkeys(paper_ids))
         for paper_id in wanted:
             self.folder(paper_id)  # Checks the ID's form.
@@ -390,7 +391,7 @@ class Library:
                 rows += db.execute(f"SELECT rowid AS insert_order,* FROM papers WHERE id IN ({','.join('?' * len(chunk))})",
                                    chunk).fetchall()
         if len(rows) != len(wanted):
-            raise KeyError("論文が見つかりません。")
+            raise NotFound("論文が見つかりません。")
         return self._oldest_first(rows)
 
     def collection_papers(self, path: str) -> list[dict]:
@@ -407,7 +408,7 @@ class Library:
         with self.connection() as db:
             row = db.execute("SELECT * FROM papers WHERE id=?", (paper_id,)).fetchone()
         if not row:
-            raise KeyError("論文が見つかりません。")
+            raise NotFound("論文が見つかりません。")
         return self._paper(row)
 
     @staticmethod
@@ -601,7 +602,7 @@ class Library:
             raise ValueError("Windowsで使用できるファイル名を入力してください。")
         with self.connection() as db:
             if not db.execute("SELECT id FROM papers WHERE id=?", (paper_id,)).fetchone():
-                raise KeyError("論文が見つかりません。")
+                raise NotFound("論文が見つかりません。")
             db.execute("UPDATE papers SET original_name=?,title=? WHERE id=?", (name, stem, paper_id))
         return name
 
@@ -610,7 +611,7 @@ class Library:
         with self.connection() as db:
             paper = db.execute("SELECT pages FROM papers WHERE id=?", (paper_id,)).fetchone()
             if paper is None:
-                raise KeyError("論文が見つかりません。")
+                raise NotFound("論文が見つかりません。")
             empty = [row[0] for row in db.execute(
                 "SELECT number FROM pages WHERE paper_id=? AND trim(text)='' ORDER BY number",
                 (paper_id,))]
@@ -745,7 +746,7 @@ class Library:
                                  (label, label, (label or "重要") if label is not None else None,
                                   None if note is None else note[:1000], anchor_x, anchor_y, color, paper_id, bookmark_id))
             if not updated.rowcount:
-                raise ValueError("付箋が見つかりません。")
+                raise NotFound("付箋が見つかりません。")
             return self._bookmark(db.execute("SELECT * FROM bookmarks WHERE id=?", (bookmark_id,)).fetchone())
 
     def highlights_by_page(self, paper_id: str, side: str) -> dict[int, list[dict]]:

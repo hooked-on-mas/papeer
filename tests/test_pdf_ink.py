@@ -39,7 +39,7 @@ def ink_env(tmp_path, monkeypatch):
 
 def test_ink_persists_and_isolated_by_page_side_and_paper(ink_env):
     client, lib, identity = ink_env
-    path = f"/api/papers/{identity}/ink"
+    path = f"/api/papers/{identity}/ink-v2"
     assert client.get(path + "/original/1").json() == {"strokes": []}
     (lib.folder(identity) / "translated.pdf").write_bytes((lib.folder(identity) / "original.pdf").read_bytes())
     for side, page, value in [("original", 1, stroke()), ("original", 2, stroke("second")), ("translated", 1, stroke("translation"))]:
@@ -61,7 +61,7 @@ def test_ink_persists_and_isolated_by_page_side_and_paper(ink_env):
     stroke(points=[[0.1, 1.01]]), stroke(color="red"), stroke(width=0), stroke(width=0.1)])
 def test_invalid_ink_rejected_without_losing_saved_ink(ink_env, value):
     client, _, identity = ink_env
-    path = f"/api/papers/{identity}/ink/original/1"
+    path = f"/api/papers/{identity}/ink-v2/original/1"
     assert client.put(path, json={"strokes": [stroke()]}).status_code == 200
     assert client.put(path, json={"strokes": [value]}).status_code == 422
     assert client.get(path).json()["strokes"] == [stroke()]
@@ -71,11 +71,11 @@ def test_ink_api_auth_and_missing_pages(ink_env, monkeypatch):
     client, _, identity = ink_env
     path = f"/api/papers/{identity}"
     for side, page, status in [("original", 0, 400), ("original", 3, 400), ("translated", 1, 400), ("wrong", 1, 422)]:
-        assert client.put(f"{path}/ink/{side}/{page}", json={"strokes": []}).status_code == status
-    assert client.get("/api/papers/missing/ink/original/1").status_code == 404
+        assert client.put(f"{path}/ink-v2/{side}/{page}", json={"strokes": []}).status_code == status
+    assert client.get("/api/papers/missing/ink-v2/original/1").status_code == 404
     monkeypatch.setenv("PAPEER_TOKEN", "ink-secret")
-    assert client.get(path + "/ink/original/1").status_code == 401
-    assert client.put(path + "/ink/original/1", json={"strokes": []}).status_code == 401
+    assert client.get(path + "/ink-v2/original/1").status_code == 401
+    assert client.put(path + "/ink-v2/original/1", json={"strokes": []}).status_code == 401
     assert client.post(path + "/ink-export", json={"side": "original"}).status_code == 401
 
 
@@ -179,13 +179,12 @@ def test_new_objects_and_page_inventory(ink_env):
              stroke("text", kind="text", text="重要な結果\nResult", points=[[0.2, 0.5], [0.5, 0.5], [0.5, 0.6], [0.2, 0.6]])]
     assert client.put(path + "/ink-v2/original/1", json={"strokes": items}).status_code == 200
     assert client.get(path + "/ink-v2/original/1").json()["strokes"] == items
-    assert client.get(path + "/ink/original/1").json()["strokes"] == items
     assert client.get(path + "/ink-pages").json() == [{"side": "original", "page": 1, "count": 2}]
-    assert client.put(path + "/ink/original/2", json={"strokes": []}).status_code == 200
+    assert client.put(path + "/ink-v2/original/2", json={"strokes": []}).status_code == 200
     assert len(client.get(path + "/ink-pages").json()) == 1
     invalid = [stroke(kind="text", text="text"), stroke(kind="wrong"), stroke(kind="text", text="", points=items[1]["points"])]
     for item in invalid:
-        assert client.put(path + "/ink/original/1", json={"strokes": [item]}).status_code == 422
+        assert client.put(path + "/ink-v2/original/1", json={"strokes": [item]}).status_code == 422
     assert lib.ink(identity, "original", 1) == items
 
 
@@ -230,16 +229,16 @@ def test_capture_is_scoped_to_page_and_usable_as_note_media(ink_env, monkeypatch
     client, _, identity = ink_env
     path = f"/api/papers/{identity}"
     body = {"side": "original", "page": 1, "x": 0.1, "y": 0.1, "width": 0.5, "height": 0.2}
-    response = client.post(path + "/ink-capture", json=body)
+    response = client.post(path + "/ink-capture-v2", json=body)
     assert response.status_code == 200
     media = client.get(path + "/" + response.json()["file"])
     assert media.status_code == 200 and media.headers["content-type"] == "image/png"
     with Image.open(io.BytesIO(media.content)) as image:
         assert image.size == (900, 540)
-    assert client.post(path + "/ink-capture", json={**body, "x": 0.9}).status_code == 422
-    assert client.post(path + "/ink-capture", json={**body, "page": 100}).status_code == 400
+    assert client.post(path + "/ink-capture-v2", json={**body, "x": 0.9}).status_code == 422
+    assert client.post(path + "/ink-capture-v2", json={**body, "page": 100}).status_code == 400
     monkeypatch.setenv("PAPEER_TOKEN", "secret")
-    assert client.post(path + "/ink-capture", json=body).status_code == 401
+    assert client.post(path + "/ink-capture-v2", json=body).status_code == 401
     assert client.get(path + "/ink-pages").status_code == 401
 
 
@@ -291,7 +290,7 @@ class SummaryProvider:
 def test_summary_regeneration_replaces_only_its_figures_and_keeps_note_captures(ink_env):
     client, lib, identity = ink_env
     body = {"side": "original", "page": 1, "x": 0.1, "y": 0.1, "width": 0.5, "height": 0.2}
-    file = client.post(f"/api/papers/{identity}/ink-capture", json=body).json()["file"]
+    file = client.post(f"/api/papers/{identity}/ink-capture-v2", json=body).json()["file"]
     files = PaperFiles(lib.folder(identity))
     capture = files.folder / file
     assert capture.parent == files.media and capture.name.startswith("ink-capture-")
@@ -345,3 +344,34 @@ def test_locked_old_summary_figure_does_not_fail_the_summary(ink_env, monkeypatc
     monkeypatch.setattr(Path, "unlink", unlink)
     PaperService(lib, SummaryProvider(), threading.Event()).article(identity)
     assert not stale.exists(), "the leftover goes with the next successful summary"
+
+
+def test_ink_page_capture_and_export_rules_without_the_routes(ink_env, tmp_path):
+    from papeer.core import ink
+    from papeer.core.errors import Invalid, NotFound
+
+    _, lib, identity = ink_env
+    folder = lib.folder(identity)
+    assert ink.check_page(lib, identity, "original", 2) == (PaperFiles(folder).original_pdf, 1)
+    for side, page in (("original", 0), ("original", 3), ("translated", 1)):
+        with pytest.raises(Invalid):
+            ink.check_page(lib, identity, side, page)
+    with pytest.raises(NotFound):
+        ink.check_page(lib, "0" * 32, "original", 1)
+
+    lib.save_ink(identity, "original", 1, [stroke()])
+    saved = ink.save_capture(lib, identity, "original", 1, (0.1, 0.1, 0.5, 0.5), include_ink=True)
+    assert (saved["page"], saved["side"]) == (1, "original")
+    assert (folder / saved["file"]).read_bytes().startswith(b"\x89PNG")
+
+    data, written = ink.export_annotated(lib, identity, "original", None)
+    assert written is None and data.startswith(b"%PDF")
+    target = tmp_path / "exports" / "annotated.PDF"
+    data, written = ink.export_annotated(lib, identity, "original", str(target))
+    assert written == target.resolve() and target.read_bytes() == data
+    for refused in (lib.root / "annotated.pdf", tmp_path / "annotated.png"):
+        with pytest.raises(Invalid, match="ライブラリの外"):
+            ink.export_annotated(lib, identity, "original", str(refused))
+    with pytest.raises(Invalid, match="保存するPDF"):
+        ink.export_annotated(lib, identity, "translated", None)
+    assert not (lib.root / "annotated.pdf").exists()

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createMetadataSaver } from "../src/features/notes/metadataSaver.ts";
 import { metaValues } from "../src/features/notes/paperMetadata.ts";
+import { paperData } from "./support/paperData.ts";
 
 class HttpError extends Error {
   status: number;
@@ -11,7 +12,7 @@ class HttpError extends Error {
   }
 }
 
-const server = metaValues({ id: "p", title: "Deep", first_author: "Smith", publication_year: "2024" });
+const server = metaValues(paperData({ id: "p", title: "Deep", first_author: "Smith", publication_year: "2024" }));
 
 /** A saver whose PATCHes are recorded and answered by `answer` (throw to refuse). */
 function saverWith(answer: (body: Record<string, string>) => void = () => undefined) {

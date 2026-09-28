@@ -583,7 +583,7 @@ def test_review_api(pair, monkeypatch):
             time.sleep(0.01)
         job = deps.job_manager.get_job(identity_)
         assert job.status == "succeeded", job.error
-        return job.result
+        return job.result.model_dump()
 
     with TestClient(app) as client:
         assert sync_job(client, {})["status"] == "review"
@@ -841,7 +841,7 @@ def test_check_api_and_background_flag(pair, monkeypatch, settled):
         deadline = time.monotonic() + 5
         while deps.job_manager.get_job(job_id).running and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert deps.job_manager.get_job(job_id).result["status"] == "deferred"
+        assert deps.job_manager.get_job(job_id).result.status == "deferred"
         assert b.paper(identity)["note"] == ""
 
         def unreachable(_):

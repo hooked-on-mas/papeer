@@ -4,8 +4,9 @@ import {
   fieldsToSend, localProblem, metaValues, newDraft, requestBody, unsavedFields, withRejected, withReverted, withSaved,
   withServerValues, withTyped, type MetaValues,
 } from "../src/features/notes/paperMetadata.ts";
+import { paperData } from "./support/paperData.ts";
 
-const server: MetaValues = metaValues({ id: "p", title: "Deep", first_author: "Smith", publication_year: "2024", collection_name: "制御 / 読書会" });
+const server: MetaValues = metaValues(paperData({ id: "p", title: "Deep", first_author: "Smith", publication_year: "2024", collection_name: "制御 / 読書会" }));
 
 test("a field is unsaved while it differs by more than the spaces the sidecar trims", () => {
   let draft = newDraft(server);

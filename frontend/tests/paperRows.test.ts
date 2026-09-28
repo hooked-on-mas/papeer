@@ -2,35 +2,36 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { paperChangeEffects, withPaperRow } from "../src/lib/paperRows.ts";
 import type { PaperData } from "../src/api/hooks.ts";
+import { paperData } from "./support/paperData.ts";
 
 const rows: PaperData[] = [
-  { id: "a", title: "Alpha", translated_count: 0 },
-  { id: "b", title: "Beta", translated_count: 0 },
+  paperData({ id: "a", title: "Alpha", translated_count: 0 }),
+  paperData({ id: "b", title: "Beta", translated_count: 0 }),
 ];
 
 test("a changed paper replaces its row in place, without the memo", () => {
-  const next = withPaperRow(rows, "b", { id: "b", title: "Beta", translated_count: 3, note: "memo" }, "", 0);
-  assert.deepEqual(next, [rows[0], { id: "b", title: "Beta", translated_count: 3 }]);
+  const next = withPaperRow(rows, "b", paperData({ id: "b", title: "Beta", translated_count: 3, note: "memo" }), "", 0);
+  assert.deepEqual(next, [rows[0], paperData({ id: "b", title: "Beta", translated_count: 3 })]);
   assert.equal(next?.[0], rows[0]);
 });
 
 test("the list is loaded again when the row cannot simply be replaced", () => {
   // New to the list, or filtered by the sidecar.
-  assert.equal(withPaperRow(rows, "c", { id: "c", title: "Gamma" }, "", 0), null);
-  assert.equal(withPaperRow(rows, "a", { id: "a", title: "Alpha" }, "alp", 0), null);
+  assert.equal(withPaperRow(rows, "c", paperData({ id: "c", title: "Gamma" }), "", 0), null);
+  assert.equal(withPaperRow(rows, "a", paperData({ id: "a", title: "Alpha" }), "alp", 0), null);
   // A new title may move it in an order by name, but not in an order by date.
-  assert.equal(withPaperRow(rows, "a", { id: "a", title: "Zeta" }, "", 2), null);
-  assert.equal(withPaperRow(rows, "a", { id: "a", title: "Zeta" }, "", 3), null);
-  assert.deepEqual(withPaperRow(rows, "a", { id: "a", title: "Zeta" }, "", 1)?.map((row) => row.title), ["Zeta", "Beta"]);
-  assert.deepEqual(withPaperRow(rows, "a", { id: "a", title: "Alpha", tags: ["x"] }, "", 2)?.[0].tags, ["x"]);
+  assert.equal(withPaperRow(rows, "a", paperData({ id: "a", title: "Zeta" }), "", 2), null);
+  assert.equal(withPaperRow(rows, "a", paperData({ id: "a", title: "Zeta" }), "", 3), null);
+  assert.deepEqual(withPaperRow(rows, "a", paperData({ id: "a", title: "Zeta" }), "", 1)?.map((row) => row.title), ["Zeta", "Beta"]);
+  assert.deepEqual(withPaperRow(rows, "a", paperData({ id: "a", title: "Alpha", tags: ["x"] }), "", 2)?.[0].tags, ["x"]);
   // Likewise a new year, author or time of opening in the orders that go by them.
-  assert.equal(withPaperRow(rows, "a", { id: "a", title: "Alpha", publication_year: "2020" }, "", 4), null);
-  assert.equal(withPaperRow(rows, "a", { id: "a", title: "Alpha", first_author: "Smith" }, "", 5), null);
-  assert.equal(withPaperRow(rows, "a", { id: "a", title: "Zeta" }, "", 5), null);
-  assert.equal(withPaperRow(rows, "a", { id: "a", title: "Alpha", last_opened_at: "2026-09-28T00:00:00.000Z" }, "", 6), null);
-  assert.ok(withPaperRow(rows, "a", { id: "a", title: "Alpha", last_opened_at: "2026-09-28T00:00:00.000Z" }, "", 4));
+  assert.equal(withPaperRow(rows, "a", paperData({ id: "a", title: "Alpha", publication_year: "2020" }), "", 4), null);
+  assert.equal(withPaperRow(rows, "a", paperData({ id: "a", title: "Alpha", first_author: "Smith" }), "", 5), null);
+  assert.equal(withPaperRow(rows, "a", paperData({ id: "a", title: "Zeta" }), "", 5), null);
+  assert.equal(withPaperRow(rows, "a", paperData({ id: "a", title: "Alpha", last_opened_at: "2026-09-28T00:00:00.000Z" }), "", 6), null);
+  assert.ok(withPaperRow(rows, "a", paperData({ id: "a", title: "Alpha", last_opened_at: "2026-09-28T00:00:00.000Z" }), "", 4));
   // A value missing from one and null in the other is the same.
-  assert.ok(withPaperRow(rows, "a", { id: "a", title: "Alpha", last_opened_at: null }, "", 6));
+  assert.ok(withPaperRow(rows, "a", paperData({ id: "a", title: "Alpha", last_opened_at: null }), "", 6));
 });
 
 test("a removed paper leaves the list", () => {

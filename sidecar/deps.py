@@ -20,19 +20,18 @@ from typing import Any, Callable, Iterable, Iterator
 from fastapi import Header, HTTPException, Query, status
 
 from papeer.core.config import Settings, api_key_from_env
+from papeer.core.errors import Conflict, NotFound
 from papeer.core.paths import app_env, data_directory
 from papeer.core.storage import Library, LibraryMissingError, NewerSchemaError, library_missing, missing_library_message
 from papeer.providers import ProviderBackend, check_cancel, create_provider
-from sidecar.jobs import ConcurrencyConflict, JobManager
-from sidecar.schemas import ProviderActionRequest
+from sidecar.job_types import SNAPSHOT_KINDS, JobKind, JobStarted, LibraryChangedEvent, PaperChangedEvent
+from sidecar.jobs import JobManager
+from sidecar.schemas.settings import ProviderActionRequest
 
 job_manager = JobManager()
 
 # Entered in the settings dialog or given at launch; kept only while the app runs.
 _runtime_api_key: str = api_key_from_env()
-
-# While these run, the library folder is being copied or replaced.
-SNAPSHOT_JOBS = {"backup", "restore", "drive-sync"}
 
 # A snapshot starts only after already-admitted HTTP handlers have finished (their responses sent, files
 # included: see app.ProtectLibrarySnapshot).
@@ -49,11 +48,11 @@ SIDE_READ = "side-read"
 LIBRARY_BUSY = "library_busy"
 
 
-class LibraryBusy(HTTPException):
-    """409 with LIBRARY_BUSY (sidecar/app.py answers it with the code); raised before a handler changed anything."""
+class LibraryBusy(Conflict):
+    """409 with the code LIBRARY_BUSY; raised before a handler changed anything."""
 
-    def __init__(self, detail: str = "同期・バックアップ・復元が終わるまでお待ちください。"):
-        super().__init__(status_code=status.HTTP_409_CONFLICT, detail=detail)
+    def __init__(self, message: str = "同期・バックアップ・復元が終わるまでお待ちください。"):
+        super().__init__(message, code=LIBRARY_BUSY)
 
 
 # Set while an automatic sync runs in the background (drive_sync.sync(background=True)): it reads the
@@ -80,7 +79,7 @@ def snapshot_blocks(read_only: bool = False) -> bool:
         return False
     if not read_only or not _background_sync.is_set():
         return True
-    return not all(job.kind == "drive-sync" for job in job_manager.get_jobs() if job.running and job.kind in SNAPSHOT_JOBS)
+    return not all(job.kind == JobKind.DRIVE_SYNC for job in job_manager.get_jobs() if job.running and job.kind in SNAPSHOT_KINDS)
 
 
 def begin_library_request(read_only: bool = False) -> str | None:
@@ -187,7 +186,8 @@ def get_data_dir() -> Path:
 
 
 def snapshot_running() -> bool:
-    return any(job.running and job.kind in SNAPSHOT_JOBS for job in job_manager.get_jobs())
+    """Whether the library folder is being copied or replaced (job_types.SNAPSHOT_KINDS)."""
+    return any(job.running and job.kind in SNAPSHOT_KINDS for job in job_manager.get_jobs())
 
 
 def get_library() -> Library:
@@ -202,7 +202,7 @@ def get_library() -> Library:
     except (NewerSchemaError, LibraryMissingError) as exc:
         # Opened by a newer Papeer, or a synced library's folder is gone: say so instead of a bare
         # server error (or an empty library) on every request.
-        raise HTTPException(status_code=409, detail=str(exc)) from None
+        raise Conflict(str(exc)) from None
 
 
 def require_library_folder() -> None:
@@ -213,7 +213,7 @@ def require_library_folder() -> None:
     """
     root = get_data_dir()
     if library_missing(root):
-        raise HTTPException(status_code=409, detail=missing_library_message(root))
+        raise Conflict(missing_library_message(root))
 
 
 def paper_folder(lib: Library, paper_id: str) -> Path:
@@ -221,22 +221,19 @@ def paper_folder(lib: Library, paper_id: str) -> Path:
         lib.paper(paper_id)
         return lib.folder(paper_id)
     except (KeyError, ValueError):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="論文が見つかりません。")
+        raise NotFound("論文が見つかりません。") from None
 
 
 # --- Jobs ---
 
-def submit_job(kind: str, action: Callable[..., Any], paper_id: str | None = None) -> dict[str, str]:
-    """Start a background job; 409 when it would overlap a job it must not run beside."""
-    try:
-        return {"job_id": job_manager.submit_job(kind, action, paper_id=paper_id).job_id}
-    except ConcurrencyConflict as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+def submit_job(kind: JobKind, action: Callable[..., Any], paper_id: str | None = None) -> JobStarted:
+    """Start a background job; ConcurrencyConflict (409) when it would overlap a job it must not run beside."""
+    return JobStarted(job_id=job_manager.submit_job(kind, action, paper_id=paper_id).job_id)
 
 
 def library_changed() -> None:
     """Tell the frontend to reload the library list."""
-    job_manager.broadcast({"type": "library.changed"})
+    job_manager.broadcast(LibraryChangedEvent())
 
 
 def paper_changed(paper_id: str, fields: Iterable[str] | None = None) -> None:
@@ -245,10 +242,7 @@ def paper_changed(paper_id: str, fields: Iterable[str] | None = None) -> None:
     `fields`: the papers columns written (Library.update); None when anything about the paper may have
     changed, such as its translation.
     """
-    event: dict[str, Any] = {"type": "paper.changed", "paper_id": paper_id}
-    if fields is not None:
-        event["fields"] = sorted(fields)
-    job_manager.broadcast(event)
+    job_manager.broadcast(PaperChangedEvent(paper_id=paper_id, fields=sorted(fields) if fields is not None else None))
 
 
 # --- Settings and AI connections ---

@@ -312,8 +312,8 @@ def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
         while job.running and time.monotonic() < deadline:
             time.sleep(.02)
         assert job.status == "succeeded", job.error
-        assert "修正した" in job.result["text"]
-        response = client.post(f"/api/papers/{identity}/revision", json={"unit_id": paragraph["id"], "text": job.result["text"], "expected_text": paragraph["text"]})
+        assert "修正した" in job.result.text
+        response = client.post(f"/api/papers/{identity}/revision", json={"unit_id": paragraph["id"], "text": job.result.text, "expected_text": paragraph["text"]})
         assert response.status_code == 200
         job = deps.job_manager.get_job(response.json()["job_id"])
         deadline = time.monotonic() + 10
@@ -367,7 +367,7 @@ def test_snapshot_api_and_write_guard(library, tmp_path, monkeypatch):
         return job
     with TestClient(runtime.app) as client:
         gate = threading.Event()
-        active = deps.job_manager.submit_job("backup", lambda *_: gate.wait(3))
+        active = deps.job_manager.submit_job("backup", lambda *_: {"path": str(tmp_path / "held.zip")} if gate.wait(3) else None)
         try:
             assert client.put("/api/prompts", json={"chat_answer": "changed"}).status_code == 409
             assert client.patch(f"/api/papers/{identity}", json={"note": "changed"}).status_code == 409
@@ -384,7 +384,7 @@ def test_snapshot_api_and_write_guard(library, tmp_path, monkeypatch):
         response = client.post("/api/restore", json={"path": str(backup)})
         assert response.status_code == 200
         job = wait(response.json()["job_id"])
-        assert Library(Path(job.result["previous_path"])).paper(identity)["note"] == "復元前のメモ"
+        assert Library(Path(job.result.previous_path)).paper(identity)["note"] == "復元前のメモ"
         assert client.get(f"/api/papers/{identity}").json()["note"] == ""
 
 
@@ -427,7 +427,7 @@ def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
     monkeypatch.setattr("sidecar.deps.create_provider", GlossaryProvider)
     with TestClient(runtime.app) as client:
         base = f"/api/papers/{identity}"
-        assert client.put(base + "/glossary", json={"terms": existing}).status_code == 200
+        assert client.put("/api/glossary", json={"terms": existing, "expected_terms": []}).status_code == 200
         response = client.post(base + "/glossary-draft", json={
             "terms": existing, "model": "draft-model", "effort": "low"})
         assert response.status_code == 200
@@ -436,11 +436,13 @@ def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
         while job.running and time.monotonic() < deadline:
             time.sleep(0.01)
         assert job.status == "succeeded"
-        assert job.result["terms"] == [{"source": "tracking error", "target": "追従誤差"}]
+        terms = job.result.model_dump()["terms"]
+        assert terms == [{"source": "tracking error", "target": "追従誤差"}]
         assert calls[0]["existing_terms"] == existing
-        assert client.get(base + "/glossary").json() == existing
-        assert client.put(base + "/glossary", json={"terms": existing + job.result["terms"]}).status_code == 200
-        assert len(client.get(base + "/glossary").json()) == 2
+        assert client.get("/api/glossary").json() == existing
+        assert client.put("/api/glossary", json={"terms": existing + terms,
+                                                 "expected_terms": existing}).status_code == 200
+        assert len(client.get("/api/glossary").json()) == 2
         assert client.post(base + "/glossary-draft", json={"terms": existing * 2}).status_code == 400
 
 
@@ -528,3 +530,54 @@ def test_backup_is_never_written_inside_the_library(library):
         with pytest.raises(ValueError, match="データ保存フォルダーの外"):
             create_backup(lib, inside)
     assert not list(lib.root.rglob("backup.zip"))
+
+
+def test_choices_templates_and_revisions_without_the_routes(library):
+    from papeer.core import reading_tools as tools
+    from papeer.core.errors import Conflict, Invalid, NotFound
+
+    lib, identity = library
+    lib.update(identity, tags=["制御", "Beta"])
+    lib.add_tag_choice("paper", "alpha")
+    assert tools.all_tags(lib) == ["alpha", "Beta", "制御"]
+    assert tools.choice_name("paper", "  読了 ") == "読了"
+    assert tools.choice_name("paper", "x" * 41) == "x" * 41
+    for kind, value in (("status", "  "), ("sticky", "x" * 41)):
+        with pytest.raises(Invalid):
+            tools.choice_name(kind, value)
+    tools.add_choice(lib, "status", "精読中")
+    tools.add_choice(lib, "sticky", "要再読")
+    assert lib.reading_statuses()[-1] == "精読中" and lib.tag_choices("sticky")[-1] == "要再読"
+
+    assert tools.note_templates(lib) == [{"name": "読書メモ", "content": tools.DEFAULT_TEMPLATE, "builtin": True}]
+    assert tools.template_name(" 実験メモ ", "## 条件") == "実験メモ"
+    for name, content in (("読書メモ", "本文"), (" ", "本文"), ("実験メモ", "  ")):
+        with pytest.raises(Invalid):
+            tools.template_name(name, content)
+    lib.save_note_template("実験メモ", "## 条件")
+    assert tools.note_templates(lib)[1:] == [{"name": "実験メモ", "content": "## 条件", "builtin": False}]
+
+    provider = FakeProvider()
+    PaperService(lib, provider, threading.Event()).translate(identity)
+    paragraph = translation_paragraphs(lib, identity)[0]
+    with pytest.raises(NotFound):
+        tools.find_paragraph(lib, "0" * 32, paragraph["id"])
+    with pytest.raises(Invalid):
+        tools.find_paragraph(lib, identity, "missing")
+    with pytest.raises(Conflict):
+        tools.find_paragraph(lib, identity, paragraph["id"], "別の画面で変えた訳文")
+    assert tools.find_paragraph(lib, identity, paragraph["id"], paragraph["text"]) == paragraph
+
+    edited = validate_revision(paragraph["source"], "採用した日本語の段落。" + " ".join(MATH_TOKEN.findall(paragraph["source"])))
+    calls = len(provider.calls)
+    result = tools.adopt_revision(lib, identity, paragraph["id"], edited, provider, threading.Event(),
+                                  lambda _: None, lambda *_: None, paragraph["text"])
+    assert not result.get("skipped_pages") and len(provider.calls) == calls
+    assert tools.find_paragraph(lib, identity, paragraph["id"])["text"] == edited
+    history = tools.revision_history(lib.folder(identity))
+    assert [(item["unit_id"], item["before"], item["after"]) for item in history] == [(paragraph["id"], paragraph["text"], edited)]
+    # Adopting over the text the user no longer sees is refused, and nothing is recorded.
+    with pytest.raises(Conflict):
+        tools.adopt_revision(lib, identity, paragraph["id"], edited, provider, threading.Event(),
+                             lambda _: None, lambda *_: None, paragraph["text"])
+    assert len(tools.revision_history(lib.folder(identity))) == 1

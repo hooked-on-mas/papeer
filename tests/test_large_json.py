@@ -16,7 +16,7 @@ from papeer.core import search, shared_json
 from papeer.core.config import Settings
 from papeer.core.fileio import atomic_write_json
 from papeer.core.paths import PaperFiles
-from papeer.core.reading_state import reading_blocks, reading_state, translation_text
+from papeer.core.reading_state import reading_state, translation_text
 from papeer.core.reading_tools import translation_paragraphs
 import papeer.core.service as service_module
 from papeer.core.service import PaperService, stored_translations
@@ -402,7 +402,6 @@ def test_readers_leave_the_shared_document_as_it_was(tmp_path):
     (library.folder(identity) / "translation.md").unlink()
     search.search_paper(library, identity, "適応", "translated")
     reading_state(library, identity)
-    reading_blocks(library, identity, 1)
     translation_text(library, identity, 1)
     translation_paragraphs(library, identity)
     service.translate(identity)

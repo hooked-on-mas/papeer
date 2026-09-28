@@ -84,22 +84,3 @@ def translation_text(lib: Library, paper_id: str, page: int) -> list[str]:
     if not files.translation_cache.is_file() and not files.translation_md.is_file():
         return []
     return page_translation_text(files.folder, lib.document(paper_id), page)
-
-
-def reading_blocks(lib: Library, paper_id: str, page: int) -> dict[str, Any]:
-    """Source blocks with their positions, and the translated blocks, of one page."""
-    document = lib.document(paper_id)
-    if not 1 <= page <= document["page_count"]:
-        raise ValueError("ページが範囲外です。")
-    source = [{"id": b["id"], "text": b["text"], "bbox": b["bbox"]}
-              for b in document["blocks"] if b["page"] == page]
-    files = PaperFiles(lib.folder(paper_id))
-    translations: list[dict[str, str]] = []
-    if files.translation_md.exists():
-        translations = [{"id": block_id, "text": text} for number, block_id, text in files.translation_sections()
-                        if number == page and text]
-    elif files.translation_cache.exists():
-        translations = [{"id": f"preview-{i}", "text": value} for i, value in
-                        enumerate(page_translation_text(files.folder, document, page))]
-    return {"source": source, "translations": translations,
-            "width": document["pages"][page - 1]["width"], "height": document["pages"][page - 1]["height"]}

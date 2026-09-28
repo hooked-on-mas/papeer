@@ -41,6 +41,11 @@ def device_directory() -> Path:
     return Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "PapeerSync"
 
 
+def log_directory() -> Path:
+    """The sidecar's log (sidecar/errors.log_to_file): this PC's, like the rest of device_directory()."""
+    return device_directory() / "logs"
+
+
 def sync_state_path(root: Path) -> Path:
     """This PC's folder-sync state for the library at `root` (see drive_sync)."""
     return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".json")

@@ -1,10 +1,14 @@
-"""Portable JSON dictionaries, staged for review before saving to the library."""
+"""Portable JSON dictionaries, staged for review before saving to the library.
+
+A file the user chose that cannot be read or written is theirs to fix, not a bug: Invalid with the OS's message.
+"""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
 from papeer.core.destinations import inside_library
+from papeer.core.errors import Invalid
 from papeer.core.fileio import atomic_write_text
 from papeer.core.reading_tools import validate_terms
 
@@ -21,14 +25,20 @@ def export_glossary(path: Path, terms: list[dict], library_root: Path) -> int:
                          ensure_ascii=False, indent=2) + "\n"
     if len(content.encode("utf-8")) > MAX_FILE_BYTES:
         raise ValueError("辞書ファイルは10MBまでです。")
-    atomic_write_text(path, content)
+    try:
+        atomic_write_text(path, content)
+    except OSError as exc:
+        raise Invalid(str(exc)) from exc
     return len(terms)
 
 
 def import_glossary(path: Path, existing: list[dict]) -> dict:
     existing = validate_terms(existing)
-    with path.open("rb") as stream:
-        content = stream.read(MAX_FILE_BYTES + 1)
+    try:
+        with path.open("rb") as stream:
+            content = stream.read(MAX_FILE_BYTES + 1)
+    except OSError as exc:
+        raise Invalid(str(exc)) from exc
     if len(content) > MAX_FILE_BYTES:
         raise ValueError("辞書ファイルは10MBまでです。")
     try:

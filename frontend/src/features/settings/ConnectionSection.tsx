@@ -116,7 +116,7 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
     try {
       await startJob("/api/providers/check", values(), { kind: "check", paperId: null }, (event) => {
         setChecking(false);
-        if (event.status === "succeeded") setCheckResult({ ok: true, text: String(event.result) });
+        if (event.status === "succeeded") setCheckResult({ ok: true, text: event.result });
         else setCheckResult({ ok: false, text: event.error || "接続を確認できませんでした。" });
       });
     } catch (error) {

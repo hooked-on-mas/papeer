@@ -85,7 +85,7 @@ function PaperReview({ paperId }: { paperId: string }) {
         { kind: draft ? "revision-draft" : "revision", paperId }, event => {
           setPending(false);
           if (event.status !== "succeeded") return;
-          if (draft) setText(event.result.text);
+          if (event.kind === "revision-draft") setText(event.result.text);
           else {
             setSelected(null); setText("");
             client.invalidateQueries({ queryKey: [QK.paragraphs, paperId] });

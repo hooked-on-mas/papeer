@@ -39,6 +39,13 @@ lint-backend:
 lint-frontend:
     pnpm typecheck
 
+# Regenerate the API schema and the frontend's types from the sidecar (tools/export_openapi.py, README「API の型」)
+# frontend/openapi.json を app.openapi() から書き出し、openapi-typescript で frontend/src/api/schema.d.ts を作り直す
+# API のモデルやルートを変えたら実行して両方をコミットする（一致は tests/test_openapi_schema.py で検査する）
+gen-api:
+    uv run python tools/export_openapi.py
+    pnpm --dir frontend gen-api
+
 # Set the app version in every manifest and lock file (tools/bump_version.py, README「リリース」)
 # 全ファイルの版を書き換え、CHANGELOG の [Unreleased] をその版の節に移す（例: just bump 0.3.0）
 bump version:

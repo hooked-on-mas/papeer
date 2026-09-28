@@ -33,6 +33,10 @@ export function authorizedUrl(path: string): string {
   return url.toString();
 }
 
+/**
+ * The typed client: paths, parameters, bodies and answers come from schema.d.ts (`just gen-api` makes it
+ * from the sidecar). Read the answer with unwrap(), which fails like apiRequest.
+ */
 export const api = createClient<paths>({
   baseUrl: "http://127.0.0.1:8000/", // dummy
   fetch: async (request) => {
@@ -45,7 +49,14 @@ export const api = createClient<paths>({
     }
     // Like apiRequest: one refused while the automatic sync runs in the background is sent again after it.
     const { response } = await sendWhenLibraryFree(async () => {
-      const response = await fetch(newRequest.clone());
+      let response: Response;
+      try {
+        response = await fetch(newRequest.clone());
+      } catch (error) {
+        // As apiRequest: a stopped request rejects with its AbortError, an unreachable sidecar with an ApiError.
+        if (newRequest.signal.aborted) throw error;
+        throw new ApiError("バックエンドに接続できませんでした。", 0);
+      }
       const body = response.status === 409 ? await response.clone().json().catch(() => null) : null;
       return { status: response.status, body, response };
     });
@@ -68,7 +79,21 @@ function errorMessage(body: any, status: number): string {
 }
 
 /**
- * Untyped request for endpoints the generated schema does not describe yet.
+ * The answer of a typed request, `unwrap(api.GET("/api/papers/{paper_id}", ...))`; a refusal throws the
+ * ApiError that apiRequest would (with the body's code, such as library_busy).
+ */
+export async function unwrap<R extends { data?: unknown; error?: unknown; response: Response }>(
+  request: Promise<R>): Promise<Exclude<R["data"], undefined>> {
+  const { data, error, response } = await request;
+  if (!response.ok) {
+    const code = (error as { code?: unknown } | undefined)?.code;
+    throw new ApiError(errorMessage(error, response.status), response.status, typeof code === "string" ? code : undefined);
+  }
+  return data as Exclude<R["data"], undefined>;
+}
+
+/**
+ * Untyped request, for the endpoints not moved to the typed client (api and unwrap) yet.
  * One refused while the automatic sync runs in the background waits for it and is sent again (libraryBusy.ts).
  * `signal` stops it (a query's, when its key changes: a search typed further); the promise then rejects
  * with the AbortError itself, which React Query takes for a cancellation rather than a failure.

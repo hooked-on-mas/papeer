@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { createOpenTracker, openedAgo, recentlyOpened } from "../src/lib/recentPapers.ts";
 import type { PaperData } from "../src/api/hooks.ts";
+import { paperData } from "./support/paperData.ts";
 
 test("a paper counts as opened once it has stayed open, and once only", () => {
   mock.timers.enable({ apis: ["setTimeout"] });
@@ -34,11 +35,11 @@ test("a paper counts as opened once it has stayed open, and once only", () => {
 
 test("the recently opened papers are those opened on this PC, the last opened first", () => {
   const papers: PaperData[] = [
-    { id: "a", title: "A", last_opened_at: "2026-09-01T00:00:00.000Z" },
-    { id: "b", title: "B", last_opened_at: null },
-    { id: "c", title: "C" },
-    { id: "d", title: "D", last_opened_at: "2026-09-03T00:00:00.000Z" },
-    { id: "e", title: "E", last_opened_at: "2026-09-02T00:00:00.000Z" },
+    paperData({ id: "a", title: "A", last_opened_at: "2026-09-01T00:00:00.000Z" }),
+    paperData({ id: "b", title: "B", last_opened_at: null }),
+    paperData({ id: "c", title: "C" }),
+    paperData({ id: "d", title: "D", last_opened_at: "2026-09-03T00:00:00.000Z" }),
+    paperData({ id: "e", title: "E", last_opened_at: "2026-09-02T00:00:00.000Z" }),
   ];
   assert.deepEqual(recentlyOpened(papers, 5).map((paper) => paper.id), ["d", "e", "a"]);
   assert.deepEqual(recentlyOpened(papers, 2).map((paper) => paper.id), ["d", "e"]);

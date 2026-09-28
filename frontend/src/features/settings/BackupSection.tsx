@@ -45,7 +45,7 @@ export function BackupSection() {
       await startJob(restore ? "/api/restore" : "/api/backup", restore ? { path, import_settings: importSettings } : { path }, { kind: restore ? "restore" : "backup", paperId: null }, async event => {
         setPending(false);
         if (event.status !== "succeeded") { suspendUiStateSync(false); return; }
-        if (restore) {
+        if (event.kind === "restore") {
           await showMessage("復元しました", `復元前のデータは次の場所に残しています：\n${event.result.previous_path}\n\n画面を読み込み直します。`);
           useStore.setState({ uiStateLoaded: false, activePaperId: null, paperPages: {}, currentPage: 1, librarySearch: "", currentCollection: "", selectedFolder: null, expandedCollections: null, moveHistory: [], chatAttachments: [], chatInputs: {} });
           reloadUnlessClosing(() => window.location.reload());

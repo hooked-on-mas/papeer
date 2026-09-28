@@ -1,22 +1,13 @@
 import { create } from "zustand";
+import type { components } from "../api/schema";
 
-/** Tokens used by one job, as the sidecar reports them. input_tokens includes cached input. */
-export type Usage = {
-  provider: string;
-  model: string;
-  calls: number;
-  measured_calls: number;
-  input_tokens: number;
-  cached_tokens: number;
-  output_tokens: number;
-  reasoning_tokens: number;
-  cost_usd: number | null;
-};
+/** Tokens used by one job, as the sidecar reports them (Usage in sidecar/job_types.py). input_tokens includes cached input. */
+export type Usage = components["schemas"]["Usage"];
 
-export type LimitWindow = { label: string; used_percent: number; resets_at: number | null };
+export type LimitWindow = components["schemas"]["LimitWindow"];
 
 /** Plan usage of the connected AI; only Claude Code, Codex and some APIs report it. */
-export type UsageLimits = { provider: string; windows: LimitWindow[]; checked_at: number };
+export type UsageLimits = components["schemas"]["UsageLimits"];
 
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;

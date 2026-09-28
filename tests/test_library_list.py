@@ -24,6 +24,7 @@ from papeer.core.paths import opened_papers_path, review_cache_path
 from papeer.core.storage import Library
 from sidecar.app import app
 from sidecar.deps import job_manager
+from sidecar.job_types import PaperChangedEvent
 
 FIXTURE_PDF = Path(__file__).parent / "fixtures/sample.pdf"
 
@@ -215,7 +216,8 @@ def test_a_row_without_its_folder_is_still_listed(library, tmp_path):
 def test_changing_one_paper_announces_only_that_paper(library, tmp_path):
     paper_id = _add(library, tmp_path, "a", "A")
     events: list[dict] = []
-    with TestClient(app) as client, patch.object(job_manager, "broadcast", side_effect=events.append):
+    with TestClient(app) as client, patch.object(job_manager, "broadcast",
+                                                          side_effect=lambda event: events.append(event.model_dump())):
         assert client.patch(f"/api/papers/{paper_id}", json={"note": "メモ"}).status_code == 200
         assert client.patch(f"/api/papers/{paper_id}", json={"tags": ["制御"], "collection": "論文"}).status_code == 200
         assert client.patch(f"/api/papers/{paper_id}", json={}).status_code == 200
@@ -262,7 +264,7 @@ def _dump(root: Path) -> str:
 def test_opening_a_paper_is_kept_on_this_pc_and_starts_reading_once(library, tmp_path):
     paper_id = _add(library, tmp_path, "a", "A")
     assert library.paper(paper_id)["read_status"] == "未読"
-    events: list[dict] = []
+    events: list[PaperChangedEvent] = []
     with TestClient(app) as client, patch.object(job_manager, "broadcast", side_effect=events.append):
         first = client.post(f"/api/papers/{paper_id}/opened").json()
         assert first["started_reading"] is True and library.paper(paper_id)["read_status"] == "読書中"
@@ -273,7 +275,7 @@ def test_opening_a_paper_is_kept_on_this_pc_and_starts_reading_once(library, tmp
         assert second["last_opened_at"] >= first["last_opened_at"]
         assert client.get(f"/api/papers/{paper_id}").json()["last_opened_at"] == second["last_opened_at"]
         assert client.post(f"/api/papers/{'0' * 32}/opened").status_code == 404
-    assert events == [
+    assert [event.model_dump() for event in events] == [
         {"type": "paper.changed", "paper_id": paper_id, "fields": ["last_opened_at", "read_status"]},
         {"type": "paper.changed", "paper_id": paper_id, "fields": ["last_opened_at"]},
     ]

@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { StickyNote, ChevronDown, ClipboardPaste, Copy, Download, Eraser, MoreHorizontal, MousePointer2, PenLine, Redo2, Scan, Scissors, SquareDashed, Trash2, Type, Undo2, X } from "lucide-react";
 import { apiRequest, authToken, backendUrl } from "@/api/client";
-import type { PaperData } from "@/api/hooks";
+import { getPaper } from "@/api/hooks";
 import { paperExportFilename } from "@/lib/exportFilename";
 import { shell, tauriShell } from "@/shell";
 import { useStore } from "@/store";
@@ -56,7 +56,7 @@ export function InkToolbar({ editor, disabled, onStickyNote, side, errorsOnly = 
     setExporting(true);
     try {
       const { paperId, side } = ink.entry;
-      const paper = await apiRequest<PaperData>("GET", `/api/papers/${paperId}`);
+      const paper = await getPaper(paperId);
       const name = paperExportFilename(paper, side === "original" ? "original-annotated" : "translated-annotated");
       const destination = shell === tauriShell ? await shell.saveFile(name, [{ name: "PDF", extensions: ["pdf"] }]) : null;
       if (shell === tauriShell && !destination) return;
