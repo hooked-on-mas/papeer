@@ -41,15 +41,14 @@ def test_the_frontend_names_the_same_kinds():
     assert set(re.findall(r'^\s*"?([a-z-]+)"?:', block[1], re.M)) == {kind.value for kind in JobKind}
 
 
-def test_the_frontend_result_types_name_the_same_fields():
-    # Usage is lib/usage.ts's, which jobTypes.ts uses.
-    source = "\n".join((FRONTEND / name).read_text("utf-8") for name in ("api/jobTypes.ts", "lib/usage.ts"))
+def test_the_frontend_result_types_are_the_generated_ones():
+    # The generated types follow the models (tests/test_openapi_schema.py); jobTypes.ts only names them.
+    source = (FRONTEND / "api/jobTypes.ts").read_text("utf-8")
     models = {model for model in RESULT_TYPES.values() if isinstance(model, type) and issubclass(model, BaseModel)}
-    for model in models | {Usage, GlossaryTerm}:
-        block = re.search(rf"export type {model.__name__} = \{{(.*?)\}};", source, re.S)
-        assert block, model.__name__
-        body = re.sub(r"/\*.*?\*/|//[^\n]*", "", block[1], flags=re.S)
-        assert set(re.findall(r"(?:^|[;{\s])([a-z_]+)\??:", body)) == set(model.model_fields), model.__name__
+    for model in models | {GlossaryTerm}:
+        assert f'export type {model.__name__} = Schemas["{model.__name__}"];' in source, model.__name__
+    usage = (FRONTEND / "lib/usage.ts").read_text("utf-8")
+    assert f'export type Usage = components["schemas"]["{Usage.__name__}"];' in usage
 
 
 @pytest.fixture

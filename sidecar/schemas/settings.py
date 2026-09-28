@@ -1,9 +1,12 @@
 """Models of the settings and the AI connections (sidecar/routes/settings.py)."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Literal, TypedDict
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from papeer.core.config import Settings
+from sidecar.schemas.common import Stored
 
 _DEFAULTS = Settings()
 
@@ -11,6 +14,8 @@ _DEFAULTS = Settings()
 class SettingsModel(BaseModel):
     # Keys the model does not know are ignored (Pydantic's default). This is only the API's shape:
     # settings.json itself is read by Settings.load, which migrates older flat keys (codex_path etc.).
+    # GET answers every field, which PUT may leave out: the schema has SettingsModel-Output and -Input.
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
     provider: str = _DEFAULTS.provider
     model: str = _DEFAULTS.model
     reasoning_effort: str = _DEFAULTS.reasoning_effort
@@ -30,12 +35,42 @@ class ProviderActionRequest(BaseModel):
     api_key: str | None = None
 
 
+class ProviderField(BaseModel):
+    """A connection-specific setting the settings dialog shows (providers.base.OptionField)."""
+    key: str
+    label: str
+    placeholder: str
+    hint: str
+
+
 class ProviderSpecModel(BaseModel):
+    """An AI connection as GET /api/providers describes it (providers.base.ProviderSpec)."""
     id: str
     label: str
     description: str
-    kind: str
+    kind: Literal["cli", "http"]
     needs_login: bool
     needs_api_key: bool
     login_service: str
-    fields: list[dict[str, str]]
+    fields: list[ProviderField]
+
+
+class ProviderOption(BaseModel):
+    """A model or reasoning effort the connection offers: its id, and the name shown."""
+    id: str
+    name: str
+
+
+class LimitWindow(TypedDict):
+    """One window of the plan's usage, as the service reports it (resets_at: seconds since the epoch)."""
+    label: str
+    used_percent: float
+    resets_at: float | None
+
+
+class UsageLimits(BaseModel):
+    """GET /api/usage/limits: the connected AI's plan usage (providers.common.remember_limits).
+    The windows come from the service (a CLI's output or an API's headers), so they are passed on as they are."""
+    provider: str
+    windows: Stored[list[LimitWindow]]
+    checked_at: float

@@ -1,10 +1,11 @@
 import type { PaperData, ReadingData } from "../api/hooks";
+import type { components } from "../api/schema";
 import { wholeOcrPages } from "./translationIssues.ts";
 
 export type PaperStatus = "untranslated" | "translating" | "partial" | "paused" | "translated" | "review" | "failed" | "ocr";
 
-/** The translation state a paper's row keeps (PaperData.status, papeer/core/translation_status.py). */
-export type StoredStatus = "not_translated" | "translating" | "partial" | "resumable" | "incomplete" | "translated";
+/** The translation state a paper's row keeps (PaperData.status, TranslationStatus in papeer/core/translation_status.py). */
+export type StoredStatus = components["schemas"]["TranslationStatus"];
 
 const storedLabels: Record<StoredStatus, string> = {
   not_translated: "未翻訳", translating: "翻訳中", partial: "一部翻訳済み",

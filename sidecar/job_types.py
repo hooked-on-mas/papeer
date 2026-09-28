@@ -168,7 +168,19 @@ def job_result(kind: JobKind, value: Any) -> Any:
     return _RESULT_ADAPTERS[kind].validate_python(value)
 
 
-class JobInfo(BaseModel):
+class Sent(BaseModel):
+    """A model whose every field is in what the sidecar sends, defaults included: the schema requires them
+    all, so the frontend's types say `paper_id: string | null` (and an event's `type`) rather than an
+    optional key."""
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+
+class JobStarted(BaseModel):
+    """The answer of a route that starts a job: follow it with GET /api/jobs/{job_id} or the events."""
+    job_id: str
+
+
+class JobInfo(Sent):
     """A job as GET /api/jobs/{job_id} tells it, running or finished (JobManager keeps the last ones)."""
     job_id: str
     paper_id: str | None = None
@@ -185,7 +197,7 @@ class JobInfo(BaseModel):
 
 # --- Events of /ws/events ---
 
-class JobStartedEvent(BaseModel):
+class JobStartedEvent(Sent):
     type: Literal["job.started"] = "job.started"
     job_id: str
     paper_id: str | None
@@ -193,7 +205,7 @@ class JobStartedEvent(BaseModel):
     message: str
 
 
-class JobProgressEvent(BaseModel):
+class JobProgressEvent(Sent):
     type: Literal["job.progress"] = "job.progress"
     job_id: str
     paper_id: str | None
@@ -203,7 +215,7 @@ class JobProgressEvent(BaseModel):
     total: int | None
 
 
-class JobPageReadyEvent(BaseModel):
+class JobPageReadyEvent(Sent):
     """A page of a translation in progress is ready to show."""
     type: Literal["job.page_ready"] = "job.page_ready"
     paper_id: str | None
@@ -215,24 +227,24 @@ class JobFinishedEvent(JobInfo):
     type: Literal["job.finished"] = "job.finished"
 
 
-class LibraryChangedEvent(BaseModel):
+class LibraryChangedEvent(Sent):
     type: Literal["library.changed"] = "library.changed"
 
 
-class PaperChangedEvent(BaseModel):
+class PaperChangedEvent(Sent):
     """One paper changed; `fields`: the columns written, None when anything about it may have."""
     type: Literal["paper.changed"] = "paper.changed"
     paper_id: str
     fields: list[str] | None = None
 
 
-class ImportPagesEvent(BaseModel):
+class ImportPagesEvent(Sent):
     """The page counts of the PDFs being added, keyed by the path as sent (None: not readable)."""
     type: Literal["import.pages"] = "import.pages"
     pages: dict[str, int | None]
 
 
-class ImportItemEvent(BaseModel):
+class ImportItemEvent(Sent):
     """One PDF has been added (or was in the library already)."""
     type: Literal["import.item"] = "import.item"
     path: str

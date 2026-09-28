@@ -2,15 +2,16 @@
  * The sidecar's job contract (sidecar/job_types.py): what each kind of job returns, how GET /api/jobs
  * and /api/jobs/{job_id} tell a job, and the events of /ws/events.
  *
- * Written by hand after the Python models, with their names, until the API types are generated
- * (schema.d.ts): each type here then becomes an alias of components["schemas"][<same name>], and only
- * what the schema cannot say stays (JobResults, which result belongs to which kind, and the narrowing
- * of JobInfo and JobFinished by kind and status).
+ * The types are the generated ones (schema.d.ts, components["schemas"][<same name>]); only what the
+ * schema cannot say is written here: JobResults (which result belongs to which kind), and the narrowing
+ * of JobInfo and JobFinished by kind and status.
  */
+import type { components } from "./schema";
 import type { JobKind } from "@/features/jobs/jobKinds";
-import type { Usage } from "@/lib/usage";
 
 export type { JobKind };
+
+type Schemas = components["schemas"];
 
 // --- Results, by kind ---
 
@@ -18,44 +19,20 @@ export type { JobKind };
  * translate and revision: the run's translation-report.json. Only what the frontend reads is named;
  * the report has more (warnings, counts of preserved blocks: TranslationReport in hooks.ts).
  */
-export type TranslateResult = {
-  pages: number;
-  requested_pages: number[];
-  selected_pages: number[];
-  already_translated_pages: number[];
-  preserved_pages: number[];
-  translated_pages: number[];
-  untranslated_pages: number[];
-  /** Pages whose PDF could not be made: they stay in the original. */
-  skipped_pages: number[];
-  skipped_blocks: string[];
-  skipped_block_pages: number[];
-  page_errors: Record<string, string>;
-  model: string;
-  usage?: Usage | null;
-};
-export type RevisionDraftResult = { text: string; unit_id: string };
-export type GlossaryTerm = { source: string; target: string };
-export type GlossaryDraftResult = { terms: GlossaryTerm[] };
-export type ArticleResult = { content: string; usage?: Usage | null };
-export type AskResult = { answer: string; usage?: Usage | null };
+export type TranslateResult = Schemas["TranslateResult"];
+export type RevisionDraftResult = Schemas["RevisionDraftResult"];
+export type GlossaryTerm = Schemas["GlossaryTerm"];
+export type GlossaryDraftResult = Schemas["GlossaryDraftResult"];
+export type ArticleResult = Schemas["ArticleResult"];
+export type AskResult = Schemas["AskResult"];
 /** paper_ids in the order the paths were sent; a PDF already in the library gives its paper. */
-export type ImportResult = { paper_ids: string[]; added: number };
-export type ExportResult = { kind: "interleaved" | "bilingual"; destination: string };
-export type InterleavedResult = { kind: "interleaved"; path: string };
-export type BackupResult = { path: string };
-export type RestoreResult = { previous_path: string };
-/** "synced", or why the sync did not (yet) take place. */
-export type DriveSyncResult = {
-  status: "synced" | "deferred" | "conflict" | "review";
-  /** Another PC's library was taken in: the page reloads. */
-  reloaded?: boolean;
-  previous_path?: string | null;
-  set_aside?: string[];
-  not_set_aside?: Record<string, unknown>[];
-  conflicts?: Record<string, unknown>[] | null;
-  review?: Record<string, unknown> | null;
-};
+export type ImportResult = Schemas["ImportResult"];
+export type ExportResult = Schemas["ExportResult"];
+export type InterleavedResult = Schemas["InterleavedResult"];
+export type BackupResult = Schemas["BackupResult"];
+export type RestoreResult = Schemas["RestoreResult"];
+/** "synced", or why the sync did not (yet) take place; reloaded: another PC's library was taken in. */
+export type DriveSyncResult = Schemas["DriveSyncResult"];
 /** check: the connection's answer as one line of text. */
 export type CheckResult = string;
 
@@ -78,17 +55,12 @@ export type JobResults = {
 
 // --- Jobs ---
 
-export type JobStatus = "running" | "succeeded" | "failed" | "cancelled";
+export type JobStatus = Schemas["JobInfo"]["status"];
 
-type JobBase<K extends JobKind> = {
-  job_id: string;
-  paper_id: string | null;
-  kind: K;
-  message: string;
-  done: number | null;
-  total: number | null;
-  cancelled: boolean;
-};
+/** A route that starts a job answers its id. */
+export type JobStarted = Schemas["JobStarted"];
+
+type JobBase<K extends JobKind> = Omit<Schemas["JobInfo"], "kind" | "status" | "running" | "result" | "error"> & { kind: K };
 
 /** A job that has ended, told by kind and outcome: a succeeded one has its kind's result, the others an error. */
 export type JobFinished<K extends JobKind = JobKind> = K extends JobKind
@@ -105,24 +77,20 @@ export type JobInfo<K extends JobKind = JobKind> = K extends JobKind
 
 // --- Events of /ws/events ---
 
-export type JobStartedEvent = { type: "job.started"; job_id: string; paper_id: string | null; kind: JobKind; message: string };
-export type JobProgressEvent = {
-  type: "job.progress"; job_id: string; paper_id: string | null; kind: JobKind; message: string;
-  /** From a "3/10" in the message. */
-  done: number | null;
-  total: number | null;
-};
+export type JobStartedEvent = Schemas["JobStartedEvent"];
+/** done and total: from a "3/10" in the message. */
+export type JobProgressEvent = Schemas["JobProgressEvent"];
 /** A page of a translation in progress is ready to show. */
-export type JobPageReadyEvent = { type: "job.page_ready"; paper_id: string | null; page: number };
-/** The job as it ended: the same as GET /api/jobs/{job_id} answers afterwards. */
+export type JobPageReadyEvent = Schemas["JobPageReadyEvent"];
+/** The job as it ended: the same as GET /api/jobs/{job_id} answers afterwards (narrowed as JobFinished). */
 export type JobFinishedEvent = JobFinished & { type: "job.finished" };
-export type LibraryChangedEvent = { type: "library.changed" };
-/** One paper changed; `fields`: the columns written, none when anything about it may have. */
-export type PaperChangedEvent = { type: "paper.changed"; paper_id: string; fields?: string[] | null };
+export type LibraryChangedEvent = Schemas["LibraryChangedEvent"];
+/** One paper changed; `fields`: the columns written, null when anything about it may have. */
+export type PaperChangedEvent = Schemas["PaperChangedEvent"];
 /** The page counts of the PDFs being added, keyed by the path as sent (null: not readable). */
-export type ImportPagesEvent = { type: "import.pages"; pages: Record<string, number | null> };
+export type ImportPagesEvent = Schemas["ImportPagesEvent"];
 /** One PDF has been added (or was in the library already). */
-export type ImportItemEvent = { type: "import.item"; path: string; paper_id: string };
+export type ImportItemEvent = Schemas["ImportItemEvent"];
 
 export type ServerEvent =
   | JobStartedEvent | JobProgressEvent | JobPageReadyEvent | JobFinishedEvent

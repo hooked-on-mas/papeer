@@ -1,7 +1,12 @@
-"""Request models of the background work on one paper (sidecar/routes/ai_jobs.py)."""
+"""Models of the background work on one paper (sidecar/routes/ai_jobs.py)."""
 from __future__ import annotations
 
+from typing import Literal, NotRequired, TypedDict
+
 from pydantic import BaseModel, Field
+
+from sidecar.job_types import Usage
+from sidecar.schemas.common import Stored
 
 
 class TranslateRequest(BaseModel):
@@ -37,3 +42,24 @@ class AskRequest(BaseModel):
 class ExportRequest(BaseModel):
     kind: str = Field(description="translated | interleaved | bilingual | markdown")
     destination: str
+
+
+class ChatPassage(TypedDict):
+    """A passage as a question stored it (an AskAttachment, its text shortened: PaperService.ask). Messages
+    saved before the offsets into the text layer were sent lack start, end and raw."""
+    page: int
+    side: Literal["original", "translated"]
+    text: str
+    anchor_y: float
+    start: NotRequired[int | None]
+    end: NotRequired[int | None]
+    raw: NotRequired[str]
+
+
+class ChatMessage(BaseModel):
+    """A message of the paper's chat (Library.messages). Answered with response_model_exclude_unset: a question
+    without attached passages has no attachments key. The usage and passages are JSON in the database."""
+    role: Literal["user", "assistant"]
+    content: str
+    usage: Stored[Usage | None]  # An answer's; None for a question, or when the connection did not tell.
+    attachments: Stored[list[ChatPassage]] = None  # Never answered: a message without passages has no key.

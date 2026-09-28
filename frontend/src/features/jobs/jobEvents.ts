@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { ApiError, apiRequest, authToken, backendPort } from "@/api/client";
-import { paperDisplayName, type PaperData } from "@/api/hooks";
-import type { JobInfo, ServerEvent } from "@/api/jobTypes";
+import { getPaper, paperDisplayName, type PaperData } from "@/api/hooks";
+import type { JobInfo, JobStarted, ServerEvent } from "@/api/jobTypes";
 import { isRunning, useStore, type Job } from "@/store";
 import { notifyIfAway, shell } from "@/shell";
 import { removePendingImports, setPendingPages } from "@/app/pendingImports";
@@ -69,7 +69,7 @@ export async function startJob<K extends JobKind>(
   meta: { kind: K; paperId: string | null },
   watcher?: Watcher<K>,
 ): Promise<string> {
-  const response = await apiRequest<{ job_id: string }>("POST", path, body ?? {});
+  const response = await apiRequest<JobStarted>("POST", path, body ?? {});
   showStartedJob(response.job_id, meta);
   if (watcher) watchJob(response.job_id, meta, watcher);
   return response.job_id;
@@ -138,7 +138,7 @@ async function paperTitle(queryClient: QueryClient, paperId: string): Promise<st
   try {
     const paper = await queryClient.fetchQuery({
       queryKey: [QK.papers, paperId],
-      queryFn: () => apiRequest<PaperData>("GET", `/api/papers/${paperId}`),
+      queryFn: () => getPaper(paperId),
     });
     return paper ? paperDisplayName(paper) || null : null;
   } catch {
@@ -186,8 +186,12 @@ async function reportFailure(event: JobFinished, visible: boolean, queryClient: 
 
 /** The AI usage a succeeded job reports, if its kind reports one. */
 function resultUsage(event: JobSucceeded): Usage | null {
-  const result = event.result;
-  return typeof result === "object" && "usage" in result ? result.usage ?? null : null;
+  switch (event.kind) {
+    case "translate": case "revision": case "article": case "ask":
+      return event.result.usage ?? null;
+    default:
+      return null;
+  }
 }
 
 function handleSuccess(event: JobSucceeded, visible: boolean, queryClient: QueryClient): void {

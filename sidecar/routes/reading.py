@@ -13,7 +13,7 @@ from papeer.core.errors import Invalid
 from papeer.providers import Cancelled, check_cancel
 from papeer.core.terminology import global_glossary, save_global_glossary
 from sidecar import deps
-from sidecar.job_types import JobKind
+from sidecar.job_types import JobKind, JobStarted
 from sidecar.schemas.reading import (
     BackupRequest,
     GlobalGlossaryRequest,
@@ -122,7 +122,7 @@ def effective_glossary(paper_id: str):
     return tools.effective_glossary(lib, paper_id)
 
 @router.post("/api/papers/{paper_id}/glossary-draft")
-def glossary_draft(paper_id: str, body: GlossaryDraftRequest):
+def glossary_draft(paper_id: str, body: GlossaryDraftRequest) -> JobStarted:
     lib = deps.get_library()
     deps.paper_folder(lib, paper_id)
     existing = tools.validate_terms(body.terms)
@@ -142,7 +142,7 @@ def revisions(paper_id: str):
     return tools.revision_history(deps.paper_folder(deps.get_library(), paper_id))
 
 @router.post("/api/papers/{paper_id}/revision-draft")
-def draft_revision(paper_id: str, body: RevisionRequest):
+def draft_revision(paper_id: str, body: RevisionRequest) -> JobStarted:
     lib = deps.get_library()
     paragraph = tools.find_paragraph(lib, paper_id, body.unit_id, body.expected_text)
     settings = deps.get_settings()
@@ -154,7 +154,7 @@ def draft_revision(paper_id: str, body: RevisionRequest):
     return deps.submit_job(JobKind.REVISION_DRAFT, action, paper_id)
 
 @router.post("/api/papers/{paper_id}/revision")
-def adopt_revision(paper_id: str, body: RevisionRequest):
+def adopt_revision(paper_id: str, body: RevisionRequest) -> JobStarted:
     lib = deps.get_library()
     paragraph = tools.find_paragraph(lib, paper_id, body.unit_id, body.expected_text)
     text = tools.validate_revision(paragraph["source"], body.text)
@@ -175,7 +175,7 @@ def citation_excerpts(paper_id: str, page: int):
     return {"text": lib.page_text(paper_id, page)[:6000]}
 
 @router.post("/api/backup")
-def backup(body: BackupRequest):
+def backup(body: BackupRequest) -> JobStarted:
     lib = deps.get_library()
     def action(cancel, progress, _page_ready):
         try:
@@ -189,7 +189,7 @@ def backup(body: BackupRequest):
     return deps.submit_job(JobKind.BACKUP, action)
 
 @router.post("/api/restore")
-def restore(body: RestoreRequest):
+def restore(body: RestoreRequest) -> JobStarted:
     lib = deps.get_library()
     def action(cancel, progress, _page_ready):
         try:

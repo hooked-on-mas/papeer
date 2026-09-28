@@ -78,8 +78,6 @@ just dev-frontend   # ターミナル 2: Tauri + Vite
 
 sidecar は `/health` 以外のすべての API と WebSocket に認証トークンを求め、`PAPEER_TOKEN` が未設定なら起動しません。`just dev-sidecar` は開発用の固定トークン `dev_token` で起動し、デバッグビルドの Tauri も同じ値をフロントエンドへ渡します。Tauri を使わずブラウザーで Vite を開く場合も、開発サーバーでは同じ値を既定で使います（別の値にするときは `VITE_PAPEER_TOKEN` を指定）。本番ビルドでは Tauri が起動ごとに OS の乱数生成器で 256 bit のトークンを作ります。API ドキュメント（`/docs`、`/openapi.json`）は配信しません。
 
-フロントエンドの `frontend/openapi.json` は、リポジトリのルートで `uv run python -c "import json; from sidecar.app import app; open('frontend/openapi.json', 'wb').write(json.dumps(app.openapi(), indent=2).encode())"` を実行して作り直します（`frontend/src/api/schema.d.ts` はこれを openapi-typescript で変換したものです）。
-
 ### テストと lint
 
 ```bash
@@ -88,6 +86,17 @@ just lint   # ruff, pyright, tsc
 ```
 
 pytest は `tests/conftest.py` で `LOCALAPPDATA` と `PAPEER_DATA_DIR` をテストごとの一時フォルダーに向けます。実際のデータフォルダー（`%LOCALAPPDATA%\Papeer`、`PaperDesk`、`PapeerSync`）でファイルを開いたり書き込んだりすると、そのテストは失敗します。同梱フォントの変換結果（約30秒かけて作る）だけは `PAPEER_FONT_CACHE_DIR` で `.pytest_cache` 内に置き、次回以降の実行でも使い回します。
+
+### API の型
+
+sidecar の API の形（ルートと、`sidecar/schemas/`・`sidecar/job_types.py` の Pydantic モデル）が、フロントエンドの型の元です。モデルやルートを変えたら `just gen-api` を実行し、次の 2 つを作り直してコミットします（食い違いは `tests/test_openapi_schema.py` が検出します）。
+
+- `frontend/openapi.json`: `tools/export_openapi.py` が `app.openapi()` から書き出します（sidecar は `/openapi.json` を配信しません）。
+- `frontend/src/api/schema.d.ts`: その JSON を openapi-typescript（`frontend/package.json` の `gen-api`）で変換したものです。`--default-non-nullable false` を付け、TypeScript の省略可能なキー（`?:`）はスキーマの `required` のとおりにします。既定値があっても必ず送る応答モデルは `json_schema_serialization_defaults_required=True`（`sidecar/job_types.py` の `Sent` など）で必須にします。
+
+フロントエンドは `api.GET(...)` などの型付きクライアントを `unwrap()` で読みます（`frontend/src/api/client.ts`。失敗は `apiRequest` と同じ `ApiError`）。型の名前は `components["schemas"]["モデル名"]` で、`hooks.ts`・`jobTypes.ts` の型はその別名です。まだ移していない呼び出しは型なしの `apiRequest` のままです。
+
+応答モデル（`response_model`）は、モデルにないキーを捨て、型の違う値を 500 にします。そのため、応答の形を変えずに付けること（`tests/test_response_models.py` でルートの返す値と比べています）。以前の版が書いたファイル（翻訳レポートなど）や外部のサービスから来る値は `Stored[...]`（`sidecar/schemas/common.py`）にして、形だけを型に書き、検証せずにそのまま返します。一覧の行のようにキーが欠けうる応答は `response_model_exclude_unset=True` で、渡されたキーだけを返します。
 
 ### データベースの変更
 

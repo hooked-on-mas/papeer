@@ -24,7 +24,7 @@ from papeer.core.errors import Conflict, NotFound
 from papeer.core.paths import app_env, data_directory
 from papeer.core.storage import Library, LibraryMissingError, NewerSchemaError, library_missing, missing_library_message
 from papeer.providers import ProviderBackend, check_cancel, create_provider
-from sidecar.job_types import SNAPSHOT_KINDS, JobKind, LibraryChangedEvent, PaperChangedEvent
+from sidecar.job_types import SNAPSHOT_KINDS, JobKind, JobStarted, LibraryChangedEvent, PaperChangedEvent
 from sidecar.jobs import JobManager
 from sidecar.schemas.settings import ProviderActionRequest
 
@@ -226,9 +226,9 @@ def paper_folder(lib: Library, paper_id: str) -> Path:
 
 # --- Jobs ---
 
-def submit_job(kind: JobKind, action: Callable[..., Any], paper_id: str | None = None) -> dict[str, str]:
+def submit_job(kind: JobKind, action: Callable[..., Any], paper_id: str | None = None) -> JobStarted:
     """Start a background job; ConcurrencyConflict (409) when it would overlap a job it must not run beside."""
-    return {"job_id": job_manager.submit_job(kind, action, paper_id=paper_id).job_id}
+    return JobStarted(job_id=job_manager.submit_job(kind, action, paper_id=paper_id).job_id)
 
 
 def library_changed() -> None:

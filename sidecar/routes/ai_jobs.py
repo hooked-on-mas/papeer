@@ -14,8 +14,8 @@ from papeer.core.service import PaperService
 from papeer.core.translation_plan import translation_plan as plan_translation
 from papeer.layout.page_selection import parse_page_selection
 from sidecar import deps
-from sidecar.job_types import JobKind
-from sidecar.schemas.ai_jobs import AskRequest, ExportRequest, TranslateRequest
+from sidecar.job_types import JobKind, JobStarted
+from sidecar.schemas.ai_jobs import AskRequest, ChatMessage, ExportRequest, TranslateRequest
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
@@ -23,7 +23,7 @@ ASK_SCOPES = {"paper", "selected", "collection", "all"}
 
 
 @router.post("/api/papers/{paper_id}/translate")
-def translate_paper(paper_id: str, body: TranslateRequest) -> dict[str, str]:
+def translate_paper(paper_id: str, body: TranslateRequest) -> JobStarted:
     lib = deps.get_library()
     deps.paper_folder(lib, paper_id)
     selected_pages = None
@@ -51,7 +51,7 @@ def translation_plan(paper_id: str, pages: str = "", model: str | None = None) -
 
 
 @router.post("/api/papers/{paper_id}/article")
-def generate_article(paper_id: str) -> dict[str, str]:
+def generate_article(paper_id: str) -> JobStarted:
     lib = deps.get_library()
     deps.paper_folder(lib, paper_id)
     settings = deps.get_settings()
@@ -65,7 +65,7 @@ def generate_article(paper_id: str) -> dict[str, str]:
     return deps.submit_job(JobKind.ARTICLE, action, paper_id)
 
 
-@router.get("/api/papers/{paper_id}/messages")
+@router.get("/api/papers/{paper_id}/messages", response_model=list[ChatMessage], response_model_exclude_unset=True)
 def get_paper_messages(paper_id: str) -> list[dict[str, Any]]:
     lib = deps.get_library()
     deps.paper_folder(lib, paper_id)
@@ -73,7 +73,7 @@ def get_paper_messages(paper_id: str) -> list[dict[str, Any]]:
 
 
 @router.post("/api/papers/{paper_id}/ask")
-def ask_paper(paper_id: str, body: AskRequest) -> dict[str, str]:
+def ask_paper(paper_id: str, body: AskRequest) -> JobStarted:
     lib = deps.get_library()
     deps.paper_folder(lib, paper_id)
     settings = deps.get_settings()
@@ -108,14 +108,15 @@ def export_paper(paper_id: str, body: ExportRequest) -> dict[str, str]:
             exports.build_paired_pdf(files, body.kind, dest)
             return {"kind": body.kind, "destination": str(dest)}
 
-        return {"status": "started", **deps.submit_job(JobKind.EXPORT, action, paper_id), "destination": str(dest)}
+        return {"status": "started", "job_id": deps.submit_job(JobKind.EXPORT, action, paper_id).job_id,
+                "destination": str(dest)}
 
     exports.copy_export(files, body.kind, dest)
     return {"status": "exported", "destination": str(dest)}
 
 
 @router.post("/api/papers/{paper_id}/interleaved")
-def prepare_interleaved(paper_id: str) -> dict[str, str]:
+def prepare_interleaved(paper_id: str) -> JobStarted:
     """interleaved.pdf beside the paper for an external viewer, built only when missing or out of date."""
     lib = deps.get_library()
     files = PaperFiles(deps.paper_folder(lib, paper_id))

@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { allFolderPaths, buildTree, countInFolder, filterPapers, isInsideFolder, normalizeCollection, type FolderNode } from "../src/features/library/libraryTree.ts";
 import type { PaperData } from "../src/api/hooks.ts";
+import { paperData } from "./support/paperData.ts";
 import type { PendingImport } from "../src/app/pendingImports.ts";
 
-const paper = (id: string, collection_name = "", extra: Partial<PaperData> = {}): PaperData => ({ id, title: id, collection_name, ...extra });
+const paper = (id: string, collection_name = "", extra: Partial<PaperData> = {}): PaperData => paperData({ id, collection_name, ...extra });
 
 /** Each folder as "path(count): papers", depth first, to compare whole trees at a glance. */
 function outline(nodes: FolderNode[], indent = ""): string[] {

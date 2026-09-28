@@ -1,6 +1,6 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
-import { ApiError, apiRequest } from "@/api/client";
-import type { PaperData } from "@/api/hooks";
+import { ApiError } from "@/api/client";
+import { getPaper, type PaperData } from "@/api/hooks";
 import { requestPaperRefresh, type PaperChanges } from "@/lib/libraryRefresh";
 import { paperChangeEffects, withPaperRow } from "@/lib/paperRows";
 import { QK } from "@/lib/queryKeys";
@@ -15,7 +15,7 @@ export async function refreshPaper(queryClient: QueryClient, paperId: string): P
   if (!lists.length) return;
   let paper: PaperData | null;
   try {
-    paper = await apiRequest<PaperData>("GET", `/api/papers/${paperId}`);
+    paper = await getPaper(paperId);
   } catch (error) {
     if (!(error instanceof ApiError && error.status === 404)) {
       void queryClient.invalidateQueries({ queryKey: [QK.papers, "list"] });

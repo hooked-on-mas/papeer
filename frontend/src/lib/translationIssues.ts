@@ -1,7 +1,8 @@
 import type { OcrPage, ReadabilityWarning, ReadingData } from "../api/hooks";
 
 /** What translationIssues reads of a paper's reading state. */
-export type IssueSource = Pick<ReadingData, "page_count" | "empty_pages" | "translation_required_pages" | "completed_pages" | "ocr_pages"> & {
+export type IssueSource = Pick<ReadingData, "page_count" | "empty_pages" | "completed_pages">
+  & Partial<Pick<ReadingData, "translation_required_pages" | "ocr_pages">> & {
   preview?: { skipped_pages?: number[] | null; page_errors?: Record<string, string> | null } | null;
   report?: {
     skipped_pages?: number[] | null; skipped_block_pages?: number[] | null; page_errors?: Record<string, string> | null;
@@ -19,7 +20,7 @@ export function ocrMessage(entry: OcrPage): string {
 }
 
 /** Pages kept entirely as the original (a partly garbled page is still translated). */
-export function wholeOcrPages(reading: Pick<ReadingData, "ocr_pages"> | null | undefined): number[] {
+export function wholeOcrPages(reading: Partial<Pick<ReadingData, "ocr_pages">> | null | undefined): number[] {
   return (reading?.ocr_pages ?? []).filter(entry => entry.reason !== "partial").map(entry => entry.page);
 }
 

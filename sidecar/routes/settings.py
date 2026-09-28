@@ -16,8 +16,14 @@ from papeer.core import prompts
 from papeer.core.errors import Invalid
 from papeer.providers import ProviderBackend, spec_for, specs
 from sidecar import deps
-from sidecar.job_types import JobKind
-from sidecar.schemas.settings import ProviderActionRequest, ProviderSpecModel, SettingsModel
+from sidecar.job_types import JobKind, JobStarted
+from sidecar.schemas.settings import (
+    ProviderActionRequest,
+    ProviderOption,
+    ProviderSpecModel,
+    SettingsModel,
+    UsageLimits,
+)
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
@@ -75,14 +81,14 @@ def _provider_with_path(provider: str, cli_path: str | None) -> ProviderBackend:
 
 
 @router.get("/api/providers/{provider}/models")
-def get_provider_models(provider: str, cli_path: str | None = None) -> list[dict[str, str]]:
-    return [{"id": m, "name": name} for m, name in _provider_with_path(provider, cli_path).list_models()]
+def get_provider_models(provider: str, cli_path: str | None = None) -> list[ProviderOption]:
+    return [ProviderOption(id=m, name=name) for m, name in _provider_with_path(provider, cli_path).list_models()]
 
 
 @router.get("/api/providers/{provider}/efforts")
-def get_provider_efforts(provider: str, model: str | None = None, cli_path: str | None = None) -> list[dict[str, str]]:
+def get_provider_efforts(provider: str, model: str | None = None, cli_path: str | None = None) -> list[ProviderOption]:
     efforts = _provider_with_path(provider, cli_path).list_efforts(model or "")
-    return [{"id": e, "name": name} for e, name in efforts]
+    return [ProviderOption(id=e, name=name) for e, name in efforts]
 
 
 def _requested_provider(body: ProviderActionRequest | None) -> ProviderBackend:
@@ -104,7 +110,7 @@ def provider_login(body: ProviderActionRequest | None = None) -> dict[str, Any]:
 
 
 @router.post("/api/providers/check")
-def provider_check(body: ProviderActionRequest | None = None) -> dict[str, str]:
+def provider_check(body: ProviderActionRequest | None = None) -> JobStarted:
     provider = _requested_provider(body)
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> str:
@@ -115,7 +121,7 @@ def provider_check(body: ProviderActionRequest | None = None) -> dict[str, str]:
     return deps.submit_job(JobKind.CHECK, action)
 
 
-@router.get("/api/usage/limits")
+@router.get("/api/usage/limits", response_model=UsageLimits | None)
 def usage_limits() -> dict[str, Any] | None:
     """Plan usage of the connected AI, when the service reports one."""
     try:

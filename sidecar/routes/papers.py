@@ -19,17 +19,23 @@ from papeer.core.storage import normalize_collection_name
 from papeer.pdf.pdf_viewer import pdf_page_count
 from papeer.providers import Cancelled
 from sidecar import deps
-from sidecar.job_types import ImportItemEvent, ImportPagesEvent, JobKind
+from sidecar.job_types import ImportItemEvent, ImportPagesEvent, JobKind, JobStarted
 from sidecar.jobs import ConcurrencyConflict, TurnQueue
 from sidecar.schemas.papers import (
+    Article,
     BibtexExportRequest,
     BibtexRequest,
     BookmarkEditRequest,
     BookmarkRequest,
     CreateCollectionRequest,
     ImportRequest,
+    LibraryStickyNote,
+    Paper,
+    PaperRow,
+    ReadingState,
     RenameCollectionRequest,
     RenamePaperRequest,
+    StickyNote,
     UpdatePaperRequest,
 )
 from sidecar.ui_state import load_ui_state
@@ -40,7 +46,8 @@ router = APIRouter(dependencies=[Depends(deps.verify_token)])
 # --- Papers ---
 
 
-@router.get("/api/papers")
+# The rows keep exactly the keys they were given (see PaperRow).
+@router.get("/api/papers", response_model=list[PaperRow], response_model_exclude_unset=True)
 def list_papers(query: str = "", sort: int = 0) -> list[dict[str, Any]]:
     """Every paper's row (without the memo); `sort` is a LibrarySort."""
     try:
@@ -78,7 +85,7 @@ def submit_import(action: Any, before_turn: Any = None) -> str:
 
 
 @router.post("/api/papers/import")
-def import_papers(body: ImportRequest) -> dict[str, str]:
+def import_papers(body: ImportRequest) -> JobStarted:
     lib = deps.get_library()
     paths = [Path(p) for p in body.paths]
     for p in paths:
@@ -106,10 +113,10 @@ def import_papers(body: ImportRequest) -> dict[str, str]:
             deps.job_manager.broadcast(ImportItemEvent(path=source, paper_id=paper_id))
         return {"paper_ids": imported_ids, "added": added}
 
-    return {"job_id": submit_import(action, announce_pages)}
+    return JobStarted(job_id=submit_import(action, announce_pages))
 
 
-@router.get("/api/papers/{paper_id}")
+@router.get("/api/papers/{paper_id}", response_model=Paper, response_model_exclude_unset=True)
 def get_paper(paper_id: str) -> dict[str, Any]:
     lib = deps.get_library()
     deps.paper_folder(lib, paper_id)
@@ -163,7 +170,7 @@ def papers_bibtex(body: BibtexRequest) -> dict[str, Any]:
 # --- What the reader shows ---
 
 
-@router.get("/api/papers/{paper_id}/reading")
+@router.get("/api/papers/{paper_id}/reading", response_model=ReadingState)
 def get_reading_info(paper_id: str) -> dict[str, Any]:
     lib = deps.get_library()
     deps.paper_folder(lib, paper_id)
@@ -185,7 +192,7 @@ def search_paper(paper_id: str, q: str = "", side: str = "original") -> dict[str
     return search.search_paper(lib, paper_id, q, side)
 
 
-@router.get("/api/papers/{paper_id}/article")
+@router.get("/api/papers/{paper_id}/article", response_model=Article)
 def get_paper_article(paper_id: str) -> dict[str, Any]:
     lib = deps.get_library()
     files = PaperFiles(deps.paper_folder(lib, paper_id))
@@ -286,17 +293,17 @@ def _paper_library(paper_id: str):
     return lib
 
 
-@router.get("/api/sticky-notes")
+@router.get("/api/sticky-notes", response_model=list[LibraryStickyNote])
 def get_sticky_notes() -> list[dict]:
     return deps.get_library().sticky_notes()
 
 
-@router.get("/api/papers/{paper_id}/sticky-notes")
+@router.get("/api/papers/{paper_id}/sticky-notes", response_model=list[StickyNote])
 def get_bookmarks(paper_id: str) -> list[dict]:
     return _paper_library(paper_id).bookmarks(paper_id)
 
 
-@router.post("/api/papers/{paper_id}/sticky-notes")
+@router.post("/api/papers/{paper_id}/sticky-notes", response_model=StickyNote)
 def add_bookmark(paper_id: str, body: BookmarkRequest) -> dict:
     return _paper_library(paper_id).add_bookmark(paper_id, body.page, body.side, body.quote, body.label, body.note,
                                                  body.anchor_y, body.anchor_x, kind=body.kind, color=body.color,
@@ -308,7 +315,7 @@ def delete_bookmark(paper_id: str, bookmark_id: int) -> dict[str, bool]:
     return {"deleted": _paper_library(paper_id).delete_bookmark(paper_id, bookmark_id)}
 
 
-@router.patch("/api/papers/{paper_id}/sticky-notes/{bookmark_id}")
+@router.patch("/api/papers/{paper_id}/sticky-notes/{bookmark_id}", response_model=StickyNote)
 def update_bookmark(paper_id: str, bookmark_id: int, body: BookmarkEditRequest) -> dict:
     # A missing note is NotFound (404); a wrong color, like any other invalid value, 400.
     return _paper_library(paper_id).update_bookmark(paper_id, bookmark_id, body.label, body.note,

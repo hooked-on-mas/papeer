@@ -1,10 +1,11 @@
 """Models of the health check and the remembered UI state (sidecar/routes/system.py)."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HealthResponse(BaseModel):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)  # status is always sent.
     status: str = "ok"
     version: str  # App release, MAJOR.MINOR.PATCH (papeer.__version__).
     code_version: str  # Extraction and PDF drawing code identity, "code-sha256-<hex>" (papeer.core.code_version).

@@ -13,7 +13,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Shutdown */
+        /**
+         * Shutdown
+         * @description Stop every job, wait for them (bounded), answer, then exit.
+         *
+         *     The caller waits for this response, so by the time it arrives nothing is writing any more;
+         *     new jobs are refused from the first moment.
+         */
         post: operations["shutdown_shutdown_post"];
         delete?: never;
         options?: never;
@@ -46,7 +52,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Jobs */
+        /**
+         * Get Jobs
+         * @description The running jobs; how a finished one ended is GET /api/jobs/{job_id}.
+         */
         get: operations["get_jobs_api_jobs_get"];
         put?: never;
         post?: never;
@@ -67,6 +76,26 @@ export interface paths {
         put?: never;
         /** Cancel All Jobs */
         post: operations["cancel_all_jobs_api_jobs_cancel_all_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Job
+         * @description A running job, or one of the last finished ones (jobs.FINISHED_JOBS_KEPT) with its result or error.
+         */
+        get: operations["get_job_api_jobs__job_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -264,7 +293,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Papers */
+        /**
+         * List Papers
+         * @description Every paper's row (without the memo); `sort` is a LibrarySort.
+         */
         get: operations["list_papers_api_papers_get"];
         put?: never;
         post?: never;
@@ -321,6 +353,26 @@ export interface paths {
         put?: never;
         /** Rename Paper */
         post: operations["rename_paper_api_papers__paper_id__rename_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/bibtex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Papers Bibtex
+         * @description BibTeX entries of the papers, to copy; made from the library's own data (nothing is looked up online).
+         */
+        post: operations["papers_bibtex_api_papers_bibtex_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -521,6 +573,26 @@ export interface paths {
         patch: operations["rename_collection_api_collections_rename_patch"];
         trace?: never;
     };
+    "/api/collections/bibtex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export Collection Bibtex
+         * @description Save the BibTeX entries of a folder's papers (with its subfolders') to a .bib file outside the library.
+         */
+        post: operations["export_collection_bibtex_api_collections_bibtex_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/collections/{name}": {
         parameters: {
             query?: never;
@@ -538,6 +610,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/collections/restore/{undo_token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Collection */
+        post: operations["restore_collection_api_collections_restore__undo_token__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/papers/{paper_id}/translate": {
         parameters: {
             query?: never;
@@ -549,6 +638,26 @@ export interface paths {
         put?: never;
         /** Translate Paper */
         post: operations["translate_paper_api_papers__paper_id__translate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/translation-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Translation Plan
+         * @description What POST .../translate with the same pages and model would send to the model; nothing runs.
+         */
+        get: operations["translation_plan_api_papers__paper_id__translation_plan_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1009,6 +1118,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/drive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Drive Status */
+        get: operations["drive_status_api_drive_get"];
+        /** Options */
+        put: operations["options_api_drive_put"];
+        post?: never;
+        /** Disconnect */
+        delete: operations["disconnect_api_drive_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/drive/folder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Select Folder */
+        post: operations["select_folder_api_drive_folder_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/drive/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Dismiss Review
+         * @description 「同期しない」 on a sync that stopped for review: automatic sync stops until turned on again.
+         */
+        delete: operations["dismiss_review_api_drive_review_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/drive/new-library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start New Library
+         * @description The data folder of a synced library is gone and the user chose to start a new, empty one.
+         */
+        post: operations["start_new_library_api_drive_new_library_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/drive/side-backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Side Backups
+         * @description The libraries a choice between two left out (drive_sync.side_backups), restored through POST /api/restore.
+         */
+        get: operations["side_backups_api_drive_side_backups_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/drive/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Check
+         * @description Whether the automatic sync has anything to do, and whether it would reload the page (drive_sync.check).
+         *
+         *     Unlike a sync it does not hold the library, so the user's edits go on while it looks. Being an
+         *     ordinary library request, a sync or backup waits for it to finish, and it is refused while one runs.
+         */
+        get: operations["check_api_drive_check_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/drive/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sync */
+        post: operations["sync_api_drive_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -1031,6 +1276,22 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * Article
+         * @description GET /api/papers/{paper_id}/article: the summary article, and what generating it used (None if unknown).
+         */
+        Article: {
+            /** Content */
+            content: string;
+            /** Usage */
+            usage: components["schemas"]["Usage"] | null;
+        };
+        /** ArticleResult */
+        ArticleResult: {
+            /** Content */
+            content: string;
+            usage?: components["schemas"]["Usage"] | null;
+        };
+        /**
          * AskAttachment
          * @description A passage selected in the PDF and attached to a chat message.
          */
@@ -1041,14 +1302,14 @@ export interface components {
              * Side
              * @default original
              */
-            side: string;
+            side?: string;
             /** Text */
             text: string;
             /**
              * Anchor Y
              * @default 0
              */
-            anchor_y: number;
+            anchor_y?: number;
             /** Start */
             start?: number | null;
             /** End */
@@ -1057,7 +1318,7 @@ export interface components {
              * Raw
              * @default
              */
-            raw: string;
+            raw?: string;
         };
         /** AskRequest */
         AskRequest: {
@@ -1069,56 +1330,75 @@ export interface components {
              * Search All
              * @default false
              */
-            search_all: boolean;
+            search_all?: boolean;
             /**
              * Scope
              * @default paper
              */
-            scope: string;
+            scope?: string;
             /** Paper Ids */
             paper_ids?: string[];
             /**
              * Collection
              * @default
              */
-            collection: string;
+            collection?: string;
             /**
              * Reference Pages
              * @default
              */
-            reference_pages: string;
+            reference_pages?: string;
             /**
              * Retrieval Query
              * @default
              */
-            retrieval_query: string;
+            retrieval_query?: string;
             /**
              * Max Pages
              * @default 10
              */
-            max_pages: number;
+            max_pages?: number;
+        };
+        /** AskResult */
+        AskResult: {
+            /** Answer */
+            answer: string;
+            usage?: components["schemas"]["Usage"] | null;
         };
         /** BackupRequest */
         BackupRequest: {
             /** Path */
             path: string;
         };
+        /** BackupResult */
+        BackupResult: {
+            /** Path */
+            path: string;
+        };
+        /** BibtexExportRequest */
+        BibtexExportRequest: {
+            /** Collection */
+            collection: string;
+            /** Destination */
+            destination: string;
+        };
+        /** BibtexRequest */
+        BibtexRequest: {
+            /** Paper Ids */
+            paper_ids: string[];
+        };
         /** BookmarkEditRequest */
         BookmarkEditRequest: {
-            /**
-             * Label
-             * @default 重要
-             */
-            label: string;
-            /**
-             * Note
-             * @default
-             */
-            note: string;
+            /** Label */
+            label?: string | null;
+            /** Note */
+            note?: string | null;
             /** Anchor X */
             anchor_x?: number | null;
             /** Anchor Y */
             anchor_y?: number | null;
+            /** Color */
+            color?: ("yellow" | "green" | "blue" | "pink" | "purple") | null;
         };
         /** BookmarkRequest */
         BookmarkRequest: {
@@ -1132,27 +1412,121 @@ export interface components {
              * Label
              * @default 重要
              */
-            label: string;
+            label?: string;
             /**
              * Note
              * @default
              */
-            note: string;
+            note?: string;
             /**
              * Anchor Y
              * @default 0
              */
-            anchor_y: number;
+            anchor_y?: number;
             /**
              * Anchor X
              * @default 0
              */
-            anchor_x: number;
+            anchor_x?: number;
+            /**
+             * Kind
+             * @default note
+             * @enum {string}
+             */
+            kind?: "note" | "highlight";
+            /**
+             * Color
+             * @default
+             */
+            color?: ("yellow" | "green" | "blue" | "pink" | "purple") | "";
+            /** Rects */
+            rects?: [
+                number,
+                number,
+                number,
+                number
+            ][];
+        };
+        /**
+         * ChatMessage
+         * @description A message of the paper's chat (Library.messages). Answered with response_model_exclude_unset: a question
+         *     without attached passages has no attachments key. The usage and passages are JSON in the database.
+         */
+        ChatMessage: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Content */
+            content: string;
+            /** Usage */
+            usage: components["schemas"]["Usage"] | null;
+            /** Attachments */
+            attachments?: components["schemas"]["ChatPassage"][];
+        };
+        /**
+         * ChatPassage
+         * @description A passage as a question stored it (an AskAttachment, its text shortened: PaperService.ask). Messages
+         *     saved before the offsets into the text layer were sent lack start, end and raw.
+         */
+        ChatPassage: {
+            /** Page */
+            page: number;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "original" | "translated";
+            /** Text */
+            text: string;
+            /** Anchor Y */
+            anchor_y: number;
+            /** Start */
+            start?: number | null;
+            /** End */
+            end?: number | null;
+            /** Raw */
+            raw?: string;
         };
         /** CreateCollectionRequest */
         CreateCollectionRequest: {
             /** Name */
             name: string;
+        };
+        /**
+         * DriveSyncResult
+         * @description drive_sync.sync: "synced", or why it did not (yet): "deferred", "conflict", "review".
+         */
+        DriveSyncResult: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "synced" | "deferred" | "conflict" | "review";
+            /**
+             * Reloaded
+             * @default false
+             */
+            reloaded?: boolean;
+            /** Previous Path */
+            previous_path?: string | null;
+            /** Set Aside */
+            set_aside?: string[];
+            /** Not Set Aside */
+            not_set_aside?: {
+                [key: string]: unknown;
+            }[];
+            /** Conflicts */
+            conflicts?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Review */
+            review?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
         };
         /** ExportRequest */
         ExportRequest: {
@@ -1163,6 +1537,21 @@ export interface components {
             kind: string;
             /** Destination */
             destination: string;
+        };
+        /** ExportResult */
+        ExportResult: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "interleaved" | "bilingual";
+            /** Destination */
+            destination: string;
+        };
+        /** FolderRequest */
+        FolderRequest: {
+            /** Path */
+            path: string;
         };
         /** GlobalGlossaryRequest */
         GlobalGlossaryRequest: {
@@ -1186,6 +1575,11 @@ export interface components {
             /** Effort */
             effort?: string | null;
         };
+        /** GlossaryDraftResult */
+        GlossaryDraftResult: {
+            /** Terms */
+            terms: components["schemas"]["GlossaryTerm"][];
+        };
         /** GlossaryFileRequest */
         GlossaryFileRequest: {
             /** Path */
@@ -1194,6 +1588,29 @@ export interface components {
             terms: {
                 [key: string]: string;
             }[];
+        };
+        /** GlossaryTerm */
+        GlossaryTerm: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+        };
+        /**
+         * GlossaryWarning
+         * @description A paragraph whose translation lacks the rendering of a glossary term found in the source.
+         */
+        GlossaryWarning: {
+            /** Page */
+            page: number;
+            /** Unit */
+            unit: string;
+            /** Excerpt */
+            excerpt: string;
+            /** Terms */
+            terms: components["schemas"]["GlossaryTerm"][];
+        } & {
+            [key: string]: unknown;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1219,6 +1636,13 @@ export interface components {
             /** Collection */
             collection?: string | null;
         };
+        /** ImportResult */
+        ImportResult: {
+            /** Paper Ids */
+            paper_ids: string[];
+            /** Added */
+            added: number;
+        };
         /** InkCaptureRequest */
         InkCaptureRequest: {
             /**
@@ -1230,7 +1654,7 @@ export interface components {
              * Include Ink
              * @default false
              */
-            include_ink: boolean;
+            include_ink?: boolean;
             /** Page */
             page: number;
             /** X */
@@ -1275,9 +1699,331 @@ export interface components {
              * @default pen
              * @enum {string}
              */
-            kind: "pen" | "highlighter" | "line" | "arrow" | "rectangle" | "ellipse" | "text";
+            kind?: "pen" | "highlighter" | "line" | "arrow" | "rectangle" | "ellipse" | "text";
             /** Text */
             text?: string | null;
+        };
+        /** InterleavedResult */
+        InterleavedResult: {
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "interleaved";
+            /** Path */
+            path: string;
+        };
+        /**
+         * JobInfo
+         * @description A job as GET /api/jobs/{job_id} tells it, running or finished (JobManager keeps the last ones).
+         */
+        JobInfo: {
+            /** Job Id */
+            job_id: string;
+            /** Paper Id */
+            paper_id: string | null;
+            kind: components["schemas"]["JobKind"];
+            /**
+             * Message
+             * @default
+             */
+            message: string;
+            /** Done */
+            done: number | null;
+            /** Total */
+            total: number | null;
+            /**
+             * Status
+             * @default running
+             * @enum {string}
+             */
+            status: "running" | "succeeded" | "failed" | "cancelled";
+            /**
+             * Running
+             * @default true
+             */
+            running: boolean;
+            /**
+             * Cancelled
+             * @default false
+             */
+            cancelled: boolean;
+            /** Result */
+            result: components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | string | null;
+            /** Error */
+            error: string | null;
+        };
+        /**
+         * JobKind
+         * @description The kinds of background jobs; the names are what the frontend receives (jobKinds.ts).
+         * @enum {string}
+         */
+        JobKind: "translate" | "revision" | "revision-draft" | "glossary-draft" | "article" | "ask" | "check" | "import" | "export" | "interleaved" | "backup" | "restore" | "drive-sync";
+        /**
+         * JobStarted
+         * @description The answer of a route that starts a job: follow it with GET /api/jobs/{job_id} or the events.
+         */
+        JobStarted: {
+            /** Job Id */
+            job_id: string;
+        };
+        /**
+         * LibraryStickyNote
+         * @description GET /api/sticky-notes: with the paper's title and file name, for the list across the library.
+         */
+        LibraryStickyNote: {
+            /** Id */
+            id: number;
+            /** Paper Id */
+            paper_id: string;
+            /** Page */
+            page: number;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "original" | "translated";
+            /** Quote */
+            quote: string;
+            /** Label */
+            label: string;
+            /** Note */
+            note: string;
+            /** Anchor Y */
+            anchor_y: number;
+            /** Anchor X */
+            anchor_x: number;
+            /** Created At */
+            created_at: string;
+            /** Kind */
+            kind: string;
+            /** Color */
+            color: string;
+            /** Rects */
+            rects: [
+                number,
+                number,
+                number,
+                number
+            ][];
+            /** Paper Title */
+            paper_title: string;
+            /** Paper Name */
+            paper_name: string;
+        };
+        /**
+         * LimitWindow
+         * @description One window of the plan's usage, as the service reports it (resets_at: seconds since the epoch).
+         */
+        LimitWindow: {
+            /** Label */
+            label: string;
+            /** Used Percent */
+            used_percent: number;
+            /** Resets At */
+            resets_at: number | null;
+        };
+        /**
+         * OcrPage
+         * @description A page needing OCR (papeer.layout.ocr_pages): kept as the original when its text layer is garbled or it
+         *     is a scanned image, or translated except for its garbled paragraphs ("partial").
+         */
+        OcrPage: {
+            /** Page */
+            page: number;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "garbled" | "image" | "partial";
+            /** Garbled Ratio */
+            garbled_ratio?: number;
+            /** Garbled Paragraphs */
+            garbled_paragraphs?: number;
+        };
+        /** OptionsRequest */
+        OptionsRequest: {
+            /** Auto Sync */
+            auto_sync: boolean;
+        };
+        /**
+         * PageVersion
+         * @description The translation key's short hash (or "不明") and the model that translated a page.
+         */
+        PageVersion: {
+            /** Sha */
+            sha: string;
+            /** Model */
+            model: string;
+        };
+        /**
+         * Paper
+         * @description GET /api/papers/{paper_id}: the paper's row with its memo, which the list leaves out.
+         */
+        Paper: {
+            /** Id */
+            id: string;
+            /** Sha256 */
+            sha256: string;
+            /** Title */
+            title: string;
+            /** Original Name */
+            original_name: string;
+            /** Pages */
+            pages: number;
+            status: components["schemas"]["TranslationStatus"];
+            /** Collection Name */
+            collection_name: string;
+            /** Created At */
+            created_at: string;
+            /** Tags */
+            tags: string[];
+            /** Read Status */
+            read_status: string;
+            /** First Author */
+            first_author: string;
+            /** Publication Year */
+            publication_year: string;
+            /** Bibliography Version */
+            bibliography_version: number;
+            /** Doi */
+            doi: string;
+            /** Arxiv Id */
+            arxiv_id: string;
+            /** Venue */
+            venue: string;
+            /** Last Opened At */
+            last_opened_at?: string | null;
+            /**
+             * Folder Path
+             * @default
+             */
+            folder_path?: string;
+            /**
+             * Has Article
+             * @default false
+             */
+            has_article?: boolean;
+            /**
+             * Translated Count
+             * @default 0
+             */
+            translated_count?: number;
+            /**
+             * Translation Required Count
+             * @default 0
+             */
+            translation_required_count?: number;
+            /**
+             * Translation Completed Required Count
+             * @default 0
+             */
+            translation_completed_required_count?: number;
+            /**
+             * Translation Ocr Count
+             * @default 0
+             */
+            translation_ocr_count?: number;
+            /** Translation Has Issues */
+            translation_has_issues?: boolean | null;
+            /**
+             * Has Translated
+             * @default false
+             */
+            has_translated?: boolean;
+            /**
+             * Translation In Progress
+             * @default false
+             */
+            translation_in_progress?: boolean;
+            /** Note */
+            note: string;
+        };
+        /**
+         * PaperRow
+         * @description A paper as GET /api/papers lists it: its papers row (Library._paper) and what library_list.paper_row adds.
+         *
+         *     Answered with response_model_exclude_unset, so a row keeps exactly the keys it was given: the fields
+         *     with defaults are the ones a row may lack. What paper_row adds is missing from the row of a paper whose
+         *     ID is not a folder's name (a hand-edited database), and last_opened_at until the sidecar records it.
+         *     The row's columns have no default, so a column added to the papers table fails the tests until named here.
+         */
+        PaperRow: {
+            /** Id */
+            id: string;
+            /** Sha256 */
+            sha256: string;
+            /** Title */
+            title: string;
+            /** Original Name */
+            original_name: string;
+            /** Pages */
+            pages: number;
+            status: components["schemas"]["TranslationStatus"];
+            /** Collection Name */
+            collection_name: string;
+            /** Created At */
+            created_at: string;
+            /** Tags */
+            tags: string[];
+            /** Read Status */
+            read_status: string;
+            /** First Author */
+            first_author: string;
+            /** Publication Year */
+            publication_year: string;
+            /** Bibliography Version */
+            bibliography_version: number;
+            /** Doi */
+            doi: string;
+            /** Arxiv Id */
+            arxiv_id: string;
+            /** Venue */
+            venue: string;
+            /** Last Opened At */
+            last_opened_at?: string | null;
+            /**
+             * Folder Path
+             * @default
+             */
+            folder_path?: string;
+            /**
+             * Has Article
+             * @default false
+             */
+            has_article?: boolean;
+            /**
+             * Translated Count
+             * @default 0
+             */
+            translated_count?: number;
+            /**
+             * Translation Required Count
+             * @default 0
+             */
+            translation_required_count?: number;
+            /**
+             * Translation Completed Required Count
+             * @default 0
+             */
+            translation_completed_required_count?: number;
+            /**
+             * Translation Ocr Count
+             * @default 0
+             */
+            translation_ocr_count?: number;
+            /** Translation Has Issues */
+            translation_has_issues?: boolean | null;
+            /**
+             * Has Translated
+             * @default false
+             */
+            has_translated?: boolean;
+            /**
+             * Translation In Progress
+             * @default false
+             */
+            translation_in_progress?: boolean;
         };
         /**
          * ProviderActionRequest
@@ -1299,7 +2045,34 @@ export interface components {
             /** Api Key */
             api_key?: string | null;
         };
-        /** ProviderSpecModel */
+        /**
+         * ProviderField
+         * @description A connection-specific setting the settings dialog shows (providers.base.OptionField).
+         */
+        ProviderField: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Placeholder */
+            placeholder: string;
+            /** Hint */
+            hint: string;
+        };
+        /**
+         * ProviderOption
+         * @description A model or reasoning effort the connection offers: its id, and the name shown.
+         */
+        ProviderOption: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * ProviderSpecModel
+         * @description An AI connection as GET /api/providers describes it (providers.base.ProviderSpec).
+         */
         ProviderSpecModel: {
             /** Id */
             id: string;
@@ -1307,8 +2080,11 @@ export interface components {
             label: string;
             /** Description */
             description: string;
-            /** Kind */
-            kind: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "cli" | "http";
             /** Needs Login */
             needs_login: boolean;
             /** Needs Api Key */
@@ -1316,9 +2092,74 @@ export interface components {
             /** Login Service */
             login_service: string;
             /** Fields */
-            fields: {
-                [key: string]: string;
-            }[];
+            fields: components["schemas"]["ProviderField"][];
+        };
+        /**
+         * ReadabilityWarning
+         * @description A paragraph typeset below the readable size because it overflowed its box (pdf_engine.build_translated_pdf).
+         *     Reports written before the length estimate have only page, block, font_size and scale.
+         */
+        ReadabilityWarning: {
+            /** Page */
+            page: number;
+            /** Block */
+            block?: string;
+            /** Font Size */
+            font_size?: number;
+            /** Scale */
+            scale?: number;
+            /** Role */
+            role?: string;
+            /** Chars */
+            chars?: number;
+            /** Char Budget */
+            char_budget?: number | null;
+            /** Source Blocks */
+            source_blocks?: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ReadingState
+         * @description Everything the reader needs to show the original and the translation page by page (reading_state.reading_state).
+         */
+        ReadingState: {
+            /** Page Count */
+            page_count: number;
+            /** Source Page Count */
+            source_page_count: number;
+            /** Empty Pages */
+            empty_pages: number[];
+            /** Translation Required Pages */
+            translation_required_pages: number[];
+            /** Ocr Pages */
+            ocr_pages: components["schemas"]["OcrPage"][];
+            /** Completed Pages */
+            completed_pages: number[];
+            /** Preview */
+            preview: components["schemas"]["TranslationPreview"] | null;
+            /** In Progress */
+            in_progress: boolean;
+            /** Report */
+            report: components["schemas"]["TranslationReport"] | null;
+            /** Translated Pages */
+            translated_pages: {
+                [key: string]: components["schemas"]["TranslatedPageRef"] | null;
+            };
+            /** Page Versions */
+            page_versions: {
+                [key: string]: components["schemas"]["PageVersion"];
+            };
+            /** Last Page */
+            last_page: number;
+            /** Has Translated */
+            has_translated: boolean;
+            /** Has Article */
+            has_article: boolean;
+            /** Has Interleaved */
+            has_interleaved: boolean;
+            /** Original Mtime */
+            original_mtime: number;
         };
         /** RenameCollectionRequest */
         RenameCollectionRequest: {
@@ -1332,6 +2173,28 @@ export interface components {
             /** New Title */
             new_title: string;
         };
+        /** RestoreRequest */
+        RestoreRequest: {
+            /** Path */
+            path: string;
+            /**
+             * Import Settings
+             * @default false
+             */
+            import_settings?: boolean;
+        };
+        /** RestoreResult */
+        RestoreResult: {
+            /** Previous Path */
+            previous_path: string;
+        };
+        /** RevisionDraftResult */
+        RevisionDraftResult: {
+            /** Text */
+            text: string;
+            /** Unit Id */
+            unit_id: string;
+        };
         /** RevisionRequest */
         RevisionRequest: {
             /** Unit Id */
@@ -1340,17 +2203,55 @@ export interface components {
              * Text
              * @default
              */
-            text: string;
+            text?: string;
             /**
              * Instruction
              * @default 自然な日本語にしてください。
              */
-            instruction: string;
+            instruction?: string;
             /** Expected Text */
             expected_text?: string | null;
+            /** Char Budget */
+            char_budget?: number | null;
         };
         /** SettingsModel */
-        SettingsModel: {
+        "SettingsModel-Input": {
+            /**
+             * Provider
+             * @default codex
+             */
+            provider?: string;
+            /**
+             * Model
+             * @default gpt-5.6-sol
+             */
+            model?: string;
+            /**
+             * Reasoning Effort
+             * @default
+             */
+            reasoning_effort?: string;
+            /**
+             * Timeout Seconds
+             * @default 900
+             */
+            timeout_seconds?: number;
+            /**
+             * Translation Concurrency
+             * @default 0
+             */
+            translation_concurrency?: number;
+            /** Provider Options */
+            provider_options?: {
+                [key: string]: {
+                    [key: string]: string;
+                };
+            };
+            /** Api Key */
+            api_key?: string | null;
+        };
+        /** SettingsModel */
+        "SettingsModel-Output": {
             /**
              * Provider
              * @default codex
@@ -1377,13 +2278,73 @@ export interface components {
              */
             translation_concurrency: number;
             /** Provider Options */
-            provider_options?: {
+            provider_options: {
                 [key: string]: {
                     [key: string]: string;
                 };
             };
             /** Api Key */
-            api_key?: string | null;
+            api_key: string | null;
+        };
+        /**
+         * StickyNote
+         * @description A sticky note or highlight (a bookmarks row, Library._bookmark).
+         *
+         *     kind and color are plain text: a newer Papeer on another PC may store values this one does not know
+         *     (the database is synced).
+         */
+        StickyNote: {
+            /** Id */
+            id: number;
+            /** Paper Id */
+            paper_id: string;
+            /** Page */
+            page: number;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "original" | "translated";
+            /** Quote */
+            quote: string;
+            /** Label */
+            label: string;
+            /** Note */
+            note: string;
+            /** Anchor Y */
+            anchor_y: number;
+            /** Anchor X */
+            anchor_x: number;
+            /** Created At */
+            created_at: string;
+            /** Kind */
+            kind: string;
+            /** Color */
+            color: string;
+            /** Rects */
+            rects: [
+                number,
+                number,
+                number,
+                number
+            ][];
+        };
+        /** SyncRequest */
+        SyncRequest: {
+            /** Choice */
+            choice?: string | null;
+            /** Expected Heads */
+            expected_heads?: string[] | null;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm?: boolean;
+            /**
+             * Background
+             * @default false
+             */
+            background?: boolean;
         };
         /** TagRequest */
         TagRequest: {
@@ -1406,6 +2367,122 @@ export interface components {
             /** Effort */
             effort?: string | null;
         };
+        /**
+         * TranslateResult
+         * @description translate and revision: the run's translation-report.json (PaperService.translate).
+         *
+         *     Only what the frontend reads is named; the rest of the report (warnings, counts of preserved
+         *     blocks, ...) is kept as it is.
+         */
+        TranslateResult: {
+            /** Pages */
+            pages: number;
+            /** Requested Pages */
+            requested_pages: number[];
+            /** Selected Pages */
+            selected_pages: number[];
+            /** Already Translated Pages */
+            already_translated_pages: number[];
+            /** Preserved Pages */
+            preserved_pages: number[];
+            /** Translated Pages */
+            translated_pages: number[];
+            /** Untranslated Pages */
+            untranslated_pages: number[];
+            /** Skipped Pages */
+            skipped_pages: number[];
+            /** Skipped Blocks */
+            skipped_blocks: string[];
+            /** Skipped Block Pages */
+            skipped_block_pages: number[];
+            /** Page Errors */
+            page_errors: {
+                [key: string]: string;
+            };
+            /** Model */
+            model: string;
+            usage?: components["schemas"]["Usage"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * TranslatedPageRef
+         * @description Where the right pane finds a page: the file (relative to the paper's folder), the page in it, its time.
+         */
+        TranslatedPageRef: {
+            /** File */
+            file: string;
+            /** Index */
+            index: number;
+            /** Mtime */
+            mtime: number;
+        };
+        /**
+         * TranslationPreview
+         * @description translation-preview.json: the pages of the translation in progress (or the last one) made so far.
+         */
+        TranslationPreview: {
+            /** Run Id */
+            run_id: string;
+            /** Complete */
+            complete: boolean;
+            /** Pages */
+            pages: number[];
+            /** Target Pages */
+            target_pages?: number[];
+            /** Skipped Pages */
+            skipped_pages?: number[];
+            /** Total Pages */
+            total_pages?: number;
+            /** Page Errors */
+            page_errors?: {
+                [key: string]: string;
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * TranslationReport
+         * @description translation-report.json of the last translation (PaperService.translate). Only what the frontend
+         *     reads is named; a report has more (the code versions, counts of preserved blocks, ...), and those of
+         *     earlier versions may lack any of it.
+         */
+        TranslationReport: {
+            /** Pages */
+            pages?: number;
+            /** Requested Pages */
+            requested_pages?: number[];
+            /** Selected Pages */
+            selected_pages?: number[];
+            /** Translated Pages */
+            translated_pages?: number[];
+            /** Skipped Pages */
+            skipped_pages?: number[];
+            /** Scaled Blocks */
+            scaled_blocks?: number;
+            /** Readability Warnings */
+            readability_warnings?: components["schemas"]["ReadabilityWarning"][];
+            /** Skipped Blocks */
+            skipped_blocks?: string[];
+            /** Skipped Block Pages */
+            skipped_block_pages?: number[];
+            /** Page Errors */
+            page_errors?: {
+                [key: string]: string;
+            };
+            /** Glossary Warnings */
+            glossary_warnings?: components["schemas"]["GlossaryWarning"][];
+            /** Model */
+            model?: string;
+            usage?: components["schemas"]["Usage"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * TranslationStatus
+         * @enum {string}
+         */
+        TranslationStatus: "not_translated" | "translating" | "partial" | "resumable" | "incomplete" | "translated";
         /** UIStateModel */
         UIStateModel: {
             /** Reading Pages */
@@ -1420,12 +2497,12 @@ export interface components {
              * Last Paper
              * @default
              */
-            last_paper: string;
+            last_paper?: string;
             /**
              * Sort
              * @default 0
              */
-            sort: number;
+            sort?: number;
             /** Expanded Collections */
             expanded_collections?: string[];
         };
@@ -1445,6 +2522,49 @@ export interface components {
             tags?: string[] | null;
             /** Read Status */
             read_status?: string | null;
+            /** Doi */
+            doi?: string | null;
+            /** Arxiv Id */
+            arxiv_id?: string | null;
+            /** Venue */
+            venue?: string | null;
+        };
+        /**
+         * Usage
+         * @description The tokens a job used, when the AI connection tells (providers.common.UsageMeter.report).
+         */
+        Usage: {
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /** Calls */
+            calls: number;
+            /** Measured Calls */
+            measured_calls: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Cached Tokens */
+            cached_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Reasoning Tokens */
+            reasoning_tokens: number;
+            /** Cost Usd */
+            cost_usd?: number | null;
+        };
+        /**
+         * UsageLimits
+         * @description GET /api/usage/limits: the connected AI's plan usage (providers.common.remember_limits).
+         *     The windows come from the service (a CLI's output or an API's headers), so they are passed on as they are.
+         */
+        UsageLimits: {
+            /** Provider */
+            provider: string;
+            /** Windows */
+            windows: components["schemas"]["LimitWindow"][];
+            /** Checked At */
+            checked_at: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -1459,6 +2579,172 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /**
+         * ImportItemEvent
+         * @description One PDF has been added (or was in the library already).
+         */
+        ImportItemEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "import.item";
+            /** Path */
+            path: string;
+            /** Paper Id */
+            paper_id: string;
+        };
+        /**
+         * ImportPagesEvent
+         * @description The page counts of the PDFs being added, keyed by the path as sent (None: not readable).
+         */
+        ImportPagesEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "import.pages";
+            /** Pages */
+            pages: {
+                [key: string]: number | null;
+            };
+        };
+        /**
+         * JobFinishedEvent
+         * @description The job as it ended; the same as GET /api/jobs/{job_id} answers afterwards.
+         */
+        JobFinishedEvent: {
+            /** Job Id */
+            job_id: string;
+            /**
+             * Paper Id
+             * @default null
+             */
+            paper_id: string | null;
+            kind: components["schemas"]["JobKind"];
+            /**
+             * Message
+             * @default
+             */
+            message: string;
+            /**
+             * Done
+             * @default null
+             */
+            done: number | null;
+            /**
+             * Total
+             * @default null
+             */
+            total: number | null;
+            /**
+             * Status
+             * @default running
+             * @enum {string}
+             */
+            status: "running" | "succeeded" | "failed" | "cancelled";
+            /**
+             * Running
+             * @default true
+             */
+            running: boolean;
+            /**
+             * Cancelled
+             * @default false
+             */
+            cancelled: boolean;
+            /**
+             * Result
+             * @default null
+             */
+            result: components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | string | null;
+            /**
+             * Error
+             * @default null
+             */
+            error: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "job.finished";
+        };
+        /**
+         * JobPageReadyEvent
+         * @description A page of a translation in progress is ready to show.
+         */
+        JobPageReadyEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "job.page_ready";
+            /** Paper Id */
+            paper_id: string | null;
+            /** Page */
+            page: number;
+        };
+        /** JobProgressEvent */
+        JobProgressEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "job.progress";
+            /** Job Id */
+            job_id: string;
+            /** Paper Id */
+            paper_id: string | null;
+            kind: components["schemas"]["JobKind"];
+            /** Message */
+            message: string;
+            /** Done */
+            done: number | null;
+            /** Total */
+            total: number | null;
+        };
+        /** JobStartedEvent */
+        JobStartedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "job.started";
+            /** Job Id */
+            job_id: string;
+            /** Paper Id */
+            paper_id: string | null;
+            kind: components["schemas"]["JobKind"];
+            /** Message */
+            message: string;
+        };
+        /** LibraryChangedEvent */
+        LibraryChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "library.changed";
+        };
+        /**
+         * PaperChangedEvent
+         * @description One paper changed; `fields`: the columns written, None when anything about it may have.
+         */
+        PaperChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "paper.changed";
+            /** Paper Id */
+            paper_id: string;
+            /**
+             * Fields
+             * @default null
+             */
+            fields: string[] | null;
+        };
+        ServerEvent: components["schemas"]["JobStartedEvent"] | components["schemas"]["JobProgressEvent"] | components["schemas"]["JobPageReadyEvent"] | components["schemas"]["JobFinishedEvent"] | components["schemas"]["LibraryChangedEvent"] | components["schemas"]["PaperChangedEvent"] | components["schemas"]["ImportPagesEvent"] | components["schemas"]["ImportItemEvent"];
     };
     responses: never;
     parameters: never;
@@ -1488,7 +2774,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        [key: string]: string;
+                        [key: string]: unknown;
                     };
                 };
             };
@@ -1594,9 +2880,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["JobInfo"][];
                 };
             };
             /** @description Validation Error */
@@ -1632,6 +2916,41 @@ export interface operations {
                     "application/json": {
                         [key: string]: number;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_job_api_jobs__job_id__get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobInfo"];
                 };
             };
             /** @description Validation Error */
@@ -1701,7 +3020,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SettingsModel"];
+                    "application/json": components["schemas"]["SettingsModel-Output"];
                 };
             };
             /** @description Validation Error */
@@ -1728,7 +3047,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SettingsModel"];
+                "application/json": components["schemas"]["SettingsModel-Input"];
             };
         };
         responses: {
@@ -1920,9 +3239,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    }[];
+                    "application/json": components["schemas"]["ProviderOption"][];
                 };
             };
             /** @description Validation Error */
@@ -1959,9 +3276,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    }[];
+                    "application/json": components["schemas"]["ProviderOption"][];
                 };
             };
             /** @description Validation Error */
@@ -2037,9 +3352,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */
@@ -2072,9 +3385,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    } | null;
+                    "application/json": components["schemas"]["UsageLimits"] | null;
                 };
             };
             /** @description Validation Error */
@@ -2109,9 +3420,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["PaperRow"][];
                 };
             };
             /** @description Validation Error */
@@ -2148,9 +3457,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */
@@ -2185,9 +3492,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Paper"];
                 };
             };
             /** @description Validation Error */
@@ -2320,6 +3625,45 @@ export interface operations {
             };
         };
     };
+    papers_bibtex_api_papers_bibtex_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BibtexRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_reading_info_api_papers__paper_id__reading_get: {
         parameters: {
             query?: {
@@ -2341,9 +3685,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ReadingState"];
                 };
             };
             /** @description Validation Error */
@@ -2455,9 +3797,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Article"];
                 };
             };
             /** @description Validation Error */
@@ -2492,9 +3832,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */
@@ -2599,9 +3937,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["LibraryStickyNote"][];
                 };
             };
             /** @description Validation Error */
@@ -2636,9 +3972,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["StickyNote"][];
                 };
             };
             /** @description Validation Error */
@@ -2677,9 +4011,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["StickyNote"];
                 };
             };
             /** @description Validation Error */
@@ -2757,9 +4089,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["StickyNote"];
                 };
             };
             /** @description Validation Error */
@@ -2884,6 +4214,45 @@ export interface operations {
             };
         };
     };
+    export_collection_bibtex_api_collections_bibtex_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BibtexExportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_collection_api_collections__name__delete: {
         parameters: {
             query?: {
@@ -2907,6 +4276,43 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_collection_api_collections_restore__undo_token__post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                undo_token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
                     };
                 };
             };
@@ -2946,8 +4352,45 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": components["schemas"]["JobStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    translation_plan_api_papers__paper_id__translation_plan_get: {
+        parameters: {
+            query?: {
+                pages?: string;
+                model?: string | null;
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": {
-                        [key: string]: string;
+                        [key: string]: unknown;
                     };
                 };
             };
@@ -2983,9 +4426,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["ChatMessage"][];
                 };
             };
             /** @description Validation Error */
@@ -3024,9 +4465,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */
@@ -3102,9 +4541,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */
@@ -3773,7 +5210,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */
@@ -3882,7 +5319,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */
@@ -3921,7 +5358,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */
@@ -3994,7 +5431,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */
@@ -4021,7 +5458,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["BackupRequest"];
+                "application/json": components["schemas"]["RestoreRequest"];
             };
         };
         responses: {
@@ -4031,7 +5468,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */
@@ -4223,6 +5660,315 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    drive_status_api_drive_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    options_api_drive_put: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OptionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_api_drive_delete: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    select_folder_api_drive_folder_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dismiss_review_api_drive_review_delete: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_new_library_api_drive_new_library_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    side_backups_api_drive_side_backups_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_api_drive_check_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sync_api_drive_sync_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */

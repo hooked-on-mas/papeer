@@ -7,8 +7,9 @@ import {
   type TreeRow,
 } from "../src/features/library/treeKeys.ts";
 import type { PaperData } from "../src/api/hooks.ts";
+import { paperData } from "./support/paperData.ts";
 
-const paper = (id: string, collection_name = "", title = id): PaperData => ({ id, title, collection_name });
+const paper = (id: string, collection_name = "", title = id): PaperData => paperData({ id, title, collection_name });
 
 // ML (open) > Vision (closed) > v1; ML > m1, m2; Bio (closed) > b1; 未分類 (open) > u1.
 const papers = [paper("m1", "ML", "Attention"), paper("m2", "ML", "Adam"), paper("v1", "ML / Vision"), paper("b1", "Bio"), paper("u1", "", "Unfiled")];

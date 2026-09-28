@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from papeer.core import drive_sync
 from papeer.providers import Cancelled
 from sidecar import deps
-from sidecar.job_types import JobKind
+from sidecar.job_types import JobKind, JobStarted
 from sidecar.schemas.drive import FolderRequest, OptionsRequest, SyncRequest
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
@@ -71,7 +71,7 @@ def check():
 
 
 @router.post("/api/drive/sync")
-def sync(body: SyncRequest):
+def sync(body: SyncRequest) -> JobStarted:
     root = deps.get_data_dir()
     def action(cancel, progress, _):
         # Before waiting for the admitted requests: the PDFs and images being shown may keep loading
