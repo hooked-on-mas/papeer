@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Copy, Eye, FolderOpen, NotebookPen, Pencil, Save } from "lucide-react";
+import { Eye, FolderOpen, NotebookPen, Pencil } from "lucide-react";
 import { useStore } from "@/store";
 import { apiRequest } from "@/api/client";
 import { useCollections, usePaper, useReading, type PaperData, type ReadingData } from "@/api/hooks";
-import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
-import { copyBibtex, normalizeCollection, openPaperFolder } from "@/app/actions";
+import { openPaperFolder } from "@/app/actions";
 import { showError } from "@/components/errorDialog";
 import { ReadingOrganization } from "./ReadingOrganization";
+import { PaperMetadataForm } from "./PaperMetadataForm";
 import { NoteTemplates } from "./NoteTemplates";
 import { registerPendingSaves } from "@/lib/pendingSaves";
 import { storedStatusLabel } from "@/lib/paperStatus";
@@ -56,16 +56,6 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
   const { data: reading } = useReading(paperId);
   const { data: collections = [] } = useCollections();
 
-  const [title, setTitle] = useState("");
-  const [author, setAuthor] = useState("");
-  const [year, setYear] = useState("");
-  const [venue, setVenue] = useState("");
-  const [doi, setDoi] = useState("");
-  const [arxivId, setArxivId] = useState("");
-  const [collection, setCollection] = useState("");
-  const [formDirty, setFormDirty] = useState(false);
-  const [savingMeta, setSavingMeta] = useState(false);
-
   const [note, setNote] = useState<string | null>(null);
   const [noteState, setNoteState] = useState<"saved" | "saving" | "dirty">("saved");
   const [preview, setPreview] = useState(false);
@@ -74,17 +64,6 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
   const savingNote = useRef<Promise<void>>(Promise.resolve());
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const noteInsert = useStore((state) => state.noteInsert);
-
-  useEffect(() => {
-    if (!paper || formDirty) return;
-    setTitle(paper.title ?? "");
-    setAuthor(paper.first_author ?? "");
-    setYear(paper.publication_year ?? "");
-    setVenue(paper.venue ?? "");
-    setDoi(paper.doi ?? "");
-    setArxivId(paper.arxiv_id ?? "");
-    setCollection(paper.collection_name ?? "");
-  }, [paper, formDirty]);
 
   useEffect(() => {
     if (paper && note === null) {
@@ -160,48 +139,12 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
     };
   }, [saveNote, paperId, queryClient]);
 
-  const saveMetadata = async () => {
-    if (!title.trim()) {
-      showError("タイトルを入力してください。", "論文情報");
-      return;
-    }
-    setSavingMeta(true);
-    try {
-      const previous = await apiRequest<PaperData>("GET", `/api/papers/${paperId}`);
-      await apiRequest("PATCH", `/api/papers/${paperId}`, {
-        title: title.trim(), author, year: year.trim(), venue: venue.trim(), doi: doi.trim(), arxiv_id: arxivId.trim(),
-        collection: collection.trim(),
-      });
-      setFormDirty(false);
-      const store = useStore.getState();
-      const from = normalizeCollection(previous.collection_name || "");
-      const to = normalizeCollection(collection);
-      if (from !== to) store.setMoveHistory([...store.moveHistory, { paperId, from, to }]);
-      if (store.selectedFolder === null && store.activePaperId === paperId) {
-        store.setCurrentCollection(collection.split(/[\\/]/).map((p) => p.trim()).filter(Boolean).join(" / "));
-      }
-      queryClient.invalidateQueries({ queryKey: [QK.papers] });
-      queryClient.invalidateQueries({ queryKey: [QK.collections] });
-      queryClient.invalidateQueries({ queryKey: [QK.librarySearch] });
-      store.setStatus("論文情報・フォルダーを保存しました。");
-    } catch (error) {
-      showError(error, "論文情報");
-    } finally {
-      setSavingMeta(false);
-    }
-  };
-
-  const edit = (setter: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    setter(e.target.value);
-    setFormDirty(true);
-  };
-
   return (
     <div className="flex h-full w-full bg-background overflow-hidden">
       {!compact && <div className="w-[21.25rem] shrink-0 border-r overflow-y-auto p-4 space-y-5">
         {paper && <ReadingOrganization paper={paper} />}
         <section className="space-y-3 border-t pt-4">
-          <h3 className="text-[0.8125rem] font-semibold">論文情報</h3>
+          <h3 className="text-[0.8125rem] font-semibold">論文情報 <span className="font-normal text-muted-foreground text-[0.75rem]">入力後に自動保存します。</span></h3>
           {paper && (
             <div className="text-[0.75rem] text-muted-foreground space-y-0.5">
               {metaLines(paper, reading).map((line) => (
@@ -209,50 +152,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
               ))}
             </div>
           )}
-          <form
-            className="grid grid-cols-[72px_1fr] items-center gap-x-2 gap-y-2 text-[0.8125rem]"
-            onSubmit={(e) => { e.preventDefault(); saveMetadata(); }}
-          >
-            <label htmlFor="meta-title">タイトル</label>
-            <Input id="meta-title" value={title} onChange={edit(setTitle)} />
-            <label htmlFor="meta-author">筆頭著者</label>
-            <Input id="meta-author" value={author} onChange={edit(setAuthor)} placeholder="例：Smith / 山田太郎" />
-            <label htmlFor="meta-year">出版年</label>
-            <Input id="meta-year" value={year} onChange={edit(setYear)} maxLength={4} placeholder="例：2024（不明なら空欄）" />
-            <label htmlFor="meta-venue">掲載誌</label>
-            <Input id="meta-venue" value={venue} onChange={edit(setVenue)} maxLength={300} placeholder="例：IEEE Transactions on …（会議名も可）" />
-            <label htmlFor="meta-doi">DOI</label>
-            <Input id="meta-doi" value={doi} onChange={edit(setDoi)} maxLength={500} placeholder="例：10.1000/xyz123" spellCheck={false} />
-            <label htmlFor="meta-arxiv">arXiv ID</label>
-            <Input id="meta-arxiv" value={arxivId} onChange={edit(setArxivId)} maxLength={200} placeholder="例：2101.00001" spellCheck={false} />
-            <p className="col-span-2 text-[0.75rem] text-muted-foreground">
-              掲載誌・DOI・arXiv ID は、追加時に PDF から読み取った値が初期値です（インターネットでは調べません）。BibTeX に使います。
-            </p>
-            <label htmlFor="meta-folder">フォルダー</label>
-            <Input id="meta-folder" value={collection} onChange={edit(setCollection)} list="collection-options" placeholder="例：制御工学 / 読書会" />
-            <datalist id="collection-options">
-              {collections.map((c) => <option key={c} value={c} />)}
-            </datalist>
-            <p className="col-span-2 text-[0.75rem] text-muted-foreground">
-              「/」で区切るとサブフォルダーになります。例：制御工学 / 読書会
-            </p>
-            <button
-              type="submit"
-              disabled={savingMeta || !formDirty}
-              className="col-span-2 flex items-center justify-center gap-1.5 h-8 rounded-md bg-primary text-primary-foreground font-medium hover:opacity-90 disabled:opacity-50"
-            >
-              <Save className="w-4 h-4" /> 論文情報・フォルダーを保存
-            </button>
-            <button
-              type="button"
-              onClick={() => void copyBibtex([paperId])}
-              disabled={formDirty}
-              title={formDirty ? "論文情報を保存するとコピーできます" : undefined}
-              className="col-span-2 flex items-center justify-center gap-1.5 h-8 rounded-md border hover:bg-muted disabled:opacity-50"
-            >
-              <Copy className="w-4 h-4" /> BibTeX をコピー
-            </button>
-          </form>
+          {paper && <PaperMetadataForm paper={paper} collections={collections} />}
         </section>
 
         <section className="space-y-2 border-t pt-4">

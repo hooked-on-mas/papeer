@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from papeer.core import reading_state, search
 from papeer.core.bibtex import bibtex, export_bibtex
 from papeer.core.library_list import LibrarySort, library_rows, paper_row
+from papeer.core.opened_papers import mark_opened
 from papeer.core.paths import PaperFiles
 from papeer.core.reading_tools import validate_terms
 from papeer.core.storage import normalize_collection_name
@@ -166,6 +167,16 @@ def update_paper(paper_id: str, body: UpdatePaperRequest) -> dict[str, str]:
         # A memo saved as it is typed then reloads no list at all.
         deps.paper_changed(paper_id, updates)
     return {"status": "updated"}
+
+
+@router.post("/api/papers/{paper_id}/opened")
+def paper_opened(paper_id: str) -> dict[str, Any]:
+    """The reader opened the paper: remembered on this PC for 最近開いた順, and 未読 becomes 読書中 (mark_opened)."""
+    lib = deps.get_library()
+    deps.paper_folder(lib, paper_id)
+    result = mark_opened(lib, paper_id)
+    deps.paper_changed(paper_id, result["fields"])
+    return result
 
 
 @router.post("/api/papers/{paper_id}/rename")

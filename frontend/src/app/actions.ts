@@ -18,6 +18,8 @@ import { bulkReport, runBulk } from "@/features/library/bulkOutcome";
 import { forgetPapers, movesRecord, undoLabel } from "@/features/library/undoHistory";
 import { LIBRARY_BUSY } from "@/lib/libraryBusy";
 import { BULK_BUSY_MESSAGE, beginBulk } from "./bulkState";
+import { applyTagChange, createTagQueue } from "@/lib/tagQueue";
+import { forgetDraftsOfPapers } from "@/lib/pendingSaves";
 
 let queryClient: QueryClient | null = null;
 
@@ -139,6 +141,117 @@ export async function movePaper(paperId: string, collection: string, record = tr
   queryClient?.invalidateQueries({ queryKey: [QK.papers, paperId] });
   store.setStatus(`「${destination || "未分類"}」へ移動しました。`);
   return true;
+}
+
+// --- Tags and reading status of one paper ---------------------------------------------------
+
+// Changes waiting to be saved are shown over the paper as loaded (shownTags, shownStatus), which a load
+// in between may still give from before them; the screen follows them through useOrganizing.ts.
+const organizingListeners = new Set<() => void>();
+let organizingVersion = 0;
+
+function organizingChanged(): void {
+  organizingVersion++;
+  for (const listener of organizingListeners) listener();
+}
+
+export function subscribeOrganizing(listener: () => void): () => void {
+  organizingListeners.add(listener);
+  return () => { organizingListeners.delete(listener); };
+}
+
+export function currentOrganizing(): number {
+  return organizingVersion;
+}
+
+// Tags are sent as differences, each applied in its turn to the tags the sidecar holds (tagQueue.ts).
+const tagQueue = createTagQueue({
+  read: async (paperId) => (await paper(paperId)).tags ?? [],
+  write: async (paperId, tags) => { await apiRequest("PATCH", `/api/papers/${paperId}`, { tags }); },
+  onWaitingChange: organizingChanged,
+});
+
+/** The paper's tags as loaded (`tags`), with its changes not saved yet: what the screen shows. */
+export function shownTags(paperId: string, tags: readonly string[]): string[] {
+  return tagQueue.shown(paperId, tags);
+}
+
+/**
+ * Puts the tag on the paper or takes it off in the paper's turn (tagQueue.ts): "unchanged" when it already
+ * was so. For actions on several papers, which report each paper themselves.
+ */
+export function changePaperTag(paperId: string, tag: string, add: boolean): Promise<"done" | "unchanged"> {
+  return tagQueue.change(paperId, { name: tag, add });
+}
+
+/**
+ * Shows a change in the paper's query at once. A load of it still under way is cancelled first, so that
+ * it cannot answer with the paper as it was afterwards.
+ */
+async function showInPaper(paperId: string, change: (paper: PaperData) => PaperData): Promise<void> {
+  if (!queryClient) return;
+  await queryClient.cancelQueries({ queryKey: [QK.papers, paperId], exact: true });
+  const before = queryClient.getQueryData<PaperData | null>([QK.papers, paperId]);
+  if (before) queryClient.setQueryData<PaperData>([QK.papers, paperId], change(before));
+}
+
+/**
+ * Puts the tag on one paper or takes it off (メモ・整理, its context menu). `quiet` leaves the status
+ * line alone, for the tag field, which says it itself. The library's row follows from paper.changed.
+ */
+export async function tagPaper(paperId: string, tag: string, add: boolean, { quiet = false } = {}): Promise<void> {
+  const change = { name: tag, add };
+  const task = changePaperTag(paperId, tag, add); // In turn from the click, before anything is awaited.
+  void showInPaper(paperId, (current) => ({ ...current, tags: applyTagChange(current.tags ?? [], change) }));
+  try {
+    if (await task === "done") {
+      void queryClient?.invalidateQueries({ queryKey: [QK.tags] });
+      if (!quiet) useStore.getState().setStatus(add ? `タグ「${tag}」を付けました。` : `タグ「${tag}」を外しました。`);
+    }
+  } catch (error) {
+    // Taken back from the screen at once, before the paper is loaded again.
+    void showInPaper(paperId, (current) => ({ ...current, tags: applyTagChange(current.tags ?? [], { name: tag, add: !add }) }));
+    showError(error, add ? "タグを付けられませんでした" : "タグを外せませんでした");
+  } finally {
+    void queryClient?.invalidateQueries({ queryKey: [QK.papers, paperId], exact: true });
+  }
+}
+
+// Reading statuses are sent in the order chosen; the last one chosen is the one kept, and shown until
+// every one sent has been answered.
+const statusTurns = new Map<string, Promise<unknown>>();
+const waitingStatuses = new Map<string, { status: string; count: number }>();
+
+/** The paper's reading status as loaded (`status`), or the one last chosen while it is being saved. */
+export function shownStatus(paperId: string, status: string): string {
+  return waitingStatuses.get(paperId)?.status ?? status;
+}
+
+/** Sets one paper's reading status (メモ・整理, its context menu); `quiet` as for tagPaper. Whether it was saved. */
+export async function setPaperReadStatus(paperId: string, status: string, { quiet = false } = {}): Promise<boolean> {
+  const task = (statusTurns.get(paperId) ?? Promise.resolve()).catch(() => undefined)
+    .then(() => apiRequest("PATCH", `/api/papers/${paperId}`, { read_status: status }));
+  statusTurns.set(paperId, task);
+  waitingStatuses.set(paperId, { status, count: (waitingStatuses.get(paperId)?.count ?? 0) + 1 });
+  organizingChanged();
+  void task.catch(() => undefined).then(() => {
+    if (statusTurns.get(paperId) === task) statusTurns.delete(paperId);
+    const waiting = waitingStatuses.get(paperId);
+    if (waiting && waiting.count > 1) waitingStatuses.set(paperId, { ...waiting, count: waiting.count - 1 });
+    else waitingStatuses.delete(paperId);
+    organizingChanged();
+  });
+  void showInPaper(paperId, (current) => ({ ...current, read_status: status }));
+  try {
+    await task;
+    if (!quiet) useStore.getState().setStatus(`読書状態を「${status}」にしました。`);
+    return true;
+  } catch (error) {
+    showError(error, "読書状態を変更できませんでした");
+    return false;
+  } finally {
+    void queryClient?.invalidateQueries({ queryKey: [QK.papers, paperId], exact: true });
+  }
 }
 
 // A double click must not undo one move but drop two records.
@@ -391,6 +504,7 @@ export async function deletePaper(paperId: string): Promise<boolean> {
   const s = useStore.getState();
   if (s.activePaperId === paperId) s.setActivePaperId(null);
   clearJobFailure(paperId);
+  forgetDraftsOfPapers([paperId]);
   useStore.setState({ moveHistory: forgetPapers(s.moveHistory, new Set([paperId])) });
   s.setStatus(`「${current.title}」を削除しました。`);
   await refreshLibrary();
@@ -447,9 +561,12 @@ async function copyWhenReady(text: Promise<string>): Promise<void> {
   }
 }
 
-/** Copies the BibTeX entries of the papers (one, or those selected together), made from the library's own data. */
-export async function copyBibtex(paperIds: string[]): Promise<void> {
-  const request = apiRequest<{ text: string; count: number }>("POST", "/api/papers/bibtex", { paper_ids: paperIds });
+/**
+ * Copies the BibTeX entries of the papers (one, or those selected together), made from the library's own
+ * data; after `ready` (the paper's details being saved), which the copy waits for within the click.
+ */
+export async function copyBibtex(paperIds: string[], ready: Promise<unknown> = Promise.resolve()): Promise<void> {
+  const request = ready.then(() => apiRequest<{ text: string; count: number }>("POST", "/api/papers/bibtex", { paper_ids: paperIds }));
   request.catch(() => undefined); // Reported below, not as an unhandled rejection.
   try {
     try {

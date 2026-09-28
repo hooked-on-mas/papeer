@@ -1,10 +1,13 @@
 """The library list (GET /api/papers): rows, order, the pages kept per PC, and what changes announce."""
 from __future__ import annotations
 
+from contextlib import closing
 import json
 import os
 from pathlib import Path
+import re
 import shutil
+import sqlite3
 import time
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -16,7 +19,8 @@ from papeer.core import drive_sync, translation_review
 from papeer.core.code_version import RENDER_SOURCES
 from papeer.core.fileio import atomic_write_json
 from papeer.core.library_list import LibrarySort, library_rows, translation_state
-from papeer.core.paths import review_cache_path
+from papeer.core.opened_papers import opened_times, record_opened
+from papeer.core.paths import opened_papers_path, review_cache_path
 from papeer.core.storage import Library
 from sidecar.app import app
 from sidecar.deps import job_manager
@@ -171,7 +175,8 @@ def test_rows_leave_out_the_memo_and_follow_the_chosen_order(library, tmp_path):
         assert titles[LibrarySort.TITLE] == ["Alpha", "beta", "gamma"]
         assert titles[LibrarySort.TITLE_DESCENDING] == ["gamma", "beta", "Alpha"]
         assert titles[LibrarySort.OLDEST] == list(reversed(titles[LibrarySort.NEWEST]))
-        assert client.get("/api/papers?sort=9").status_code == 400
+        assert client.get(f"/api/papers?sort={len(LibrarySort)}").status_code == 400
+        assert client.get("/api/papers?sort=-1").status_code == 400
         # The memo pane reads the paper itself.
         assert client.get(f"/api/papers/{ids[0]}").json()["note"] == "長いメモ" * 100
 
@@ -220,3 +225,94 @@ def test_changing_one_paper_announces_only_that_paper(library, tmp_path):
         {"type": "paper.changed", "paper_id": paper_id, "fields": ["collection_name", "tags"]},
         {"type": "paper.changed", "paper_id": paper_id, "fields": ["original_name", "title"]},
     ]
+
+
+def test_orders_by_publication_year_author_and_last_opened(library, tmp_path):
+    first = _add(library, tmp_path, "a", "First")
+    second = _add(library, tmp_path, "b", "Second")
+    third = _add(library, tmp_path, "c", "Third")
+    fourth = _add(library, tmp_path, "d", "Fourth")
+    library.update(first, publication_year="2019", first_author="smith")
+    library.update(second, publication_year="2024", first_author="Adams")
+    library.update(third, publication_year="", first_author="")
+    library.update(fourth, publication_year="2019", first_author="Smith")
+    newest = [row["id"] for row in library_rows(library)]
+
+    def order(sort: LibrarySort) -> list[str]:
+        return [row["id"] for row in library_rows(library, sort=sort)]
+
+    # Ties keep the newest first; papers without a year or an author go last.
+    assert order(LibrarySort.PUBLISHED) == [second] + [i for i in newest if i in (first, fourth)] + [third]
+    assert order(LibrarySort.AUTHOR) == [second, first, fourth, third]  # smith/Smith by title: First, Fourth.
+    # Never opened on this PC: newest first, as the default order.
+    assert order(LibrarySort.RECENT) == newest
+    record_opened(library.root, third, "2026-09-01T00:00:00.000Z")
+    record_opened(library.root, first, "2026-09-02T00:00:00.000Z")
+    assert order(LibrarySort.RECENT)[:2] == [first, third]
+    assert order(LibrarySort.RECENT)[2:] == [i for i in newest if i not in (first, third)]
+    rows = {row["id"]: row for row in library_rows(library)}
+    assert rows[first]["last_opened_at"] == "2026-09-02T00:00:00.000Z" and rows[second]["last_opened_at"] is None
+
+
+def _dump(root: Path) -> str:
+    with closing(sqlite3.connect(root / "library.sqlite3")) as db:
+        return "".join(db.iterdump())
+
+
+def test_opening_a_paper_is_kept_on_this_pc_and_starts_reading_once(library, tmp_path):
+    paper_id = _add(library, tmp_path, "a", "A")
+    assert library.paper(paper_id)["read_status"] == "未読"
+    events: list[dict] = []
+    with TestClient(app) as client, patch.object(job_manager, "broadcast", side_effect=events.append):
+        first = client.post(f"/api/papers/{paper_id}/opened").json()
+        assert first["started_reading"] is True and library.paper(paper_id)["read_status"] == "読書中"
+        # Opening it again writes nothing to the synced database: only this PC's record.
+        before = _dump(library.root)
+        second = client.post(f"/api/papers/{paper_id}/opened").json()
+        assert second["started_reading"] is False and _dump(library.root) == before
+        assert second["last_opened_at"] >= first["last_opened_at"]
+        assert client.get(f"/api/papers/{paper_id}").json()["last_opened_at"] == second["last_opened_at"]
+        assert client.post(f"/api/papers/{'0' * 32}/opened").status_code == 404
+    assert events == [
+        {"type": "paper.changed", "paper_id": paper_id, "fields": ["last_opened_at", "read_status"]},
+        {"type": "paper.changed", "paper_id": paper_id, "fields": ["last_opened_at"]},
+    ]
+    assert opened_papers_path(library.root).is_file() and "last_opened" not in before
+    assert set(opened_times(library.root)) == {paper_id}
+
+
+def test_only_an_unread_paper_starts_reading_and_only_while_the_status_exists(library, tmp_path):
+    finished = _add(library, tmp_path, "a", "A")
+    library.update(finished, read_status="読了")
+    unread = _add(library, tmp_path, "b", "B")
+    assert library.start_reading(finished) is False and library.paper(finished)["read_status"] == "読了"
+    library.delete_reading_status("読書中")
+    assert library.start_reading(unread) is False and library.paper(unread)["read_status"] == "未読"
+
+
+def test_opened_times_of_removed_papers_are_forgotten_and_other_files_ignored(library, tmp_path):
+    kept = _add(library, tmp_path, "a", "A")
+    removed = _add(library, tmp_path, "b", "B")
+    record_opened(library.root, kept)
+    record_opened(library.root, removed)
+    library.delete_paper(removed)
+    library_rows(library, query="A")  # A filtered list does not know about the others.
+    assert set(opened_times(library.root)) == {kept, removed}
+    library_rows(library)
+    assert set(opened_times(library.root)) == {kept}
+    # Written for a library elsewhere (a copied file), or unreadable: nothing was opened.
+    path = opened_papers_path(library.root)
+    atomic_write_json(path, {"format": 1, "root": str(tmp_path / "other"), "papers": {kept: "2026-01-01T00:00:00.000Z"}})
+    assert opened_times(library.root) == {}
+    path.write_text("{", "utf-8")
+    assert opened_times(library.root) == {}
+
+
+def test_the_frontend_offers_exactly_the_orders_the_sidecar_accepts():
+    """SORT_LABELS (frontend/src/lib/librarySort.ts) names each LibrarySort by its number, and no other:
+    an order the sidecar refuses (400) would leave the library looking empty."""
+    source = (Path(__file__).parents[1] / "frontend/src/lib/librarySort.ts").read_text("utf-8")
+    labels = re.search(r"export const SORT_LABELS = \[(.*?)\];", source, re.S)
+    assert labels is not None
+    assert len(re.findall(r'"[^"]+"', labels[1])) == len(LibrarySort)
+    assert f"RECENT_ORDER = {LibrarySort.RECENT.value};" in source

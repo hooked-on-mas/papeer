@@ -9,6 +9,7 @@ import { PdfPane } from "./PdfPane";
 import { ReaderToolbar } from "./ReaderToolbar";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { importPdfs } from "@/app/actions";
+import { ContinueReading } from "@/features/library/ContinueReading";
 import { bindReaderViewport, changeZoom, historyBack, historyForward, movePage, moveToEdgePage, navigateTo } from "./navigation";
 import { createWheelPager, keyTarget, onScreen, paneEdges, readerKeyAction, readerOwnsKey, type KeyPlace } from "./pageTurn";
 import { savedAnchor } from "./sidePanel";
@@ -267,10 +268,11 @@ export function Reader() {
 
   if (!activePaperId) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8">
+      <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8 overflow-y-auto">
         <FilePlus2 className="w-16 h-16 mb-4 opacity-20" />
         <p className="text-[0.9375rem] font-medium mb-1 text-foreground">論文を追加して、読み始めよう</p>
         <p className="text-[0.8125rem] mb-6">左のライブラリから論文を選ぶか、PDF を追加してください（ドロップでも追加できます）</p>
+        <ContinueReading />
         <button onClick={importPdfs} className="bg-primary text-primary-foreground px-4 py-2 rounded-md font-medium hover:opacity-90 transition-opacity">
           PDF を追加
         </button>
