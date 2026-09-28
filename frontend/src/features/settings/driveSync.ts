@@ -4,13 +4,14 @@ import { showError } from "@/components/errorDialog";
 import { closeToast, showToast } from "@/components/toast";
 import { isRunning, useStore } from "@/store";
 import { requestCancel, startJob } from "@/features/jobs/jobEvents";
+import { useConnection } from "@/features/jobs/connection";
 import { flushPendingSaves, describeFailure, openEditLabels } from "@/lib/pendingSaves";
 import { askConfirm } from "@/components/AppDialogs";
 import { flushUiState, suspendUiStateSync } from "@/app/uiStateSync";
 import { reloadUnlessClosing } from "@/app/appClosing";
 import { setLibraryBusyWaiter } from "@/lib/libraryBusy";
 import { openSettings } from "./settingsNavigation";
-import { nextSyncWarning, SYNC_WARNINGS, type SyncWarning } from "./syncWarnings";
+import { clearsOnReconnect, nextSyncWarning, SYNC_WARNINGS, type SyncWarning } from "./syncWarnings";
 
 /** background: the automatic sync that runs without the waiting screen (it never replaces the library). */
 export const useSyncState = create<{ busy: boolean; jobId: string | null; cancelling: boolean; background: boolean }>(
@@ -63,6 +64,19 @@ export async function confirmOpenEdits(): Promise<boolean> {
 }
 
 let shownWarning: SyncWarning | null = null;
+// Whether the warning on screen was told while the sidecar could not be reached.
+let toldWhileDown = false;
+
+// Once the sidecar is back, a failure told during the drop goes (clearsOnReconnect); the automatic sync
+// tells it again if it still fails.
+useConnection.subscribe((state, prev) => {
+  if (!state.connected || prev.connected) return;
+  if (clearsOnReconnect(shownWarning, toldWhileDown)) {
+    shownWarning = null;
+    closeToast("sync-warning");
+  }
+  toldWhileDown = false;
+});
 
 /**
  * Tell a sync state the user has to act on (syncWarnings.ts) in a toast that stays until closed,
@@ -76,6 +90,7 @@ export function reportSyncOutcome(outcome: SyncWarning | null): void {
     return;
   }
   if (!next.tell) return;
+  toldWhileDown = !useConnection.getState().connected;
   showToast({
     id: "sync-warning",
     ...SYNC_WARNINGS[outcome],

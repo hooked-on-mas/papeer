@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, unwrap } from "@/api/client";
+import { api, ApiError, unwrap } from "@/api/client";
 import { invalidate } from "@/api/mutations";
 import { QK } from "@/lib/queryKeys";
 import { cancelSync, confirmOpenEdits, reportSyncOutcome, runDriveSync, syncDrive, useSyncState } from "./driveSync";
@@ -18,6 +18,7 @@ import { isAppClosing } from "@/app/appClosing";
 import { PublishSchedule } from "./autoSyncSchedule";
 import { describeDifference, type Counts } from "./conflictSummary";
 import { fetchDriveStatus, fetchSyncCheck, type SyncReview } from "./driveApi";
+import { isAutoSyncFailure } from "./syncWarnings";
 import { VersionNoticeSetting } from "./VersionNoticeHost";
 const COUNT_LABELS: [keyof Counts, string][] = [["papers", "論文"], ["notes", "メモ"], ["stickies", "付箋"], ["ink", "書き込み（ページ）"]];
 // Told once per launch; the settings keep showing it.
@@ -62,6 +63,8 @@ export function DriveSyncHost() {
       && !useStore.getState().activeJobs.some(isRunning);
     const tick = async () => {
       if (!idle()) return;
+      // Whether the sync was found to be set up and on: until then, there is no sync to fail.
+      let syncOn = false;
       try {
         const state = await fetchDriveStatus();
         if (state.library_missing) {
@@ -77,6 +80,7 @@ export function DriveSyncHost() {
         // A review waits for the user's answer, like a conflict or an error.
         if (state.connected && state.review) { await tellReview(state.review); return; }
         if (!state.connected || !state.auto_sync || state.conflicts.length || state.error) return;
+        syncOn = true;
         // Cheap, and the library stays usable meanwhile: a sync (which holds it) runs only when there is
         // something to do. Hashing every file each minute is what this avoids (drive_sync.check).
         const check = await fetchSyncCheck();
@@ -95,9 +99,10 @@ export function DriveSyncHost() {
         await invalidate({ kind: "drive" }, queryClient);
         const after = await fetchDriveStatus();
         if (after.review) await tellReview(after.review);
-      } catch {
-        // Told once while the automatic sync keeps failing, not every minute.
-        reportSyncOutcome("failed");
+      } catch (e) {
+        // Told once while the automatic sync keeps failing, not every minute; not when the sidecar could
+        // not be reached, which the connection banner tells (isAutoSyncFailure).
+        if (isAutoSyncFailure({ syncOn, status: e instanceof ApiError ? e.status : undefined })) reportSyncOutcome("failed");
       }
     };
     const initial = setTimeout(() => void tick(), 5000);

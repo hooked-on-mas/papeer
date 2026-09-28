@@ -26,3 +26,20 @@ export const SYNC_WARNINGS: Record<SyncWarning, { title: string; description: st
 export function nextSyncWarning(shown: SyncWarning | null, outcome: SyncWarning | null): { shown: SyncWarning | null; tell: boolean } {
   return { shown: outcome, tell: outcome !== null && outcome !== shown };
 }
+
+/**
+ * Whether an error in the automatic sync is told as a failed sync ("failed"): only once the sync was
+ * found to be set up and turned on (`syncOn`), and not when the sidecar could not be reached (an ApiError
+ * with status 0), which the connection banner already tells. A library without a sync has none to fail.
+ */
+export function isAutoSyncFailure({ syncOn, status }: { syncOn: boolean; status?: number }): boolean {
+  return syncOn && status !== 0;
+}
+
+/**
+ * Whether the warning on screen goes once the sidecar can be reached again: a failure told while it
+ * could not be (a sync cut off by the drop) is the connection's, which the banner told and which is over.
+ */
+export function clearsOnReconnect(shown: SyncWarning | null, toldWhileDown: boolean): boolean {
+  return shown === "failed" && toldWhileDown;
+}
