@@ -17,6 +17,7 @@ import { parsePageSelection } from "@/lib/pageSelection";
 import { useSessionState } from "@/lib/useSessionState";
 import { GlossaryEditor, useGlossaryEditor } from "./GlossaryEditor";
 import { setGlossaryDialogPaper, startGlossaryDraft, takeGlossaryDraft, useGlossaryDrafts } from "./glossaryDraft";
+import { markRebuildJob } from "./rebuildJobs";
 import {
   draftResultMessage, glossaryKey, glossaryReviewSkip, isResuming, mergeDraftTerms, normalizeTerms, readReviewedGlossary,
   recordReviewedGlossary, retranslationWarning, reviewSkipMessage, startButtonLabel, translationTargetText,
@@ -144,12 +145,15 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   const handleStart = async () => {
     if (!selection.pages?.length || busy || !savedGlossary) return;
     const pages = scope === "all" ? "" : selection.pages.join(",");
+    // Every page from saved translations: the run only makes the PDF again (said so while it runs).
+    const rebuild = skip === "reusable";
     setStarting(true);
     try {
       if (glossary.dirty) await glossary.save();
-      await startJob(`/api/papers/${paperId}/translate`,
+      const jobId = await startJob(`/api/papers/${paperId}/translate`,
         { pages, model: model || undefined, effort: effort || undefined },
         { kind: "translate", paperId });
+      if (rebuild) markRebuildJob(jobId);
       // The next start skips the check while the glossary stays as it is now.
       if (choices.reviewed) recordReviewedGlossary(() => globalThis.localStorage, paperId, currentKey);
       onOpenChange(false);

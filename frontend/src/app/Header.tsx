@@ -18,6 +18,7 @@ import {
 import { TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
 import { cancelJob } from "@/features/jobs/jobEvents";
 import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
+import { useRebuilding } from "@/features/reader/rebuildJobs";
 
 export function Header() {
   const activePaperId = useStore((s) => s.activePaperId);
@@ -26,6 +27,7 @@ export function Header() {
   // The translation dialog opens while the AI checks the paper's terms, showing that check as it goes on.
   const translateBlocked = useStore((s) => paperBusy(s.activeJobs, s.activePaperId, ["glossary-draft"]));
   const sidebarCollapsed = useStore((s) => s.sidebarCollapsed);
+  const rebuilding = useRebuilding(translateJobId);
 
   const { data: paper } = usePaper(activePaperId);
   const { data: reading } = useReading(activePaperId);
@@ -53,7 +55,7 @@ export function Header() {
     );
   }
 
-  const translation = paperTranslationStatus(paper, !!translateJobId, reading);
+  const translation = paperTranslationStatus(paper, !!translateJobId, reading, { rebuilding });
   const { status } = translation;
 
   const handleCancel = async () => {

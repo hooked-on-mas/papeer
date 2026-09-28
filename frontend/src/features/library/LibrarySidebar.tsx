@@ -45,8 +45,10 @@ import { LibraryTags } from "./LibraryTags";
 import { TagChip } from "@/components/ui/TagChip";
 import { PaperStatusBadge } from "@/components/ui/PaperStatusBadge";
 import { paperTranslationStatus } from "@/lib/paperStatus";
+import { besideCursor } from "./dragOverlay";
 import { TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
-import { paperJobState } from "@/features/jobs/jobSelectors";
+import { paperJobState, runningPaperJob } from "@/features/jobs/jobSelectors";
+import { useRebuilding } from "@/features/reader/rebuildJobs";
 import { showJobFailure, useJobFailures } from "@/features/jobs/jobFailures";
 import { onAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
@@ -527,7 +529,7 @@ export function LibrarySidebar() {
             </div>
           )}
         </div>
-        <DragOverlay dropAnimation={null}>
+        <DragOverlay dropAnimation={null} modifiers={[besideCursor]}>
           {dragging && (
             <div className="px-3 py-1.5 rounded-md bg-card border shadow-md text-[0.8125rem] max-w-[16.25rem] truncate">
               {dragging.ids.length > 1
@@ -752,7 +754,9 @@ const PaperRow = memo(function PaperRow({ paper, depth, collections, onTagSelect
   // After a move with the keyboard, only the row in the folder it moved to takes the focus.
   useFocusRequest(rowRef, useTreeFocus((s) => s.pending?.key === key && (s.pending.folder === undefined || s.pending.folder === collection)));
 
-  const translation = paperTranslationStatus(paper, translating);
+  // 「保存済みの訳文でPDFを作り直す」 is said as such, as in the header.
+  const rebuilding = useRebuilding(useStore((s) => runningPaperJob(s.activeJobs, paper.id, ["translate"])?.job_id));
+  const translation = paperTranslationStatus(paper, translating, undefined, { rebuilding });
   const showProgress = ["partial", "translating", "paused"].includes(translation.status) && translation.pages > 0;
 
   return (

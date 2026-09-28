@@ -89,22 +89,30 @@ export function useReading(id: string | null) {
   });
 }
 
+/**
+ * The paper's summary, or null when it has none. Most papers have none, so it is asked for only once the
+ * paper's reading state says there is one (has_article): the webview would log the 404 each time such a
+ * paper is opened. Loading until that state is known; asked for anyway when it could not be read.
+ */
 export function useArticle(id: string | null) {
-  return useQuery({
+  const { data: reading, isLoading: readingLoading, isError: readingFailed } = useReading(id);
+  const hasArticle = !!reading?.has_article || readingFailed;
+  const query = useQuery({
     queryKey: [QK.article, id],
     queryFn: async () => {
       if (!id) return null;
       try {
         return await unwrap(api.GET("/api/papers/{paper_id}/article", { params: { path: { paper_id: id } } }));
       } catch (error) {
-        // 404: no summary has been generated yet, which is not an error.
+        // 404: no summary has been generated yet (or it was removed meanwhile), which is not an error.
         if (error instanceof ApiError && error.status === 404) return null;
         throw error;
       }
     },
-    enabled: !!id,
+    enabled: !!id && hasArticle,
     retry: false,
   });
+  return { ...query, data: reading && !reading.has_article && !readingFailed ? null : query.data, isLoading: query.isLoading || readingLoading };
 }
 
 export function useMessages(id: string | null) {

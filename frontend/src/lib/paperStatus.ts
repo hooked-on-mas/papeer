@@ -17,8 +17,12 @@ export function storedStatusLabel(status: string | undefined): string {
   return status ? storedLabels[status as StoredStatus] ?? status : "";
 }
 
-/** Counts are translated pages, never a job's paragraph-level progress counters. */
-export function paperTranslationStatus(paper: PaperData | null | undefined, translating: boolean, reading?: ReadingData | null) {
+/**
+ * Counts are translated pages, never a job's paragraph-level progress counters. `rebuilding`: the job
+ * running only makes the PDF again from saved translations (rebuildJobs.ts), which is said as such.
+ */
+export function paperTranslationStatus(paper: PaperData | null | undefined, translating: boolean, reading?: ReadingData | null,
+  { rebuilding = false }: { rebuilding?: boolean } = {}) {
   const totalPages = reading?.page_count ?? paper?.pages ?? 0;
   const required = reading?.translation_required_pages;
   const pages = required?.length ?? (reading ? totalPages : paper?.translation_required_count ?? totalPages);
@@ -39,7 +43,7 @@ export function paperTranslationStatus(paper: PaperData | null | undefined, tran
   else if (paper?.status === "incomplete") status = "failed";
   else if (pages === 0 && ocrPages > 0) status = "ocr";
   else status = "untranslated";
-  const text = { untranslated: "未翻訳", translating: "翻訳中", partial: "一部翻訳", paused: "中断・再開可", translated: "翻訳完了", review: "訳文に未翻訳あり", failed: "翻訳未完了", ocr: "要OCR" }[status];
+  const text = { untranslated: "未翻訳", translating: rebuilding ? "PDF作り直し中" : "翻訳中", partial: "一部翻訳", paused: "中断・再開可", translated: "翻訳完了", review: "訳文に未翻訳あり", failed: "翻訳未完了", ocr: "要OCR" }[status];
   const scope = pages !== totalPages ? "翻訳対象" : "全";
   const count = status === "ocr" ? `${ocrPages}/${totalPages}ページ` : pages > 0 ? `${completed}/${pages}ページ` : "ページ数不明";
   const ocrNote = status === "ocr" ? "文字化け・画像だけのページしかないため翻訳できません。OCR済みのPDFを追加してください"

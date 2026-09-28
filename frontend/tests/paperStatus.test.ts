@@ -91,3 +91,10 @@ test("the stored translation state is a code, shown by its label", () => {
   assert.equal(paperTranslationStatus({ ...paper, status: "translated" }, false).status, "untranslated");
   assert.equal(paperTranslationStatus({ ...paper, status: "resumable", translated_count: 3 }, false).status, "partial");
 });
+
+test("a run that only makes the PDF again from saved translations is not called 翻訳中", () => {
+  const result = paperTranslationStatus({ ...paper, translated_count: 12 }, true, undefined, { rebuilding: true });
+  assert.equal(result.status, "translating");
+  assert.equal(result.text, "PDF作り直し中");
+  assert.equal(paperTranslationStatus({ ...paper, translated_count: 12 }, true).text, "翻訳中");
+});
