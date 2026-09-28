@@ -1,6 +1,6 @@
 # 翻訳処理の仕様
 
-PDF を日本語に翻訳し、原文と同じレイアウトの `translated.pdf` を生成する処理の挙動と制限をまとめます。実装は `papeer/translation/`、`papeer/layout/`、`papeer/pdf/`、`papeer/core/service.py` にあります。段・ページをまたぐ結合の詳細は [reading-flow.md](reading-flow.md) を参照してください。
+PDF を日本語に翻訳し、原文と同じレイアウトの `translated.pdf` を生成する処理の挙動と制限をまとめます。実装は `papeer/translation/`、`papeer/layout/`、`papeer/pdf/`、`papeer/core/service.py`（入口の `PaperService.translate`）と `papeer/core/translation_run.py`（1 回の翻訳の手順 `TranslationRun`）にあります。段・ページをまたぐ結合の詳細は [reading-flow.md](reading-flow.md) を参照してください。
 
 ## 基本の流れ
 

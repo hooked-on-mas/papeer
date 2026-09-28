@@ -194,7 +194,7 @@ def test_leftovers_are_removed_when_a_new_process_first_reads_the_cache(conversi
 
 @pytest.mark.parametrize("failure", ["write", "folder"])
 def test_cache_that_cannot_be_saved_still_gives_the_face(conversions, monkeypatch, tmp_path, capsys, failure):
-    # An OSError out of build_translated_pdf would stop the whole translation (service.py).
+    # An OSError out of build_translated_pdf would stop the whole translation (translation_run.py, _publish_ready).
     monkeypatch.setattr(pdf_fonts, "_STORE_WARNED", False)
     if failure == "write":
         def refuse(path, data):

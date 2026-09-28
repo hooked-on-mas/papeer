@@ -98,7 +98,7 @@ class TranslationPlanTests(unittest.TestCase):
         # PaperService.translate (TranslationKey keys the cache without the code version).
         self.translate()
         changed = "code-sha256-" + "b" * 64
-        with patch("papeer.core.service.loaded_version", return_value=changed):
+        with patch("papeer.core.translation_run.loaded_version", return_value=changed):
             plan = self.plan()
             self.assertFalse(plan["needs_ai"])
             self.assertEqual(plan["reusable_pages"], [1, 2, 3])

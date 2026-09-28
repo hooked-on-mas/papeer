@@ -196,7 +196,7 @@ def test_translation_sends_the_paper_without_changing_the_cache_key(tmp_path):
         library = Library(tmp_path / folder_name)
         identity, _ = library.import_pdf(titled_paper(tmp_path / "titled.pdf"))
         provider = RecordingProvider()
-        with patch("papeer.core.service.paper_context", wraps=context):
+        with patch("papeer.core.translation_run.paper_context", wraps=context):
             PaperService(library, provider, threading.Event()).translate(identity)
         cache = json.loads((library.folder(identity) / "translation-cache.json").read_text("utf-8"))
         return library.document(identity), provider.calls, cache

@@ -22,6 +22,7 @@ import papeer.core.service as service_module
 from papeer.core.service import PaperService, stored_translations
 from papeer.core.storage import Library
 import papeer.core.translation_review as translation_review
+import papeer.core.translation_run as run_module
 from papeer.core.terminology import apply_glossary, effective_glossary
 from papeer.core import prompts
 from papeer.layout.math_layout import LAYOUT_VERSION
@@ -155,7 +156,7 @@ class Snapshots:
     def __init__(self, monkeypatch, cache_path: Path):
         self.pages: dict[int, dict] = {}
         self.writes = 0
-        build, write = service_module.build_translated_pdf, service_module.atomic_write_json
+        build, write = run_module.build_translated_pdf, run_module.atomic_write_json
 
         def building(source, document, translations, output, page_numbers=None, **options):
             if page_numbers is not None and len(page_numbers) == 1:
@@ -167,8 +168,8 @@ class Snapshots:
                 self.writes += 1
             return write(path, value, **options)
 
-        monkeypatch.setattr(service_module, "build_translated_pdf", building)
-        monkeypatch.setattr(service_module, "atomic_write_json", writing)
+        monkeypatch.setattr(run_module, "build_translated_pdf", building)
+        monkeypatch.setattr(run_module, "atomic_write_json", writing)
 
 
 def test_answers_are_written_with_the_next_record_and_a_crash_before_it_sends_them_again(tmp_path, monkeypatch):

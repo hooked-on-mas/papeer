@@ -141,7 +141,7 @@ def test_failure_before_the_new_preview_is_saved_keeps_the_pages_the_reader_show
             raise OSError("disk full")
         failing(path, value, **options)
 
-    with patch("papeer.core.service.atomic_write_json", side_effect=write), pytest.raises(OSError):
+    with patch("papeer.core.translation_run.atomic_write_json", side_effect=write), pytest.raises(OSError):
         service.translate(identity, {3})
     # The new run never became the preview, so its copies go and the stopped run stays.
     assert read_preview(folder)["run_id"] == stopped["run_id"]
