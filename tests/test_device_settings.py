@@ -266,3 +266,73 @@ def test_settings_update_keeps_what_was_left_out_and_merges_connection_options()
     assert saved.provider_options["codex"]["model"] == "m"  # The saved settings are left as they were.
     with pytest.raises(ValueError):
         saved.updated({"reasoning_effort": "extreme"})
+
+
+# --- Keys of settings.json this version does not know (written by a newer Papeer on another PC) ---
+
+def test_unknown_keys_are_reported_and_dropped_only_by_saving(tmp_path):
+    (tmp_path / "settings.json").write_text(json.dumps({
+        "provider": "claude", "model": "claude-x", "timeout_seconds": 600, "translation_concurrency": 2,
+        "reasoning_effort": "high", "provider_options": {"claude": {"model": "claude-x", "future_option": "1"}},
+        "future_setting": True, "another_new": {"a": 1},
+    }), "utf-8")
+    settings, unknown = Settings.load_with_unknown_keys(tmp_path)
+    assert unknown == ["another_new", "future_setting"]
+    assert settings == Settings.load(tmp_path)
+    assert settings.provider == "claude" and settings.timeout_seconds == 600
+    # Loading leaves the file as it is; saving writes only what this version knows.
+    assert read(tmp_path / "settings.json")["future_setting"] is True
+    settings.save(tmp_path)
+    saved = read(tmp_path / "settings.json")
+    assert not {"future_setting", "another_new"} & saved.keys()
+    # An option this version does not know inside provider_options is kept, so it is not reported.
+    assert saved["provider_options"]["claude"]["future_option"] == "1"
+    assert Settings.load_with_unknown_keys(tmp_path)[1] == []
+
+
+def test_older_and_migrated_keys_are_not_unknown(tmp_path):
+    # Every field, the flat per-connection keys from before provider_options, the renamed provider,
+    # and an api_key an old version may have written: all read (or knowingly dropped) by this version.
+    (tmp_path / "settings.json").write_text(json.dumps({
+        "provider": "gemini", "model": "m", "reasoning_effort": "", "timeout_seconds": 900, "translation_concurrency": 0,
+        "api_key": "old", "provider_options": {"gemini": {"model": "m"}},
+        "codex_path": "C:/codex.exe", "claude_path": "C:/claude.exe", "gemini_path": "C:/agy.exe",
+        "base_url": "http://localhost:1234/v1", "api_base": "http://localhost:1234/v1",
+    }), "utf-8")
+    settings, unknown = Settings.load_with_unknown_keys(tmp_path)
+    assert unknown == []
+    assert settings.provider == "antigravity"
+    assert Settings.load_with_unknown_keys(tmp_path / "missing")[1] == []
+
+
+def test_moving_device_options_keeps_unknown_keys_for_the_notice(tmp_path):
+    # The first load on this PC rewrites settings.json without the device options; that is not a save
+    # by the user, so a newer version's keys stay (and are reported).
+    (tmp_path / "settings.json").write_text(json.dumps({
+        "model": "m", "codex_path": "C:/codex.exe", "future_setting": 1}), "utf-8")
+    assert Settings.load_with_unknown_keys(tmp_path)[1] == ["future_setting"]
+    saved = read(tmp_path / "settings.json")
+    assert "codex_path" not in saved and saved["future_setting"] == 1
+    assert read(device_settings_path())["provider_options"] == {"codex": {"cli_path": "C:/codex.exe"}}
+
+
+def test_settings_api_reports_unknown_keys_and_logs_dropping_them(tmp_path, monkeypatch, caplog):
+    from sidecar.app import app
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
+    (tmp_path / "settings.json").write_text(json.dumps({"model": "m", "future_setting": 1, "codex_path": ""}), "utf-8")
+    client = TestClient(app)
+    body = client.get("/api/settings").json()
+    assert body["unknown_keys"] == ["future_setting"]
+    assert body["model"] == "m"
+    # Sending the list back changes nothing: PUT ignores it.
+    with caplog.at_level("WARNING", logger="papeer.sidecar"):
+        assert client.put("/api/settings", json={**body, "model": "n"}).status_code == 200
+    assert "future_setting" in caplog.text
+    assert "unknown_keys" not in read(tmp_path / "settings.json")
+    after = client.get("/api/settings").json()
+    assert after["unknown_keys"] == [] and after["model"] == "n"
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="papeer.sidecar"):
+        assert client.put("/api/settings", json={"model": "o"}).status_code == 200
+    assert "削除" not in caplog.text

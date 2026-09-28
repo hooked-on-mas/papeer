@@ -23,6 +23,7 @@ import type { StickyNote } from "./stickyNotes";
 import type { JumpTarget } from "./PdfPane";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
+import { useRebuilding } from "./rebuildJobs";
 
 // Stable while the notes are loading or failed: a new array would redraw the text layer on every render.
 const NO_NOTES: StickyNote[] = [];
@@ -40,7 +41,7 @@ function viewAnchor(pane: HTMLElement | null): number | null {
 }
 
 /** Caption for the translation pane, following the old reader's rules. */
-function translatedCaption(reading: ReadingData | null | undefined, page: number): string {
+function translatedCaption(reading: ReadingData | null | undefined, page: number, rebuilding = false): string {
   const preview = reading?.preview;
   const completed = reading?.completed_pages ?? [];
   if (preview?.skipped_pages?.includes(page)) return "原文（PDF生成をスキップ）";
@@ -50,7 +51,7 @@ function translatedCaption(reading: ReadingData | null | undefined, page: number
     if (preview.complete || preview.target_pages) return "原文（未翻訳）";
   }
   if (!preview && !reading?.has_translated) return "日本語訳";
-  return "日本語訳（翻訳待ち）";
+  return rebuilding ? "日本語訳（PDF作り直し中）" : "日本語訳（翻訳待ち）";
 }
 
 export function Reader() {
@@ -71,7 +72,10 @@ export function Reader() {
   const sourceHighlights = useMemo(() => bookmarks.filter(item => item.page === currentPage && item.side === "original"), [bookmarks, currentPage]);
   const translatedHighlights = useMemo(() => bookmarks.filter(item => item.page === currentPage && item.side === "translated"), [bookmarks, currentPage]);
   const { data: reading } = useReading(activePaperId);
-  const translating = useStore((s) => !!runningPaperJob(s.activeJobs, s.activePaperId, ["translate"]));
+  const translateJobId = useStore((s) => runningPaperJob(s.activeJobs, s.activePaperId, ["translate"])?.job_id);
+  const translating = !!translateJobId;
+  // 「保存済みの訳文でPDFを作り直す」: no AI is called, so neither 翻訳中 nor 翻訳待ち is said.
+  const rebuilding = useRebuilding(translateJobId);
 
   const readerRef = useRef<HTMLDivElement>(null);
   const leftScrollRef = useRef<HTMLDivElement>(null);
@@ -289,7 +293,7 @@ export function Reader() {
   const leftUrl = fileUrl("original.pdf", reading?.original_mtime ?? 0);
   const ref = reading?.translated_pages?.[String(currentPage)];
   const rightUrl = ref ? fileUrl(ref.file, ref.mtime) : null;
-  const caption = translatedCaption(reading, currentPage);
+  const caption = translatedCaption(reading, currentPage, rebuilding);
   const waiting = !!reading?.preview && !reading.preview.complete;
 
   let rightPlaceholder: React.ReactNode = null;
@@ -297,7 +301,7 @@ export function Reader() {
     rightPlaceholder = waiting ? (
       <span className="inline-flex flex-col items-center gap-3">
         {translating && <Loader2 className="w-6 h-6 animate-spin text-primary" />}
-        このページは翻訳待ちです。完了したページから表示します。
+        {rebuilding ? "保存済みの訳文からPDFを作り直しています。できたページから表示します。" : "このページは翻訳待ちです。完了したページから表示します。"}
       </span>
     ) : (
       <span className="inline-flex flex-col items-center gap-3">
@@ -316,7 +320,7 @@ export function Reader() {
   return (
     <div ref={readerRef} className="flex flex-col h-full w-full bg-reader-bg">
       <ReaderToolbar paperId={activePaperId} search={search} setSearch={setSearch} outline={outline} ownsKey={ownsKey} />
-      <span role="status" className="sr-only">{translating ? "翻訳中" : ""}</span>
+      <span role="status" className="sr-only">{rebuilding ? "PDFを作り直しています" : translating ? "翻訳中" : ""}</span>
       {/* data-ink-toolbar-slot: INK_TOOLBAR_SLOT, which lets the toolbar's keys through to its pane. */}
       <div ref={setInkToolbarSlot} data-ink-toolbar-slot="" className="flex flex-col shrink-0 max-h-[40%]" />
       {noTranslatedPages ? (
@@ -380,7 +384,7 @@ export function Reader() {
                 badge={translating && (
                   // Announced by the status line under the toolbar, which is there before the translation starts.
                   <span aria-hidden="true" className="flex items-center gap-1 pr-1 text-[0.75rem] leading-none text-primary">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />翻訳中
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />{rebuilding ? "PDF作り直し中" : "翻訳中"}
                   </span>
                 )}
                 inkToolbarSlot={inkToolbarSlot}

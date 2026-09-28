@@ -2248,8 +2248,11 @@ export interface components {
             /** Char Budget */
             char_budget?: number | null;
         };
-        /** SettingsModel */
-        "SettingsModel-Input": {
+        /**
+         * SettingsModel
+         * @description PUT /api/settings: the fields to change (any left out keep their values); GET answers SettingsResponse.
+         */
+        SettingsModel: {
             /**
              * Provider
              * @default codex
@@ -2284,8 +2287,11 @@ export interface components {
             /** Api Key */
             api_key?: string | null;
         };
-        /** SettingsModel */
-        "SettingsModel-Output": {
+        /**
+         * SettingsResponse
+         * @description GET /api/settings: every field, and what settings.json holds that this version does not know.
+         */
+        SettingsResponse: {
             /**
              * Provider
              * @default codex
@@ -2319,6 +2325,8 @@ export interface components {
             };
             /** Api Key */
             api_key: string | null;
+            /** Unknown Keys */
+            unknown_keys: string[];
         };
         /**
          * StickyNote
@@ -3054,7 +3062,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SettingsModel-Output"];
+                    "application/json": components["schemas"]["SettingsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3081,7 +3089,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SettingsModel-Input"];
+                "application/json": components["schemas"]["SettingsModel"];
             };
         };
         responses: {

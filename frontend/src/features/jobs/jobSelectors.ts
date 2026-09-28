@@ -26,8 +26,14 @@ export function anyJobRunning(jobs: Job[]): boolean {
   return jobs.some(isRunning);
 }
 
-export function paperBusy(jobs: Job[], paperId: string | null): boolean {
-  return !!paperId && jobs.some((j) => isRunning(j) && j.paper_id === paperId);
+/** Whether a job of `paperId` runs, leaving out the kinds in `ignore`. */
+export function paperBusy(jobs: Job[], paperId: string | null, ignore: readonly JobKind[] = []): boolean {
+  return !!paperId && jobs.some((j) => isRunning(j) && j.paper_id === paperId && !isJobKind(j.kind, ignore));
+}
+
+/** How far a job has got, as 「1/2」, or "" before it has counted anything. */
+export function jobCount(job: Job | undefined): string {
+  return job && typeof job.done === "number" && typeof job.total === "number" && job.total > 0 ? `${job.done}/${job.total}` : "";
 }
 
 /** The running job of `paperId`, of one of `kinds` when given; none without a paper. */

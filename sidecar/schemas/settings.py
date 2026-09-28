@@ -12,9 +12,10 @@ _DEFAULTS = Settings()
 
 
 class SettingsModel(BaseModel):
+    """PUT /api/settings: the fields to change (any left out keep their values); GET answers SettingsResponse."""
     # Keys the model does not know are ignored (Pydantic's default). This is only the API's shape:
     # settings.json itself is read by Settings.load, which migrates older flat keys (codex_path etc.).
-    # GET answers every field, which PUT may leave out: the schema has SettingsModel-Output and -Input.
+    # GET answers every field, which PUT may leave out: SettingsResponse marks them all required.
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
     provider: str = _DEFAULTS.provider
     model: str = _DEFAULTS.model
@@ -24,6 +25,13 @@ class SettingsModel(BaseModel):
     # By provider id: that connection's own settings (cli_path, base_url, model, reasoning_effort).
     provider_options: dict[str, dict[str, str]] = Field(default_factory=dict)
     api_key: str | None = None
+
+
+class SettingsResponse(SettingsModel):
+    """GET /api/settings: every field, and what settings.json holds that this version does not know."""
+    # Keys written by a newer Papeer on another PC (or in a backup restored here). They are not used
+    # here, and saving the settings drops them (config.unknown_keys).
+    unknown_keys: list[str] = Field(default_factory=list)
 
 
 class ProviderActionRequest(BaseModel):

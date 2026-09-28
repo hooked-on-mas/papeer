@@ -17,7 +17,8 @@
 
 export type DialogRequest =
   | { kind: "text"; title: string; label: string; defaultValue: string }
-  | { kind: "confirm"; title: string; message: string; okLabel: string; destructive: boolean }
+  /** cancelLabel: the other button's label, キャンセル when left out; either way it answers false. */
+  | { kind: "confirm"; title: string; message: string; okLabel: string; destructive: boolean; cancelLabel?: string }
   | { kind: "message"; title: string; message: string };
 
 export type DialogAnswer<R extends DialogRequest> =

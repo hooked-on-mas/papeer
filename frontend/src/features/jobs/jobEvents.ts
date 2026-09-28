@@ -51,9 +51,13 @@ function watchJob<K extends JobKind>(jobId: string, meta: { kind: K; paperId: st
   watchers.set(jobId, { ...entry, callbacks: [...entry.callbacks, callback] });
 }
 
-/** Show a just-started job as running, unless its finished event already arrived. */
+/**
+ * Show a just-started job as running, unless its finished event already arrived, or its job.started or
+ * a progress event did (they often come before the answer to the request that started it): its message,
+ * such as 「… 1/2」, is not put back to 準備中.
+ */
 export function showStartedJob(jobId: string, meta: { kind: JobKind; paperId: string | null }): void {
-  if (recentlyFinished.has(jobId)) return;
+  if (recentlyFinished.has(jobId) || useStore.getState().activeJobs.some((job) => job.job_id === jobId)) return;
   useStore.getState().addJob({
     job_id: jobId,
     paper_id: meta.paperId,

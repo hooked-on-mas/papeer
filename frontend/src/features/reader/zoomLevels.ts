@@ -47,6 +47,25 @@ export function pinchLevel(scale: number): { scale: number; level: number } {
 }
 
 /**
+ * The narrowest a page is drawn at 「幅に合わせる」, however narrow its pane (as when the side panel
+ * leaves the reader little room): below this, the pane scrolls sideways rather than cutting the page off.
+ */
+export const MIN_FIT_WIDTH = 40;
+
+/** The width that fits a page in `room` CSS pixels, the pane's width less its padding. */
+export function fitWidthFor(room: number): number {
+  return Math.max(MIN_FIT_WIDTH, room);
+}
+
+/**
+ * Whether a pane scrolls sideways: when zoomed in, or when the page is wider than the room for it. At
+ * 「幅に合わせる」 the page's 1px border is let overflow, so that it never brings a scrollbar.
+ */
+export function scrollsSideways(zoom: number, pageWidth: number, room: number): boolean {
+  return zoom > 1 || pageWidth > Math.round(room);
+}
+
+/**
  * The page width, in CSS pixels, for `zoom` in a pane that fits pages `fitWidth` wide and `fitHeight`
  * tall. `ratio` is the page's height over its width.
  */

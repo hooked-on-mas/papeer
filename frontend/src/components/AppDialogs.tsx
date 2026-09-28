@@ -7,7 +7,6 @@ import { useErrorDialog } from "@/components/errorDialog";
 import { Toaster } from "@/components/Toaster";
 import { errorAdvice, firstLine, reportDetails, type ErrorAction, type ErrorReport } from "@/lib/errorReports";
 import { openSettings } from "@/features/settings/settingsNavigation";
-import { ConnectionBanner } from "@/features/jobs/ConnectionBanner";
 import { isAppClosing, onAppClosingChange } from "@/app/appClosing";
 import { createDialogQueue, type DialogOptions, type QueuedDialog } from "@/lib/dialogQueue";
 
@@ -27,8 +26,13 @@ export function askText(title: string, label: string, defaultValue = "", options
   return dialogs.ask({ kind: "text", title, label, defaultValue }, withDefaults(options));
 }
 
-export function askConfirm(title: string, message: string, okLabel = "OK", destructive = false, options: DialogOptions = {}): Promise<boolean> {
-  return dialogs.ask({ kind: "confirm", title, message, okLabel, destructive }, withDefaults(options));
+/** `cancelLabel` names the button that answers false (キャンセル by default), for a question whose two answers are both fine. */
+export type ConfirmOptions = DialogOptions & { cancelLabel?: string };
+
+export function askConfirm(title: string, message: string, okLabel = "OK", destructive = false, options: ConfirmOptions = {}): Promise<boolean> {
+  const { cancelLabel, ...queueOptions } = options;
+  return dialogs.ask({ kind: "confirm", title, message, okLabel, destructive, ...(cancelLabel ? { cancelLabel } : {}) },
+    withDefaults(queueOptions));
 }
 
 export function showMessage(title: string, message: string, options: DialogOptions = {}): Promise<void> {
@@ -108,7 +112,9 @@ function PromptDialogs() {
             <Button ref={okRef} onClick={() => finish(null)}>OK</Button>
           ) : (
             <>
-              <Button ref={cancelRef} variant="outline" onClick={cancel}>キャンセル</Button>
+              <Button ref={cancelRef} variant="outline" onClick={cancel}>
+                {request?.kind === "confirm" && request.cancelLabel ? request.cancelLabel : "キャンセル"}
+              </Button>
               <Button
                 variant={request?.kind === "confirm" && request.destructive ? "destructive" : "default"}
                 onClick={() => finish(request?.kind === "confirm" ? true : value)}
@@ -202,7 +208,6 @@ export function AppDialogs() {
       <PromptDialogs />
       <JobErrorDialog />
       <Toaster />
-      <ConnectionBanner />
     </>
   );
 }

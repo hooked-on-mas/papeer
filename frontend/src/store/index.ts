@@ -5,6 +5,7 @@ import { clampZoom } from "@/features/reader/zoomLevels";
 import { EMPTY_HISTORY, type ReaderHistory } from "@/features/reader/readerHistory";
 import { pageFilterOf, type PageFilter } from "@/features/reader/pageAppearance";
 import { openBesideReader, tabChange, type SidePanel } from "@/features/reader/sidePanel";
+import { inkBarStartOf, type InkBarStart } from "@/features/reader/readerBars";
 import { mergePersisted, migratePersisted, PERSIST_VERSION } from "./persisted";
 import { upsertJob } from "@/features/jobs/jobSelectors";
 
@@ -96,6 +97,8 @@ interface UiState {
   sidePanelWidth: number;
   /** Whether the writing toolbar is shown while no writing tool is picked; see readerBars.ts. */
   inkBarOpen: boolean;
+  /** How the writing toolbar starts at launch (設定「表示」); applied when the saved state is read (persisted.ts). */
+  inkBarStart: InkBarStart;
   statusMessage: string;
   /** Folder that new PDFs go into ("" = 未分類); follows the selected tree row. */
   currentCollection: string;
@@ -134,6 +137,7 @@ interface UiState {
   openSidePanel: (panel: SidePanel) => void;
   setSidePanelWidth: (w: number) => void;
   setInkBarOpen: (open: boolean) => void;
+  setInkBarStart: (start: InkBarStart) => void;
   setStatus: (message: string) => void;
   setCurrentCollection: (collection: string) => void;
   setSelectedFolder: (folder: string | null) => void;
@@ -172,6 +176,7 @@ export const useStore = create<UiState>()(
       sidePanel: null,
       sidePanelWidth: 420,
       inkBarOpen: false,
+      inkBarStart: "closed",
       statusMessage: "準備できました。PDFの追加・閲覧・メモ保存にはAI接続は不要です。",
       currentCollection: "",
       selectedFolder: null,
@@ -221,6 +226,7 @@ export const useStore = create<UiState>()(
       openSidePanel: (panel) => set(openBesideReader(panel)),
       setSidePanelWidth: (sidePanelWidth) => set({ sidePanelWidth }),
       setInkBarOpen: (inkBarOpen) => set({ inkBarOpen }),
+      setInkBarStart: (start) => set({ inkBarStart: inkBarStartOf(start) }),
       setStatus: (statusMessage) => set({ statusMessage }),
       setCurrentCollection: (currentCollection) => set({ currentCollection }),
       setSelectedFolder: (selectedFolder) => set({ selectedFolder }),
@@ -261,6 +267,7 @@ export const useStore = create<UiState>()(
         sidePanel: state.sidePanel,
         sidePanelWidth: state.sidePanelWidth,
         inkBarOpen: state.inkBarOpen,
+        inkBarStart: state.inkBarStart,
       }),
     }
   )

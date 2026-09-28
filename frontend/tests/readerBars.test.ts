@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  fitBar, fitReaderToolbar, inkToolbarOpen, inkToolbarSide, MORE_BUTTON_WIDTH, readerToolbarItems, TOOLBAR_GAP, TOOLBAR_SLACK,
+  fitBar, fitReaderToolbar, INK_BAR_STARTS, inkBarStartOf, initialInkBarOpen, inkToolbarOpen, inkToolbarSide, MORE_BUTTON_WIDTH,
+  readerToolbarItems, TOOLBAR_GAP, TOOLBAR_SLACK,
   type BarFit, type BarItem,
 } from "../src/features/reader/readerBars.ts";
 
@@ -132,4 +133,19 @@ test("the writing toolbar stays on screen while a writing tool or the page list 
   assert.equal(inkToolbarOpen({ open: false, tool: "pen", listOpen: false }), true);
   assert.equal(inkToolbarOpen({ open: false, tool: "capture", listOpen: false }), true);
   assert.equal(inkToolbarOpen({ open: false, tool: "select", listOpen: true }), true);
+});
+
+test("the writing toolbar's start setting: closed by default, open, or as it was left", () => {
+  assert.deepEqual(INK_BAR_STARTS.map((item) => item.id), ["closed", "open", "last"]);
+  assert.equal(inkBarStartOf(undefined), "closed");
+  assert.equal(inkBarStartOf("later-version"), "closed");
+  for (const { id } of INK_BAR_STARTS) assert.equal(inkBarStartOf(id), id);
+  assert.equal(initialInkBarOpen("closed", true), false);
+  assert.equal(initialInkBarOpen("open", false), true);
+  assert.equal(initialInkBarOpen("open", undefined), true);
+  assert.equal(initialInkBarOpen("last", true), true);
+  assert.equal(initialInkBarOpen("last", false), false);
+  // Anything but a saved true (nothing saved, or edited by hand) is closed.
+  assert.equal(initialInkBarOpen("last", undefined), false);
+  assert.equal(initialInkBarOpen("last", "true"), false);
 });

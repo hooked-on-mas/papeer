@@ -5,6 +5,7 @@
  */
 import { mergeSavedSettings, type PageFilter } from "../features/reader/pageAppearance.ts";
 import { isSidePanel, type SidePanel } from "../features/reader/sidePanel.ts";
+import { initialInkBarOpen, inkBarStartOf, type InkBarStart } from "../features/reader/readerBars.ts";
 
 /** The version of the saved data; migratePersisted brings older versions up to it. */
 export const PERSIST_VERSION = 3;
@@ -24,8 +25,20 @@ export function migratePersisted(persisted: any, version: number): any {
   return persisted;
 }
 
-/** Takes what was saved over the defaults; a page filter or side panel this version doesn't know is dropped. */
-export function mergePersisted<T extends { pageFilter: PageFilter; sidePanel: SidePanel | null }>(saved: unknown, current: T): T {
+/**
+ * Takes what was saved over the defaults; a page filter, side panel or writing toolbar start this version
+ * doesn't know is dropped. The writing toolbar opens as its start setting says (readerBars.ts), from how
+ * it was saved only with 「前回の状態を引き継ぐ」.
+ */
+export function mergePersisted<T extends {
+  pageFilter: PageFilter; sidePanel: SidePanel | null; inkBarStart: InkBarStart; inkBarOpen: boolean;
+}>(saved: unknown, current: T): T {
   const merged = mergeSavedSettings(saved, current);
-  return { ...merged, sidePanel: isSidePanel(merged.sidePanel) ? merged.sidePanel : null };
+  const inkBarStart = inkBarStartOf(merged.inkBarStart);
+  return {
+    ...merged,
+    sidePanel: isSidePanel(merged.sidePanel) ? merged.sidePanel : null,
+    inkBarStart,
+    inkBarOpen: initialInkBarOpen(inkBarStart, merged.inkBarOpen),
+  };
 }

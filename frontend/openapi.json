@@ -530,7 +530,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SettingsModel-Output"
+                  "$ref": "#/components/schemas/SettingsResponse"
                 }
               }
             }
@@ -590,7 +590,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SettingsModel-Input"
+                "$ref": "#/components/schemas/SettingsModel"
               }
             }
           }
@@ -8948,7 +8948,7 @@
         ],
         "title": "RevisionRequest"
       },
-      "SettingsModel-Input": {
+      "SettingsModel": {
         "properties": {
           "provider": {
             "type": "string",
@@ -8998,9 +8998,10 @@
           }
         },
         "type": "object",
-        "title": "SettingsModel"
+        "title": "SettingsModel",
+        "description": "PUT /api/settings: the fields to change (any left out keep their values); GET answers SettingsResponse."
       },
-      "SettingsModel-Output": {
+      "SettingsResponse": {
         "properties": {
           "provider": {
             "type": "string",
@@ -9047,6 +9048,13 @@
               }
             ],
             "title": "Api Key"
+          },
+          "unknown_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unknown Keys"
           }
         },
         "type": "object",
@@ -9057,9 +9065,11 @@
           "timeout_seconds",
           "translation_concurrency",
           "provider_options",
-          "api_key"
+          "api_key",
+          "unknown_keys"
         ],
-        "title": "SettingsModel"
+        "title": "SettingsResponse",
+        "description": "GET /api/settings: every field, and what settings.json holds that this version does not know."
       },
       "StickyNote": {
         "properties": {

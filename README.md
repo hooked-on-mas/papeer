@@ -230,7 +230,7 @@ PDF の本文は信頼できない入力として扱い、CLI にはツールを
 2. `papeer/providers/registry.py` の `BACKENDS` に 1 行追加する。
 3. `papeer/core/code_version.py` の `RENDER_EXCLUDED` に新しいファイルを追加する（`tests/test_code_version.py` が未分類のファイルを検出する）。
 
-設定画面の選択肢と入力欄は `GET /api/providers` から作られるため、フロントエンドの変更は不要です。接続先ごとの設定のうち、最後に選んだモデルと effort はライブラリの `settings.json` の `provider_options` に、CLI のパスと API URL（`config.DEVICE_OPTION_KEYS`）は PC ごとの `%LOCALAPPDATA%\PapeerSync\device-settings.json` に保存されます。後者は同期・バックアップに含めず、別の PC から届いた `settings.json` や復元したバックアップに書かれていても使いません（以前の版の `settings.json` にあった値は、初回の読み込み時に一度だけ PC ごとの保存先へ移します）。モデル名は半角英数字と `. : / @ [ ] + - _` だけ（先頭の `-` は不可）を受け付けます。保存済みのモデル名が不正な場合は、接続先の既定のモデルを使います。
+設定画面の選択肢と入力欄は `GET /api/providers` から作られるため、フロントエンドの変更は不要です。接続先ごとの設定のうち、最後に選んだモデルと effort はライブラリの `settings.json` の `provider_options` に、CLI のパスと API URL（`config.DEVICE_OPTION_KEYS`）は PC ごとの `%LOCALAPPDATA%\PapeerSync\device-settings.json` に保存されます。後者は同期・バックアップに含めず、別の PC から届いた `settings.json` や復元したバックアップに書かれていても使いません（以前の版の `settings.json` にあった値は、初回の読み込み時に一度だけ PC ごとの保存先へ移します）。モデル名は半角英数字と `. : / @ [ ] + - _` だけ（先頭の `-` は不可）を受け付けます。保存済みのモデル名が不正な場合は、接続先の既定のモデルを使います。`settings.json` にこの版が知らない項目（別の PC の新しい版の Papeer が書いたもの）があると、`GET /api/settings` の `unknown_keys` で返し、フロントエンドが起動時に知らせます（「今後表示しない」は PC ごとにブラウザーの保存領域に記憶します）。それらの項目はこの版では使わず、設定を保存すると消えます（sidecar のログに記録します。消えた状態は同期で新しい版の PC にも届きます）。
 
 翻訳キャッシュはコードではなく接続先・モデル・プロンプト・原文で区別するため、`papeer/providers/` を編集しても既存の訳文は訳し直しません。依頼の送り方や応答の検証を変えて訳し直すべきときは、`papeer/translation/translation.py` の `TRANSLATION_PROTOCOL` を上げます（[翻訳](docs/translation.md#翻訳キャッシュの識別値)）。
 

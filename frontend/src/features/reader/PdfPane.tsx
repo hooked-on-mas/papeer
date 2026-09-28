@@ -26,7 +26,8 @@ import { highlightColor, highlightFill } from "./highlights";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { cappedPixelRatio, snapshotSize } from "./canvasBudget";
 import { resolveDestination, type PdfPlace } from "./pdfLinks";
-import { pageWidthFor } from "./zoomLevels";
+import { fitWidthFor, pageWidthFor, scrollsSideways } from "./zoomLevels";
+import { createPlaceKeeper, scrollForPlace, type PaneView } from "./readingPlace";
 import { pageAppearance } from "./pageAppearance";
 import { inkToolbarSide } from "./readerBars";
 
@@ -79,6 +80,18 @@ export interface JumpTarget {
 }
 
 const PADDING = 16;
+
+/** The pane's view and the page in it (its box as drawn, CSS zoom and all), for readingPlace.ts. */
+function paneView(scroller: HTMLElement, page: HTMLElement): PaneView {
+  const box = page.getBoundingClientRect();
+  const frame = scroller.getBoundingClientRect();
+  return {
+    scrollTop: scroller.scrollTop, scrollLeft: scroller.scrollLeft,
+    clientWidth: scroller.clientWidth, clientHeight: scroller.clientHeight,
+    page: { top: box.top - frame.top - scroller.clientTop + scroller.scrollTop, left: box.left - frame.left - scroller.clientLeft + scroller.scrollLeft,
+      width: box.width, height: box.height },
+  };
+}
 
 /** Frees a canvas's pixels; a hidden canvas otherwise keeps them for as long as it is mounted. */
 function releaseCanvas(canvas: HTMLCanvasElement | null) {
@@ -167,17 +180,37 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   // them keep their own colours.
   const pageStyle = { "--pdf-page-filter": appearance.filter ?? "none", "--pdf-page-bg": appearance.background } as React.CSSProperties;
 
+  // The page shown and the width it is laid out at, read by the observer below.
+  const pageKey = useRef(inkKey);
+  pageKey.current = inkKey;
+  const layoutWidth = useRef(0);
+  const placeKeeper = useMemo(createPlaceKeeper, []);
+  useEffect(() => placeKeeper.reset(), [placeKeeper, inkKey]);
   useEffect(() => {
     if (!containerRef.current) return;
     const observer = new ResizeObserver((entries) => {
-      // Before the paint, so a pane that just narrowed never shows the page cut off.
       const rect = entries[0]?.contentRect;
-      if (rect) flushSync(() => setContainerSize((size) =>
+      const scroller = containerRef.current;
+      if (!rect || !scroller) return;
+      // The page still has its old size here: where the view is on it, to come back to at the new size
+      // (see readingPlace.ts). The same scroll position would land elsewhere on a page drawn larger or smaller.
+      const page = pageRef.current?.isConnected ? pageRef.current : null;
+      const key = pageKey.current;
+      const place = page ? placeKeeper.measure(key, paneView(scroller, page), layoutWidth.current) : null;
+      // Before the paint, so a pane that just narrowed never shows the page cut off or out of place.
+      flushSync(() => setContainerSize((size) =>
         size.width === rect.width && size.height === rect.height ? size : { width: rect.width, height: rect.height }));
+      const resized = pageRef.current;
+      if (!place || !resized?.isConnected || pageKey.current !== key) return;
+      const sideways = getComputedStyle(scroller).overflowX !== "hidden";
+      const { top, left } = scrollForPlace(place, paneView(scroller, resized), { sideways });
+      if (scroller.scrollTop !== top) scroller.scrollTop = top;
+      if (scroller.scrollLeft !== left) scroller.scrollLeft = left;
+      placeKeeper.restored(key, place, paneView(scroller, resized), layoutWidth.current);
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [placeKeeper]);
 
   useEffect(() => setNumPages(null), [url]);
 
@@ -223,9 +256,10 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   const shapeKnown = pageShape?.key === inkKey;
   const layoutRatio = shapeKnown ? pageShape.ratio : pageShape?.ratio ?? Math.SQRT2;
   const canvasRatio = shapeKnown ? pageShape.ratio : Math.max(pageShape?.ratio ?? Math.SQRT2, Math.SQRT2);
-  const fitWidth = Math.max(250, containerWidth - PADDING * 2);
+  const fitWidth = fitWidthFor(containerWidth - PADDING * 2);
   // The page's 1px border sits outside its canvas.
   const pageWidth = pageWidthFor(zoom, fitWidth, containerSize.height - PADDING * 2 - 2, layoutRatio);
+  layoutWidth.current = pageWidth;
 
   // react-pdf replaces the canvas whenever the width changes, leaving the page blank until it is
   // redrawn. So while a side panel opens or the pane is resized or zoomed, the current drawing is
@@ -399,7 +433,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
         onAuxClickCapture={handleLinkClick}
         // A stable gutter keeps the width from changing as the scrollbar comes and goes; otherwise a
         // page that only just overflows at "fit width" shrinks to fit, loses its scrollbar and grows back.
-        className={`w-full h-full bg-reader-bg [scrollbar-gutter:stable] ${zoom > 1 ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
+        className={`w-full h-full bg-reader-bg [scrollbar-gutter:stable] ${scrollsSideways(zoom, pageWidth, containerWidth - PADDING * 2) ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
       >
         {placeholder ? message(placeholder) : !url ? message("PDFがありません。") : (
           <div className="w-fit min-w-full" style={{ padding: PADDING }}>

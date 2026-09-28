@@ -16,12 +16,14 @@ import { isRunning, useStore } from "../store";
 import { anyJobRunning } from "@/features/jobs/jobSelectors";
 import { Header, TranslationDialogHost } from "./Header";
 import { StatusBar } from "./StatusBar";
+import { ConnectionBanner } from "@/features/jobs/ConnectionBanner";
 import { LibrarySidebar } from "../features/library/LibrarySidebar";
 import { ReaderTab, useSidePanelOpen } from "./ReaderArea";
 import { ChatPane, NotesPane, SummaryPane } from "./lazyPanes";
 import { StickyNotesTab } from "../features/reader/StickyNotesTab";
 import { StickyNoteDialog } from "../features/reader/StickyNoteDialog";
 import { DriveSyncHost } from "../features/settings/DriveSection";
+import { SettingsVersionNotice } from "../features/settings/VersionNoticeHost";
 import { syncDrive } from "../features/settings/driveSync";
 import { fetchDriveStatus, fetchSyncCheck } from "../features/settings/driveApi";
 import { useJobEvents } from "../features/jobs/jobEvents";
@@ -362,6 +364,7 @@ export function AppShell() {
 
   return (
     <div className="flex h-screen w-full flex-col bg-background text-foreground overflow-hidden">
+      <ConnectionBanner />
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
         {!focusMode && !sidebarCollapsed && (
           <>
@@ -462,6 +465,7 @@ export function AppShell() {
       {(!focusMode || anyRunning) && <StatusBar />}
       {settingsMounted && <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />}
       <DriveSyncHost />
+      <SettingsVersionNotice />
       <StickyNoteDialog />
       <AppDialogs />
       <Lightbox />

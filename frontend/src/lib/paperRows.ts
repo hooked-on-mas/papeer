@@ -26,6 +26,18 @@ export function withPaperRow(rows: PaperData[], paperId: string, paper: PaperDat
   return rows.map((current, i) => (i === index ? row : current));
 }
 
+/**
+ * `rows` with the paper shown in the folder `collection` at once, when it has just moved there, before
+ * paper.changed brings its row as the sidecar keeps it (withPaperRow). The same array when the paper is
+ * not in the list (the event puts it in) or is there already. The folder is not a value the lists are
+ * ordered or searched by, so the row keeps its place.
+ */
+export function withPaperCollection(rows: PaperData[], paperId: string, collection: string): PaperData[] {
+  const index = rows.findIndex((row) => row.id === paperId);
+  if (index < 0 || (rows[index].collection_name ?? "") === collection) return rows;
+  return rows.map((row, i) => (i === index ? { ...row, collection_name: collection } : row));
+}
+
 export type PaperChangeEffects = {
   /** The paper's row and the paper itself are loaded again. */
   row: boolean;
