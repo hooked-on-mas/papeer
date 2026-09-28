@@ -26,7 +26,7 @@ import { highlightColor, highlightFill } from "./highlights";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { cappedPixelRatio, snapshotSize } from "./canvasBudget";
 import { resolveDestination, type PdfPlace } from "./pdfLinks";
-import { pageWidthFor } from "./zoomLevels";
+import { fitWidthFor, pageWidthFor, scrollsSideways } from "./zoomLevels";
 import { pageAppearance } from "./pageAppearance";
 import { inkToolbarSide } from "./readerBars";
 
@@ -223,7 +223,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   const shapeKnown = pageShape?.key === inkKey;
   const layoutRatio = shapeKnown ? pageShape.ratio : pageShape?.ratio ?? Math.SQRT2;
   const canvasRatio = shapeKnown ? pageShape.ratio : Math.max(pageShape?.ratio ?? Math.SQRT2, Math.SQRT2);
-  const fitWidth = Math.max(250, containerWidth - PADDING * 2);
+  const fitWidth = fitWidthFor(containerWidth - PADDING * 2);
   // The page's 1px border sits outside its canvas.
   const pageWidth = pageWidthFor(zoom, fitWidth, containerSize.height - PADDING * 2 - 2, layoutRatio);
 
@@ -399,7 +399,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
         onAuxClickCapture={handleLinkClick}
         // A stable gutter keeps the width from changing as the scrollbar comes and goes; otherwise a
         // page that only just overflows at "fit width" shrinks to fit, loses its scrollbar and grows back.
-        className={`w-full h-full bg-reader-bg [scrollbar-gutter:stable] ${zoom > 1 ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
+        className={`w-full h-full bg-reader-bg [scrollbar-gutter:stable] ${scrollsSideways(zoom, pageWidth, containerWidth - PADDING * 2) ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
       >
         {placeholder ? message(placeholder) : !url ? message("PDFがありません。") : (
           <div className="w-fit min-w-full" style={{ padding: PADDING }}>

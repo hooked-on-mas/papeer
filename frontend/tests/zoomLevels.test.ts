@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  clampZoom, pageWidthFor, pinchLevel, pinchStart, stepZoom, ZOOM_FIT_PAGE, ZOOM_LEVELS, ZOOM_PRESETS, zoomLabel,
+  clampZoom, fitWidthFor, MIN_FIT_WIDTH, pageWidthFor, scrollsSideways, pinchLevel, pinchStart, stepZoom, ZOOM_FIT_PAGE, ZOOM_LEVELS, ZOOM_PRESETS, zoomLabel,
 } from "../src/features/reader/zoomLevels.ts";
 
 test("「ページ全体」 sits below 「幅に合わせる」 in the zoom steps", () => {
@@ -53,4 +53,19 @@ test("zoom labels", () => {
   assert.equal(zoomLabel(ZOOM_FIT_PAGE), "ページ全体");
   assert.equal(zoomLabel(1), "幅に合わせる");
   assert.equal(zoomLabel(1.25), "125%");
+});
+
+test("「幅に合わせる」 fits the page to a narrow pane rather than cutting it off", () => {
+  // The reader beside a 420px side panel in a small window: panes 162px wide, 130px for the page.
+  assert.equal(fitWidthFor(130), 130);
+  assert.equal(pageWidthFor(1, fitWidthFor(130), 800, Math.SQRT2), 130);
+  assert.equal(scrollsSideways(1, 130, 130), false);
+  // Narrower than the least a page is drawn at: it scrolls sideways instead.
+  assert.equal(fitWidthFor(10), MIN_FIT_WIDTH);
+  assert.equal(scrollsSideways(1, MIN_FIT_WIDTH, 10), true);
+  // Zoomed in, always.
+  assert.equal(scrollsSideways(2, 260, 130), true);
+  // Rounding up by less than a pixel brings no scrollbar.
+  assert.equal(scrollsSideways(1, 131, 130.6), false);
+  assert.equal(scrollsSideways(ZOOM_FIT_PAGE, 100, 130), false);
 });
