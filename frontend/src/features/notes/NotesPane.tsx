@@ -172,21 +172,26 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
       </div>}
 
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="h-11 flex items-center justify-between px-4 border-b shrink-0">
-          <h3 className="text-[0.8125rem] font-semibold flex items-center gap-2">
-            <NotebookPen className="w-4 h-4 text-muted-foreground" />
-            メモ
-            {!compact && <span className="font-normal text-muted-foreground text-[0.75rem]">Markdownで記入できます。入力後に自動保存します。</span>}
+        {/* Never wrapped a character at a time in a narrow pane (a small window, a large 文字の大きさ): the
+            hint is cut short first, then the buttons go to a second line, then the button keeps its icon only. */}
+        <div className="@container min-h-11 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-1.5 border-b shrink-0">
+          <h3 className="min-w-0 flex-[1_1_3.5rem] text-[0.8125rem] font-semibold flex items-center gap-2 whitespace-nowrap">
+            <NotebookPen className="w-4 h-4 shrink-0 text-muted-foreground" />
+            <span className="shrink-0">メモ</span>
+            {!compact && <span className="min-w-0 truncate font-normal text-muted-foreground text-[0.75rem]" title="Markdownで記入できます。入力後に自動保存します。">
+              Markdownで記入できます。入力後に自動保存します。</span>}
           </h3>
-          <div className="flex items-center gap-3">
-            <span className="text-[0.75rem] text-muted-foreground">
+          <div className="ml-auto min-w-0 flex items-center gap-3 whitespace-nowrap">
+            <span className="min-w-0 truncate text-[0.75rem] text-muted-foreground">
               {noteState === "saving" ? "保存中…" : noteState === "dirty" ? "未保存" : "自動保存済み ✓"}
             </span>
             <button
               onClick={() => setPreview(!preview)}
-              className="flex items-center gap-1 h-7 px-2 rounded border text-[0.75rem] hover:bg-muted"
+              title={preview ? "編集" : "プレビュー"}
+              className="shrink-0 flex items-center gap-1 h-7 px-2 rounded border text-[0.75rem] hover:bg-muted"
             >
-              {preview ? <><Pencil className="w-3.5 h-3.5" /> 編集</> : <><Eye className="w-3.5 h-3.5" /> プレビュー</>}
+              {preview ? <Pencil className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              <span className="@max-[14rem]:sr-only">{preview ? "編集" : "プレビュー"}</span>
             </button>
           </div>
         </div>
