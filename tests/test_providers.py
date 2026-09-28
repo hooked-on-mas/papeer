@@ -1,16 +1,19 @@
 from datetime import datetime, timedelta, timezone
 from email.message import Message
 from email.utils import format_datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import io
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError, URLError
+from urllib.request import Request
 
 from papeer.core.config import Settings
 from papeer.providers import AnswerRejected, Cancelled, ProviderBackend, ProviderSpec, create_provider, parse_json_answer
@@ -30,6 +33,12 @@ RUN = "papeer.providers.common.subprocess.run"
 def cli(provider_cls):
     """Patch a CLI connection so it runs the mocked process instead of looking for the real CLI."""
     return patch.object(provider_cls, "command", return_value=["cli"])
+
+
+def node_on_path(node: str | None):
+    """Patch shutil.which to find `node` (or no node) and every other program as it does."""
+    real = shutil.which
+    return patch("shutil.which", side_effect=lambda name, *args, **kwargs: node if name == "node" else real(name, *args, **kwargs))
 
 
 def agy_stream(response: str, status: str = "SUCCESS") -> bytes:
@@ -107,7 +116,9 @@ class ProvidersTests(unittest.TestCase):
 
     def test_claude_command_detection(self):
         provider = ClaudeCodeProvider(Settings(provider="claude", provider_options={"claude": {"cli_path": "my-claude"}}))
-        self.assertEqual(provider.command(), ["my-claude"])
+        with patch("shutil.which", return_value="/opt/bin/my-claude") as which:
+            self.assertEqual(provider.command(), [str(Path("/opt/bin/my-claude"))])  # A bare name, from PATH.
+        which.assert_called_once_with("my-claude")
         provider = ClaudeCodeProvider(Settings(provider="claude"))
         with patch("shutil.which", return_value="/usr/bin/claude"):
             self.assertEqual(provider.command(), [str(Path("/usr/bin/claude"))])
@@ -115,9 +126,60 @@ class ProvidersTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Claude Code CLIが見つかりません"):
                 provider.command()
 
+    def test_configured_cli_path_that_names_no_file_is_reported_as_a_setting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "node_modules" / CodexProvider.npm_entry).parent.mkdir(parents=True)
+            (folder / "node_modules" / CodexProvider.npm_entry).write_text("", "utf-8")
+            for cls, configured in ((ClaudeCodeProvider, str(folder / "claude.exe")),
+                                    # A missing shim is missing, not refused for cmd.exe (even with the npm entry beside it).
+                                    (CodexProvider, str(folder / "codex.cmd")),
+                                    (CodexProvider, str(folder)),  # A folder, not a program.
+                                    (AntigravityProvider, "agy-not-on-path")):
+                with self.subTest(configured=configured):
+                    provider = cls(Settings(provider=cls.spec.id, provider_options={cls.spec.id: {"cli_path": configured}}))
+                    with patch("shutil.which", return_value=None), patch(POPEN) as popen, patch(RUN) as run:
+                        message = f"{cls.tool_name} の実行ファイルが見つかりません（{configured}）。設定の接続先で、パスを確かめてください。"
+                        with self.assertRaises(RuntimeError) as raised:
+                            provider.command()
+                        self.assertEqual(str(raised.exception), message)
+                        with self.assertRaisesRegex(RuntimeError, "の実行ファイルが見つかりません"):
+                            provider.check()
+                        self.assertFalse(provider.login_status())
+                    popen.assert_not_called()
+                    run.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "PATHEXT: Windows finds a program without its extension")
+    def test_configured_cli_path_is_found_as_windows_finds_a_program(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            exe = folder / "claude.exe"
+            exe.write_bytes(b"")
+            npm = folder / "npm"
+            entry = npm / "node_modules" / CodexProvider.npm_entry
+            entry.parent.mkdir(parents=True)
+            entry.write_text("", "utf-8")
+            (npm / "codex").write_text("#!/bin/sh\nexec node ...\n", "utf-8")  # npm's sh script, no extension.
+            (npm / "codex.cmd").write_text("@exit /b 9\n", "utf-8")
+            (npm / "node.exe").write_bytes(b"")
+            with patch.dict(os.environ, {"PATH": str(folder), "PAPEER_TEST_HOME": str(folder)}):
+                for cls, configured, command in (
+                        (ClaudeCodeProvider, str(folder / "claude"), [exe]),  # No extension.
+                        (ClaudeCodeProvider, "claude", [exe]),  # A bare name, on PATH.
+                        (ClaudeCodeProvider, f"  {exe}  ", [exe]),
+                        (ClaudeCodeProvider, f'"{exe}"', [exe]),
+                        (ClaudeCodeProvider, "%PAPEER_TEST_HOME%\\claude.exe", [exe]),
+                        (CodexProvider, str(npm / "codex.cmd"), [npm / "node.exe", entry]),
+                        (CodexProvider, str(npm / "codex"), [npm / "node.exe", entry]),  # What `where codex` lists first.
+                ):
+                    with self.subTest(configured=configured):
+                        provider = cls(Settings(provider=cls.spec.id, provider_options={cls.spec.id: {"cli_path": configured}}))
+                        self.assertEqual([Path(part) for part in provider.command()], command)
+
     def test_antigravity_command_detection(self):
         provider = AntigravityProvider(Settings(provider="antigravity", provider_options={"antigravity": {"cli_path": "my-agy"}}))
-        self.assertEqual(provider.command(), ["my-agy"])
+        with patch("shutil.which", return_value="/opt/bin/my-agy"):
+            self.assertEqual(provider.command(), [str(Path("/opt/bin/my-agy"))])
         provider = AntigravityProvider(Settings(provider="antigravity"))
         with patch("shutil.which", return_value="/usr/bin/agy"):
             self.assertEqual(provider.command(), [str(Path("/usr/bin/agy"))])
@@ -305,6 +367,26 @@ class ProvidersTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "未ログイン"):
                 provider.check()
 
+    @unittest.skipUnless(os.name == "nt", "Windows job objects")
+    def test_cli_sign_in_console_starts_outside_the_apps_job(self):
+        # The app's job ends the sidecar's processes as the app exits; the sign-in console and its browser
+        # may stay. A job that does not let processes leave refuses the flag: the console starts inside it.
+        import subprocess
+        leave = subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_BREAKAWAY_FROM_JOB
+        for refused in (False, True):
+            with self.subTest(refused=refused):
+                flags = []
+
+                def popen(command, env=None, creationflags=0):
+                    flags.append(creationflags)
+                    if refused and creationflags & subprocess.CREATE_BREAKAWAY_FROM_JOB:
+                        raise PermissionError(13, "Access is denied")
+                    return Mock()
+
+                with cli(CodexProvider), patch(POPEN, side_effect=popen):
+                    CodexProvider(Settings()).login()
+                self.assertEqual(flags, [leave, subprocess.CREATE_NEW_CONSOLE] if refused else [leave])
+
 
 class CliSafetyTests(unittest.TestCase):
     """What an untrusted document can reach through a CLI: tools, MCP servers, the sidecar token, cmd.exe."""
@@ -389,16 +471,16 @@ class CliSafetyTests(unittest.TestCase):
             shim = folder / "claude.cmd"
             shim.write_text("@exit /b 9\n", "utf-8")
             provider = ClaudeCodeProvider(Settings(provider="claude", provider_options={"claude": {"cli_path": str(shim)}}))
-            with patch("shutil.which", return_value="/bin/node"):
+            with node_on_path("/bin/node"):
                 with self.assertRaisesRegex(RuntimeError, "claude.cmd は cmd.exe を経由するため使いません"):
                     provider.command()  # No JS entry next to the shim: the shim itself is never run.
             entry = folder / "node_modules" / ClaudeCodeProvider.npm_entry
             entry.parent.mkdir(parents=True)
             entry.write_text("", "utf-8")
-            with patch("shutil.which", return_value=None):
+            with node_on_path(None):
                 with self.assertRaisesRegex(RuntimeError, "Node.js"):
                     provider.command()  # A JS entry but no node to run it.
-            with patch("shutil.which", return_value="/bin/node"):
+            with node_on_path("/bin/node"):
                 self.assertEqual(provider.command(), ["/bin/node", str(entry)])
                 (folder / "node.exe").write_bytes(b"")
                 self.assertEqual(provider.command(), [str(folder / "node.exe"), str(entry)])  # As the shim prefers.
@@ -432,7 +514,7 @@ class CliSafetyTests(unittest.TestCase):
                             '  "%~dp0\\node.exe"  "%~dp0\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n'
                             ') ELSE (\r\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n'
                             '  node  "%~dp0\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n)\r\n', "utf-8")
-            with patch("shutil.which", return_value="/bin/node"):
+            with node_on_path("/bin/node"):
                 self.assertEqual(provider.command(), ["/bin/node", str(target.resolve())])
                 # npm's own shim, pointing at a moved JS entry.
                 moved = bin_folder / "node_modules/@openai/codex/cli.js"
@@ -621,6 +703,65 @@ class TransportRetryTests(unittest.TestCase):
         self.assertTrue(caught.exception.timed_out)
         self.assertTrue(caught.exception.after_sending)  # The CLI had the request: past its deadline, not unsent.
         self.assertIn("タイムアウト", str(caught.exception))
+
+    def test_cli_answer_that_came_as_the_job_was_cancelled_is_kept(self):
+        # The CLI ended by itself as the cancel came: its answer is paid for and goes to the caller, which
+        # records it before it stops (translation would otherwise send the same request again on resuming).
+        cancel = threading.Event()
+        cancel.set()
+
+        def ended(returncode):
+            def popen(command, cwd=None, stdin=None, stdout=None, stderr=None, **kwargs):
+                stdout.write(b"answer")
+                stdout.flush()
+                return Mock(poll=Mock(return_value=returncode), returncode=returncode)
+            return popen
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(POPEN, side_effect=ended(0)):
+                self.assertEqual(run_cli_process(["cli"], b"", cancel, 60, "CLI", Path(directory)),
+                                 ("answer", "answer"))
+            # A run that failed brings no answer: it ends as cancelled, as before.
+            with patch(POPEN, side_effect=ended(1)), self.assertRaises(Cancelled):
+                run_cli_process(["cli"], b"", cancel, 60, "CLI", Path(directory))
+
+    def test_api_answer_that_came_as_the_job_was_cancelled_is_kept(self):
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(handler):
+                handler.rfile.read(int(handler.headers["Content-Length"]))
+                requests.append(1)
+                body = json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": "訳文"}}]}).encode()
+                handler.send_response(200)
+                handler.send_header("Content-Type", "application/json")
+                handler.send_header("Content-Length", str(len(body)))
+                handler.end_headers()
+                handler.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        cancel = threading.Event()
+        settings = Settings(provider="api", model="m",
+                            provider_options={"api": {"base_url": f"http://127.0.0.1:{server.server_port}/v1"}})
+        provider = create_provider(settings, cancel)
+        # The cancel comes once the response has been read, before the request's thread hands it over.
+        with patch.object(OpenAICompatProvider, "_remember_limits", side_effect=lambda headers: cancel.set()):
+            started = time.monotonic()
+            self.assertEqual(provider.generate("i", "d"), "訳文")
+        self.assertTrue(cancel.is_set())
+        self.assertLess(time.monotonic() - started, 0.45)  # Handed over at once, not at the next half-second check.
+        # A request not sent yet is not sent once the job is cancelled.
+        with self.assertRaises(Cancelled):
+            provider._fetch(Request(f"http://127.0.0.1:{server.server_port}/v1/chat/completions", data=b"{}"))
+        self.assertEqual(len(requests), 1)
 
     def test_api_timeouts_and_dropped_connections_are_sent_again(self):
         body = json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": "訳文"}}]}).encode()
@@ -885,6 +1026,27 @@ class UnusableAnswerTests(unittest.TestCase):
         self.assertIs(type(error), RuntimeError)
         self.assertEqual(runs, 1)
         self.assertIn("warning: something", str(error))
+
+    def test_cli_exit_is_judged_by_its_error_output_only(self):
+        """The model's text and the status events never decide: only stderr and the events reporting an error."""
+        success = (0, [self.result("訳文", is_error=False)], "")
+        document = "You've hit your usage credit limit; refresh token; quota; 401 Unauthorized"
+        status = {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "overageDisabledReason": "out_of_credits"}}
+        assistant = {"type": "assistant", "message": {"content": [{"type": "text", "text": document}]}}
+        error, runs = self.claude((1, [status, assistant], ""), success)
+        self.assertEqual((error, runs), (None, 2))
+        codex_answer = {"type": "item.completed", "item": {"type": "agent_message", "text": document}}
+        dropped = "stream disconnected before completion"
+        error, runs = self.claude((1, [codex_answer, {"type": "error", "message": dropped},
+                                       {"type": "turn.failed", "error": {"message": dropped}}], ""),
+                                  provider_id="codex", cls=CodexProvider)
+        self.assertIsInstance(error, TransientError)
+        self.assertEqual(runs, 3)  # Sent again, as many times as a temporary failure is.
+        self.assertEqual(str(error), f"Codex接続に失敗しました。ログイン状態・利用枠を確認してください。\n{dropped}")
+        # Shown as judged: the error once, without the answer.
+        error, _ = self.claude((1, [codex_answer, {"type": "turn.failed", "error": {"message": "Not logged in"}}], "warn"),
+                               provider_id="codex", cls=CodexProvider)
+        self.assertEqual(str(error), "Codex接続に失敗しました。ログイン状態・利用枠を確認してください。\nwarn\nNot logged in")
 
     def test_agy_error_status_is_sent_again_only_when_known_to_pass(self):
         def status(value, error):

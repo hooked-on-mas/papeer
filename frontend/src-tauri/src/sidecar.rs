@@ -3,6 +3,10 @@
 //! At exit the sidecar is given the chance to stop its jobs and end by itself: the Python process of a
 //! PyInstaller onefile exe runs under a bootloader that deletes %TEMP%\_MEI* only after a normal exit,
 //! so killing the process (what `child.kill()` does) leaves that folder behind. Killing is the last resort.
+//!
+//! Killing the bootloader alone would leave the Python process running, serving the port and holding the
+//! library's files. The sidecar runs in a job object (job.rs) that ends both, and the CLIs Python runs,
+//! when it is terminated here and when the app exits however it exits (a crash, 「タスクの終了」).
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -45,6 +49,9 @@ impl Exited {
 
 pub struct Sidecar {
     child: Mutex<Option<CommandChild>>,
+    /// None when the sidecar could not be put in a job (then its process tree is killed with taskkill).
+    #[cfg(windows)]
+    job: Option<crate::job::Job>,
     exited: Arc<Exited>,
     port: u16,
     token: String,
@@ -61,6 +68,9 @@ pub fn spawn(
         .env("PAPEER_PORT", port.to_string())
         .env("PAPEER_TOKEN", token)
         .spawn()?;
+    // At once, before the bootloader starts Python (job.rs).
+    #[cfg(windows)]
+    let job = crate::job::Job::contain(child.pid()).ok();
     let exited = Arc::new(Exited::default());
     let signal = exited.clone();
     // The channel holds a single event, so it must be drained or the sidecar's output would stall.
@@ -75,6 +85,8 @@ pub fn spawn(
     });
     Ok(Sidecar {
         child: Mutex::new(Some(child)),
+        #[cfg(windows)]
+        job,
         exited,
         port,
         token: token.to_string(),
@@ -105,8 +117,26 @@ impl Sidecar {
             .exited
             .wait(deadline.saturating_duration_since(Instant::now()))
         {
-            let _ = child.kill();
+            self.kill(child);
         }
+    }
+
+    /// End the bootloader and the Python process it runs, with the CLIs that one runs.
+    fn kill(&self, child: CommandChild) {
+        #[cfg(windows)]
+        {
+            if self.job.as_ref().is_some_and(|job| job.terminate().is_ok()) {
+                return;
+            }
+            // taskkill finds the descendants through the bootloader, so it goes before child.kill().
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &child.pid().to_string(), "/T", "/F"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+        }
+        let _ = child.kill();
     }
 }
 

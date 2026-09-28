@@ -76,6 +76,21 @@ test("the API connection's messages", () => {
   assert.equal(errorCause("AIの応答から指定した形式のJSONを取り出せませんでした。"), "answer");
   assert.equal(errorCause("codex.cmd は cmd.exe を経由するため使いません。Codexの実行ファイル(.exe)、またはnpm版とNode.jsが必要です。"), "settings");
   assert.equal(errorCause("Antigravity (agy)の応答を読み取れませんでした。agy を更新してください。\n{}"), "settings");
+  // A configured CLI path that names no file (papeer/providers/common.py, find_cli), from any job or the check.
+  const missing = "Codex の実行ファイルが見つかりません（C:\\nope\\codex.cmd）。設定の接続先で、パスを確かめてください。";
+  assert.equal(errorCause(missing), "settings");
+  assert.equal(errorCause(missing, "check"), "settings");
+  assert.equal(errorAdvice(missing).primary, "settings");
+});
+
+test("Codex's warning about a model's metadata does not read as a wrong model", () => {
+  assert.equal(errorCause(cli("Codex", "Model metadata for `gpt-x` not found. Defaulting to fallback metadata\nstream disconnected")), "network");
+});
+
+test("a CLI that exits without saying why is told so, with neither cause decided", () => {
+  // papeer/providers/common.py cli_exit_failure: the fixed words, never the answer the CLI printed.
+  assert.equal(errorCause(cli("Codex", "Codexがエラー内容を出さずに終了しました（終了コード 1）。"), "translate"), "connection");
+  assert.equal(errorCause(cli("Claude Code", "Claude Codeがエラー内容を出さずに終了しました（終了コード 3221225477）。")), "connection");
 });
 
 test("the app's own messages", () => {

@@ -522,6 +522,73 @@ class ParallelPaperTranslationTests(unittest.TestCase):
             self.assertEqual(cache["retry_state"]["unanswered"], {})
 
 
+class CancelAfterAnswerTests(unittest.TestCase):
+    def test_an_answer_in_as_the_job_is_cancelled_is_saved_and_not_sent_again(self):
+        """The API answers page 2 and the cancel comes before the answer is handed over: it is kept and
+        saved, and resuming sends only the pages not answered (a paid request is not paid for twice)."""
+        sent = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(handler):
+                request = json.loads(handler.rfile.read(int(handler.headers["Content-Length"])))
+                units = json.loads(request["messages"][-1]["content"])["blocks"]
+                sent.append(units[0]["text"].rsplit(" ", 1)[-1])
+                content = json.dumps({"translations": [{"id": u["id"], "text": "適応制御の検証結果。"} for u in units]},
+                                     ensure_ascii=False)
+                body = json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": content}}]}).encode()
+                handler.send_response(200)
+                handler.send_header("Content-Type", "application/json")
+                handler.send_header("Content-Length", str(len(body)))
+                handler.end_headers()
+                handler.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        settings = Settings(provider="api", model="test-model", translation_concurrency=1,
+                            provider_options={"api": {"base_url": f"http://127.0.0.1:{server.server_port}/v1"}})
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.pdf"
+            with fitz.open() as pdf:
+                for number in range(1, 5):
+                    pdf.new_page().insert_text((40, 70), f"Original content on page {number}.", fontsize=12)
+                pdf.save(source)
+            library = Library(root / "library")
+            identity, _ = library.import_pdf(source)
+
+            cancel = threading.Event()
+            responses = []
+
+            def response_read(headers):
+                # On the request's thread, once the response is read: the cancel comes with page 2's answer.
+                responses.append(1)
+                if len(responses) == 2:
+                    cancel.set()
+
+            with patch("papeer.providers.openai_compat.OpenAICompatProvider._remember_limits",
+                       side_effect=response_read):
+                with self.assertRaises(Cancelled):
+                    PaperService(library, create_provider(settings, cancel), cancel).translate(identity)
+            self.assertEqual(sent, ["1.", "2."])
+            cache = json.loads((library.folder(identity) / "translation-cache.json").read_text("utf-8"))
+            self.assertEqual(sorted(cache["completed_pages"]), ["1", "2"])
+            self.assertEqual(cache["retry_state"]["unanswered"], {})
+            self.assertEqual(library.paper(identity)["status"], "resumable")
+
+            sent.clear()
+            cancel = threading.Event()
+            report = PaperService(library, create_provider(settings, cancel), cancel).translate(identity)
+            self.assertEqual(sent, ["3.", "4."])
+            self.assertEqual(report["translated_pages"], [1, 2, 3, 4])
+
+
 class ApiRateLimitTests(unittest.TestCase):
     def setUp(self):
         # The server asks for 0.01 seconds; honour it instead of the usual minimum, to keep the tests fast.

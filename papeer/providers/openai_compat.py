@@ -10,7 +10,6 @@ import json
 import re
 import ssl
 import threading
-import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -205,7 +204,8 @@ class OpenAICompatProvider(ProviderBackend):
                 raise TransientError("APIとの接続が途中で切れました。ネットワークを確認してください。") from error
         if options != first:
             self._remember_refusal(key, schema, first, options)
-        check_cancel(self.cancel)
+        # No cancel check from here on: the answer has come and is paid for. The caller records it
+        # (translation saves it) and stops at its next check, so that resuming does not send it again.
         choice = result["choices"][0]
         if choice.get("finish_reason") == "length":
             raise AnswerRejected("AIの回答が出力上限で途切れました。モデル設定を変更して再試行してください。")
@@ -264,19 +264,24 @@ class OpenAICompatProvider(ProviderBackend):
         return RuntimeError(message + effort_hint)
 
     def _fetch(self, request: Request) -> bytes:
-        """POST on a helper thread so that cancelling does not wait for the response."""
+        """POST on a helper thread so that cancelling does not wait for the response.
+
+        A response that has come in is returned even when the job was cancelled meanwhile: it is paid
+        for, and dropping it would send the same request again when the job resumes.
+        """
         def fetch():
             with urlopen(request, timeout=self.settings.timeout_seconds) as response:
                 body = response.read()
                 self._remember_limits(getattr(response, "headers", None))
                 return body
+        check_cancel(self.cancel)  # Also before a request sent again without a refused option.
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         future = executor.submit(fetch)
         try:
-            while not future.done():
+            # Ends as soon as the response is in; the cancel is checked every half second meanwhile.
+            while not concurrent.futures.wait([future], timeout=0.5).done:
                 if self.cancel.is_set():
                     raise Cancelled()
-                time.sleep(0.5)
             return future.result()
         finally:
             executor.shutdown(wait=False)

@@ -32,6 +32,10 @@ tauri-plugin-window-state = "2.4.1"
 tauri-plugin-shell = "2.3.6"
 tauri-plugin-process = "2.3.1"
 
+# Already in the tree through tauri; the job object that ends the sidecar's processes with the app (job.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

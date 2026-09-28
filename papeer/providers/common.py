@@ -1,6 +1,7 @@
 """Helpers shared by provider backends: CLI processes, cancel, usage and plan limits."""
 from __future__ import annotations
 
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -54,26 +55,48 @@ class AnswerRejected(RuntimeError):
     """
 
 
-# What a failed CLI run reports when sending the request again cannot help: the plan's usage limit,
-# no sign-in, or options and models the CLI does not accept. Matched against its error output
-# (for Claude Code the stream-json events, which always hold "rate_limit_event" and "usage" keys,
-# so bare words like "limit" or "usage" are not enough). Anything else counts as temporary.
-_LASTING_CLI_FAILURE = re.compile("|".join((
-    # Plan limits and billing.
-    r"usage limit", r"hit your (?:\w+ )?limit", r"(?:weekly|daily|monthly|session|hourly|5-hour|five-hour) limit",
-    r"limit (?:reached|exceeded)", r"quota", r"resource.?exhausted", r"credit", r"billing", r"insufficient",
-    r"rate.?limit(?:ed| reached| exceeded)",
-    # Sign-in.
-    r"not (?:logged|signed) in", r"log ?in (?:required|again)", r"please (?:run )?(?:/login|log ?in|sign in)",
-    r"unauthori[sz]ed", r"authenticat", r"invalid (?:api[ _-]?key|token|credential)",
-    r"(?:token|session|credentials?) (?:has )?expired", r"forbidden", r"permission denied",
-    r"(?:status|http|code|error)\W{0,3}40[13]\b",
-    # Options and models.
-    r"provided but not defined", r"unknown (?:option|flag|argument|command|model)", r"unrecognized",
-    r"unexpected argument", r"invalid (?:model|value|argument|option)",
-    r"model\b[^\n]{0,60}\b(?:not found|does not exist|not supported|not available|unavailable)",
-    r"not (?:a )?(?:valid|supported) model", r"invalid_request",
-)), re.IGNORECASE)
+# What a failed CLI run reports when sending the request again cannot help, by cause: the plan's
+# usage limit or plan (quota), no sign-in (login), or options and models the CLI does not accept
+# (settings). Matched against its error output only (cli_error_output, or the text of Claude Code's
+# result event), never the answer or the model's text. Claude Code's stream-json status events hold
+# "rate_limit_event" and "usage" keys, so bare words like "limit" or "usage" are not enough. Anything
+# else counts as temporary. The frontend reads the same causes from the message the user sees
+# (frontend/src/lib/errorReports.ts); tests/fixtures/cli_failures.json holds what the real CLIs print,
+# which both must judge alike. Checked in this order, as the frontend does.
+_CLI_FAILURE_CAUSES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("quota", re.compile("|".join((
+        r"usage limit", r"(?:hit|reached) your (?:[\w'\N{RIGHT SINGLE QUOTATION MARK}-]+ ){0,3}limit",
+        r"(?:weekly|daily|monthly|session|hourly|5-hour|five-hour) limit",
+        r"limit (?:reached|exceeded)", r"quota", r"resource.?exhausted", r"credit", r"billing", r"insufficient",
+        r"rate.?limit(?:ed| reached| exceeded)",
+        # Claude Code's usage credits, spend limits and team budgets; a plan or seat without the usage.
+        r"spend limit", r"shared budget", r"out of (?:extra )?usage", r"seat type (?:does not|doesn.?t) include",
+        r"usage allocation", r"usage not included",
+        # Claude Code's error code for it (the "error" of its events).
+        r"billing_error",
+    )), re.IGNORECASE)),
+    ("login", re.compile("|".join((
+        r"not (?:logged|signed) in", r"log ?in (?:required|again)", r"sign in again",
+        r"please (?:run )?(?:/login|log ?in|sign in)",
+        r"unauthori[sz]ed", r"authenticat", r"invalid (?:api[ _-]?key|token|credential)",
+        r"(?:token|session|credentials?) (?:has )?expired", r"forbidden", r"permission denied",
+        r"(?:status|http|code|error)\W{0,3}40[13]\b",
+        # Codex: a sign-in it cannot renew, or none at all. Not "Failed to refresh token: <network error>",
+        # which passes; the lasting ones all say "could not be refreshed".
+        r"could not be refreshed", r"no (?:\w+ )?credentials? (?:were |was )?found",
+        # Claude Code's error codes for it.
+        r"authentication_failed", r"oauth_org_not_allowed", r"account_on_hold", r"verification_required",
+        r"cloud_credential_error",
+    )), re.IGNORECASE)),
+    ("settings", re.compile("|".join((
+        r"provided but not defined", r"unknown (?:option|flag|argument|command|model)", r"unrecognized",
+        r"unexpected argument", r"invalid (?:model|value|argument|option)",
+        # Not Codex's warning "Model metadata for `x` not found", printed for models it runs anyway.
+        r"model\b(?! metadata)[^\n]{0,60}\b(?:not found|does not exist|may not exist|not supported|not available|unavailable)",
+        r"not (?:a )?(?:valid|supported) model", r"issue with the selected model", r"invalid_request",
+        r"model_not_found",
+    )), re.IGNORECASE)),
+)
 
 
 # Errors a CLI relays from its service that are known to pass: server errors and overload, and
@@ -85,19 +108,68 @@ _TEMPORARY_CLI_FAILURE = re.compile("|".join((
     r"temporarily unavailable", r"\bunavailable\b", r"deadline.?exceeded", r"\baborted\b",
     r"econnreset", r"econnrefused", r"econnaborted", r"etimedout", r"epipe", r"socket hang up", r"fetch failed",
     r"connection (?:reset|refused|closed|error|lost)", r"network (?:error|is unreachable)", r"stream disconnected",
-    r"timed out", r"timeout",
+    r"timed out", r"timeout", r"error sending request", r"server_error",
 )), re.IGNORECASE)
 
 
+def cli_failure_cause(text: str) -> str | None:
+    """The cause a CLI's error output names that retrying cannot help ("quota", "login", "settings"), or None."""
+    return next((cause for cause, pattern in _CLI_FAILURE_CAUSES if pattern.search(text)), None)
+
+
 def lasting_cli_failure(text: str) -> bool:
-    """Whether a CLI's error output names a failure that retrying cannot help (_LASTING_CLI_FAILURE)."""
-    return bool(_LASTING_CLI_FAILURE.search(text))
+    """Whether a CLI's error output names a failure that retrying cannot help (_CLI_FAILURE_CAUSES)."""
+    return cli_failure_cause(text) is not None
+
+
+def _event_errors(event: dict) -> list[str]:
+    """The error texts of one JSON event: its "message" or "error" string, its error's message, the
+    message of an error item (Codex), or the error of the payload an agy event names ({"event": "result",
+    "result": {...}}). A message that is an object (Claude Code's assistant message) is not taken."""
+    item = event.get("item")
+    payload = event.get(event["event"]) if isinstance(event.get("event"), str) else None
+    errors = [event.get("error"), payload.get("error") if isinstance(payload, dict) else None]
+    values = [event.get("message"), item.get("message") if isinstance(item, dict) and item.get("type") == "error" else None,
+              *(error.get("message") if isinstance(error, dict) else error for error in errors)]
+    return [value.strip() for value in values if isinstance(value, str) and value.strip()]
+
+
+def cli_error_output(stderr: str, stdout: str) -> str:
+    """What a failed CLI run printed about its failure: stderr, the plain lines of stdout, and the
+    messages of the JSON events on stdout that report an error (Codex's error and turn.failed events
+    and error items).
+
+    Events carrying the answer or the model's text (Codex's agent messages, Claude Code's assistant
+    messages) and status events are left out, so words of the document never decide the cause. Each
+    text comes once: Codex repeats a failed turn's error.
+    """
+    texts = [stderr.strip()]
+    for line in stdout.splitlines():
+        line = line.strip()
+        try:
+            event = json.loads(line) if line.startswith("{") else None
+        except ValueError:
+            event = None
+        texts += _event_errors(event) if isinstance(event, dict) else [line]
+    return "\n".join(dict.fromkeys(text for text in texts if text))
+
+
+def cli_exit_failure(tool_name: str, stderr: str, stdout: str, returncode: int) -> RuntimeError:
+    """The error for a CLI that exited with `returncode`: cli_failure on what it printed about the
+    failure (cli_error_output; both streams, as a CLI may print a warning to stderr and the reason to
+    stdout), shown as judged so that the frontend reads the same cause.
+
+    A run that printed nothing of the kind is told in fixed words, not with its output, which may hold
+    the answer (whose words must decide nothing, here or in the frontend); it counts as temporary.
+    """
+    errors = cli_error_output(stderr, stdout)
+    return cli_failure(tool_name, errors or f"{tool_name}がエラー内容を出さずに終了しました（終了コード {returncode}）。")
 
 
 def cli_failure(tool_name: str, detail: str, evidence: str | None = None, known_temporary_only: bool = False) -> RuntimeError:
     """The error for a CLI run that failed, showing `detail` and judged by `evidence` (default: detail).
 
-    RuntimeError when retrying cannot help (_LASTING_CLI_FAILURE); otherwise TransientError, or with
+    RuntimeError when retrying cannot help (_CLI_FAILURE_CAUSES); otherwise TransientError, or with
     known_temporary_only, TransientError only for failures known to pass (_TEMPORARY_CLI_FAILURE).
     """
     text = detail if evidence is None else evidence
@@ -333,11 +405,11 @@ def run_cli_process(
     tool_name: str,
     root: Path,
     output_file: Path | None = None,
-    failure: Callable[[str, str], Exception] | None = None,
+    failure: Callable[[str, str, int], Exception] | None = None,
 ) -> tuple[str, str]:
     """Run a CLI and return (answer, stdout); the answer is the output file when one is given.
 
-    failure(stderr, stdout) makes the error for a nonzero exit; by default cli_failure judged by both.
+    failure(stderr, stdout, returncode) makes the error for a nonzero exit; by default cli_exit_failure.
     """
     with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         if prompt_bytes:
@@ -352,17 +424,16 @@ def run_cli_process(
                     raise TransientError(f"{tool_name}の応答がタイムアウトしました。途中結果は保存されています。",
                                          after_sending=True)
                 cancel.wait(0.15)
-            check_cancel(cancel)
+            # The CLI has ended by itself: an answer it wrote is kept even when the job was cancelled
+            # meanwhile. It is paid for, and the caller records it before it stops (see
+            # OpenAICompatProvider._fetch). A failed run during a cancel still ends as cancelled.
             stdout.seek(0)
             out_text = stdout.read().decode("utf-8", "replace").strip()
             stderr.seek(0)
             err_text = stderr.read().decode("utf-8", "replace").strip()
             if process.returncode:
-                if failure is not None:
-                    raise failure(err_text, out_text)
-                # Shown: stderr, else stdout. Judged: both, as a CLI may print a warning to stderr
-                # and the reason (a plan limit, a sign-in) to stdout.
-                raise cli_failure(tool_name, (err_text or out_text)[-1800:], evidence=err_text + "\n" + out_text)
+                check_cancel(cancel)
+                raise (failure or partial(cli_exit_failure, tool_name))(err_text, out_text, process.returncode)
             if output_file is not None:
                 if not output_file.exists():
                     raise AnswerRejected(f"{tool_name}から回答ファイルが返りませんでした。")
@@ -405,16 +476,27 @@ def shim_target(shim: Path) -> Path | None:
 
 
 def find_cli(configured: str, executable: str, windows_candidates: tuple[str, ...], npm_entry: str,
-             missing_message: str) -> list[str]:
+             missing_message: str, tool_name: str = "") -> list[str]:
     """The command that starts a CLI: the configured path, PATH, then known install locations.
 
+    A configured path may be quoted and hold %VARIABLES%; it is found as Windows finds a program
+    (shutil.which: a bare name on PATH, a missing extension from PATHEXT, so npm's extensionless sh
+    script "...\\npm\\codex" names its codex.cmd), else taken as the file it names. When it names
+    none, the error says which path, and that the setting is to blame, before anything is started.
     windows_candidates are "ENVVAR/relative/path" strings. npm installs a .cmd shim; Windows runs a
     .cmd/.bat through cmd.exe, which re-parses every argument (model names, schemas, paths) with its
     own quoting rules, so a shim is never run itself. The program it starts (npm_entry in the npm
     layout, else the one named in the shim) runs directly: an .exe as it is, a JS entry with the
     node.exe next to the shim first, as the shim does, then node on PATH. Without that, it is refused.
     """
-    found = configured.strip() or shutil.which(executable) or ""
+    configured = os.path.expandvars(configured.strip().strip("\"'").strip())
+    if configured:
+        located = shutil.which(configured) or (configured if Path(configured).is_file() else None)
+        if not located:
+            raise RuntimeError(f"{tool_name or executable} の実行ファイルが見つかりません（{configured}）。"
+                               "設定の接続先で、パスを確かめてください。")
+        configured = located
+    found = configured or shutil.which(executable) or ""
     if not found and os.name == "nt":
         for candidate in windows_candidates:
             variable, _, rest = candidate.partition("/")
@@ -464,7 +546,7 @@ class CliBackend:
 
     def command(self) -> list[str]:
         return find_cli(self.options.get("cli_path", ""), self.executable, self.windows_candidates,
-                        self.npm_entry, self.missing_message)
+                        self.npm_entry, self.missing_message, self.tool_name)
 
     def run_status(self, timeout: float) -> subprocess.CompletedProcess:
         return subprocess.run(self.command() + list(self.status_args), capture_output=True, text=True,
@@ -477,8 +559,18 @@ class CliBackend:
             return False
 
     def login(self) -> str:
-        flags: dict = {"creationflags": subprocess.CREATE_NEW_CONSOLE} if os.name == "nt" else {}
-        subprocess.Popen(self.command() + list(self.login_args), env=child_env(), **flags)
+        command = self.command() + list(self.login_args)
+        if os.name == "nt":
+            # Outside the app's job for the sidecar (frontend/src-tauri/src/job.rs), which ends its
+            # processes as the app exits: the sign-in console and the browser it opens may stay open.
+            # A job that does not let processes leave refuses it; then the console starts inside.
+            try:
+                subprocess.Popen(command, env=child_env(),
+                                 creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_BREAKAWAY_FROM_JOB)
+            except PermissionError:
+                subprocess.Popen(command, env=child_env(), creationflags=subprocess.CREATE_NEW_CONSOLE)
+        else:
+            subprocess.Popen(command, env=child_env())
         service = getattr(self.spec, "login_service", "") or self.tool_name
         return f"開いたブラウザーで{service}にログイン後、「接続を確認」を押してください。"
 
