@@ -30,13 +30,13 @@ def health() -> dict[str, str]:
 
 # How long /shutdown lets cancelled jobs wind down (CLI subprocesses stopped, files closed) and
 # in-flight requests finish before the process exits anyway. Tauri waits longer than this for
-# the process to end before it kills it (SIDECAR_EXIT_TIMEOUT in src-tauri/src/lib.rs).
+# the process to end before it kills it (SIDECAR_EXIT_TIMEOUT in src-tauri/src/sidecar.rs).
 SHUTDOWN_JOB_TIMEOUT = 20.0
 SHUTDOWN_REQUEST_TIMEOUT = 5.0
 
 
 def exit_process() -> None:
-    # A normal exit of this (child) process lets PyInstaller's bootloader delete its %TEMP%\_MEI* folder.
+    # Exit code 0 tells Tauri and `just smoke-sidecar` the sidecar ended by itself.
     os._exit(0)
 
 

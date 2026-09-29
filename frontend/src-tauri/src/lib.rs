@@ -137,7 +137,7 @@ pub fn run() {
     #[cfg(not(debug_assertions))]
     let remember_window = true;
 
-    let mut builder = tauri::Builder::default().plugin(tauri_plugin_shell::init());
+    let mut builder = tauri::Builder::default();
     if remember_window {
         builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
     }

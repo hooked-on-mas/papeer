@@ -24,7 +24,7 @@
     },
     {
       "path": "frontend/src-tauri/Cargo.lock",
-      "sha256": "4d3a4702a0f7c9fdf01747c5be125e293c2f126c1f2c8dda66a97c4109fec64f"
+      "sha256": "1c1e097d1fafd8fd33a43e5c87d6658debf1303115ed3f5af366bcf45df5dd3b"
     }
   ],
   "summary": {
@@ -74,11 +74,11 @@
       "developmentUnknownLicenseRows": 56
     },
     "rust": {
-      "rows": 266,
-      "directRows": 13,
+      "rows": 256,
+      "directRows": 12,
       "unknownLicenseRows": 0,
       "scopeCounts": {
-        "normal-graph": 247,
+        "normal-graph": 237,
         "build-only-graph": 19
       }
     }
@@ -12638,18 +12638,6 @@
         "cachedSourceOnAuditMachine": true
       },
       {
-        "name": "core_detect",
-        "version": "1.0.0",
-        "dependencyType": "transitive",
-        "directScopes": [],
-        "scopes": [
-          "normal-graph"
-        ],
-        "license": "MIT/Apache-2.0",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/core_detect-1.0.0/Cargo.toml",
-        "cachedSourceOnAuditMachine": true
-      },
-      {
         "name": "cpufeatures",
         "version": "0.2.17",
         "dependencyType": "transitive",
@@ -12959,18 +12947,6 @@
         ],
         "license": "MIT",
         "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embed-resource-3.0.11/Cargo.toml",
-        "cachedSourceOnAuditMachine": true
-      },
-      {
-        "name": "encoding_rs",
-        "version": "0.8.41",
-        "dependencyType": "transitive",
-        "directScopes": [],
-        "scopes": [
-          "normal-graph"
-        ],
-        "license": "(Apache-2.0 OR MIT) AND BSD-3-Clause",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/encoding_rs-0.8.41/Cargo.toml",
         "cachedSourceOnAuditMachine": true
       },
       {
@@ -13530,42 +13506,6 @@
         "cachedSourceOnAuditMachine": true
       },
       {
-        "name": "multiversion",
-        "version": "0.9.0",
-        "dependencyType": "transitive",
-        "directScopes": [],
-        "scopes": [
-          "normal-graph"
-        ],
-        "license": "MIT OR Apache-2.0",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/multiversion-0.9.0/Cargo.toml",
-        "cachedSourceOnAuditMachine": true
-      },
-      {
-        "name": "multiversion-macros",
-        "version": "0.9.0",
-        "dependencyType": "transitive",
-        "directScopes": [],
-        "scopes": [
-          "normal-graph"
-        ],
-        "license": "MIT OR Apache-2.0",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/multiversion-macros-0.9.0/Cargo.toml",
-        "cachedSourceOnAuditMachine": true
-      },
-      {
-        "name": "multiversion_no_op",
-        "version": "1.0.0",
-        "dependencyType": "transitive",
-        "directScopes": [],
-        "scopes": [
-          "normal-graph"
-        ],
-        "license": "Apache-2.0 OR MIT",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/multiversion_no_op-1.0.0/Cargo.toml",
-        "cachedSourceOnAuditMachine": true
-      },
-      {
         "name": "new_debug_unreachable",
         "version": "1.0.6",
         "dependencyType": "transitive",
@@ -13635,18 +13575,6 @@
         ],
         "license": "MPL-2.0",
         "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/option-ext-0.2.0/Cargo.toml",
-        "cachedSourceOnAuditMachine": true
-      },
-      {
-        "name": "os_pipe",
-        "version": "1.2.3",
-        "dependencyType": "transitive",
-        "directScopes": [],
-        "scopes": [
-          "normal-graph"
-        ],
-        "license": "MIT",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/os_pipe-1.2.3/Cargo.toml",
         "cachedSourceOnAuditMachine": true
       },
       {
@@ -13986,18 +13914,6 @@
         "cachedSourceOnAuditMachine": true
       },
       {
-        "name": "rustversion",
-        "version": "1.0.23",
-        "dependencyType": "transitive",
-        "directScopes": [],
-        "scopes": [
-          "normal-graph"
-        ],
-        "license": "MIT OR Apache-2.0",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustversion-1.0.23/Cargo.toml",
-        "cachedSourceOnAuditMachine": true
-      },
-      {
         "name": "same-file",
         "version": "1.0.6",
         "dependencyType": "transitive",
@@ -14242,18 +14158,6 @@
         "cachedSourceOnAuditMachine": true
       },
       {
-        "name": "shared_child",
-        "version": "1.1.2",
-        "dependencyType": "transitive",
-        "directScopes": [],
-        "scopes": [
-          "normal-graph"
-        ],
-        "license": "MIT",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shared_child-1.1.2/Cargo.toml",
-        "cachedSourceOnAuditMachine": true
-      },
-      {
         "name": "shlex",
         "version": "2.0.1",
         "dependencyType": "transitive",
@@ -14275,18 +14179,6 @@
         ],
         "license": "MIT",
         "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/simd-adler32-0.3.10/Cargo.toml",
-        "cachedSourceOnAuditMachine": true
-      },
-      {
-        "name": "simdutf8",
-        "version": "0.1.5",
-        "dependencyType": "transitive",
-        "directScopes": [],
-        "scopes": [
-          "normal-graph"
-        ],
-        "license": "MIT OR Apache-2.0",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/simdutf8-0.1.5/Cargo.toml",
         "cachedSourceOnAuditMachine": true
       },
       {
@@ -14551,20 +14443,6 @@
         ],
         "license": "Apache-2.0 OR MIT",
         "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-process-2.3.1/Cargo.toml",
-        "cachedSourceOnAuditMachine": true
-      },
-      {
-        "name": "tauri-plugin-shell",
-        "version": "2.3.6",
-        "dependencyType": "direct",
-        "directScopes": [
-          "runtime"
-        ],
-        "scopes": [
-          "normal-graph"
-        ],
-        "license": "Apache-2.0 OR MIT",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-shell-2.3.6/Cargo.toml",
         "cachedSourceOnAuditMachine": true
       },
       {

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import os
 from pathlib import Path
 import re
 import sys
@@ -50,7 +51,9 @@ RENDER_EXCLUDED = {
     "providers/openai_compat.py": "AI 接続（翻訳キャッシュは接続先・モデルで区別）",
     "providers/registry.py": "接続先の一覧",
 }
-SIDECAR_BINARY = Path("frontend/src-tauri/sidecar-x86_64-pc-windows-msvc.exe")
+# The onedir sidecar (sidecar.spec) as `just build-sidecar` places it for Tauri's bundle.resources, and its launcher.
+SIDECAR_DIR = Path("frontend/src-tauri/sidecar")
+SIDECAR_EXE = SIDECAR_DIR / ("papeer-sidecar.exe" if os.name == "nt" else "papeer-sidecar")
 # What PyInstaller bundles from the source tree (sidecar.spec) and the dependencies it installs.
 _BUNDLED = ("papeer", "sidecar", "sidecar.spec", "pyproject.toml", "uv.lock")
 
@@ -81,7 +84,7 @@ def bundle_version(root: Path) -> str:
 
 def application_version() -> str:
     if getattr(sys, "frozen", False):
-        # PyInstaller sets sys._MEIPASS (the unpacked bundle) in a frozen app.
+        # PyInstaller sets sys._MEIPASS in a frozen app: the onedir bundle's _internal folder.
         value = (Path(sys._MEIPASS) / "code-version.txt").read_text("utf-8").strip()  # pyright: ignore[reportAttributeAccessIssue]
         if not re.fullmatch(r"code-sha256-[0-9a-f]{64}", value):
             raise ValueError("アプリのコードバージョンが不正です。再ビルドしてください。")
@@ -98,13 +101,18 @@ def loaded_version() -> str:
 def check_build(root: Path, record: Path, bundle: Path) -> list[str]:
     """Why the sidecar next to the Tauri app is not built from the current source (empty when it is).
 
-    `bundle` holds bundle_version() as `just build-sidecar` wrote it after copying the sidecar.
+    `bundle` holds bundle_version() as `just build-sidecar` wrote it after placing the sidecar folder.
     """
     problems = []
     if not record.is_file() or record.read_text("utf-8").strip() != source_version(root):
         problems.append(f"{record.name} が現在のソースと一致しません。")
-    if not (root / SIDECAR_BINARY).is_file():
-        problems.append(f"{SIDECAR_BINARY.as_posix()} がありません。")
+    bundled = SIDECAR_DIR / "_internal" / "code-version.txt"
+    if not (root / SIDECAR_EXE).is_file():
+        problems.append(f"{SIDECAR_EXE.as_posix()} がありません。")
+    elif (not (root / bundled).is_file() or not record.is_file()
+          or (root / bundled).read_text("utf-8").strip() != record.read_text("utf-8").strip()):
+        # The folder of another build (the record is rewritten by every `just build-sidecar`).
+        problems.append(f"{bundled.as_posix()} が {record.name} と一致しません。")
     if not bundle.is_file() or bundle.read_text("utf-8").strip() != bundle_version(root):
         problems.append(f"sidecar のビルド後にソースまたは依存関係が変更されています（{bundle.name} と不一致）。")
     return problems
@@ -119,7 +127,7 @@ if __name__ == "__main__":
             sys.exit(1)
         sys.exit(0)
     if sys.argv[1] == "--record-bundle":
-        # Written before PyInstaller runs and moved into place once the sidecar is copied (justfile).
+        # Written before PyInstaller runs and moved into place once the sidecar folder is placed (justfile).
         target = root / sys.argv[2]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(bundle_version(root) + "\n", encoding="utf-8")

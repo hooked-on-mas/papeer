@@ -33,7 +33,7 @@ test-frontend:
 # 実際の AI は呼ばない。開発用の sidecar（8000）・Vite（1420）が動いていれば止めてから実行する（例: just e2e --repeat 3、just e2e library）
 [working-directory: 'frontend']
 e2e *args:
-    $env:TAURI_CONFIG = '{"bundle":{"externalBin":[]}}'; cargo build --manifest-path src-tauri/Cargo.toml
+    $env:TAURI_CONFIG = '{"bundle":{"resources":[]}}'; cargo build --manifest-path src-tauri/Cargo.toml
     node e2e/run.ts {{ args }}
 
 # Lint and type check (README「テストと lint」)
@@ -52,11 +52,11 @@ lint-frontend:
     pnpm lint
 
 # Run clippy on the Tauri app as CI does (README「テストと lint」)
-# sidecar の exe がなくても通るよう TAURI_CONFIG で externalBin を外す。変数はこの行の PowerShell の中だけで効き、終われば消える
-# （付けたまま just build するとインストーラーに sidecar が入らないため、シェルには残さない）
+# sidecar のフォルダー（frontend/src-tauri/sidecar）がなくても通るよう TAURI_CONFIG で bundle.resources を外す。
+# 変数はこの行の PowerShell の中だけで効き、終われば消える（付けたまま just build するとインストーラーに sidecar が入らないため、シェルには残さない）
 [working-directory: 'frontend/src-tauri']
 clippy:
-    $env:TAURI_CONFIG = '{"bundle":{"externalBin":[]}}'; cargo clippy --release --all-targets -- -D warnings
+    $env:TAURI_CONFIG = '{"bundle":{"resources":[]}}'; cargo clippy --release --all-targets -- -D warnings
 
 # Regenerate the API schema and the frontend's types from the sidecar (tools/export_openapi.py, README「API の型」)
 # frontend/openapi.json を app.openapi() から書き出し、openapi-typescript で frontend/src/api/schema.d.ts を作り直す
@@ -96,28 +96,30 @@ dev-frontend:
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../tools/stop_stale_dev.ps1 -Port 1420 -ExePath frontend/src-tauri/target/debug/papeer.exe
     pnpm tauri dev
 
-# Build sidecar binary, smoke-test it, and only then place it where Tauri's externalBin expects it
-# 同梱ソースのハッシュは PyInstaller の前に計算して build/ に置き、コピーが成功してから sidecar-sources.txt にする
+# Build the onedir sidecar (dist/sidecar), smoke-test it, and only then place it where Tauri's bundle.resources takes it
+# 同梱ソースのハッシュは PyInstaller の前に計算して build/ に置き、配置が成功してから sidecar-sources.txt にする
 # （ビルド中にソースを編集しても、その編集を含まない sidecar が「最新」と記録されないように）
+# 配置（tools/place_sidecar.py）は frontend/src-tauri/sidecar.new にコピーしてから名前の変更で入れ替える
 build-sidecar:
     uv run python -m papeer.core.code_version code-version.txt
     uv run python -m papeer.core.code_version --record-bundle build/sidecar-sources.pending
     uv run --group build pyinstaller --noconfirm sidecar.spec
     uv run python tools/smoke_sidecar.py
-    uv run python -c "import shutil; shutil.copy2('dist/sidecar-x86_64-pc-windows-msvc.exe', 'frontend/src-tauri/')"
+    uv run python tools/place_sidecar.py
     uv run python -c "import os; os.replace('build/sidecar-sources.pending', 'sidecar-sources.txt')"
 
 # Smoke-test the built sidecar exe before packaging it (tools/smoke_sidecar.py, README「ビルド」)
 # データ・LOCALAPPDATA・TEMP を一時フォルダーにして起動する。実際の AI は呼ばない（翻訳はスクリプトが 127.0.0.1 で動かす代役 API で行う）
-# `--source` は exe の代わりに python -m sidecar を試し、`--keep` は一時フォルダー（データ・ログ）を残す
-# dist の sidecar exe を試す（/health の版、認証、プロンプト、PDF の取り込みと翻訳、/shutdown と _MEI* の後始末）
+# `--source` は exe の代わりに python -m sidecar を試し、`--keep` は一時フォルダー（データ・ログ）を残す、`--exe` は別の場所の exe を試す
+# dist/sidecar の exe を試す（/health の版、認証、プロンプト、PDF の取り込みと翻訳、/shutdown、%TEMP% に何も展開しないこと）
 smoke-sidecar *args:
     uv run python tools/smoke_sidecar.py {{ args }}
 
 # Build everything
 build: build-sidecar build-app
 
-# 同梱する sidecar が現在のソースから作られたかを確かめる（code-version.txt と、ビルド時に記録した同梱ソース・依存関係の内容ハッシュの一致）
+# 同梱する sidecar が現在のソースから作られたかを確かめる（code-version.txt と、ビルド時に記録した同梱ソース・依存関係の内容ハッシュの一致、
+# frontend/src-tauri/sidecar の中の起動用 exe があること）
 check-sidecar:
     uv run python -m papeer.core.code_version --check code-version.txt sidecar-sources.txt
 

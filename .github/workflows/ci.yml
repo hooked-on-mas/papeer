@@ -147,8 +147,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     env:
-      # tauri-build requires the externalBin sidecar exe, which only `just build-sidecar` makes.
-      TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+      # tauri-build copies bundle.resources at build time and fails without the onedir sidecar folder
+      # (frontend/src-tauri/sidecar), which only `just build-sidecar` makes.
+      TAURI_CONFIG: '{"bundle":{"resources":[]}}'
     defaults:
       run:
         working-directory: frontend/src-tauri

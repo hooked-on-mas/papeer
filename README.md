@@ -101,7 +101,7 @@ CI（`.github/workflows/ci.yml`）は push ごとに Windows で、`just lint`�
 just e2e              # すべてのシナリオ（例: just e2e library で名前に library を含むファイルだけ、just e2e --repeat 3 で 3 回続けて）
 ```
 
-実際のアプリの画面（デバッグ版の `papeer.exe` と WebView2）を、playwright-core の `connectOverCDP` で操作して確かめます（`frontend/e2e`、node:test）。Windows 11 と WebView2 ランタイムが前提で、所要時間は約 5 分です（シナリオごとにライブラリ・sidecar・アプリを起動し直すため、1 本あたり 15〜40 秒。初回だけ、同梱フォントの変換に約 30 秒余計にかかります。変換結果は pytest と同じ `.pytest_cache` 内に置いて使い回します）。`just e2e` はまず `cargo build`（デバッグ版。変更がなければすぐ終わる）を行い、次に `frontend/e2e/run.ts` が共通の準備をして、シナリオごとに新しいライブラリ・sidecar・アプリを起動します。この `cargo build` は sidecar の exe なしで通るよう `just clippy` と同じく `TAURI_CONFIG` で `externalBin` を外すため、`just dev-frontend` と交互に使うとアプリ本体（`papeer` クレート）だけが作り直されます（約 40 秒）。
+実際のアプリの画面（デバッグ版の `papeer.exe` と WebView2）を、playwright-core の `connectOverCDP` で操作して確かめます（`frontend/e2e`、node:test）。Windows 11 と WebView2 ランタイムが前提で、所要時間は約 5 分です（シナリオごとにライブラリ・sidecar・アプリを起動し直すため、1 本あたり 15〜40 秒。初回だけ、同梱フォントの変換に約 30 秒余計にかかります。変換結果は pytest と同じ `.pytest_cache` 内に置いて使い回します）。`just e2e` はまず `cargo build`（デバッグ版。変更がなければすぐ終わる）を行い、次に `frontend/e2e/run.ts` が共通の準備をして、シナリオごとに新しいライブラリ・sidecar・アプリを起動します。この `cargo build` は sidecar のフォルダーなしで通るよう `just clippy` と同じく `TAURI_CONFIG` で `bundle.resources` を外すため、`just dev-frontend` と交互に使うとアプリ本体（`papeer` クレート）だけが作り直されます（約 40 秒）。
 
 - デバッグ版のアプリは sidecar を `127.0.0.1:8000`、画面を Vite の `1420` から読むため、`just dev-sidecar`・`just dev-frontend` を止めてから実行します（使われていれば始める前に止まります）。CDP のポートは毎回空いているものを選びます。
 - 実際のデータには触れません。守り方は次の 3 段です。
@@ -116,7 +116,7 @@ just e2e              # すべてのシナリオ（例: just e2e library で名�
 
 シナリオ（`frontend/e2e/tests`）は、起動とライブラリの表示、右クリックでのタグの付け外し（本文付きのリクエストと論文ごとの順番待ち）、フォルダーへの移動で行がすぐ移ること、付箋の作成・編集でダイアログがすぐ閉じること、986px の窓で右パネルを開いてもページの右が欠けないこと、拡大表示で右パネルを開け閉めしても読む位置が保たれること、sidecar を止めても同期の失敗が出ず接続切れのバナーが題名に重ならないこと、代役 API での翻訳と訳文 PDF、用語抽出を閉じて開き直したときの引き継ぎ、設定の版の違いの通知と「今後表示しない」、× で閉じたときの保存できない入力の確認です。待ち合わせは画面や API の状態を待つ形にし、固定の待ち時間は「出ないこと」を確かめる短い間だけに使います。「すぐ閉じる」「すぐ移る」の時間は、CDP でのやり取りの遅れが入らないよう、ページの中の時計（クリック・通信の応答から画面が変わるまで）で測ります。
 
-clippy は手元では `just clippy` で CI と同じように実行できます。sidecar の exe なしで通るよう、このコマンドの間だけ `TAURI_CONFIG` で `externalBin` を外します。PowerShell で直接実行するなら `$env:TAURI_CONFIG='{"bundle":{"externalBin":[]}}'; cargo clippy --release --all-targets -- -D warnings; Remove-Item Env:TAURI_CONFIG` のように、終わったら必ず外してください（付けたまま `just build` すると sidecar の入っていないインストーラーができます）。
+clippy は手元では `just clippy` で CI と同じように実行できます。tauri-build はビルドのたびに `bundle.resources` の sidecar のフォルダー（`frontend/src-tauri/sidecar`）を写すため、フォルダーなしで通るよう、このコマンドの間だけ `TAURI_CONFIG` で `bundle.resources` を外します。PowerShell で直接実行するなら `$env:TAURI_CONFIG='{"bundle":{"resources":[]}}'; cargo clippy --release --all-targets -- -D warnings; Remove-Item Env:TAURI_CONFIG` のように、終わったら必ず外してください（付けたまま `just build` すると sidecar の入っていないインストーラーができます）。`just build-sidecar` の後なら、外さなくても通ります。
 
 ### API の型
 
@@ -144,27 +144,29 @@ just build
 次の処理を順に行います。
 
 1. `code-version.txt`（抽出・PDF 生成コードの識別値）と、同梱ソースと依存関係の内容ハッシュを生成する
-2. PyInstaller で `sidecar.spec` から `dist/sidecar-x86_64-pc-windows-msvc.exe` を作る
+2. PyInstaller で `sidecar.spec` から sidecar をフォルダー形式（onedir）で作る。`dist/sidecar/` に起動用の `papeer-sidecar.exe` と、Python・ライブラリ・同梱データの入った `_internal/` ができる
 3. その exe を `just smoke-sidecar` と同じ手順で試す（次節）。失敗したらここで止まる
-4. 試した exe を `frontend/src-tauri/` へコピーし、成功したら 1 の内容ハッシュを `sidecar-sources.txt` に記録する
-5. `code-version.txt` と sidecar が現在のソースから作られたことを確かめ（`just check-sidecar`）、`pnpm tauri build` でインストーラーを作る
+4. 試したフォルダーを `frontend/src-tauri/sidecar/` に置き（`tools/place_sidecar.py`。隣にコピーしてから名前の変更で入れ替えるので、途中で失敗しても中途半端なフォルダーは残らない）、成功したら 1 の内容ハッシュを `sidecar-sources.txt` に記録する
+5. `code-version.txt` と sidecar が現在のソースから作られたこと（と `frontend/src-tauri/sidecar/papeer-sidecar.exe` があること）を確かめ（`just check-sidecar`）、`pnpm tauri build` でインストーラーを作る
 
-インストーラーは `frontend/src-tauri/target/release/bundle/` に出力されます。
+インストーラーは `frontend/src-tauri/target/release/bundle/` に出力されます。sidecar のフォルダーは `tauri.conf.json` の `bundle.resources` でそのまま同梱され、インストール先では `papeer.exe` の隣の `sidecar\` に入ります。アプリはリソースフォルダーの中の `sidecar\papeer-sidecar.exe` を起動し（`frontend/src-tauri/src/sidecar.rs`）、ジョブオブジェクトに入れて、終了時は `/shutdown` で自分で終わるのを待ちます（30 秒で終わらなければジョブごと止める）。以前の onefile の exe と違い、起動のたびに `%TEMP%\_MEI*` へ展開しないため、起動が速く、強制終了しても何も残りません。NSIS のインストーラーは、ファイルを置く前にインストール先の古い `sidecar\` と 0.2.0 以前の `sidecar.exe` を消します（`frontend/src-tauri/windows/hooks.nsh`）。ただし Papeer か sidecar が動いている間は `sidecar\` を消しません（このフックはアプリを閉じるよう求める確認より前に動くため、そこで取り消されても起動できなくならないように）。MSI は置き換える版のファイルを自分で消します。
+
+`target/release/papeer.exe` をインストールせずにそのまま起動するときは、`target/release/sidecar/` を使います。tauri-build はビルドのたびにこのフォルダーへ上書きでコピーするだけなので、前のビルドにしかないファイルが残ることがあります。おかしいときは `target/release/sidecar/` を消してからビルドし直してください（インストーラーには `frontend/src-tauri/sidecar/` の中身だけが入ります）。
 
 PyInstaller は依存グループ `build` にあり、`just build-sidecar` が `uv run --group build` で使います。
 
 ### sidecar のスモークテスト
 
-`just smoke-sidecar`（`tools/smoke_sidecar.py`）は、`just build-sidecar` で作った exe を Tauri と同じように乱数のトークンと空きポートで起動し、次を確かめます。PyInstaller の `hiddenimports`・`datas` の漏れ（同梱し忘れたモジュール・プロンプト・フォント）は、ここで起動や翻訳の失敗として見つかります。
+`just smoke-sidecar`（`tools/smoke_sidecar.py`）は、`just build-sidecar` で作った `dist/sidecar/papeer-sidecar.exe` を Tauri と同じように乱数のトークンと空きポートで起動し、次を確かめます。PyInstaller の `hiddenimports`・`datas` の漏れ（同梱し忘れたモジュール・プロンプト・フォント）は、ここで起動や翻訳の失敗として見つかります。
 
 1. `/health` が応答し、`version` がソースの版（`MAJOR.MINOR.PATCH`）、`code_version` がソースの抽出・PDF 生成コードの識別値（`code-version.txt` と同じ値）と一致する（版か抽出・PDF 生成のコードが変わった後に exe を作り直していなければ失敗する。それ以外のコードの変更はどちらの値にも表れないため、ここでは見つからない。同梱ソース全体の一致は `just check-sidecar` が確かめる）
 2. トークンなし・誤ったトークンは 401、正しいトークン（`Authorization` ヘッダーと `token` クエリ）は 200 になる
 3. 同梱のプロンプトが `papeer/core/prompts` と一致し、設定を保存できる
 4. `tests/fixtures/sample.pdf` を取り込み、テキストを抽出・検索できる
 5. その論文を翻訳し、同梱の日本語フォント（源ノ明朝）を埋め込んだ `translated.pdf` ができる。翻訳の依頼先は、スクリプトが `127.0.0.1` で動かす OpenAI 互換の代役サーバーで、実際の AI は呼ばず、PC の外にも通信しない。翻訳の指示に共通部分（`papeer/core/prompts/_*.txt`）が差し込まれていることも確かめる
-6. `/shutdown` でプロセスが終了コード 0 で終わり、`_MEI*`（onefile の展開フォルダー）が残らない
+6. `/shutdown` でプロセスが終了コード 0 で終わる。起動してから終わるまで、`TEMP` に `_MEI*`（onefile の展開フォルダー）が作られない（作られたら onefile の exe を試している）
 
-データフォルダー・`LOCALAPPDATA`・`TEMP` は毎回新しい一時フォルダーに向けるため、実際のライブラリや PC ごとの設定には触れません（`_MEI*` もその中に作られ、終了後に残っていないかを正確に確かめられます）。失敗すると、失敗した確認と sidecar のログの末尾を表示して終了コード 1 で終わります。どの場合も sidecar は止め（応答しなければ強制終了）、一時フォルダーは消します。`--keep` で一時フォルダー（データとログ）を残し、`--source` で exe の代わりに `python -m sidecar` を同じ手順で試せます（`tests/test_smoke_sidecar.py` はこちらを使い、exe なしでスクリプト自体を検査します）。`just build-sidecar`（`just build` とリリースのワークフローも使う）は exe を作った直後にこのテストを実行し、通った exe だけを `frontend/src-tauri/` へコピーします。
+データフォルダー・`LOCALAPPDATA`・`TEMP` は毎回新しい一時フォルダーに向けるため、実際のライブラリや PC ごとの設定には触れません（`TEMP` に何も展開されないことも、そこで正確に確かめられます）。失敗すると、失敗した確認と sidecar のログの末尾を表示して終了コード 1 で終わります。どの場合も sidecar は止め（応答しなければ強制終了）、一時フォルダーは消します。`--keep` で一時フォルダー（データとログ）を残し、`--exe` で別の場所の exe（インストーラーを展開したフォルダーの `sidecar\papeer-sidecar.exe` など）を、`--source` で exe の代わりに `python -m sidecar` を同じ手順で試せます（`tests/test_smoke_sidecar.py` はこちらを使い、exe なしでスクリプト自体を検査します）。`just build-sidecar`（`just build` とリリースのワークフローも使う）は sidecar を作った直後にこのテストを実行し、通ったフォルダーだけを `frontend/src-tauri/sidecar/` に置きます。
 
 `just clean` はリポジトリ直下の `build/`・`dist/`・`output/`・`tmp/` とその容量を一覧表示するだけで、`just clean yes` で削除します。それ以外のフォルダーは消しません。
 

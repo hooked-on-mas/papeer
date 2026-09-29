@@ -1,9 +1,10 @@
 """Smoke-test the packaged sidecar exe before it goes into an installer (`just smoke-sidecar`).
 
-Starts dist/sidecar-x86_64-pc-windows-msvc.exe (made by `just build-sidecar`) the way Tauri does,
-with a random token and a free port, but in a throwaway environment: the data folder, LOCALAPPDATA
-and TEMP all point into a new temporary folder, so the user's library and device settings are never
-read or written, and the exe's own %TEMP%\\_MEI* extraction folder can be checked exactly. Then:
+Starts dist/sidecar/papeer-sidecar.exe (the onedir bundle `just build-sidecar` makes from sidecar.spec)
+the way Tauri does, with a random token and a free port, but in a throwaway environment: the data folder,
+LOCALAPPDATA and TEMP all point into a new temporary folder, so the user's library and device settings are
+never read or written, and it shows exactly that nothing is unpacked into %TEMP% (a PyInstaller onefile
+exe would make a _MEI* folder there, and leave it behind when killed). Then:
 
 1. /health answers; `version` is this checkout's MAJOR.MINOR.PATCH and `code_version` matches its
    extraction, layout and PDF drawing code (papeer.core.code_version.RENDER_SOURCES). An exe built
@@ -17,12 +18,13 @@ read or written, and the exe's own %TEMP%\\_MEI* extraction folder can be checke
    (never a real AI, nothing leaves the PC), so translated.pdf is typeset with the bundled Japanese
    fonts: the check reads the fonts and text of that PDF. The instructions it receives must have
    the shared prompt sections (papeer/core/prompts/_*.txt) in place of their markers.
-6. /shutdown: the process ends by itself with exit code 0 and no _MEI* folder is left behind.
+6. /shutdown: the process ends by itself with exit code 0, and no _MEI* folder was made at any point.
 
 Each step prints OK; the first failure prints what went wrong and the end of the sidecar's log,
 and the exit code is 1. The sidecar is stopped (killed if need be) and the temporary folder removed
 in every case, unless --keep asks to keep it for a look. `--source` runs the same checks against
 `python -m sidecar` from this checkout instead of the exe (no _MEI* checks), to try the script itself.
+`--exe` names another launcher, such as the one in a folder an installer was unpacked to.
 """
 from __future__ import annotations
 
@@ -52,15 +54,16 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from papeer import __version__  # noqa: E402
-from papeer.core.code_version import source_version  # noqa: E402
+from papeer.core.code_version import SIDECAR_DIR, SIDECAR_EXE, source_version  # noqa: E402
 from tools.bump_version import SEMVER  # noqa: E402 (the release version rule: MAJOR.MINOR.PATCH)
 
-DEFAULT_EXE = ROOT / "dist" / "sidecar-x86_64-pc-windows-msvc.exe"
+# PyInstaller's output (sidecar.spec COLLECT); tools/place_sidecar.py copies the folder to SIDECAR_DIR once this passes.
+DEFAULT_EXE = ROOT / "dist" / SIDECAR_DIR.name / SIDECAR_EXE.name
 SAMPLE_PDF = ROOT / "tests" / "fixtures" / "sample.pdf"
 PROMPT_DIR = ROOT / "papeer" / "core" / "prompts"
 
-# A onefile exe unpacks ~90 MB into %TEMP% before Python starts; antivirus scanning can make the
-# first launch slow. /shutdown itself waits up to 25 s for jobs and requests (routes/system.py).
+# Antivirus scanning can make the first launch of a new build slow. /shutdown itself waits up to 25 s
+# for jobs and requests (routes/system.py).
 HEALTH_TIMEOUT = 120.0
 JOB_TIMEOUT = 300.0
 EXIT_TIMEOUT = 45.0
@@ -105,8 +108,8 @@ def sidecar_environment(base: dict[str, str], *, data_dir: Path, local_appdata: 
         "PAPEER_DATA_DIR": str(data_dir),
         # Device settings (PapeerSync) and anything else under LOCALAPPDATA stay in the smoke folder.
         "LOCALAPPDATA": str(local_appdata),
-        # The onefile bootloader unpacks into %TEMP% (GetTempPath reads TMP first): a folder of our own
-        # shows exactly which _MEI* folder is this run's.
+        # A onefile bootloader would unpack into %TEMP% (GetTempPath reads TMP first): a folder of our
+        # own shows that the onedir sidecar makes no _MEI* folder.
         "TEMP": str(temp_dir),
         "TMP": str(temp_dir),
         "PAPEER_TOKEN": token,
@@ -118,7 +121,7 @@ def sidecar_environment(base: dict[str, str], *, data_dir: Path, local_appdata: 
 
 
 def mei_folders(temp_dir: Path) -> list[Path]:
-    """The PyInstaller onefile extraction folders in temp_dir."""
+    """PyInstaller onefile extraction folders in temp_dir (the onedir sidecar makes none)."""
     if not temp_dir.is_dir():
         return []
     return sorted(path for path in temp_dir.glob("_MEI*") if path.is_dir())
@@ -379,9 +382,7 @@ class Smoke:
             with self.step("起動と /health"):
                 self.start()
                 check_health(self.wait_for_health(), __version__, source_version(ROOT))
-                if self.frozen and not mei_folders(self.temp_dir):
-                    raise SmokeFailure(f"一時フォルダー {self.temp_dir} に _MEI* が作られていません"
-                                       "（展開先の確認ができません）。")
+                self.check_nothing_unpacked()
             with self.step("認証（トークンなし・誤り 401、正しいトークン 200）"):
                 self.check_authentication()
             with self.step("同梱のプロンプトと設定の保存"):
@@ -467,20 +468,20 @@ class Smoke:
             raise SmokeFailure(f"/shutdown の後 {EXIT_TIMEOUT:.0f} 秒たってもプロセスが終了しません。") from None
         if code != 0:
             raise SmokeFailure(f"終了コードが 0 ではありません: {code}")
-        if self.frozen:
-            # The bootloader removes _MEI* before its own process ends; allow the file system a moment.
-            deadline = time.monotonic() + 5
-            while mei_folders(self.temp_dir) and time.monotonic() < deadline:
-                time.sleep(0.2)
-            left = mei_folders(self.temp_dir)
-            if left:
-                raise SmokeFailure("終了後に展開フォルダーが残っています: " + ", ".join(p.name for p in left))
+        self.check_nothing_unpacked()
+
+    def check_nothing_unpacked(self) -> None:
+        """The onedir sidecar runs from its folder; a _MEI* folder means a onefile exe (see sidecar.spec)."""
+        found = mei_folders(self.temp_dir) if self.frozen else []
+        if found:
+            raise SmokeFailure("一時フォルダーに展開フォルダーが作られました（onefile の exe では？ sidecar.spec は onedir）: "
+                               + ", ".join(path.name for path in found))
 
     def stop(self) -> None:
-        """Make sure the sidecar (and a onefile exe's child process) is gone."""
+        """Make sure the sidecar (and any process it started) is gone."""
         if self.process is not None and self.process.poll() is None:
             if os.name == "nt":
-                # /T also ends the Python child that the onefile bootloader started.
+                # /T also ends the processes the sidecar started.
                 subprocess.run(["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
             else:
@@ -539,7 +540,8 @@ def main(argv: list[str] | None = None, out: Any = None) -> int:
     out = sys.stdout if out is None else out
     parser = argparse.ArgumentParser(description="配布用 sidecar exe のスモークテスト（README「ビルド」）")
     target = parser.add_mutually_exclusive_group()
-    target.add_argument("--exe", type=Path, default=DEFAULT_EXE, help=f"試す exe（既定: {DEFAULT_EXE.relative_to(ROOT)}）")
+    target.add_argument("--exe", type=Path, default=DEFAULT_EXE,
+                        help=f"試す sidecar（onedir のフォルダーの中の exe。既定: {DEFAULT_EXE.relative_to(ROOT)}）")
     target.add_argument("--source", action="store_true", help="exe ではなくこのチェックアウトの python -m sidecar を試す")
     parser.add_argument("--keep", action="store_true", help="一時フォルダー（データ・ログ）を消さずに残す")
     args = parser.parse_args(argv)

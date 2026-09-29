@@ -16,7 +16,7 @@
 
 ## 実装とデータの流れ
 
-Papeer は Tauri/React の Windows アプリと、PyInstaller で単一実行ファイル化する Python/FastAPI の sidecar から成る。PDF を追加すると `%LOCALAPPDATA%\Papeer` に原本、抽出結果、SQLite の索引が置かれる。追加だけでは AI へ送らない。[README](../README.md)。翻訳では PDF の文字ブロックを抽出し、チャンクと文脈を選択された接続先へ送る。解説生成では論文のページ本文を広く送り、質問応答では全文が短ければ全文、長ければ関連ページ最大 10 ページと直近の会話を送る。図の切り抜き画像は現在の解説生成ではローカル処理であり、画像バイナリをモデルへ送る実装ではない。送信データは「選択した短い引用だけ」と説明してはいけない。[providers/](../papeer/providers/)、[service.py](../papeer/core/service.py)。
+Papeer は Tauri/React の Windows アプリと、PyInstaller でフォルダー形式（onedir）の実行ファイルにする Python/FastAPI の sidecar から成る（2026-09 に単一実行ファイル形式から変更）。PDF を追加すると `%LOCALAPPDATA%\Papeer` に原本、抽出結果、SQLite の索引が置かれる。追加だけでは AI へ送らない。[README](../README.md)。翻訳では PDF の文字ブロックを抽出し、チャンクと文脈を選択された接続先へ送る。解説生成では論文のページ本文を広く送り、質問応答では全文が短ければ全文、長ければ関連ページ最大 10 ページと直近の会話を送る。図の切り抜き画像は現在の解説生成ではローカル処理であり、画像バイナリをモデルへ送る実装ではない。送信データは「選択した短い引用だけ」と説明してはいけない。[providers/](../papeer/providers/)、[service.py](../papeer/core/service.py)。
 
 翻訳結果は、原 PDF の数式・表・図・参考文献等を残しつつ訳文を重ねた PDF、原文と訳文を交互に並べる PDF、左右対訳 PDF、Markdown として書き出せる。[PDF 生成](../papeer/pdf/pdf_engine.py)、[README](../README.md)。利用者の原稿に未公開情報、個人データ、査読中原稿、出版社契約上の制限がある場合、外部 AI への送信そのものを確認すべきである。
 
