@@ -16,6 +16,7 @@ from papeer.core.paths import PaperFiles
 from papeer.core.reading_tools import create_backup, draft_revision, restore_backup, library_search, translation_paragraphs
 from papeer.core.terminology import effective_glossary, validate_revision, global_glossary, save_global_glossary
 from papeer.core.service import PaperService
+from papeer.core import local_history
 from papeer.core.storage import Library
 from _legacy_library import mark_unversioned
 from papeer.layout.math_layout import MATH_TOKEN
@@ -308,7 +309,7 @@ def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
         response = client.post(f"/api/papers/{identity}/revision-draft", json={"unit_id": paragraph["id"]})
         assert response.status_code == 200
         job = deps.job_manager.get_job(response.json()["job_id"])
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 60  # Generous: the whole suite may load the machine.
         while job.running and time.monotonic() < deadline:
             time.sleep(.02)
         assert job.status == "succeeded", job.error
@@ -316,7 +317,7 @@ def test_reading_api_templates_tags_search_and_revision(library, monkeypatch):
         response = client.post(f"/api/papers/{identity}/revision", json={"unit_id": paragraph["id"], "text": job.result.text, "expected_text": paragraph["text"]})
         assert response.status_code == 200
         job = deps.job_manager.get_job(response.json()["job_id"])
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 60  # Generous: the whole suite may load the machine.
         while job.running and time.monotonic() < deadline:
             time.sleep(.02)
         assert job.status == "succeeded", job.error
@@ -384,7 +385,12 @@ def test_snapshot_api_and_write_guard(library, tmp_path, monkeypatch):
         response = client.post("/api/restore", json={"path": str(backup)})
         assert response.status_code == 200
         job = wait(response.json()["job_id"])
-        assert Library(Path(job.result.previous_path)).paper(identity)["note"] == "復元前のメモ"
+        # The library as it was is in this PC's history, so no folder stays beside it.
+        assert job.result.previous_path is None
+        [before] = local_history.entries(lib.root)
+        assert before["kind"] == "before_restore"
+        local_history.materialize(lib.root, before["id"], tmp_path / "before")
+        assert Library(tmp_path / "before").paper(identity)["note"] == "復元前のメモ"
         assert client.get(f"/api/papers/{identity}").json()["note"] == ""
 
 

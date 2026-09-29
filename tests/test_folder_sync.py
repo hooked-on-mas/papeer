@@ -146,7 +146,7 @@ def test_malformed_version_fields_are_rejected(tmp_path, field, value):
 
 
 def test_conflict_reads_what_differs_in_place_and_keeps_the_side_left_out(tmp_path, monkeypatch):
-    from papeer.core.reading_tools import restore_backup
+    from papeer.core import local_history
 
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
     a, b = Library(tmp_path / "a"), Library(tmp_path / "b")
@@ -171,10 +171,11 @@ def test_conflict_reads_what_differs_in_place_and_keeps_the_side_left_out(tmp_pa
     assert (diff["local_titles"], diff["remote_titles"]) == ([b.paper(second)["title"]], [a.paper(first)["title"]])
 
     sync.sync(b, remote, threading.Event(), lambda _: None, choice="local", expected_heads=[head["id"]])
-    kept = sync.side_backups(b.root)
+    kept = [entry for entry in local_history.entries(b.root) if entry["kind"] == "set_aside"]
     assert [item["side"] for item in kept] == ["remote"]
-    restore_backup(Library(b.root), Path(kept[0]["path"]))
-    assert [paper["id"] for paper in Library(b.root).papers()] == [first]
+    # Recorded from the revision where it lies in the sync folder.
+    local_history.materialize(b.root, kept[0]["id"], tmp_path / "kept")
+    assert [paper["id"] for paper in Library(tmp_path / "kept").papers()] == [first]
 
 
 def test_open_library_refuses_a_malformed_revision(tmp_path):

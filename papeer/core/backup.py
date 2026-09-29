@@ -5,6 +5,7 @@ backup may have is read from storage.SCHEMA_VERSION when the restore runs.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import closing
 from datetime import datetime
 import hashlib
@@ -72,6 +73,21 @@ def create_backup(lib: Library, destination: Path, cancel: threading.Event | Non
                               zipfile.ZIP_STORED if path.suffix.lower() in STORED_SUFFIXES else zipfile.ZIP_DEFLATED)
 
 
+# Names Windows keeps for devices: a file so named cannot be created in any folder.
+_RESERVED_NAMES = frozenset({"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)],
+                             *[f"LPT{i}" for i in range(1, 10)]})
+
+
+def unsafe_path(name: str) -> bool:
+    """Whether a path given for a file of the library (a backup's entry, another PC's) must not be written.
+
+    It must be relative, stay inside the library, use "/" only, and be a name Windows can create.
+    """
+    path = PurePosixPath(name)
+    return (path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name or not path.parts
+            or any(part.endswith((".", " ")) or part.split(".")[0].upper() in _RESERVED_NAMES for part in path.parts))
+
+
 # The library's settings (settings.json: connection, model, effort, ...) and the user's prompt texts.
 # A restore may keep the current ones instead of taking those in the backup.
 SETTINGS_ENTRIES = ("settings.json", "prompts")
@@ -86,8 +102,7 @@ def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = 
     `cancel` is honoured only until the folders are swapped: a cancelled restore leaves the library as it was.
     """
     root = lib.root.resolve()
-    staging = root.with_name(root.name + "-restore-" + uuid.uuid4().hex)
-    previous = root.with_name(root.name + "-before-restore-" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    staging, previous = _staging_names(root)
     staging.mkdir()
     try:
         with zipfile.ZipFile(source) as archive:
@@ -101,12 +116,8 @@ def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = 
                 path = PurePosixPath(name)
                 normalized = "/".join(path.parts).casefold()
                 total += item.file_size
-                if (path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name
-                        or not path.parts or (item.external_attr >> 16) & 0o170000 == 0o120000
-                        or total > 20 * 1024**3 or normalized in names
-                        or any(part.endswith((".", " ")) or part.split(".")[0].upper() in
-                               {"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)], *[f"LPT{i}" for i in range(1, 10)]}
-                               for part in path.parts)):
+                if (unsafe_path(name) or (item.external_attr >> 16) & 0o170000 == 0o120000
+                        or total > 20 * 1024**3 or normalized in names):
                     raise ValueError("バックアップに不正なパスまたは大きすぎるデータが含まれます。")
                 names.add(normalized)
                 target = staging.joinpath(*path.parts)
@@ -124,39 +135,77 @@ def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = 
         if not manifest_path.is_file() or not (staging / "library.sqlite3").is_file():
             raise ValueError("Papeerのバックアップを選択してください。")
         manifest = json.loads(manifest_path.read_text("utf-8"))
-        if manifest.get("version") != 1 or not (staging / "library.sqlite3").is_file():
+        if manifest.get("version") != 1:
             raise ValueError("Papeerのバックアップを選択してください。")
-        with closing(sqlite3.connect(staging / "library.sqlite3")) as db:
-            # Backups made before schema versioning have neither field and are at user_version 0.
-            schema_version = manifest.get("schema_version", 0)
-            if not isinstance(schema_version, int) or isinstance(schema_version, bool):
-                raise ValueError("Papeerのバックアップを選択してください。")
-            if max(schema_version, db.execute("PRAGMA user_version").fetchone()[0]) > storage.SCHEMA_VERSION:
-                made_by = newer_papeer(manifest.get("app_version") if schema_version > storage.SCHEMA_VERSION else None)
-                # Neutral wording: sync validates a pulled revision through this path as well.
-                raise NewerSchemaError(f"このデータは{made_by}で作成されたため読み込めません。"
-                                       "Papeerを最新版に更新してから、もう一度お試しください。")
-            if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or db.execute("PRAGMA foreign_key_check").fetchall():
-                raise ValueError("バックアップのデータベースが破損しています。")
-            for paper_id, digest in db.execute("SELECT id,sha256 FROM papers"):
-                _stop_if_cancelled(cancel)
-                if not re.fullmatch(r"[0-9a-f]{32}", paper_id) or not (PaperFiles(staging / "papers" / paper_id).original_pdf).is_file():
-                    raise ValueError("バックアップの論文ファイルが不足しています。")
-                with (PaperFiles(staging / "papers" / paper_id).original_pdf).open("rb") as stream:
-                    if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
-                        raise ValueError("バックアップの原文PDFが破損しています。")
+        # Backups made before schema versioning have neither field and are at user_version 0.
+        schema_version = manifest.get("schema_version", 0)
+        if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+            raise ValueError("Papeerのバックアップを選択してください。")
+        validate_library(staging, cancel, schema_version=schema_version, app_version=manifest.get("app_version"))
         manifest_path.unlink()
-        if not import_settings:
-            _keep_current_settings(root, staging)
-        # The last point to stop; once the folders are swapped the restore runs to the end.
-        _stop_if_cancelled(cancel)
-        _rename_folder(root, previous)
-        try:
-            staging.rename(root)
-        except Exception:
-            previous.rename(root)
-            raise
-        return previous
+        return _swap_in(root, staging, previous, cancel, import_settings=import_settings)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
+def validate_library(folder: Path, cancel: threading.Event | None = None, *, schema_version: int = 0,
+                     app_version: object = None) -> None:
+    """Refuse a library folder about to replace the library unless it is whole: a database this Papeer can
+    open (not from a newer one) that passes SQLite's own checks, and every paper's original PDF matching
+    the SHA-256 the database records. `schema_version` and `app_version` are what the copy says of itself.
+    """
+    database = folder / "library.sqlite3"
+    if not database.is_file():
+        raise ValueError("Papeerのバックアップを選択してください。")
+    with closing(sqlite3.connect(database)) as db:
+        if max(schema_version, db.execute("PRAGMA user_version").fetchone()[0]) > storage.SCHEMA_VERSION:
+            made_by = newer_papeer(app_version if schema_version > storage.SCHEMA_VERSION else None)
+            # Neutral wording: sync validates a pulled revision through this path as well.
+            raise NewerSchemaError(f"このデータは{made_by}で作成されたため読み込めません。"
+                                   "Papeerを最新版に更新してから、もう一度お試しください。")
+        if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or db.execute("PRAGMA foreign_key_check").fetchall():
+            raise ValueError("バックアップのデータベースが破損しています。")
+        for paper_id, digest in db.execute("SELECT id,sha256 FROM papers"):
+            _stop_if_cancelled(cancel)
+            if not re.fullmatch(r"[0-9a-f]{32}", paper_id) or not (PaperFiles(folder / "papers" / paper_id).original_pdf).is_file():
+                raise ValueError("バックアップの論文ファイルが不足しています。")
+            with (PaperFiles(folder / "papers" / paper_id).original_pdf).open("rb") as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
+                    raise ValueError("バックアップの原文PDFが破損しています。")
+
+
+def _staging_names(root: Path) -> tuple[Path, Path]:
+    """(where a restored copy is put together, where the library as it was is moved): beside the library."""
+    return (root.with_name(root.name + "-restore-" + uuid.uuid4().hex),
+            root.with_name(root.name + "-before-restore-" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]))
+
+
+def _swap_in(root: Path, staging: Path, previous: Path, cancel: threading.Event | None, *, import_settings: bool) -> Path:
+    """Put the validated copy at `staging` in place of the library, which moves to `previous`."""
+    if not import_settings:
+        _keep_current_settings(root, staging)
+    # The last point to stop; once the folders are swapped the restore runs to the end.
+    _stop_if_cancelled(cancel)
+    _rename_folder(root, previous)
+    try:
+        staging.rename(root)
+    except Exception:
+        previous.rename(root)
+        raise
+    return previous
+
+
+def restore_folder(lib: Library, fill: Callable[[Path], None], cancel: threading.Event | None = None, *,
+                   import_settings: bool = True, schema_version: int = 0, app_version: object = None) -> Path:
+    """Replace the library with the folder `fill` writes (given a path that does not exist yet, beside the
+    library), validated as a backup is (validate_library); where the old one was moved, as restore_backup."""
+    root = lib.root.resolve()
+    staging, previous = _staging_names(root)
+    try:
+        fill(staging)
+        validate_library(staging, cancel, schema_version=schema_version, app_version=app_version)
+        return _swap_in(root, staging, previous, cancel, import_settings=import_settings)
     finally:
         if staging.exists():
             shutil.rmtree(staging)

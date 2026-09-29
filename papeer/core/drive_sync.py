@@ -18,6 +18,7 @@ import platform
 import sqlite3
 import tempfile
 import re
+import shutil
 import struct
 import threading
 import time
@@ -25,6 +26,7 @@ import uuid
 import zipfile
 
 from papeer import __version__
+from papeer.core import local_history
 from papeer.core.errors import Invalid
 from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
 from papeer.core.paths import fingerprint_cache_path, sync_state_path
@@ -312,21 +314,22 @@ def _differing_rows(db: sqlite3.Connection, table: str, key: tuple[str, ...], wh
         f" UNION SELECT {keys} FROM (SELECT * FROM b EXCEPT SELECT * FROM a))").fetchone()[0]
 
 
-# The newest few are kept: each holds a whole library.
-SIDE_BACKUP_LIMIT = 3
+# The libraries a choice leaves out are kept in this PC's history (local_history, kind "set_aside"), the
+# newest local_history.SPECIAL_LIMIT of them. Earlier versions kept them as backup ZIPs beside the library;
+# those stay listed (side_backups, local_history.legacy_items) until the user removes them.
+SIDE_BACKUP_LIMIT = local_history.SPECIAL_LIMIT
 
 
 def side_backup_folder(root: Path) -> Path:
-    """Where the libraries a choice left out are kept: beside the library, like the copy a restore keeps.
-
-    On this PC only (neither synced nor in a backup), and on the drive the library itself was put on.
-    """
-    root = root.resolve()
-    return root.with_name(root.name + "-sync-backups")
+    """Where earlier versions kept the libraries a choice left out: beside the library, as backup ZIPs."""
+    return local_history.side_backup_folder(root)
 
 
 def side_backups(root: Path) -> list[dict]:
-    """The kept libraries, newest first, with what their descriptions say (unknown fields are None)."""
+    """The ZIPs earlier versions kept, newest first, with what their descriptions say (unknown fields are None).
+
+    Each is an ordinary backup, restored like one.
+    """
     folder = side_backup_folder(root)
     result = []
     for path in sorted(folder.glob("*.zip"), reverse=True) if folder.is_dir() else []:
@@ -346,86 +349,22 @@ def side_backups(root: Path) -> list[dict]:
     return result
 
 
-def _new_side_backup(root: Path, side: str) -> Path:
-    folder = side_backup_folder(root)
-    folder.mkdir(exist_ok=True)
-    # Named by the time in UTC, so the names sort as the backups were made (also across a clock change).
-    return folder / f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}-{side}.zip"
-
-
-def _describe_side_backup(path: Path, **values) -> None:
-    atomic_write_json(path.with_suffix(".json"), {**values, "saved": datetime.now(timezone.utc).isoformat()}, indent=None)
-
-
-def _remove_side_backup(path: Path) -> None:
-    path.unlink(missing_ok=True)
-    path.with_suffix(".json").unlink(missing_ok=True)
-
-
-def prune_side_backups(root: Path, keep: int = SIDE_BACKUP_LIMIT, new: Sequence[Path] = ()) -> None:
-    """Remove all but the newest `keep`. The ones just set aside (`new`) always stay and count toward them."""
-    folder = side_backup_folder(root)
-    if not folder.is_dir():
-        return
-    spared = {path.resolve() for path in new}
-    older = [path for path in sorted(folder.glob("*.zip"), reverse=True) if path.resolve() not in spared]
-    for path in older[max(0, keep - len(spared)):]:
-        _remove_side_backup(path)
-    for path in folder.glob("*.json"):
-        if not path.with_suffix(".zip").exists():
-            path.unlink(missing_ok=True)
-
-
-class _Unreadable(Exception):
-    """A revision in the sync folder could not be read, or did not match its hash."""
-
-
 # What reading a revision that is damaged, cut short or still arriving may raise.
 _READ_ERRORS = (OSError, EOFError, ValueError, KeyError, zipfile.BadZipFile)
 
 
-def _copy_revision(remote, head: dict, target: Path, cancel) -> Path:
-    """Copy a revision's library.zip to `target`, checked against its archive_hash.
-
-    Reading the sync folder raises _Unreadable; writing `target` on this PC raises as it is, so the
-    two are never mistaken for each other.
-    """
-    with atomic_output(target) as temporary, temporary.open("wb") as output, ExitStack() as stack:
-        try:
-            source = stack.enter_context(remote.open_library(head["id"]))
-            size = source.seek(0, io.SEEK_END)
-            source.seek(0)
-        except _READ_ERRORS as exc:
-            raise _Unreadable() from exc
-        ensure_free_space({target.parent: size})
-        digest = hashlib.sha256()
-        while True:
-            check_cancel(cancel)
-            try:
-                chunk = source.read(8 * 1024**2)
-            except _READ_ERRORS as exc:
-                raise _Unreadable() from exc
-            if not chunk:
-                break
-            digest.update(chunk)
-            output.write(chunk)
-        if digest.hexdigest() != head["archive_hash"]:
-            raise _Unreadable()
-    return target
-
-
 def _set_aside(lib: Library, remote, heads: list[dict], choice: str, library_hash: str, chosen_hash: str,
-               counts: dict, cancel, progress, written: list[Path]) -> list[dict]:
-    """Keep the libraries a choice leaves out as backups: each other head, and this PC's library when a
-    head was chosen. One identical to the chosen contents, or without papers, holds nothing to go back to.
+               counts: dict, local_files: dict, cancel, progress, recorded: list[str]) -> list[dict]:
+    """Keep the libraries a choice leaves out in this PC's history: each other head, and this PC's library
+    when a head was chosen. One identical to the chosen contents, or without papers, holds nothing to go back to.
 
-    A head's archive already is a backup (create_backup made it), so it is copied as it is and checked
-    against the hash its revision records. Each file kept is added to `written` at once, for the caller
-    to remove should the choice fail. Returns the heads that could not be read or did not match their
-    hash ({id, device, created}): they are skipped rather than stopping the choice, since a damaged
-    revision in the sync folder must not keep this PC's library from being chosen over it (it stays in
-    the sync folder's history either way). Only reading the sync folder counts as that: stopping,
-    writing a backup on this PC (a full drive, no permission...) or backing up this PC's library stops
+    A head is recorded from its archive where it lies in the sync folder (local_history.record_archive),
+    each file read once and stored only when the history does not hold it yet. Each state recorded is
+    added to `recorded` at once, for the caller to remove should the choice fail. Returns the heads that
+    could not be read ({id, device, created}): they are skipped rather than stopping the choice, since a
+    damaged revision in the sync folder must not keep this PC's library from being chosen over it (it
+    stays in the sync folder's history either way). Only reading the sync folder counts as that: stopping,
+    writing the history on this PC (a full drive, no permission...) or recording this PC's library stops
     the choice.
     """
     skipped = []
@@ -434,23 +373,46 @@ def _set_aside(lib: Library, remote, heads: list[dict], choice: str, library_has
             continue
         check_cancel(cancel)
         progress("選ばなかったデータを退避しています…")
-        try:
-            target = _copy_revision(remote, head, _new_side_backup(lib.root, "remote"), cancel)
-        except _Unreadable:
+        with ExitStack() as stack:
+            try:
+                stream = stack.enter_context(remote.open_library(head["id"]))
+            except _READ_ERRORS:
+                stream = None
+            try:
+                entry = None if stream is None else local_history.record_archive(
+                    lib.root, stream, kind="set_aside", library_hash=head["hash"], counts=head.get("counts"),
+                    schema_version=head.get("schema_version", 0), cancel=cancel, side="remote",
+                    revision=head["id"], source_device=head["device"], source_created=head["created"])
+            except local_history.SourceUnreadable:
+                entry = None
+        if entry is None:
             skipped.append({k: head[k] for k in ("id", "device", "created")})
             continue
-        written.append(target)
-        _describe_side_backup(target, side="remote", device=head["device"], created=head["created"],
-                              counts=head.get("counts"))
+        recorded.append(entry)
     if choice != "local" and library_hash != chosen_hash and counts.get("papers"):
         check_cancel(cancel)
         progress("選ばなかったデータを退避しています…")
-        target = _new_side_backup(lib.root, "local")
-        create_backup(lib, target, cancel)
-        written.append(target)
-        _describe_side_backup(target, side="local", device=platform.node(),
-                              created=datetime.now(timezone.utc).isoformat(), counts=counts)
+        entry = local_history.record_folder(lib.root, lib.root, kind="set_aside", library_hash=library_hash,
+                                            counts=counts, files=local_files, cancel=cancel, progress=progress,
+                                            side="local")
+        if entry is not None:
+            recorded.append(entry)
     return skipped
+
+
+def _discard_previous(previous: Path) -> None:
+    """Remove the library a sync replaced: this PC's history holds it. What cannot be removed (a file held
+    open for a moment by a virus scan, say) stays, and is listed with what earlier versions left
+    (local_history.legacy_items) for the user to remove."""
+    shutil.rmtree(previous, ignore_errors=True)
+
+
+def forget_previous_path(root: Path, removed: Sequence[str]) -> None:
+    """After the user removed folders a sync had moved aside: stop pointing the status at one of them."""
+    state = read_state(root)
+    if state.get("previous_path") and state["previous_path"] in removed:
+        state["previous_path"] = None
+        save_state(root, state)
 
 
 # What revisions() read from each archive, by (path, size, modification time); shared by every FolderDrive,
@@ -702,12 +664,19 @@ def fingerprint(lib: Library | Path, cancel=None, *, remember: bool = False) -> 
     Every file is read. remember=True also records the digests for check() (the library itself, never a
     staging copy).
     """
+    return fingerprint_files(lib, cancel, remember=remember)[0]
+
+
+def fingerprint_files(lib: Library | Path, cancel=None, *,
+                      remember: bool = False) -> tuple[str, dict[str, tuple[str, int]]]:
+    """fingerprint(), with the SHA-256 and size of each file it read by path (local_history need not read them again)."""
     root = lib.root if isinstance(lib, Library) else lib
     before = _read_fingerprint_cache(root) if remember else {}
     paths = _library_files(root, cancel)
     database, database_seen = _database_key(root), _now_ns()
     digest = _dump_digest(root)
     files: dict[str, list] = {}
+    read: dict[str, tuple[str, int]] = {}
     for path in paths:
         if cancel is not None:
             check_cancel(cancel)
@@ -719,6 +688,7 @@ def fingerprint(lib: Library | Path, cancel=None, *, remember: bool = False) -> 
             key = _stat_key(os.fstat(stream.fileno()))
         digest.update(rel.encode("utf-8"))
         digest.update(file_digest.digest())
+        read[rel] = (file_digest.hexdigest(), key[0])
         # Measured against now, not the start: reading a large library can take longer than the racy window.
         if _settled(key[1], _now_ns()):
             files[rel] = [*key, file_digest.hexdigest()]
@@ -729,7 +699,7 @@ def fingerprint(lib: Library | Path, cancel=None, *, remember: bool = False) -> 
         whole = len(files) == len(paths) and all(key is None or _settled(key[1], database_seen) for key in database)
         _write_fingerprint_cache(root, {"files": files, "database": database if whole else None,
                                         "hash": result if whole else None}, before)
-    return result
+    return result, read
 
 
 def recorded_fingerprint(root: Path) -> tuple[str | None, str | None]:
@@ -849,7 +819,10 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
     Resolving a conflict creates a revision with all observed heads as its parents.
     A simultaneous upload remains a separate head and will be offered next time.
     A conflict records what differs from each head (conflict_differences) for the choice, and a choice
-    keeps the libraries it leaves out as backups (_set_aside), returned as "set_aside".
+    keeps the libraries it leaves out in this PC's history (_set_aside), their IDs returned as "set_aside".
+    Each library published or taken in is recorded in that history as well (local_history). Taking one in
+    moves this PC's library aside, and removes it once the swap is done when the history holds it
+    complete; otherwise it stays, and its folder is returned as "previous_path".
     Publishing a library that shrank a lot or was just restored from a backup, or taking in one that
     shrank a lot, returns {"status": "review"} instead (see shrunk_kinds); confirm=True then goes
     ahead, as long as neither the sync folder nor this library changed since. To back out without
@@ -867,7 +840,7 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
     heads = revision_heads(revisions)
     ids = sorted(item["id"] for item in heads)
     # Hashed from the files every time (the records only serve check()), and recorded afresh.
-    local_hash = fingerprint(lib, cancel, remember=True)
+    local_hash, local_files = fingerprint_files(lib, cancel, remember=True)
     dirty = local_hash != state.get("hash")
     base = state.get("base")
     if base and base not in {item["id"] for item in revisions}:
@@ -923,9 +896,13 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
     previous = None
     # This library's contents; local_hash becomes the taken revision's below.
     library_hash = local_hash
-    set_aside: list[Path] = []
+    # The states this sync recorded in this PC's history (local_history), and those set aside among them.
+    recorded: list[str] = []
+    set_aside: list[str] = []
+    # A state the clean-up keeps though it was recorded before: the one that stands for the library replaced.
+    spared: list[str] = []
     not_set_aside: list[dict] = []
-    uploaded = False
+    uploaded = replaced = False
     try:
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "library.zip"
@@ -935,6 +912,8 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
             pull = selected or (heads[0] if choice is None and heads and base != heads[0]["id"] and not dirty else None)
             # What `archive` holds if it is published: this library, or the revision taken below.
             content_hash, content_schema, content_counts = local_hash, SCHEMA_VERSION, counts
+            staging = Path(directory) / "validation"
+            content_files = local_files
             if pull:
                 if pull.get("schema_version", 0) > SCHEMA_VERSION:
                     raise NewerSchemaError(f"この同期データは{newer_papeer(pull.get('app_version'))}で作成されたため取り込めません。"
@@ -947,11 +926,10 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
                     if hashlib.file_digest(stream, "sha256").hexdigest() != pull["archive_hash"]:
                         raise ValueError("同期データの検証に失敗しました。再試行してください。")
                 # Validate using the backup restore path before touching the active library.
-                staging = Path(directory) / "validation"
                 staging.mkdir()
                 restore_backup(Library(staging), archive, cancel)
                 # Hash the database as the publishing PC did, before this version migrates it.
-                content_hash = fingerprint(staging, cancel)
+                content_hash, content_files = fingerprint_files(staging, cancel)
                 content_schema = database_version(staging / "library.sqlite3")
                 if content_hash != pull["hash"]:
                     raise ValueError("同期データの内容が一致しません。")
@@ -959,21 +937,27 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
                 if choice is None and not confirmed and (kinds := shrunk_kinds(counts, content_counts)):
                     # Counted from the verified contents, not from what the revision says about itself.
                     return ask(_review("remote_shrunk", f"{pull['device']} で保存された同期データでは{_kinds_text(kinds)}が大きく減っています。"
-                                       "取り込むと、このPCのデータもこの内容に置き換わります（元のデータは別フォルダーに残します）。",
+                                       "取り込むと、このPCのデータもこの内容に置き換わります（元のデータはこのPCに残します）。",
                                        counts, content_counts, ("このPC", "同期フォルダー"), ids, local_hash))
                 local_hash = content_hash
                 if content_schema < SCHEMA_VERSION:
                     # The library as it is once opened here, so taking an older revision is not published again.
-                    local_hash = fingerprint(Library(staging), cancel)
+                    local_hash, content_files = fingerprint_files(Library(staging), cancel)
                 check_cancel(cancel)
                 base = pull["id"]
             if choice is not None:
                 # Before anything is published or replaced: a choice that fails keeps nothing (see below).
-                not_set_aside = _set_aside(lib, remote, heads, choice, library_hash, content_hash, counts, cancel,
-                                           progress, set_aside)
+                not_set_aside = _set_aside(lib, remote, heads, choice, library_hash, content_hash, counts, local_files,
+                                           cancel, progress, set_aside)
+                recorded += set_aside
             # Explicit resolutions publish the chosen contents as a merge revision.
             if choice is not None or (not pull and (dirty or not heads)):
                 check_cancel(cancel)
+                if not pull:
+                    progress("このPCの履歴に記録しています…")
+                    _recorded(recorded, local_history.record_folder(
+                        lib.root, lib.root, kind="publish", library_hash=local_hash, counts=counts, files=local_files,
+                        cancel=cancel, progress=progress))
                 progress("ライブラリ全体の同期データを作成しています…")
                 if not pull:
                     create_backup(lib, archive, cancel)
@@ -986,25 +970,49 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
                                               "app_version": __version__, "counts": content_counts}, cancel, progress)
                 uploaded = True
             if pull:
+                progress("このPCの履歴に記録しています…")
+                _recorded(recorded, local_history.record_folder(
+                    lib.root, staging, kind="pull", library_hash=local_hash, counts=content_counts, files=content_files,
+                    cancel=cancel, progress=progress, revision=pull["id"], source_device=pull["device"], source_created=pull["created"]))
+                # This library as it is now (the state last synced, or the side a choice just set aside), read
+                # back from the history in full: only then may the copy the swap moves aside be removed.
+                progress("このPCの履歴を確かめています…")
+                try:
+                    kept = local_history.verified_state(lib.root, library_hash, cancel)
+                except (OSError, local_history.HistoryBusy):
+                    kept = None  # Could not be read back just now (a blob held by a virus scan, say): keep the folder.
+                if kept is not None:
+                    spared.append(kept)  # Kept by the clean-up below, whatever the settings keep.
                 # All network operations succeeded; only now replace the local copy. Cancellable until the
                 # folders are swapped: the state is then left as it was, so the next sync pulls the same
                 # revision again (or, when this PC has changes, offers the choice again), and nothing is lost.
-                previous = str(restore_backup(lib, archive, cancel))
+                moved = restore_backup(lib, archive, cancel)
+                replaced = True
+                if kept is not None:
+                    _discard_previous(moved)
+                else:
+                    previous = str(moved)
             if previous:
                 state["previous_path"] = previous
             finish(base=base, hash=local_hash, not_set_aside=not_set_aside)
     except BaseException:
-        if previous is None and not uploaded:
+        if not replaced and not uploaded:
             # Nothing was published or replaced, so the state is as it was and the next sync offers the same
             # choice, which sets its libraries aside anew. Once the choice is published it is kept: that
             # revision now stands for the choice, and the library it left out may be needed.
-            for path in set_aside:
-                _remove_side_backup(path)
+            try:
+                local_history.remove_entries(lib.root, recorded)
+            except OSError:
+                pass  # Only an unused state stays, until the settings no longer keep it.
         raise
-    if set_aside:
-        try:
-            prune_side_backups(lib.root, new=set_aside)
-        except OSError:
-            pass  # Only more than the usual number are kept until the next choice.
-    return {"status": "synced", "reloaded": bool(previous), "previous_path": previous,
-            "set_aside": [str(path) for path in set_aside], "not_set_aside": not_set_aside}
+    try:
+        local_history.prune(lib.root, protect=recorded + spared)
+    except OSError:
+        pass  # Only more than the settings keep stay until the next sync.
+    return {"status": "synced", "reloaded": replaced, "previous_path": previous,
+            "set_aside": set_aside, "not_set_aside": not_set_aside}
+
+
+def _recorded(recorded: list[str], entry: str | None) -> None:
+    if entry is not None:
+        recorded.append(entry)

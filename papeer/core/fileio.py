@@ -48,6 +48,23 @@ def replace_file(source: Path, target: Path) -> None:
     _sync_directory(Path(target).parent)
 
 
+def move_file(source: Path, target: Path) -> None:
+    """Move `source`, already flushed to disk by its writer, over `target`, retrying while Windows refuses it
+    (see replace_file). The folder is not flushed: the caller does it once for many (sync_directory)."""
+    for _ in range(_REPLACE_ATTEMPTS - 1):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            time.sleep(_REPLACE_WAIT)
+    os.replace(source, target)
+
+
+def sync_directory(directory: Path) -> None:
+    """Flush the renames made in `directory` to disk (POSIX; nothing to do on Windows)."""
+    _sync_directory(Path(directory))
+
+
 def _sync_directory(directory: Path) -> None:
     # POSIX needs the directory flushed for the rename itself to survive a crash;
     # Windows cannot open a directory this way and NTFS journals the rename.

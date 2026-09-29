@@ -119,7 +119,9 @@ class BackupResult(BaseModel):
 
 
 class RestoreResult(BaseModel):
-    previous_path: str  # Where the library as it was before stays.
+    # Where the library as it was stays, when it had to stay beside the library; None when this PC's
+    # history holds it (history_restore).
+    previous_path: str | None = None
 
 
 class DriveSyncResult(BaseModel):

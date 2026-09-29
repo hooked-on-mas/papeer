@@ -33,4 +33,5 @@ export const QK = {
   noteTemplates: "note-templates",
   drive: "drive",
   sideBackups: "side-backups",
+  history: "history",
 } as const;
