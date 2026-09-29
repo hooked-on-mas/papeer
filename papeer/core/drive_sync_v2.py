@@ -23,12 +23,14 @@ whether this library changed since (its hash), and the heads of the sync folder.
 Publishing writes the blobs the sync folder lacks first, from this PC's history (checked against their
 names), and the generation last (sync_store). Taking a generation in puts it together beside the library
 from the files the library already has, this PC's history and the sync folder, each checked, and swaps it
-in once validated as a restore is (backup.restore_folder).
+in once validated as a restore is (backup.restore_folder). A sync that settles then cleans up the folder
+(collect_garbage, by sync_store's rules).
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
 import platform
@@ -41,7 +43,8 @@ import uuid
 from papeer import __version__
 from papeer.core import drive_sync, local_history, sync_store
 from papeer.core.backup import restore_folder
-from papeer.core.fileio import ensure_free_space
+from papeer.core.fileio import atomic_write_json, ensure_free_space
+from papeer.core.paths import sync_blobs_path
 from papeer.core.local_history import BlobDamaged, SourceUnreadable
 from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, database_version, library_missing, newer_papeer
 from papeer.core.sync_store import GenerationStore, NewerFormatError, View, blob_names
@@ -53,7 +56,9 @@ WAIT_WARNING = timedelta(hours=24)
 BASE_EXPIRY = timedelta(days=sync_store.LINEAGE_DAYS)
 # The base of a PC whose device file is older than this is no longer kept for it (its blobs are rewritten
 # rather than relied on when a new generation uses them again).
-DEVICE_KEPT = timedelta(days=30)
+DEVICE_KEPT = sync_store.DEVICE_KEPT
+# The clean-up of blobs and leftovers runs after a sync at most this often (that of generations, every time).
+GC_INTERVAL = timedelta(days=1)
 DEVICE_REFRESH = timedelta(days=1)
 
 
@@ -328,14 +333,9 @@ def _supply(root: Path, store: GenerationStore, name: str, library: dict[str, Pa
 
 
 def _kept(view: View) -> set[str]:
-    """The blobs the generations kept in the folder use: the heads, and the bases of the PCs that synced
-    within DEVICE_KEPT. A blob only others use may be removed at any time (a later stage's clean-up)."""
-    keep = set(view.heads())
-    for device in view.devices.values():
-        age = _age(device.get("updated"))
-        if device.get("base") and age is not None and age <= DEVICE_KEPT:
-            keep.add(device["base"])
-    return set().union(*(blob_names(view.generations[i]) for i in keep if i in view.generations))
+    """The blobs the generations kept in the folder use (View.kept): a blob only others use may be removed
+    by any PC's clean-up at any time."""
+    return set().union(*(blob_names(view.generations[i]) for i in view.kept() if i in view.generations))
 
 
 def _publish(root: Path, store: GenerationStore, view: View, manifest: dict, *, parents: list[str],
@@ -446,6 +446,79 @@ def _repair(root: Path, store: GenerationStore, view: View, state: dict, local_f
             except OSError:
                 continue  # Writing to the sync folder failed: the next sync tries again.
     return written
+
+
+def _recover_names(store: GenerationStore, names: set[str], cancel) -> set[str]:
+    try:
+        return store.recover(names, cancel)
+    except OSError:
+        return set()  # Tried again at the next sync.
+
+
+def _recover(store: GenerationStore, view: View, incomplete: list[str], heads: dict, cancel) -> set[str]:
+    """Put back the blobs the incomplete heads lack that are here only as a copy Google Drive renamed
+    ("<name> (1)"): another PC's clean-up may have removed the right name, taking it for the copy."""
+    names = set().union(*(view.missing(heads[identity]) for identity in incomplete if identity in heads))
+    if not names & set(view.copies):
+        return set()
+    return _recover_names(store, names, cancel)
+
+
+# --- The clean-up (sync_store) ---
+
+def _read_seen(root: Path, folder: Path) -> dict:
+    """When this PC first saw each blob of `folder` (sync_store.remember_blobs); empty for another folder."""
+    try:
+        value = json.loads(sync_blobs_path(root).read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(value, dict) or value.get("folder") != str(folder) or not isinstance(value.get("blobs"), dict):
+        return {}
+    return value["blobs"]
+
+
+def collect_garbage(root: Path, store: GenerationStore, state: dict, cancel=None, progress=None) -> list[str]:
+    """The clean-up after a sync that settled (never after a choice left open, a review or a wait): the
+    generations taken over every time; once a day (GC_INTERVAL) the leftovers, then the blobs nothing uses.
+    The paths removed, below "v2".
+
+    It never fails the sync it follows: a file held, the folder gone offline or a stop leaves the rest
+    for the next time, which removes it by the same rules (sync_store). The day's run counts as done
+    once it starts, so a failure does not make every sync try again.
+    """
+    cleaner = None
+    try:
+        view = store.view()
+        cleaner = sync_store.Cleaner(store, view, cancel)
+        generations = sync_store.removable_generations(view, state.get("base"))
+        if generations and progress is not None:
+            progress("同期フォルダーの古いデータを片付けています…")
+        cleaner.generations(generations)
+        if cleaner.removed:
+            view = cleaner.view = store.view()
+        now = _now()
+        earlier = _read_seen(root, store.folder)
+        seen = sync_store.remember_blobs(earlier, view, now)
+        if seen != earlier:
+            atomic_write_json(sync_blobs_path(root), {"folder": str(store.folder), "blobs": seen}, indent=None)
+        age = _age(state.get("gc_last"))
+        if age is None or age >= GC_INTERVAL or age < timedelta(0):
+            state["gc_last"] = now.isoformat()
+            drive_sync.save_state(root, state)
+            # The copies and leftovers first: a copy put in its place is a blob some generation may use.
+            try:
+                cleaner.leftovers(state.get("device_id"), now)
+            except OSError:
+                pass  # The blobs are cleaned up all the same.
+            if len(cleaner.removed) or any(view.copies.values()):
+                view = cleaner.view = store.view()
+            names = sync_store.removable_blobs(view, seen, now)
+            if names and progress is not None:
+                progress(f"同期フォルダーの使われなくなったデータを片付けています（{len(names)} 個）…")
+            cleaner.blobs(names)
+    except (OSError, Cancelled):
+        pass
+    return cleaner.removed if cleaner is not None else []
 
 
 # --- Choosing between libraries ---
@@ -584,8 +657,12 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
         # as two PCs that published the same contents leave): only the base moves, even one no longer known.
         chosen = base if base in ids else _newest(view, ids)
         finish(base=chosen, hash=local_hash, base_created=heads[chosen]["created"])
+        collect_garbage(root, store, state, cancel, progress)
         return {"status": "synced", "reloaded": False, "previous_path": None}
     incomplete = [identity for identity in ids if not view.complete(identity)]
+    if incomplete and _recover(store, view, incomplete, heads, cancel):
+        view = store.view()
+        incomplete = [identity for identity in ids if not view.complete(identity)]
     if choice is None and incomplete:
         first = heads.get(incomplete[0])
         missing = sum(len(view.missing(heads[identity])) if identity in heads else 1 for identity in incomplete)
@@ -652,6 +729,7 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
                 try:
                     _assemble(root, store, view, pull, staging, local_files, cancel)
                 except _NotReady as exc:
+                    _recover_names(store, exc.missing, cancel)  # The next sync (or check) takes it in then.
                     return _wait(root, store, view, state, reason="damaged" if exc.bad else "arrival", ids=ids,
                                  device=pull["device"], missing=len(exc.missing | exc.bad), bad=exc.bad)
                 # Hash the database as the publishing PC did, before this version migrates it.
@@ -728,6 +806,7 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
             except OSError:
                 pass
         raise
+    collect_garbage(root, store, state, cancel, progress)
     try:
         local_history.prune(root, protect=recorded + spared)
     except OSError:
@@ -767,6 +846,8 @@ def check(root: Path, store: GenerationStore) -> dict:
     waiting = state.get("waiting") if isinstance(state.get("waiting"), dict) else None
     blobs = waiting.get("blobs") if waiting and isinstance(waiting.get("blobs"), dict) else {}
     rewritten = any(list(view.blobs.get(name, ())) != value for name, value in blobs.items())
+    lacking = set().union(*(view.missing(heads[identity]) for identity in ids if identity in heads))
+    rewritten = rewritten or bool(lacking & set(view.copies))  # Only renamed: the sync puts it back.
     still = any(not view.complete(identity) for identity in ids) or (where == "unknown" and not _expired(state)) \
         or (waiting is not None and waiting.get("reason") == "damaged")
     if still:

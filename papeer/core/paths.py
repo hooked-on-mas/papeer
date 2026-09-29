@@ -56,6 +56,11 @@ def fingerprint_cache_path(root: Path) -> Path:
     return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".fingerprint.json")
 
 
+def sync_blobs_path(root: Path) -> Path:
+    """When this PC first saw each blob of the sync folder of the library at `root` (see sync_store's clean-up)."""
+    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".sync-blobs.json")
+
+
 def history_directory(root: Path) -> Path:
     """This PC's history of the library at `root`: the states folder sync settled on (see local_history)."""
     return device_directory() / "history" / hashlib.sha256(str(root.resolve()).encode()).hexdigest()

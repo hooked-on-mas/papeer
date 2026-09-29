@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import gzip
 import hashlib
 import json
+import os
 from pathlib import Path
 import uuid
 import zlib
@@ -334,3 +335,179 @@ def test_a_generation_that_cannot_be_read_is_not_read_again_while_it_stays_as_it
     item = generation("1" * 32)
     store.write_generation(item)
     assert set(store.view().generations) == {item["id"]} and len(calls) == 2
+
+
+# --- The clean-up (S5) ---
+
+def ids(n: int) -> str:
+    return f"{n:032x}"
+
+
+def view_of(*generations, devices=None, now=NOW, blobs=None, unreadable=()) -> View:
+    return View(generations={item["id"]: item for item in generations}, devices=devices or {},
+                blobs=blobs or {}, unreadable=set(unreadable), now=now)
+
+
+def device(base: str | None, *, updated=NOW, identity="e" * 32) -> dict:
+    return {"device_id": identity, "device": "pc", "base": base, "updated": updated.isoformat(), "bad_blobs": []}
+
+
+def test_generations_taken_over_go_and_the_heads_and_recent_bases_stay():
+    first = generation(ids(1))
+    second = generation(ids(2), parents=[ids(1)], lineage=[(ids(1), seconds(NOW))])
+    third = generation(ids(3), parents=[ids(2)], lineage=[(ids(2), seconds(NOW)), (ids(1), seconds(NOW))])
+    view = view_of(first, second, third)
+    assert view.heads() == [ids(3)] and sync_store.removable_generations(view) == {ids(1), ids(2)}
+    # The base of a PC that synced within 30 days stays, and this PC's own.
+    view = view_of(first, second, third, devices={"e" * 32: device(ids(1))})
+    assert sync_store.removable_generations(view) == {ids(2)}
+    assert sync_store.removable_generations(view, own_base=ids(2)) == set()
+    # A PC away for longer is no longer kept for.
+    view = view_of(first, second, third, devices={"e" * 32: device(ids(1), updated=NOW - timedelta(days=31))})
+    assert sync_store.removable_generations(view) == {ids(1), ids(2)}
+
+
+def test_a_generation_that_cannot_be_read_is_never_removed_and_blocks_blob_removal():
+    head = generation(ids(2), parents=[ids(1)], lineage=[(ids(1), seconds(NOW))])
+    view = view_of(head, unreadable=[ids(1)], blobs={"f" * 64: (1, 0)})
+    assert sync_store.removable_generations(view) == set()
+    assert sync_store.removable_blobs(view, {"f" * 64: [1, 0, 0]}, NOW) == []
+
+
+def test_a_generation_that_alone_takes_over_another_stays():
+    """Removing the middle one would bring back the old one as a head (the head's lineage lacks it)."""
+    old = generation(ids(1))
+    middle = generation(ids(2), parents=[ids(1)], lineage=[(ids(1), seconds(NOW))])
+    head = generation(ids(3), parents=[ids(2)], lineage=[(ids(2), seconds(NOW))])
+    # The old one is kept as a recent PC's base, so only the middle one is a candidate.
+    view = view_of(old, middle, head, devices={"e" * 32: device(ids(1))})
+    assert view.heads() == [ids(3)]
+    assert sync_store.removable_generations(view) == set()
+
+
+def test_a_generation_its_own_pc_has_gone_past_is_no_head_once_its_lineage_aged_out():
+    now = NOW + timedelta(days=70)
+    later = NOW + timedelta(days=5)
+    old = generation(ids(1), device_id="e" * 32)
+    head = generation(ids(3), created=now, parents=[ids(4)], lineage=[(ids(4), seconds(now)), (ids(2), seconds(later))])
+    # Its PC's device file names a later base: taken over, and cleaned up.
+    view = view_of(old, head, devices={"e" * 32: device(ids(2), updated=now)}, now=now)
+    assert view.heads() == [ids(3)] and ids(1) in sync_store.removable_generations(view)
+    # Its PC still stands on it: a head (a choice), however old.
+    view = view_of(old, head, devices={"e" * 32: device(ids(1), updated=now)}, now=now)
+    assert view.heads() == [ids(1), ids(3)]
+    # Without a device file, nothing tells: a head.
+    assert view_of(old, head, now=now).heads() == [ids(1), ids(3)]
+    # Within the lineage's reach it is judged by lineage only.
+    assert view_of(old, head, devices={"e" * 32: device(ids(2))}, now=NOW + timedelta(days=10)).heads() \
+        == [ids(1), ids(3)]
+
+
+def test_the_lineage_keeps_an_ancestor_still_in_the_folder_however_old():
+    old = seconds(NOW - timedelta(days=100))
+    parent = generation(ids(2), lineage=[(ids(1), old), (ids(5), old)])
+    view = view_of(parent, generation(ids(1)))
+    assert sync_store.lineage(view, [ids(2)], NOW) == [[ids(2), seconds(NOW)], [ids(1), old]]
+
+
+def test_a_blob_goes_only_when_unused_and_seen_and_written_long_enough_ago():
+    long_ago = seconds(NOW - timedelta(days=4))
+    recent = seconds(NOW - timedelta(days=1))
+    used = generation(ids(1))
+    names = {"a" * 64: (5, long_ago * 10**9), "b" * 64: (5, long_ago * 10**9), "c" * 64: (5, recent * 10**9),
+             digest(b"pdf"): (3, long_ago * 10**9)}
+    view = view_of(used, blobs=names)
+    # Just seen: nothing goes.
+    assert sync_store.removable_blobs(view, sync_store.remember_blobs({}, view, NOW), NOW) == []
+    seen = {name: [size, modified, long_ago] for name, (size, modified) in names.items()}
+    seen["b" * 64] = [5, long_ago * 10**9, recent]  # This PC saw it only a day ago.
+    assert sync_store.removable_blobs(view, seen, NOW) == ["a" * 64]
+    # Written again (another time): seen anew.
+    again = view_of(used, blobs={**names, "a" * 64: (5, recent * 10**9)})
+    assert sync_store.remember_blobs(seen, again, NOW)["a" * 64] == [5, recent * 10**9, seconds(NOW)]
+
+
+def test_blob_removal_is_limited_a_day(monkeypatch):
+    long_ago = seconds(NOW - timedelta(days=4))
+    names = {f"{n:064x}": (10, (long_ago + n) * 10**9) for n in range(5)}
+    seen = {name: [size, modified, long_ago] for name, (size, modified) in names.items()}
+    monkeypatch.setattr(sync_store, "BLOB_REMOVE_LIMIT", 3)
+    assert sync_store.removable_blobs(view_of(blobs=names), seen, NOW) == sorted(names)[:3]
+    monkeypatch.setattr(sync_store, "BLOB_REMOVE_LIMIT", 100)
+    monkeypatch.setattr(sync_store, "BLOB_REMOVE_BYTES", 25)
+    assert len(sync_store.removable_blobs(view_of(blobs=names), seen, NOW)) == 2
+
+
+def test_the_cleaner_leaves_a_blob_written_again_since_it_looked(store):
+    name = put(store, b"old", True)
+    view = store.view()
+    path = store.blobs / name
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))  # Another PC wrote it again.
+    cleaner = sync_store.Cleaner(store, view)
+    cleaner.blobs([name])
+    assert path.exists() and cleaner.removed == []
+    cleaner = sync_store.Cleaner(store, store.view())
+    cleaner.blobs([name, "0" * 64])  # One already gone is no failure.
+    assert not path.exists() and cleaner.removed == [f"blobs/{name}"]
+
+
+def test_leftovers_and_copies_google_drive_named_again_are_tidied(store):
+    stale = store.blobs / ".blob.old.tmp"
+    stale.write_bytes(b"half")
+    old = seconds(NOW - timedelta(days=2))
+    os.utime(stale, (old, old))
+    fresh = store.gens / ".x.gen.new.tmp"
+    fresh.write_bytes(b"half")
+    os.utime(fresh, (seconds(NOW), seconds(NOW)))
+    name = put(store, b"text", True)
+    (store.blobs / (digest(b"text") + " (1).z")).write_bytes((store.blobs / name).read_bytes())
+    lone = local_history.blob_name(digest(b"alone"), True)
+    (store.blobs / (digest(b"alone") + " (1).z")).write_bytes(zlib.compress(b"alone"))
+    wrong = digest(b"wrong")
+    (store.blobs / (wrong + " (1).z")).write_bytes(zlib.compress(b"not it"))
+    store.write_generation(generation(ids(7)))
+    (store.gens / f"{ids(7)} (1).gen").write_bytes((store.gens / f"{ids(7)}.gen").read_bytes())
+    store.write_generation(generation(ids(8)))
+    (store.gens / f"{ids(8)}.gen").rename(store.gens / f"{ids(8)} (1).gen")
+    mine, theirs = "a" * 32, "b" * 32
+    for identity in (mine, theirs):
+        (store.devices / f"{identity} (1).json").write_text("{}", "utf-8")
+    cleaner = sync_store.Cleaner(store, store.view())
+    cleaner.leftovers(mine, NOW)
+    assert not stale.exists() and fresh.exists()
+    # The copy of a blob that is there goes, a lone right copy takes its name, a wrong one stays.
+    assert sorted(path.name for path in store.blobs.iterdir()) == sorted([name, lone, wrong + " (1).z"])
+    assert sorted(path.name for path in store.gens.iterdir() if not path.name.startswith(".")) \
+        == [f"{ids(7)}.gen", f"{ids(8)}.gen"]
+    assert sorted(path.name for path in store.devices.iterdir()) == [f"{theirs} (1).json"]
+
+
+def test_a_pc_taken_off_the_list_is_no_longer_kept_for(store):
+    store.write_device(device(ids(1), identity="e" * 32))
+    assert sync_store.forget_device(store, "e" * 32) and store.view().devices == {}
+    assert not sync_store.forget_device(store, "e" * 32)
+    with pytest.raises(ValueError):
+        sync_store.forget_device(store, "../x")
+
+
+def test_one_blob_larger_than_the_day_s_bytes_does_not_hold_up_the_rest(monkeypatch):
+    long_ago = seconds(NOW - timedelta(days=4))
+    names = {f"{n:064x}": ((30 if n == 0 else 10), (long_ago + n) * 10**9) for n in range(4)}
+    seen = {name: [size, modified, long_ago] for name, (size, modified) in names.items()}
+    monkeypatch.setattr(sync_store, "BLOB_REMOVE_BYTES", 25)
+    ordered = sorted(names)
+    # The large one goes on a day of its own; the others are not held up behind it.
+    assert sync_store.removable_blobs(view_of(blobs=names), seen, NOW) == [ordered[0]]
+    del names[ordered[0]]
+    assert sync_store.removable_blobs(view_of(blobs=names), seen, NOW) == ordered[1:3]
+
+
+def test_a_blob_left_only_under_a_copy_name_is_put_back_when_its_content_is_right(store):
+    name = local_history.blob_name(digest(b"text"), True)
+    (store.blobs / (digest(b"text") + " (2).z")).write_bytes(zlib.compress(b"wrong"))
+    (store.blobs / (digest(b"text") + " (1).z")).write_bytes(zlib.compress(b"text"))
+    assert {key: sorted(value) for key, value in store.view().copies.items()}         == {name: [digest(b"text") + " (1).z", digest(b"text") + " (2).z"]}
+    assert store.recover({name, "0" * 64}) == {name}
+    assert name in store.view().blobs
+    assert store.recover({name}) == set()  # Already there.

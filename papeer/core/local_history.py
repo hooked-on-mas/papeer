@@ -778,12 +778,13 @@ class _Content:
             raise BlobDamaged()
 
 
-def stored_content(path: Path, cancel=None, limit: int | None = None) -> Iterator[bytes]:
+def stored_content(path: Path, cancel=None, limit: int | None = None, *, expected: str | None = None) -> Iterator[bytes]:
     """The content of the blob file at `path` (named as blob_name), checked against its name once read to
     the end, and against `limit` (the most it may hold) all along. A file that cannot be opened or read
     raises SourceUnreadable (perhaps for a moment); content that is not the one named, or longer than
-    `limit`, BlobDamaged. What the caller does with each piece (writing it) raises as it is."""
-    content = _Content(path.name, limit)
+    `limit`, BlobDamaged. What the caller does with each piece (writing it) raises as it is. `expected` is
+    the blob name to check it against when the file is named otherwise (a copy Google Drive renamed)."""
+    content = _Content(expected or path.name, limit)
     try:
         stream = path.open("rb")
     except OSError as exc:
