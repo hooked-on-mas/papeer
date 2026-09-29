@@ -98,7 +98,7 @@ pytest は `tests/conftest.py` で `LOCALAPPDATA`・`XDG_DATA_HOME`・`XDG_STATE
 
 CI（`.github/workflows/ci.yml`）は push ごとに Windows と Linux（ubuntu-22.04）で、`just lint`・`just test` と同じ検査に加えて `frontend/openapi.json` とライセンス台帳が最新か（`--check`）、Rust の `cargo fmt --check`・`cargo clippy --release --all-targets -- -D warnings`・`cargo test --release`（`lib.rs`・`sidecar.rs` の単体テスト）を実行します。フロントエンドの検査（tsc・ESLint・node:test・`pnpm build`）は OS に依存しないため Windows だけで行います。同じリポジトリのブランチからの pull request は push したときの結果を使い、pull request として検査するのは fork からのものだけです。実際の AI は呼びません。
 
-GitHub の Actions の画面から手動で実行（Run workflow）すると、macOS（Apple Silicon）での同じ検査と、各 OS で sidecar を `just build-sidecar` で作ってスモークテストし、`sidecar.rs` の `#[ignore]` のテスト（作った sidecar をアプリと同じように起動し、`/shutdown` と、標準入力のパイプが閉じたときに自分で終わること）を通すジョブも選べます。非公開のリポジトリでは Actions の実行時間が無料枠から引かれ、Linux の 1 分は 1 分、Windows は 2 分、macOS は 10 分として数えられるため、macOS と sidecar のビルドは push では動かしません。
+GitHub の Actions の画面から手動で実行（Run workflow）すると、macOS（Apple Silicon）での同じ検査と、各 OS で sidecar を `just build-sidecar` で作ってスモークテストし、`sidecar.rs` の `#[ignore]` のテスト（作った sidecar をアプリと同じように起動し、`/shutdown` と、標準入力のパイプが閉じたときに自分で終わること）を通すジョブ、Linux と macOS のライセンス台帳を作るジョブ（`licenses`。「依存ライブラリ」）も選べます。非公開のリポジトリでは Actions の実行時間が無料枠から引かれ、Linux の 1 分は 1 分、Windows は 2 分、macOS は 10 分として数えられるため、macOS と sidecar のビルドは push では動かしません。
 
 ### E2E テスト
 
@@ -239,9 +239,10 @@ Linux 版は `.deb` だけで、WebKitGTK 4.1 と GTK 3 に依存します。タ
 
 ### ライセンス台帳
 
-[docs/dependency-license-inventory.json](docs/dependency-license-inventory.json) に、ロックファイル（`uv.lock`・`frontend/pnpm-lock.yaml`・`frontend/src-tauri/Cargo.lock`）にあるすべての依存の版・宣言されたライセンス・本番/開発の区別と、同梱のフォント・PDFium などを記録しています。依存を追加・更新したら `just licenses`（`tools/license_inventory.py`）で作り直し、台帳もコミットしてください。
+[docs/dependency-license-inventory.json](docs/dependency-license-inventory.json)（Windows。ほかの OS は下記）に、ロックファイル（`uv.lock`・`frontend/pnpm-lock.yaml`・`frontend/src-tauri/Cargo.lock`）にあるすべての依存の版・宣言されたライセンス・本番/開発の区別と、同梱のフォント・PDFium などを記録しています。依存を追加・更新したら `just licenses`（`tools/license_inventory.py`）で作り直し、台帳もコミットしてください。
 
-- ネットワークは使いません。依存関係はロックファイルから、ライセンスは手元にインストール済みの情報（`.venv` の METADATA、`frontend/node_modules` の `package.json`、`cargo metadata --offline` で読む Cargo のキャッシュ）から読みます。先に `just setup` を実行し、Rust の crate は一度ビルドするか `frontend/src-tauri` で `cargo fetch` を実行して取得しておいてください。対象が Windows x64 なので Windows で実行します。
+- ネットワークは使いません。依存関係はロックファイルから、ライセンスは手元にインストール済みの情報（`.venv` の METADATA、`frontend/node_modules` の `package.json`、`cargo metadata --offline` で読む Cargo のキャッシュ）から読みます。先に `just setup` を実行し、Rust の crate は一度ビルドするか `frontend/src-tauri` で `cargo fetch` を実行して取得しておいてください。
+- 台帳は配布する OS ごとに作ります。Windows x64 のものが `docs/dependency-license-inventory.json`、macOS（Apple Silicon・Intel）と Linux x64 のものが `docs/dependency-license-inventory.macos-arm64.json`・`.macos-x64.json`・`.linux-x64.json` です。OS ごとに使う依存（Python の環境マーカー、npm の `os`・`cpu`・`libc`、Rust の target）と、インストールされたライセンスの情報が違うため、それぞれの OS の上で作ります。Windows のものは Windows で `just licenses`、macOS と Linux のものは CI を手動で実行して `licenses` を選ぶ（Mac は `macos` も選ぶ）と作られるので、成果物をダウンロードして `docs/` にコミットしてください。まだ作っていない OS の台帳は `--check` で確かめません（作ったものは確かめます）。
 - 台帳には元にしたロックファイルの sha256（`sourceFiles`）を記録します。直接依存もロックファイルに記録されるので、依存を変えればロックファイルが変わり、台帳を作り直すまで `tests/test_license_inventory.py` が失敗します（ツールの設定や scripts だけの変更では失敗しません）。`just licenses check` はこの一致だけを確かめます。
 - 並列のブランチで台帳がマージ時に衝突したら、どちらか片方を採ってから `just licenses` で作り直してください。
 - `just bump` は自パッケージの版しか変えないため、台帳が最新なら同時にハッシュを書き換えます（最新でなければ `just licenses` を促します）。

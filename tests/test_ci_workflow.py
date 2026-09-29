@@ -37,6 +37,7 @@ def test_ci_runs_on_every_push_and_pull_request_and_by_hand_with_a_read_only_tok
     # macOS minutes count ten times on a private repository: never unless asked for.
     assert inputs["macos"]["type"] == "boolean" and inputs["macos"]["default"] is False
     assert inputs["sidecar"]["type"] == "boolean"
+    assert inputs["licenses"]["type"] == "boolean" and inputs["licenses"]["default"] is False
     assert workflow["permissions"] == {"contents": "read"}
     # Every commit on main keeps its result; a newer push to another branch cancels the older run, and a
     # run by hand is in a group of its own (a push does not cancel it, nor it a push's run).
@@ -44,7 +45,7 @@ def test_ci_runs_on_every_push_and_pull_request_and_by_hand_with_a_read_only_tok
         "group": "ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}-${{ github.event_name }}",
         "cancel-in-progress": True}
     jobs = workflow["jobs"]
-    assert set(jobs) == {"python", "frontend", "rust", "sidecar"}
+    assert set(jobs) == {"python", "frontend", "rust", "sidecar", "licenses"}
     for job in jobs.values():
         assert "permissions" not in job
         checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
@@ -117,6 +118,21 @@ def test_the_sidecar_is_built_as_the_release_builds_it_then_started_as_the_app_s
     assert runs.index("uv sync --locked --all-groups") < runs.index("just build-sidecar")
     assert runs[-1] == "cargo test --release sidecar -- --ignored"
     assert "TAURI_CONFIG" not in sidecar.get("env", {})  # The built sidecar folder is there.
+
+
+def test_the_license_inventories_of_linux_and_macos_are_made_on_them_by_hand():
+    licenses = _load("ci.yml")["jobs"]["licenses"]
+    assert licenses["if"] == "github.event_name == 'workflow_dispatch' && inputs.licenses"
+    # Windows' inventory is made on a Windows PC (just licenses); the others only on their own runners.
+    assert _platforms(licenses, macos=False) == ["ubuntu-22.04"]
+    assert _platforms(licenses, macos=True) == ["ubuntu-22.04", "macos-latest", "macos-15-intel"]
+    runs = _runs(licenses)
+    # Everything the inventory reads offline is installed first.
+    for command in ("uv sync --locked --all-groups", "pnpm --dir frontend install --frozen-lockfile",
+                    "cargo fetch --locked --manifest-path frontend/src-tauri/Cargo.toml"):
+        assert runs.index(command) < runs.index("uv run python tools/license_inventory.py")
+    upload = next(step for step in licenses["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
+    assert upload["with"]["path"] == "docs/dependency-license-inventory.*.json"
 
 
 def test_the_justfile_sets_variables_the_same_way_in_every_shell():

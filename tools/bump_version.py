@@ -6,9 +6,9 @@
   uv run python tools/bump_version.py --notes 0.3.0   # print the CHANGELOG section of 0.3.0 (release notes)
 
 Only this project's own version is touched: the lock files keep every dependency as it is.
-Because of that, the lock file hashes in the license inventory
-(docs/dependency-license-inventory.json, tools/license_inventory.py) are refreshed in the same
-write when the inventory matched the files before the bump; a stale inventory is left alone.
+Because of that, the lock file hashes in the license inventories
+(docs/dependency-license-inventory*.json, one per platform, tools/license_inventory.py) are refreshed in
+the same write in each inventory that matched the files before the bump; a stale one is left alone.
 The version is plain MAJOR.MINOR.PATCH. Pre-release and build suffixes are refused because
 the MSI installer (WiX) takes numbers only and PEP 440 would spell them differently from
 Cargo and npm, so the four manifests could no longer agree character for character.
@@ -29,7 +29,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from papeer.core.fileio import atomic_write_bytes  # noqa: E402
-from tools.license_inventory import INVENTORY, refresh_source_hashes, stale_sources  # noqa: E402
+from tools.license_inventory import inventory_files, refresh_source_hashes, stale_sources  # noqa: E402
 
 CHANGELOG = "CHANGELOG.md"
 
@@ -208,21 +208,24 @@ def bump(version: str, root: Path = ROOT, today: date | None = None, out=None) -
             new_text = text[:match.start("v")] + version + text[match.end("v"):]
             writes.append((root / spot.path, text, new_text))
             changed[spot.path] = new_text.encode("utf-8")
-    inventory = root / INVENTORY
-    inventory_stale = False
-    if inventory.exists():
-        inventory_text = _read_text(inventory, INVENTORY)
+    stale_inventories, refreshed = [], []
+    for relative in inventory_files(root):
+        inventory = root / relative
+        inventory_text = _read_text(inventory, relative)
         # Dependencies stay as they are, so a current inventory stays current: only its hashes move.
-        inventory_stale = bool(stale_sources(json.loads(inventory_text), root))
-        if not inventory_stale:
+        if stale_sources(json.loads(inventory_text), root):
+            stale_inventories.append(relative)
+        else:
             writes.append((inventory, inventory_text, refresh_source_hashes(inventory_text, changed)))
+            refreshed.append(relative)
     _write_all(writes)
     for spot, _, match in reads:
         print(f"  {match['v']:<8} -> {version}  {spot.path}", file=out)
-    if inventory_stale:
-        print(f"注意: {INVENTORY} が依存の変更に追いついていません。just licenses で作り直してください。", file=out)
-    elif inventory.exists():
-        print(f"  {INVENTORY} のロックファイルのハッシュを更新しました。", file=out)
+    for relative in stale_inventories:
+        print(f"注意: {relative} が依存の変更に追いついていません。just licenses（macOS・Linux のものは CI の "
+              "licenses ジョブ）で作り直してください。", file=out)
+    for relative in refreshed:
+        print(f"  {relative} のロックファイルのハッシュを更新しました。", file=out)
     print(f"{CHANGELOG} の [Unreleased] を [{version}] にしました。内容を確認してからコミットし、"
           f"タグ v{version} を付けてください。", file=out)
 

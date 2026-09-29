@@ -7,9 +7,10 @@
 #            behind #[cfg(not(debug_assertions))] and is compiled only with --release) (Windows and Linux)
 #
 # Run by hand (Actions → CI → Run workflow), it can also check macOS (python and rust on an Apple Silicon
-# runner), and build the sidecar on every platform and smoke-test it (`just build-sidecar`: the onedir
+# runner), build the sidecar on every platform and smoke-test it (`just build-sidecar`: the onedir
 # sidecar started in a throwaway folder, and the ignored tests of sidecar.rs that start it as the app
-# does). The repository is private, so runner minutes count against the plan's allowance: a Linux minute
+# does), and make the license inventories of Linux and macOS (`licenses`: tools/license_inventory.py reads
+# the licenses from what is installed, so each platform's is made on it; commit the uploaded files). The repository is private, so runner minutes count against the plan's allowance: a Linux minute
 # counts once, a Windows minute twice and a macOS minute ten times; macOS and the sidecar builds are
 # therefore never run on a push. Estimated (not measured): a push costs some 60-80 minutes of the allowance,
 # mostly the Windows jobs counted twice; a manual run with macOS and the sidecar builds several hundred.
@@ -37,6 +38,10 @@ on:
         description: "各 OS で sidecar をビルドしてスモークテストする（Windows・Linux、macOS を選べば Mac 2 種も）"
         type: boolean
         default: true
+      licenses:
+        description: "Linux（macOS を選べば Mac 2 種も）のライセンス台帳を作り、成果物にする（docs/ にコミットする）"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -277,3 +282,62 @@ jobs:
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "256"
           CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
         run: cargo test --release sidecar -- --ignored
+
+  # By hand only. The license inventories of Linux and the two Macs (tools/license_inventory.py), each made on
+  # its own platform from the packages installed there; download the artifact and commit its files to docs/.
+  # Windows' inventory is made on a Windows PC (`just licenses`). `--check` in the python job then keeps each
+  # one in step with the lock files.
+  licenses:
+    if: github.event_name == 'workflow_dispatch' && inputs.licenses
+    name: licenses (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.macos && '["ubuntu-22.04", "macos-latest", "macos-15-intel"]' || '["ubuntu-22.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      UV_LOCKED: "1"
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 12
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: stable
+
+      - name: uv sync
+        run: uv sync --locked --all-groups
+
+      - name: pnpm install
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      # The inventory reads the crates offline: fetch them first (every platform's, as cargo fetch does).
+      - name: cargo fetch
+        run: cargo fetch --locked --manifest-path frontend/src-tauri/Cargo.toml
+
+      - name: License inventory
+        run: uv run python tools/license_inventory.py
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: license-inventory-${{ matrix.os }}
+          path: docs/dependency-license-inventory.*.json
+          if-no-files-found: error

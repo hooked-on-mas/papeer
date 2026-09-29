@@ -1,31 +1,41 @@
-"""Generate docs/dependency-license-inventory.json: every locked dependency and its declared license.
+"""Generate the license inventory of every locked dependency and its declared license, one per platform.
 
-  uv run python tools/license_inventory.py          # regenerate the inventory (just licenses)
-  uv run python tools/license_inventory.py --check  # the lock files still match it (exit 1 if not)
+  uv run python tools/license_inventory.py          # regenerate this platform's inventory (just licenses)
+  uv run python tools/license_inventory.py --check  # the lock files still match every inventory (exit 1 if not)
+
+One inventory for each platform the app is built for (TARGETS): docs/dependency-license-inventory.json for
+Windows x64, and docs/dependency-license-inventory.<target>.json for macOS (Apple Silicon, Intel) and Linux
+x64. Each is made on its own platform, since the licenses are read from what is installed there: run it on
+Windows for Windows, and use the CI workflow's `licenses` job (run by hand) for macOS and Linux, then
+commit the files it uploads.
 
 Nothing is fetched from the network. The dependency graphs come from the lock files, the licenses
 from what is installed on this machine:
 
   Python      uv.lock + the METADATA of the wheels in .venv          (uv sync --all-groups)
   JavaScript  pnpm-lock.yaml + package.json in frontend/node_modules (pnpm install), and `pnpm licenses list`
-  Rust        `cargo tree` / `cargo metadata --offline --locked` (the crates cached by a previous cargo build)
+  Rust        `cargo tree` / `cargo metadata --offline --locked` (the crates cached by a previous cargo build
+              or `cargo fetch`)
 
 A package that is not installed here (an optional binary for another OS/CPU, a wheel for another
-platform) is recorded with license "unknown". The target is Windows x64, so run it on Windows.
+platform) is recorded with license "unknown".
 
-The inventory records the sha256 of the lock files it was made from (sourceFiles);
+Each inventory records the sha256 of the lock files it was made from (sourceFiles);
 tests/test_license_inventory.py fails when they no longer match, so a dependency change must come
-with a regenerated inventory. `just bump` changes only the project's own version in those files and
-refreshes the hashes itself (refresh_source_hashes) when the inventory was current before the bump.
+with regenerated inventories. The Windows one must be there; one for another platform is checked when it
+has been made. `just bump` changes only the project's own version in those files and refreshes the hashes
+itself (refresh_source_hashes) in each inventory that was current before the bump.
 """
 from __future__ import annotations
 
 import argparse
 from collections import Counter, deque
+from dataclasses import dataclass, field
 from datetime import date
 import hashlib
 import json
 from pathlib import Path
+import platform
 import re
 import shutil
 import subprocess
@@ -33,10 +43,56 @@ import sys
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-INVENTORY = "docs/dependency-license-inventory.json"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 PROJECT = "papeer"
-RUST_TARGET = "x86_64-pc-windows-msvc"
+
+
+@dataclass(frozen=True)
+class Target:
+    """A platform the app is built for, and what selects its dependencies in each lock file."""
+    name: str
+    label: str
+    rust: str  # The Rust target triple.
+    js_os: str  # package.json "os" / "cpu" / "libc", as pnpm-lock.yaml records them.
+    js_cpu: str
+    js_libc: str | None
+    # The environment markers of uv.lock that differ between platforms (CPython 3.12 on each).
+    markers: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def inventory(self) -> str:
+        return ("docs/dependency-license-inventory.json" if self.name == "windows-x64"
+                else f"docs/dependency-license-inventory.{self.name}.json")
+
+
+TARGETS = {target.name: target for target in (
+    Target("windows-x64", "Windows 11 x64", "x86_64-pc-windows-msvc", "win32", "x64", None,
+           {"sys_platform": "win32", "os_name": "nt", "platform_system": "Windows", "platform_machine": "AMD64"}),
+    Target("macos-arm64", "macOS 13.3+ Apple Silicon", "aarch64-apple-darwin", "darwin", "arm64", None,
+           {"sys_platform": "darwin", "os_name": "posix", "platform_system": "Darwin", "platform_machine": "arm64"}),
+    Target("macos-x64", "macOS 13.3+ Intel", "x86_64-apple-darwin", "darwin", "x64", None,
+           {"sys_platform": "darwin", "os_name": "posix", "platform_system": "Darwin", "platform_machine": "x86_64"}),
+    Target("linux-x64", "Linux x64 (glibc 2.35+, Ubuntu 22.04+)", "x86_64-unknown-linux-gnu", "linux", "x64", "glibc",
+           {"sys_platform": "linux", "os_name": "posix", "platform_system": "Linux", "platform_machine": "x86_64"}),
+)}
+WINDOWS = TARGETS["windows-x64"]
+# The Windows inventory, which must always be there (the other platforms' are made on their CI runners).
+INVENTORY = WINDOWS.inventory
+PYTHON_MARKERS = {"platform_python_implementation": "CPython", "implementation_name": "cpython",
+                  "python_version": "3.12", "python_full_version": "3.12.0"}
+
+
+def host_target(system: str | None = None, machine: str | None = None) -> Target | None:
+    """The target this machine is (sys.platform and platform.machine() unless given), or None."""
+    system = system or sys.platform
+    machine = (machine or platform.machine()).lower()
+    if system == "win32" and machine in ("amd64", "x86_64"):
+        return WINDOWS
+    if system == "darwin":
+        return {"arm64": TARGETS["macos-arm64"], "x86_64": TARGETS["macos-x64"]}.get(machine)
+    if system.startswith("linux") and machine in ("x86_64", "amd64"):
+        return TARGETS["linux-x64"]
+    return None
 # The lock files the dependency graphs are read from, in the order they are listed in the inventory.
 # Only the lock files: each one also records the project's direct dependencies (uv.lock and
 # Cargo.lock in the project's own entry, pnpm-lock.yaml in its importers), so a dependency change
@@ -100,21 +156,35 @@ def refresh_source_hashes(text: str, contents: dict[str, bytes]) -> str:
     return dumps(inventory)
 
 
+def inventory_files(root: Path = ROOT) -> list[str]:
+    """The inventories that have been made, in the order of TARGETS."""
+    return [target.inventory for target in TARGETS.values() if (root / target.inventory).exists()]
+
+
 def check(root: Path = ROOT, out=None) -> bool:
+    """Whether every inventory there is was made from the lock files as they are; the Windows one must be there."""
     out = sys.stdout if out is None else out
-    try:
-        inventory = json.loads((root / INVENTORY).read_bytes())
-    except FileNotFoundError:
-        print(f"{INVENTORY} がありません。just licenses で作成してください。", file=out)
-        return False
-    stale = stale_sources(inventory, root)
-    if not stale:
-        print(f"{INVENTORY} はロックファイルと一致しています。", file=out)
-        return True
-    print(f"{INVENTORY} の作成後に変更されたファイルがあります。just licenses で作り直してください:", file=out)
-    for path in stale:
-        print(f"  {path}", file=out)
-    return False
+    current = True
+    for target in TARGETS.values():
+        try:
+            inventory = json.loads((root / target.inventory).read_bytes())
+        except FileNotFoundError:
+            if target is WINDOWS:
+                print(f"{target.inventory} がありません。Windows で just licenses を実行して作成してください。", file=out)
+                current = False
+            else:
+                print(f"{target.inventory} はまだ作られていません（CI の licenses ジョブで作れます）。", file=out)
+            continue
+        stale = stale_sources(inventory, root)
+        if not stale:
+            print(f"{target.inventory} はロックファイルと一致しています。", file=out)
+            continue
+        where = "Windows で just licenses" if target is WINDOWS else "CI の licenses ジョブ"
+        print(f"{target.inventory} の作成後に変更されたファイルがあります。{where}で作り直してください:", file=out)
+        for path in stale:
+            print(f"  {path}", file=out)
+        current = False
+    return current
 
 
 # --- helpers ------------------------------------------------------------------------------------
@@ -138,15 +208,16 @@ def run(command: list[str], cwd: Path) -> str:
 
 
 def site_packages(root: Path) -> Path:
-    path = root / ".venv" / "Lib" / "site-packages"
-    if not path.is_dir():
-        raise InventoryError(f"{rel(path, root)} がありません。uv sync --all-groups を実行してください。")
-    return path
+    """The virtual environment's packages: .venv/Lib/site-packages on Windows, .venv/lib/python3.x/site-packages elsewhere."""
+    for path in (root / ".venv" / "Lib" / "site-packages", *sorted((root / ".venv" / "lib").glob("python3*/site-packages"))):
+        if path.is_dir():
+            return path
+    raise InventoryError(".venv の site-packages がありません。uv sync --all-groups を実行してください。")
 
 
 # --- Python -------------------------------------------------------------------------------------
 
-def python_inventory(root: Path = ROOT) -> list[dict]:
+def python_inventory(root: Path = ROOT, target: Target = WINDOWS) -> list[dict]:
     from importlib import metadata
 
     from packaging.markers import Marker
@@ -161,16 +232,7 @@ def python_inventory(root: Path = ROOT) -> list[dict]:
         if name:
             dist_info[canonicalize_name(name)] = dist
 
-    windows_environment = {
-        "sys_platform": "win32",
-        "os_name": "nt",
-        "platform_system": "Windows",
-        "platform_machine": "AMD64",
-        "platform_python_implementation": "CPython",
-        "implementation_name": "cpython",
-        "python_version": "3.12",
-        "python_full_version": "3.12.0",
-    }
+    environment = {**target.markers, **PYTHON_MARKERS}
 
     def reachable(roots: list[dict]) -> set[str]:
         seen = set()
@@ -178,7 +240,7 @@ def python_inventory(root: Path = ROOT) -> list[dict]:
         queue = deque(roots)
         while queue:
             dependency = queue.popleft()
-            if dependency.get("marker") and not Marker(dependency["marker"]).evaluate(windows_environment):
+            if dependency.get("marker") and not Marker(dependency["marker"]).evaluate(environment):
                 continue
             name = canonicalize_name(dependency["name"])
             extras = tuple(sorted(dependency.get("extra", [])))
@@ -196,7 +258,7 @@ def python_inventory(root: Path = ROOT) -> list[dict]:
     runtime_roots, build_roots, dev_roots = project["dependencies"], groups.get("build", []), groups.get("dev", [])
     direct = {scope: {canonicalize_name(x["name"]) for x in roots}
               for scope, roots in (("runtime", runtime_roots), ("build", build_roots), ("development", dev_roots))}
-    reached = {"windows-runtime": reachable(runtime_roots), "build": reachable(build_roots),
+    reached = {"runtime": reachable(runtime_roots), "build": reachable(build_roots),
                "development": reachable(dev_roots)}
 
     rows = []
@@ -234,7 +296,16 @@ def python_inventory(root: Path = ROOT) -> list[dict]:
 
 # --- JavaScript ---------------------------------------------------------------------------------
 
-def javascript_inventory(root: Path = ROOT) -> list[dict]:
+def platform_matches(values: list[str] | None, wanted: str | None) -> bool:
+    """Whether a package.json "os", "cpu" or "libc" list admits `wanted`: named in it (when it names any
+    without "!"), and not excluded ("!name"). No list, or nothing wanted (libc off Linux), admits it."""
+    if not values or wanted is None:
+        return True
+    allowed = [value for value in values if not value.startswith("!")]
+    return f"!{wanted}" not in values and (not allowed or wanted in allowed)
+
+
+def javascript_inventory(root: Path = ROOT, target: Target = WINDOWS) -> list[dict]:
     import yaml
 
     frontend = root / "frontend"
@@ -317,8 +388,9 @@ def javascript_inventory(root: Path = ROOT) -> list[dict]:
         platform = {field: entry[field] for field in ("os", "cpu", "libc") if field in entry}
         if platform:
             row["platformRestriction"] = platform
-        row["targetRelevant"] = (("os" not in platform or "win32" in platform["os"])
-                                 and ("cpu" not in platform or "x64" in platform["cpu"]))
+        row["targetRelevant"] = (platform_matches(platform.get("os"), target.js_os)
+                                 and platform_matches(platform.get("cpu"), target.js_cpu)
+                                 and platform_matches(platform.get("libc"), target.js_libc))
         rows.append(row)
     return rows
 
@@ -340,19 +412,19 @@ def pnpm_licenses_summary(rows: list[dict], root: Path = ROOT) -> dict:
 
 # --- Rust ---------------------------------------------------------------------------------------
 
-def rust_inventory(root: Path = ROOT) -> list[dict]:
+def rust_inventory(root: Path = ROOT, target: Target = WINDOWS) -> list[dict]:
     tauri = root / "frontend" / "src-tauri"
 
     def cargo_tree(*options: str) -> set[tuple[str, str]]:
         # cargo tree applies the feature resolver per target and dependency kind; the resolve graph of
         # cargo metadata unifies features and lists crates that are never built for the target.
-        output = run(["cargo", "tree", "--locked", "--offline", "--target", RUST_TARGET, "--prefix", "none",
+        output = run(["cargo", "tree", "--locked", "--offline", "--target", target.rust, "--prefix", "none",
                       "--format", "{p}", *options], tauri)
         return {match.groups() for line in output.splitlines() if (match := re.match(r"([^ ]+) v([^ ]+)", line))}
 
     # The license and manifest of each exact crate (cargo reads them from its local cache).
     meta = json.loads(run(["cargo", "metadata", "--offline", "--locked", "--format-version", "1",
-                           "--filter-platform", RUST_TARGET], tauri))
+                           "--filter-platform", target.rust], tauri))
     packages = {(package["name"], package["version"]): package for package in meta["packages"]}
     members = {(package["name"], package["version"]) for package in meta["packages"]
                if package["id"] in meta["workspace_members"]}
@@ -405,14 +477,19 @@ def bundled_assets(root: Path = ROOT) -> list[dict]:
     dist_info = sorted(packages.glob("pypdfium2-*.dist-info"))
     if len(dist_info) != 1:
         raise InventoryError("pypdfium2 の dist-info を 1 つに特定できません。uv sync --all-groups を実行してください。")
-    pdfium_licenses = dist_info[0] / "licenses" / "data" / "windows_x64" / "BUILD_LICENSES"
+    # One platform's in each wheel: licenses/data/<windows_x64, darwin_arm64, linux_x64…>/BUILD_LICENSES.
+    found = sorted((dist_info[0] / "licenses" / "data").glob("*/BUILD_LICENSES"))
+    binaries = sorted((packages / "pypdfium2_raw").glob("*pdfium.*"))
+    if len(found) != 1 or len(binaries) != 1:
+        raise InventoryError("pypdfium2 の PDFium とそのライセンスを 1 つに特定できません。uv sync --all-groups を実行してください。")
+    pdfium_licenses = found[0]
     pdfjs = root / "frontend" / "public" / "pdfjs"
     return [
         {
             "name": "PDFium (via pypdfium2)",
             "version": f"{pdfium_info['major']}.{pdfium_info['minor']}.{pdfium_info['build']}.{pdfium_info['patch']}",
             "license": "BSD-style PDFium license plus bundled third-party licenses",
-            "binary": rel(packages / "pypdfium2_raw" / "pdfium.dll", root),
+            "binary": rel(binaries[0], root),
             "licenseEvidence": rel(pdfium_licenses, root),
             "bundledLicenseFiles": sorted(item.name for item in pdfium_licenses.iterdir() if item.is_file()),
         },
@@ -451,14 +528,14 @@ def summarize(groups: dict[str, list[dict]]) -> dict:
         }
     js = groups["javascript"]
     summary["javascript"].update({
-        "windowsX64RelevantRows": sum(row["targetRelevant"] for row in js),
-        "windowsX64RelevantUnknownLicenseRows": sum(row["targetRelevant"] and row["license"] == "unknown" for row in js),
-        "windowsX64ProductionRows": sum(row["targetRelevant"] and "production" in row["scopes"] for row in js),
+        "targetRelevantRows": sum(row["targetRelevant"] for row in js),
+        "targetRelevantUnknownLicenseRows": sum(row["targetRelevant"] and row["license"] == "unknown" for row in js),
+        "targetProductionRows": sum(row["targetRelevant"] and "production" in row["scopes"] for row in js),
     })
     return summary
 
 
-def method(summary: dict, groups: dict[str, list[dict]]) -> list[str]:
+def method(summary: dict, groups: dict[str, list[dict]], target: Target = WINDOWS) -> list[str]:
     js, py = summary["javascript"], summary["python"]
     production = [row for row in groups["javascript"] if "production" in row["scopes"]]
     missing = [row for row in production if not row["installedOnAuditMachine"]]
@@ -466,14 +543,14 @@ def method(summary: dict, groups: dict[str, list[dict]]) -> list[str]:
     omitted = js["installedProductionPairsOmittedByPnpmLicensesCommand"]
     omitted_licenses = sorted({row["license"] for row in production
                                if {"name": row["name"], "version": row["version"]} in omitted})
-    unknown_js_relevant = js["windowsX64RelevantUnknownLicenseRows"]
-    unknown_py_windows = sum(row["license"] == "unknown" and row["scopes"] != ["other-platform-in-lock"]
-                             for row in groups["python"])
+    unknown_js_relevant = js["targetRelevantUnknownLicenseRows"]
+    unknown_py_target = sum(row["license"] == "unknown" and row["scopes"] != ["other-platform-in-lock"]
+                            for row in groups["python"])
     return [
         "Generated by tools/license_inventory.py (just licenses) from local files only: no registry is queried. "
         "sourceFiles holds the sha256 of the lock files it was made from.",
         f"Python: traverse uv.lock from the {PROJECT} runtime, build, and dev roots; evaluate dependency markers for "
-        "CPython 3.12 on Windows; read installed wheel METADATA License-Expression/License fields and inspect named "
+        f"CPython 3.12 on {target.label}; read installed wheel METADATA License-Expression/License fields and inspect named "
         "local LICENSE files where needed.",
         "JavaScript: traverse pnpm-lock.yaml snapshots from production and development importer roots, including "
         "optional edges; read license values from the exact installed package.json. A missing installed package or "
@@ -485,7 +562,7 @@ def method(summary: dict, groups: dict[str, list[dict]]) -> list[str]:
         f"other OS/CPU combinations). The pnpm license command omits {len(omitted)} installed production pairs listed in "
         f"summary; their package.json files were read directly"
         + (f" and declare {', '.join(omitted_licenses)}." if omitted_licenses else "."),
-        f"Rust: run cargo tree --locked --offline --target {RUST_TARGET} (and --edges normal; --depth 1 for the "
+        f"Rust: run cargo tree --locked --offline --target {target.rust} (and --edges normal; --depth 1 for the "
         "direct dependencies), then read package.license of the exact cached Cargo.toml through cargo metadata "
         "--offline. Other-platform entries in Cargo.lock are excluded.",
         "A production or normal-graph reachability flag means dependency graph inclusion, not proof that code "
@@ -495,18 +572,26 @@ def method(summary: dict, groups: dict[str, list[dict]]) -> list[str]:
         "expression. Unknown means this audit did not verify a license for that locked version.",
         f"Unknown licenses: {js['unknownLicenseRows']} JavaScript rows ({js['productionUnknownLicenseRows']} "
         f"production, {js['developmentUnknownLicenseRows']} development), {unknown_js_relevant} of them relevant "
-        f"to Windows x64; {py['unknownLicenseRows']} Python rows, {unknown_py_windows} of them reachable on "
-        f"Windows; {summary['rust']['unknownLicenseRows']} Rust rows.",
+        f"to {target.label}; {py['unknownLicenseRows']} Python rows, {unknown_py_target} of them reachable on "
+        f"{target.label}; {summary['rust']['unknownLicenseRows']} Rust rows.",
     ]
 
 
-def build(root: Path = ROOT, today: date | None = None) -> dict:
-    if sys.platform != "win32":
-        raise InventoryError("対象は Windows x64 なので Windows 上で実行してください（ライセンスはインストール済みのパッケージから読みます）。")
+def build(root: Path = ROOT, today: date | None = None, target: Target | None = None) -> dict:
+    """The inventory of `target` (this machine's platform by default), which must be this machine's: the
+    licenses are read from the packages installed here."""
+    host = host_target()
+    target = target or host
+    if target is None:
+        raise InventoryError(f"この環境（{sys.platform} {platform.machine()}）向けの台帳はありません。"
+                             f"対象は {', '.join(TARGETS)} です。")
+    if target is not host:
+        raise InventoryError(f"{target.name} の台帳は {target.label} の上で作ってください（ライセンスはインストール済みの"
+                             "パッケージから読みます。macOS・Linux は CI の licenses ジョブで作れます）。")
     groups = {
-        "python": python_inventory(root),
-        "javascript": javascript_inventory(root),
-        "rust": rust_inventory(root),
+        "python": python_inventory(root, target),
+        "javascript": javascript_inventory(root, target),
+        "rust": rust_inventory(root, target),
     }
     summary = summarize(groups)
     js_rows = groups["javascript"]
@@ -518,9 +603,9 @@ def build(root: Path = ROOT, today: date | None = None) -> dict:
     return {
         "schemaVersion": SCHEMA_VERSION,
         "auditDate": (today or date.today()).isoformat(),
-        "target": f"Windows 11 x64; Python 3.12; Rust {RUST_TARGET}",
+        "target": f"{target.label}; Python 3.12; Rust {target.rust}",
         "projectLicense": "AGPL-3.0-or-later (README.md and LICENSE)",
-        "method": method(summary, groups),
+        "method": method(summary, groups, target),
         "sourceFiles": source_hashes(root),
         "summary": summary,
         "packages": groups,
@@ -528,11 +613,11 @@ def build(root: Path = ROOT, today: date | None = None) -> dict:
     }
 
 
-def write(inventory: dict, root: Path = ROOT) -> bool:
-    """Write the inventory; False (and nothing written) when only auditDate would change."""
+def write(inventory: dict, root: Path = ROOT, target: Target = WINDOWS) -> bool:
+    """Write the inventory of `target`; False (and nothing written) when only auditDate would change."""
     from papeer.core.fileio import atomic_write_bytes
 
-    path = root / INVENTORY
+    path = root / target.inventory
     try:
         previous = json.loads(path.read_bytes())
     except (FileNotFoundError, ValueError):
@@ -546,22 +631,25 @@ def write(inventory: dict, root: Path = ROOT) -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--check", action="store_true", help="台帳がいまのロックファイルから作られたものか確かめる")
+    parser.add_argument("--target", choices=list(TARGETS), help="作る台帳の対象（既定はこの PC。この PC のものだけ作れる）")
     args = parser.parse_args(argv)
     try:
         if args.check:
             return 0 if check() else 1
-        inventory = build()
-        changed = write(inventory)
+        target = TARGETS[args.target] if args.target else host_target()
+        inventory = build(target=target)
+        assert target is not None  # build() refuses a machine without a target.
+        changed = write(inventory, target=target)
     except InventoryError as error:
         print(f"エラー: {error}", file=sys.stderr)
         return 1
-    print(f"{INVENTORY} を{'更新しました' if changed else '確認しました（変更なし）'}。")
+    print(f"{target.inventory} を{'更新しました' if changed else '確認しました（変更なし）'}。")
     for ecosystem, values in inventory["summary"].items():
         print(f"  {ecosystem:<10} {values['rows']:>4} 件（直接 {values['directRows']}、"
               f"ライセンス不明 {values['unknownLicenseRows']}）")
-    relevant = inventory["summary"]["javascript"]["windowsX64RelevantUnknownLicenseRows"]
+    relevant = inventory["summary"]["javascript"]["targetRelevantUnknownLicenseRows"]
     if relevant:
-        print(f"注意: Windows x64 で使う JavaScript パッケージにライセンス不明が {relevant} 件あります。", file=sys.stderr)
+        print(f"注意: {target.label} で使う JavaScript パッケージにライセンス不明が {relevant} 件あります。", file=sys.stderr)
     return 0
 
 
