@@ -297,5 +297,5 @@ def ocr_markdown_note(document: dict) -> list[str]:
 def needs_ocr_message(document: dict) -> str | None:
     """Why a paper without translatable text cannot be translated, when pages need OCR."""
     if any(e.get("reason") != "partial" for e in document.get("ocr_pages", [])):
-        return "文字化けや画像だけのページ（要OCR）のため、翻訳できる文字が見つかりませんでした。OCR済みのPDFを追加してください。"
+        return "文字化けや画像だけのページ（要OCR）のため、翻訳できる文字が見つかりませんでした。「翻訳の確認・修正」の OCR の欄から、そのページを OCR で読めます。"
     return None

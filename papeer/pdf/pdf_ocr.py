@@ -45,6 +45,9 @@ PITCH_EM = 1.18
 
 _CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ]")
 _LATIN_WORD = re.compile(r"[A-Za-z]{3,}")
+# A word as English prints it: a letter then lower-case ones. The English model reading Japanese gives
+# runs of capitals and mixed case ("IiIl", "RJEE") far more than such words.
+_ENGLISH_WORD = re.compile(r"[A-Za-z][a-z]{2,}")
 _MATH_SIGN = re.compile(r"[=<>≤≥≠≈±×÷∑∏∫√∞∂∇∈⊂⊆∀∃|^_{}\\]")
 
 
@@ -146,6 +149,80 @@ class OcrPage:
         so that extracting again gives the same document (the time goes to the log only)."""
         return {"engine": "+".join(sorted(self.engines_used)) or self.engine, "lang": self.lang, "skew": self.angle}
 
+    def to_record(self) -> dict:
+        """The reading as the paper keeps it (ocr-text.json, papeer.core.ocr_readings): the text lines with
+        their characters' edges, and the formula and figure areas, in page coordinates.
+
+        Extracting the paper again (a new LAYOUT_VERSION, on this PC or another) builds the page's blocks
+        from it instead of reading the page again: nothing is read twice, the AI is never asked again,
+        and the text (and so the translation cache) stays the same whatever engines the PC has.
+        """
+        blocks = []
+        for item in self.items:
+            lines = []
+            for line in item["lines"]:
+                span = line["spans"][0]
+                chars = span["chars"]
+                lines.append([_round(line["bbox"][1]), _round(line["bbox"][3]), round(span["size"], 3),
+                              "".join(c["c"] for c in chars),
+                              [_round(v) for c in chars for v in (c["bbox"][0], c["bbox"][2])]])
+            blocks.append(lines)
+        return {"version": RECORD_VERSION, **self.summary(), "blocks": blocks,
+                "formulas": [[_round(v) for v in rect] for rect in self.formulas],
+                "figures": [[_round(v) for v in rect] for rect in self.figures]}
+
+    @classmethod
+    def from_record(cls, record: object) -> OcrPage | None:
+        """The reading to_record kept, or None when it is not one this version can use."""
+        try:
+            if not isinstance(record, dict) or record.get("version") != RECORD_VERSION:
+                return None
+            items = []
+            for lines in record["blocks"]:
+                out_lines = []
+                for top, bottom, size, text, edges in lines:
+                    if len(edges) != 2 * len(text):
+                        return None
+                    line = _text_line(float(top), float(bottom), float(size),
+                                      [(c, float(edges[2 * i]), float(edges[2 * i + 1])) for i, c in enumerate(text)])
+                    if line is not None:
+                        out_lines.append(line)
+                if out_lines:
+                    items.append(_block(out_lines, len(items)))
+            formulas = [fitz.Rect(*box) for box in record["formulas"]]
+            figures = [fitz.Rect(*box) for box in record["figures"]]
+            engine, lang, angle = str(record["engine"]), str(record["lang"]), float(record["skew"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return cls(items, formulas, figures, engine, lang, angle, 0.0, {name for name in engine.split("+") if name})
+
+
+# The shape of OcrPage.to_record: raise it when the record changes, and readings kept before are read again.
+RECORD_VERSION = 1
+
+
+def _round(value: float) -> float:
+    return round(float(value), 2)
+
+
+def _text_line(top: float, bottom: float, size: float, chars: list[tuple[str, float, float]]) -> dict | None:
+    """A rawdict line of OCR text: characters (text, left, right) between top and bottom (page points)."""
+    if not chars:
+        return None
+    baseline = bottom - .2 * (bottom - top)
+    out = [{"c": c, "bbox": (a, top, b, bottom), "origin": (a, baseline), "synthetic": c == " "} for c, a, b in chars]
+    bbox = (out[0]["bbox"][0], top, out[-1]["bbox"][2], bottom)
+    span = {"font": OCR_FONT, "flags": 0, "size": size, "color": 0, "alpha": 255,
+            "ascender": .8, "descender": -.2, "bbox": bbox, "origin": out[0]["origin"],
+            "chars": out, "math_font": False}
+    return {"bbox": bbox, "wmode": 0, "dir": (1.0, 0.0), "spans": [span]}
+
+
+def _block(lines: list[dict], number: int) -> dict:
+    return {"type": 0, "number": number, "ocr": True, "lines": lines,
+            "bbox": (min(ln["bbox"][0] for ln in lines), min(ln["bbox"][1] for ln in lines),
+                     max(ln["bbox"][2] for ln in lines), max(ln["bbox"][3] for ln in lines))}
+
 
 def _join(line: OcrLine, height: float) -> list[tuple[str, tuple[float, float, float, float]]]:
     """(text, box) pieces of a line in the engine's order, with a (" ", gap box) between Latin words."""
@@ -222,8 +299,7 @@ def _item(lines: list[OcrLine], layout: PageLayout, scale: float, number: int) -
         mx, my = layout.unrotate((x0 + x1) / 2, (y0 + y1) / 2)
         dx, dy = mx - (x0 + x1) / 2, my - (y0 + y1) / 2
         top, bottom = (y0 + dy) * scale, (y1 + dy) * scale
-        baseline = bottom - .2 * (bottom - top)
-        chars = []
+        chars: list[tuple[str, float, float]] = []
         edge = -math.inf
         for text, box in _join(line, y1 - y0):
             # Characters always move right: an engine's word box can reach over the next word (a
@@ -232,21 +308,13 @@ def _item(lines: list[OcrLine], layout: PageLayout, scale: float, number: int) -
             right = max((box[2] + dx) * scale, left + .1 * len(text))
             edge = right
             step = (right - left) / len(text)
-            for i, c in enumerate(text):
-                a = left + i * step
-                chars.append({"c": c, "bbox": (a, top, a + step, bottom), "origin": (a, baseline), "synthetic": c == " "})
-        if not chars:
-            continue
-        bbox = (chars[0]["bbox"][0], top, chars[-1]["bbox"][2], bottom)
-        span = {"font": OCR_FONT, "flags": 0, "size": size * scale, "color": 0, "alpha": 255,
-                "ascender": .8, "descender": -.2, "bbox": bbox, "origin": chars[0]["origin"],
-                "chars": chars, "math_font": False}
-        out_lines.append({"bbox": bbox, "wmode": 0, "dir": (1.0, 0.0), "spans": [span]})
+            chars += [(c, left + i * step, left + (i + 1) * step) for i, c in enumerate(text)]
+        out_line = _text_line(top, bottom, size * scale, chars)
+        if out_line is not None:
+            out_lines.append(out_line)
     if not out_lines:
         return None
-    return {"type": 0, "number": number, "ocr": True, "lines": out_lines,
-            "bbox": (min(ln["bbox"][0] for ln in out_lines), min(ln["bbox"][1] for ln in out_lines),
-                     max(ln["bbox"][2] for ln in out_lines), max(ln["bbox"][3] for ln in out_lines))}
+    return _block(out_lines, number)
 
 
 def _page_rect(box, layout: PageLayout, scale: float) -> fitz.Rect:
@@ -273,46 +341,123 @@ def _cjk_share(lines: list[OcrLine]) -> tuple[int, float]:
 PROBE_LINES = 4
 
 
-def _probe_language(layout: PageLayout, engines: EngineSet) -> str:
+# Share of Japanese characters in the Japanese reading of the first lines: at or above JA_SURE the page is
+# Japanese; below JA_LEAST (JA_LEAST_IN_ENGLISH in a document whose text is English) it is English. The
+# Japanese recognizers turn English into kana and kanji: Windows' read the first page of an English scan
+# (ResNet) with 36% of them, while Japanese papers read with 85-90%. In between, an English reading decides.
+JA_SURE = .6
+JA_LEAST = .45
+JA_LEAST_IN_ENGLISH = .6
+# Share of an English reading in English words (_ENGLISH_WORD) above which the lines are English. Measured
+# on the first lines of 23 English pages (synthetic, ResNet, a sample paper; 150 and 300 dpi) and 7 Japanese
+# ones (synthetic, a line, a title): English 0.73-0.94, Japanese read by the English model 0.06-0.21. Counting
+# any three letters instead gave Japanese 0.61-0.71 (letter salad), too close to English's 0.76-0.94.
+EN_WORDS = .5
+
+
+def _latin_word_share(lines: list[OcrLine]) -> float:
+    text = " ".join(w.text for line in lines for w in line.words)
+    chars = sum(not c.isspace() for c in text)
+    return sum(len(word) for word in _ENGLISH_WORD.findall(text)) / chars if chars else 0.0
+
+
+def _probe_language(layout: PageLayout, engines: EngineSet, document_lang: str | None = None) -> str:
     """"ja" when the first lines of the page's largest text block read as Japanese, else "en".
 
     The Japanese models read Latin letters too, while the English ones turn Japanese into noise; a
-    few lines are enough and keep the cost of the look small.
+    few lines are enough and keep the cost of the look small. The Japanese recognizers also read an
+    English scan as kana and kanji at times, so the share must be high (JA_SURE), all the more in a
+    document whose text is English (document_lang "en"); a share in between is settled by reading the
+    same lines as English.
     """
     order = engines.order("ja")
-    if not layout.blocks or not order:
+    # A page of a line or two (a title, an appendix heading) may have no text block: its largest region
+    # that is no figure (a formula it was unsure of included) is looked at instead.
+    boxes = [b.box for b in layout.blocks] or [r.box for r in layout.regions if r.kind != "figure"]
+    if not boxes or not order:
         return "en"
-    box = max((b.box for b in layout.blocks), key=_area)
+    box = max(boxes, key=_area)
     sample = (box[0], box[1], box[2], min(box[3], box[1] + int(PROBE_LINES * 1.6 * layout.line_height)))
+    crop = layout.image.crop(sample)
     try:
-        lines, _ = recognize(layout.image.crop(sample), "ja", order)
+        lines, _ = recognize(crop, "ja", order)
     except OcrError:
         return "en"
     count, share = _cjk_share(lines)
-    return "ja" if count >= 5 and share >= .3 else "en"
+    if count < 5 or share < (JA_LEAST_IN_ENGLISH if document_lang == "en" else JA_LEAST):
+        return "en"
+    if share >= JA_SURE:
+        return "ja"
+    english = engines.order("en")
+    if not english:
+        return "ja"
+    try:
+        lines, _ = recognize(crop, "en", english)
+    except OcrError:
+        return "ja"
+    return "en" if _latin_word_share(lines) >= EN_WORDS else "ja"
 
 
-def ocr_page(page: fitz.Page, engines: EngineSet, lang: str | None = None) -> OcrPage:
+def ocr_page(page: fitz.Page, engines: EngineSet, lang: str | None = None, document_lang: str | None = None) -> OcrPage:
     """Read a page by OCR. lang None: Japanese when a first look at its largest text region finds
-    mostly Japanese characters, else English. Raises OcrError when no engine can read the page."""
-    start = time.perf_counter()
+    mostly Japanese characters, else English. Raises OcrError when no engine can read the page.
+
+    Renders the page and reads it at once: extract_pdf renders under PDF_LOCK and calls ocr_image
+    outside it instead."""
     image, dpi = render_page(page, engines.options.dpi)
+    return ocr_image(image, dpi, engines, lang, document_lang)
+
+
+def _prefetch(layout: PageLayout, engines: EngineSet, lang: str | None) -> tuple[dict, str | None]:
+    """The regions an engine reads all at once (recognize_many: the AI, one request a page), by box, and
+    the language their text shows when lang was None. Empty when the first engine reads one at a time."""
+    order = engines.order(lang or "en")
+    many = getattr(order[0], "recognize_many", None) if order else None
+    if many is None:
+        return {}, lang
+    boxes = [block.box for block in layout.blocks]
+    boxes += [region.box for region in layout.regions if region.kind == "math" and region.uncertain]
+    if not boxes:
+        return {}, lang
+    found = many([layout.image.crop(box) for box in boxes], lang)
+    read = {tuple(box): (lines, order[0].name) for box, lines in zip(boxes, found)}
+    if lang is None:
+        count, share = _cjk_share([line for lines, _ in read.values() for line in lines])
+        lang = "ja" if count >= 5 and share >= .3 else "en"
+    return read, lang
+
+
+def ocr_image(image: Image.Image, dpi: int, engines: EngineSet, lang: str | None = None,
+              document_lang: str | None = None) -> OcrPage:
+    """Read a rendered page (render_page) by OCR: ocr_page without MuPDF, apart from Tesseract, which
+    takes PDF_LOCK itself (EngineSet.lock) for each region. engines.cancel stops it between regions.
+    lang None: found by a first look at the page (_probe_language), strict when document_lang, the
+    language of the document's text layer, is English."""
+    start = time.perf_counter()
     layout = segment_page(image, dpi)
     del image
     scale = 72 / dpi
     used: set[str] = set()
+    engines.check()
+    prefetched, lang = _prefetch(layout, engines, lang)
 
-    def read_block(index: int, language: str) -> list[OcrLine]:
-        box = layout.blocks[index].box
+    def read_box(box, language: str) -> tuple[list[OcrLine], str]:
+        engines.check()
+        if tuple(box) in prefetched:
+            return prefetched[tuple(box)]
         order = engines.order(language)
         if not order:
             raise OcrError(f"{language} を読める OCR エンジンがありません（言語データが未取得）。")
-        lines, name = recognize(layout.image.crop(box), language, order)
+        return recognize(layout.image.crop(box), language, order)
+
+    def read_block(index: int, language: str) -> list[OcrLine]:
+        box = layout.blocks[index].box
+        lines, name = read_box(box, language)
         used.add(name)
         return _offset(lines, box[0], box[1])
 
     if lang is None:
-        lang = _probe_language(layout, engines)
+        lang = _probe_language(layout, engines, document_lang)
     read = [read_block(index, lang) for index in range(len(layout.blocks))]
 
     # Each line goes to the text region holding its middle (else the nearest region of its block).
@@ -335,9 +480,8 @@ def ocr_page(page: fitz.Page, engines: EngineSet, lang: str | None = None) -> Oc
         lines = by_region.get(index, [])
         if region.kind == "math":
             if region.uncertain:
-                order = engines.order(lang)
                 try:
-                    found, name = recognize(layout.image.crop(region.box), lang, order)
+                    found, name = read_box(region.box, lang)
                 except OcrError:
                     found, name = [], ""
                 text = " ".join(w.text for line in found for w in line.words)
@@ -418,4 +562,5 @@ def ocr_page_blocks(result: OcrPage, number: int, page_height: float) -> list[di
     return blocks
 
 
-__all__ = ["OcrOptions", "OcrPage", "document_language", "ocr_page", "ocr_page_blocks", "prose_text", "render_page"]
+__all__ = ["OcrOptions", "OcrPage", "document_language", "ocr_image", "ocr_page", "ocr_page_blocks", "prose_text",
+           "render_page"]

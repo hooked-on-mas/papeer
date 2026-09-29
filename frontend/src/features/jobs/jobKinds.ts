@@ -7,6 +7,7 @@ export const JOB_KINDS = [
   "article", "ask", "check",
   "import", "export", "interleaved",
   "backup", "restore", "drive-sync",
+  "ocr", "ocr-data",
 ] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];

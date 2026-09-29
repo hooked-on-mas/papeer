@@ -11,12 +11,12 @@
     "Rust: run cargo tree --locked --offline --target x86_64-pc-windows-msvc (and --edges normal; --depth 1 for the direct dependencies), then read package.license of the exact cached Cargo.toml through cargo metadata --offline. Other-platform entries in Cargo.lock are excluded.",
     "A production or normal-graph reachability flag means dependency graph inclusion, not proof that code survives tree shaking or appears in the released binary. Inspect final build artifacts separately before publication.",
     "License strings are kept as declared upstream, rather than silently normalized to a different SPDX expression. Unknown means this audit did not verify a license for that locked version.",
-    "Unknown licenses: 66 JavaScript rows (10 production, 56 development), 0 of them relevant to Windows x64; 3 Python rows, 0 of them reachable on Windows; 0 Rust rows."
+    "Unknown licenses: 66 JavaScript rows (10 production, 56 development), 0 of them relevant to Windows x64; 8 Python rows, 0 of them reachable on Windows; 0 Rust rows."
   ],
   "sourceFiles": [
     {
       "path": "uv.lock",
-      "sha256": "f88bf0f6770a9f96e2a6821c0415f33b53089f776a72b471d595f05cbe6873f5"
+      "sha256": "39ec3abfc780ced60c73381273947ebdd6cc0cec4e9438333896d8c216331f32"
     },
     {
       "path": "frontend/pnpm-lock.yaml",
@@ -29,14 +29,14 @@
   ],
   "summary": {
     "python": {
-      "rows": 50,
-      "directRows": 20,
-      "unknownLicenseRows": 3,
+      "rows": 55,
+      "directRows": 21,
+      "unknownLicenseRows": 8,
       "scopeCounts": {
         "build": 7,
         "windows-runtime": 29,
         "development": 17,
-        "other-platform-in-lock": 3
+        "other-platform-in-lock": 8
       }
     },
     "javascript": {
@@ -426,6 +426,68 @@
         "license": "Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial License",
         "licenseEvidence": ".venv/Lib/site-packages/pymupdf-1.28.2.dist-info/METADATA",
         "installedOnAuditMachine": true
+      },
+      {
+        "name": "pyobjc-core",
+        "version": "12.2.2",
+        "dependencyType": "transitive",
+        "directScopes": [],
+        "scopes": [
+          "other-platform-in-lock"
+        ],
+        "license": "unknown",
+        "licenseEvidence": null,
+        "installedOnAuditMachine": false
+      },
+      {
+        "name": "pyobjc-framework-cocoa",
+        "version": "12.2.2",
+        "dependencyType": "transitive",
+        "directScopes": [],
+        "scopes": [
+          "other-platform-in-lock"
+        ],
+        "license": "unknown",
+        "licenseEvidence": null,
+        "installedOnAuditMachine": false
+      },
+      {
+        "name": "pyobjc-framework-coreml",
+        "version": "12.2.2",
+        "dependencyType": "transitive",
+        "directScopes": [],
+        "scopes": [
+          "other-platform-in-lock"
+        ],
+        "license": "unknown",
+        "licenseEvidence": null,
+        "installedOnAuditMachine": false
+      },
+      {
+        "name": "pyobjc-framework-quartz",
+        "version": "12.2.2",
+        "dependencyType": "transitive",
+        "directScopes": [],
+        "scopes": [
+          "other-platform-in-lock"
+        ],
+        "license": "unknown",
+        "licenseEvidence": null,
+        "installedOnAuditMachine": false
+      },
+      {
+        "name": "pyobjc-framework-vision",
+        "version": "12.2.2",
+        "dependencyType": "direct",
+        "directScopes": [
+          "runtime"
+        ],
+        "scopes": [
+          "other-platform-in-lock"
+        ],
+        "license": "unknown",
+        "licenseEvidence": null,
+        "installedOnAuditMachine": false
       },
       {
         "name": "pypdfium2",

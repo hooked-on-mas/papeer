@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type SettingsSection = "connection" | "appearance" | "prompts" | "shortcuts" | "backup" | "drive" | "tags" | "reading-status" | "sticky-labels" | "note-templates";
+export type SettingsSection = "connection" | "appearance" | "prompts" | "shortcuts" | "backup" | "drive" | "tags" | "reading-status" | "sticky-labels" | "note-templates" | "ocr";
 
 export const useSettingsNavigation = create<{
   open: boolean;

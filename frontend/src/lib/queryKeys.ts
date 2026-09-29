@@ -34,4 +34,5 @@ export const QK = {
   drive: "drive",
   sideBackups: "side-backups",
   history: "history",
+  ocr: "ocr",
 } as const;

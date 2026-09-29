@@ -20,6 +20,8 @@ dependencies = [
     "winrt-Windows.Graphics.Imaging>=3.2.1; sys_platform == 'win32'",
     "winrt-Windows.Media.Ocr>=3.2.1; sys_platform == 'win32'",
     "winrt-Windows.Storage.Streams>=3.2.1; sys_platform == 'win32'",
+    # macOS Vision for OCR (papeer/layout/ocr_engines.py, VisionEngine); macOS only, Tesseract when it fails.
+    "pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'",
 ]
 
 [dependency-groups]

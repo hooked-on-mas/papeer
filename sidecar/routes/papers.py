@@ -1,6 +1,7 @@
 """The library: papers, folders (collections), their files, sticky notes and what the reader shows."""
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 import re
 import threading
@@ -10,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 
-from papeer.core import reading_state, search
+from papeer.core import ocr, reading_state, search
 from papeer.core.bibtex import bibtex, export_bibtex
 from papeer.core.errors import Invalid, NotFound
 from papeer.core.library_list import LibrarySort, library_rows, paper_row
@@ -22,6 +23,7 @@ from papeer.providers import Cancelled
 from sidecar import deps
 from sidecar.job_types import ImportItemEvent, ImportPagesEvent, JobKind, JobStarted
 from sidecar.jobs import ConcurrencyConflict, TurnQueue
+from sidecar.routes.ocr import ocr_turn
 from sidecar.schemas.papers import (
     Article,
     BibtexExportRequest,
@@ -102,18 +104,32 @@ def import_papers(body: ImportRequest) -> JobStarted:
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, Any]:
         imported_ids: list[str] = []
+        needs_ocr: list[str] = []
         added = 0
+        # This PC's OCR setting "auto": pages needing OCR are read while the paper is added.
+        reads = ocr.import_reads()
         for i, (source, path) in enumerate(zip(body.paths, paths)):
             if cancel.is_set():
                 raise Cancelled("追加を中止しました。追加済みの論文は保存されています。")
-            progress(f"PDFを追加 {i + 1}/{len(paths)}: {path.name}")
-            paper_id, is_new = lib.import_pdf(path, collection_name=body.collection or "")
+            label = f"PDFを追加 {i + 1}/{len(paths)}: {path.name}"
+            progress(label)
+            run = None
+            if reads:
+                run = ocr.ocr_run(ocr.ocr_options(), cancel,
+                                  progress=lambda page, _done, _total, label=label: progress(f"{label}（p.{page} を OCR で読んでいます）"))
+            try:
+                with ocr_turn(cancel, progress) if reads else nullcontext():
+                    paper_id, is_new = lib.import_pdf(path, collection_name=body.collection or "", ocr=run)
+            except Cancelled:
+                raise Cancelled("追加を中止しました。追加済みの論文は保存されています。") from None
             imported_ids.append(paper_id)
             added += is_new
-            lib.document(paper_id)
+            document = lib.document(paper_id)
+            if is_new and any(entry.get("reason") != "partial" for entry in document["ocr_pages"]):
+                needs_ocr.append(paper_id)
             # Also a library change: the client refreshes the list, then drops the placeholder row.
             deps.job_manager.broadcast(ImportItemEvent(path=source, paper_id=paper_id))
-        return {"paper_ids": imported_ids, "added": added}
+        return {"paper_ids": imported_ids, "added": added, "needs_ocr": needs_ocr}
 
     return JobStarted(job_id=submit_import(action, announce_pages))
 

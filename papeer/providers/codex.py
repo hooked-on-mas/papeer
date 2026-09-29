@@ -99,11 +99,28 @@ class CodexProvider(CliBackend, ProviderBackend):
     status_args = ("login", "status")
 
     def _generate(self, instruction: str, data: str, schema: dict | None) -> str:
+        return self._run(wrap_document_prompt(instruction, data), schema)
+
+    def image_support(self) -> str | None:
+        return None
+
+    def _generate_images(self, instruction: str, images: list[bytes], schema: dict | None) -> str:
+        """The images are attached with `codex exec --image` (files in the run's temporary folder, named
+        relative to it: the run's working folder)."""
+        return self._run(wrap_document_prompt(instruction, "The document data is the attached images."), schema, images)
+
+    def _run(self, prompt: str, schema: dict | None, images: list[bytes] | None = None) -> str:
         with tempfile.TemporaryDirectory(prefix="papeer-") as directory:
             root = Path(directory)
             output = root / "answer.txt"
+            attached = []
+            for index, image in enumerate(images or []):
+                path = root / f"image-{index + 1}.png"
+                path.write_bytes(image)
+                attached += ["--image", path.name]
             command = self.command() + [
-                "--ask-for-approval", "never", "exec", "--skip-git-repo-check",
+                # --image takes the files up to the next option, so another option follows them.
+                "--ask-for-approval", "never", "exec", *attached, "--skip-git-repo-check",
                 "--ephemeral", "--sandbox", "read-only",
                 "-c", "features.shell_tool=false", "-c", "features.unified_exec=false",
                 "-c", "web_search=\"disabled\"",
@@ -122,7 +139,7 @@ class CodexProvider(CliBackend, ProviderBackend):
             command.append("-")
             answer, events = run_cli_process(
                 command=command,
-                prompt_bytes=wrap_document_prompt(instruction, data).encode("utf-8"),
+                prompt_bytes=prompt.encode("utf-8"),
                 cancel=self.cancel,
                 timeout_seconds=self.settings.timeout_seconds,
                 tool_name=self.tool_name,

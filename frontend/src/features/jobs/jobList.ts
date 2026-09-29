@@ -20,6 +20,8 @@ const KIND_LABELS: Record<string, string> = {
   backup: "バックアップ",
   restore: "復元",
   "drive-sync": "同期",
+  ocr: "OCR",
+  "ocr-data": "OCRの言語データのダウンロード",
 };
 
 export function jobKindLabel(kind: string | undefined): string {

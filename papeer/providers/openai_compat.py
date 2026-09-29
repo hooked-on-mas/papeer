@@ -1,6 +1,7 @@
 """Any OpenAI-compatible /chat/completions API, including local servers such as Ollama."""
 from __future__ import annotations
 
+import base64
 import concurrent.futures
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -151,6 +152,20 @@ class OpenAICompatProvider(ProviderBackend):
     transport_retries = API_RETRIES
 
     def _generate(self, instruction: str, data: str, schema: dict | None) -> str:
+        return self._chat(instruction, data, schema)
+
+    def image_support(self) -> str | None:
+        # Whether the model reads images is only known by asking: a model without vision answers with an error.
+        return None
+
+    def _generate_images(self, instruction: str, images: list[bytes], schema: dict | None) -> str:
+        """The images as data URLs in the user message (image_url parts, as vision models of OpenAI-compatible APIs take them)."""
+        content: list[dict] = [{"type": "text", "text": "The document data is the images below."}]
+        content += [{"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(image).decode("ascii")}}
+                    for image in images]
+        return self._chat(instruction, content, schema)
+
+    def _chat(self, instruction: str, data: str | list[dict], schema: dict | None) -> str:
         model = self.settings.model.strip()
         if not model:
             raise ValueError("API接続ではモデル名を設定してください。")

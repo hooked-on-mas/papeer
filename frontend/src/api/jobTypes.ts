@@ -33,6 +33,10 @@ export type BackupResult = Schemas["BackupResult"];
 export type RestoreResult = Schemas["RestoreResult"];
 /** "synced", or why the sync did not (yet) take place; reloaded: another PC's library was taken in. */
 export type DriveSyncResult = Schemas["DriveSyncResult"];
+/** ocr: the pages read by OCR (or one page by the AI), those that failed and those whose translation is made again. */
+export type OcrResult = Schemas["OcrResult"];
+/** ocr-data: the languages whose Tesseract data is now on this PC. */
+export type OcrDataResult = Schemas["OcrDataResult"];
 /** check: the connection's answer as one line of text. */
 export type CheckResult = string;
 
@@ -51,6 +55,8 @@ export type JobResults = {
   backup: BackupResult;
   restore: RestoreResult;
   "drive-sync": DriveSyncResult;
+  ocr: OcrResult;
+  "ocr-data": OcrDataResult;
 };
 
 // --- Jobs ---

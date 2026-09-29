@@ -21,7 +21,7 @@ from papeer.translation import translation_preview
 from sidecar import deps
 from sidecar.errors import AnswerUnexpectedErrors, error_response, log_to_file, where
 from sidecar.job_types import event_schemas
-from sidecar.routes import ai_jobs, drive, ink, papers, reading, settings, system
+from sidecar.routes import ai_jobs, drive, ink, ocr, papers, reading, settings, system
 
 
 def remove_unused_translation_runs() -> None:
@@ -147,7 +147,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for module in (system, settings, papers, ai_jobs, reading, ink, drive):
+for module in (system, settings, papers, ai_jobs, reading, ink, drive, ocr):
     app.include_router(module.router)
 app.include_router(system.public)
 

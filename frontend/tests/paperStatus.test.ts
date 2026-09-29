@@ -59,7 +59,7 @@ test("a paper whose pages all need OCR says so instead of an unknown page count"
   assert.equal(result.status, "ocr");
   assert.equal(result.text, "要OCR");
   assert.equal(result.count, "3/3ページ");
-  assert.match(result.description, /OCR済みのPDF/);
+  assert.match(result.description, /「翻訳の確認・修正」の OCR の欄から読めます/);
   const ocr: OcrPage[] = [{ page: 1, reason: "garbled" }, { page: 2, reason: "image" }, { page: 3, reason: "garbled" }];
   const reading = { page_count: 3, completed_pages: [] as number[], translation_required_pages: [] as number[],
     in_progress: false, report: null, ocr_pages: ocr } as ReadingData;

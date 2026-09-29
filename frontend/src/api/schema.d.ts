@@ -1458,6 +1458,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ocr": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ocr Status */
+        get: operations["ocr_status_api_ocr_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ocr/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save Ocr Settings
+         * @description This PC's settings (not synced); they apply to the next paper added or read.
+         */
+        put: operations["save_ocr_settings_api_ocr_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ocr/language-data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Download Language Data
+         * @description Download Tesseract's language data (the user has agreed on the screen, which named the source and size).
+         */
+        post: operations["download_language_data_api_ocr_language_data_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/ocr": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Paper
+         * @description Read a paper's pages by OCR and write its extraction again (papeer.core.ocr.read_again).
+         *
+         *     engine "ai" reads one page with the AI connection: its images go to that service and use its plan.
+         */
+        post: operations["read_paper_api_papers__paper_id__ocr_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -1479,6 +1558,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AiReading
+         * @description Whether the AI connection now chosen can read a page from its image, and if not, why.
+         */
+        AiReading: {
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason?: string | null;
+            /** Provider */
+            provider: string;
+            /** Label */
+            label: string;
+        };
         /**
          * Article
          * @description GET /api/papers/{paper_id}/article: the summary article, and what generating it used (None if unknown).
@@ -1863,6 +1956,8 @@ export interface components {
             paper_ids: string[];
             /** Added */
             added: number;
+            /** Needs Ocr */
+            needs_ocr?: string[];
         };
         /** InkCaptureRequest */
         InkCaptureRequest: {
@@ -1970,7 +2065,7 @@ export interface components {
              */
             cancelled: boolean;
             /** Result */
-            result: components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | string | null;
+            result: components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | null;
             /** Error */
             error: string | null;
         };
@@ -1979,7 +2074,7 @@ export interface components {
          * @description The kinds of background jobs; the names are what the frontend receives (jobKinds.ts).
          * @enum {string}
          */
-        JobKind: "translate" | "revision" | "revision-draft" | "glossary-draft" | "article" | "ask" | "check" | "import" | "export" | "interleaved" | "backup" | "restore" | "drive-sync";
+        JobKind: "translate" | "revision" | "revision-draft" | "glossary-draft" | "article" | "ask" | "check" | "import" | "export" | "interleaved" | "backup" | "restore" | "drive-sync" | "ocr" | "ocr-data";
         /**
          * JobStarted
          * @description The answer of a route that starts a job: follow it with GET /api/jobs/{job_id} or the events.
@@ -1987,6 +2082,32 @@ export interface components {
         JobStarted: {
             /** Job Id */
             job_id: string;
+        };
+        /**
+         * LanguageData
+         * @description One language's data for Tesseract (tessdata_fast), and whether this PC has it.
+         */
+        LanguageData: {
+            /**
+             * Lang
+             * @enum {string}
+             */
+            lang: "en" | "ja";
+            /** Label */
+            label: string;
+            /** File */
+            file: string;
+            /** Size */
+            size: number;
+            /** Url */
+            url: string;
+            /** Installed */
+            installed: boolean;
+        };
+        /** LanguageDataRequest */
+        LanguageDataRequest: {
+            /** Langs */
+            langs: ("en" | "ja")[];
         };
         /** LegacyRemoveRequest */
         LegacyRemoveRequest: {
@@ -2050,6 +2171,31 @@ export interface components {
             resets_at: number | null;
         };
         /**
+         * OcrApplied
+         * @description A page whose text was read by OCR (pdf_engine.extract_pdf): which engines ("tesseract", "windows",
+         *     "vision", "ai"; several joined by "+"), in which language, and how far the scan was turned (degrees).
+         */
+        OcrApplied: {
+            /** Page */
+            page: number;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "garbled" | "image";
+            /** Engine */
+            engine: string;
+            /** Lang */
+            lang: string;
+            /** Skew */
+            skew: number;
+        };
+        /** OcrDataResult */
+        OcrDataResult: {
+            /** Installed */
+            installed: string[];
+        };
+        /**
          * OcrPage
          * @description A page needing OCR (papeer.layout.ocr_pages): kept as the original when its text layer is garbled or it
          *     is a scanned image, or translated except for its garbled paragraphs ("partial").
@@ -2066,6 +2212,86 @@ export interface components {
             garbled_ratio?: number;
             /** Garbled Paragraphs */
             garbled_paragraphs?: number;
+        };
+        /**
+         * OcrReadRequest
+         * @description POST /api/papers/{paper_id}/ocr. engine "local": this PC's engines, "ai": the AI connection (one page).
+         *     pages: the pages to read (again, when they were read before); None reads the pages that need OCR and
+         *     have not been read yet.
+         */
+        OcrReadRequest: {
+            /**
+             * Engine
+             * @default local
+             * @enum {string}
+             */
+            engine?: "local" | "ai";
+            /** Pages */
+            pages?: number[] | null;
+        };
+        /**
+         * OcrResult
+         * @description ocr: what papeer.core.ocr.read_again read and changed (pages are page numbers).
+         */
+        OcrResult: {
+            /** Read Pages */
+            read_pages: number[];
+            /** Failed Pages */
+            failed_pages: {
+                [key: string]: string;
+            };
+            /** Ocr Pages */
+            ocr_pages: number[];
+            /** Changed Pages */
+            changed_pages: number[];
+            /** Retranslate Pages */
+            retranslate_pages: number[];
+            usage?: components["schemas"]["Usage"] | null;
+        };
+        /**
+         * OcrSettings
+         * @description This PC's OCR settings (papeer.core.ocr: not synced). mode: read papers by OCR when they are added
+         *     ("auto"), ask when one has pages that need it ("ask"), or never ("off").
+         */
+        OcrSettings: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "ask" | "auto" | "off";
+            /**
+             * Engine
+             * @enum {string}
+             */
+            engine: "auto" | "tesseract" | "windows" | "vision";
+            /**
+             * Lang
+             * @enum {string}
+             */
+            lang: "auto" | "en" | "ja";
+        };
+        /**
+         * OcrStatus
+         * @description GET /api/ocr: the settings, the language data, what each language is read with and what cannot be read yet.
+         */
+        OcrStatus: {
+            settings: components["schemas"]["OcrSettings"];
+            /** Directory */
+            directory: string;
+            /** Language Data */
+            language_data: components["schemas"]["LanguageData"][];
+            system: components["schemas"]["SystemEngine"] | null;
+            /** Readable */
+            readable: {
+                [key: string]: string[];
+            };
+            /** Order */
+            order: {
+                [key: string]: string[];
+            };
+            /** Missing */
+            missing: ("en" | "ja")[];
+            ai: components["schemas"]["AiReading"];
         };
         /** OptionsRequest */
         OptionsRequest: {
@@ -2379,6 +2605,8 @@ export interface components {
             translation_required_pages: number[];
             /** Ocr Pages */
             ocr_pages: components["schemas"]["OcrPage"][];
+            /** Ocr Applied */
+            ocr_applied: components["schemas"]["OcrApplied"][];
             /** Completed Pages */
             completed_pages: number[];
             /** Preview */
@@ -2598,6 +2826,21 @@ export interface components {
              * @default false
              */
             background?: boolean;
+        };
+        /**
+         * SystemEngine
+         * @description The system's own OCR (Windows, or macOS Vision) and the languages it reads on this PC.
+         */
+        SystemEngine: {
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "windows" | "vision";
+            /** Label */
+            label: string;
+            /** Languages */
+            languages: ("en" | "ja")[];
         };
         /** TagRequest */
         TagRequest: {
@@ -2910,7 +3153,7 @@ export interface components {
              * Result
              * @default null
              */
-            result: components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | string | null;
+            result: components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | null;
             /**
              * Error
              * @default null
@@ -6574,6 +6817,152 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ocr_status_api_ocr_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OcrStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_ocr_settings_api_ocr_settings_put: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OcrSettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OcrSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_language_data_api_ocr_language_data_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LanguageDataRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_paper_api_papers__paper_id__ocr_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OcrReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */

@@ -174,6 +174,9 @@ class PaperFiles:
     def document_json(self) -> Path: return self.folder / "document.json"
     @property
     def note_md(self) -> Path: return self.folder / "note.md"
+    # What OCR read on the pages that needed it (papeer.core.ocr: kept so that extracting again reads nothing).
+    @property
+    def ocr_text(self) -> Path: return self.folder / "ocr-text.json"
 
     # Translation
     @property

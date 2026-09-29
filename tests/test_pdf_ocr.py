@@ -16,7 +16,7 @@ import re
 import unicodedata
 
 import pymupdf as fitz
-from PIL import Image, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import pytest
 
 from papeer.layout.ocr_engines import OcrLine, OcrOptions, OcrWord, WindowsOcrEngine
@@ -292,9 +292,9 @@ def test_the_language_comes_from_pages_that_need_no_ocr(tessdata, tmp_path, monk
                                 fontname="japan", fontsize=4)
         document.saveIncr()
     seen = []
-    original = pdf_ocr.ocr_page
-    monkeypatch.setattr("papeer.pdf.pdf_engine.ocr_page", lambda page, engines, lang: seen.append(lang) or
-                        original(page, engines, lang))
+    original = pdf_ocr.ocr_image
+    monkeypatch.setattr("papeer.pdf.pdf_engine.ocr_image", lambda image, dpi, engines, lang, *rest: seen.append(lang) or
+                        original(image, dpi, engines, lang, *rest))
     document = extract_pdf(path, options(tessdata))
     assert seen == [None] and document["ocr_applied"][0]["lang"] == "en"
 
@@ -340,3 +340,42 @@ def test_a_japanese_scan_in_an_english_paper_is_read_as_japanese(tessdata, tmp_p
     assert cer(text, normalize("\n".join(prose("synth_ja_2col_mathfig")), "ja")) <= .08
     # Asked for English, it stays English.
     assert extract_pdf(path, options(tessdata, engine="tesseract", lang="en"))["ocr_applied"][0]["lang"] == "en"
+
+
+# ---------------------------------------------------------------- the language of a page with little text
+
+FONT = Path(__file__).parent.parent / "papeer" / "core" / "assets" / "fonts" / "SourceHanSerifJP-Regular.otf"
+
+
+def _first_lines(name: str, lines: float) -> Image.Image:
+    """A letter-size page at 300 dpi holding only the first `lines` lines of a fixture's largest text block."""
+    image = Image.open(FIXTURES / f"{name}.png").convert("L")
+    layout = pdf_ocr.segment_page(image, 300)
+    box = max((b.box for b in layout.blocks), key=pdf_ocr._area)
+    page = Image.new("L", (2550, 3300), 255)
+    page.paste(image.crop((box[0], box[1], box[2], min(box[3], box[1] + int(lines * layout.line_height)))), (box[0], 400))
+    return page
+
+
+def _title(*lines: str) -> Image.Image:
+    page = Image.new("L", (2550, 3300), 255)
+    draw = ImageDraw.Draw(page)
+    font = ImageFont.truetype(str(FONT), 60)
+    for index, line in enumerate(lines):
+        draw.text((300, 400 + 120 * index), line, fill=0, font=font)
+    return page
+
+
+@pytest.mark.parametrize("case, image, lang", [
+    ("Japanese, two lines", lambda: _first_lines("synth_ja_2col_mathfig", 2.2), "ja"),
+    ("Japanese, one line", lambda: _first_lines("synth_ja_2col_mathfig", 1.1), "ja"),
+    ("English, two lines", lambda: _first_lines("synth_en_2col", 2.2), "en"),
+    ("English, a title only", lambda: _title("Appendix B", "Proof of Theorem 2"), "en"),
+    ("Japanese, a title only", lambda: _title("付録 B　定理 2 の証明"), "ja"),
+])
+def test_a_page_of_a_line_or_two_gets_its_language_from_its_largest_region(tessdata, case, image, lang):
+    # Such a page may have no text block; its language is still looked at, also in an English document.
+    layout = pdf_ocr.segment_page(image(), 300)
+    engines = pdf_ocr.EngineSet(OcrOptions(enabled=True, tessdata=tessdata))
+    for document_lang in (None, "en"):
+        assert pdf_ocr._probe_language(layout, engines, document_lang) == lang, (case, document_lang)

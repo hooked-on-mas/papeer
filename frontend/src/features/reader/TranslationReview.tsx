@@ -15,6 +15,7 @@ import { paragraphOfSelection } from "@/lib/pdfSelection";
 import { QK } from "@/lib/queryKeys";
 import { useOpenEdit } from "@/lib/pendingSaves";
 import { GlossaryWarnings } from "./GlossaryWarnings";
+import { OcrPanel } from "./OcrPanel";
 import { readabilityPages, shorteningHint, translationIssues } from "@/lib/translationIssues";
 
 type Paragraph = { id: string; page: number; pages: number[]; source: string; text: string };
@@ -30,6 +31,9 @@ function PaperReview({ paperId }: { paperId: string }) {
   const { data: reading } = useReading(paperId);
   const currentPage = useStore(s => s.currentPage);
   const busy = useStore(s => paperBusy(s.activeJobs, paperId));
+  // Reading pages by OCR may take minutes and goes on without the dialog: it may be closed meanwhile
+  // (the editing buttons stay disabled while it runs).
+  const busyBesidesOcr = useStore(s => paperBusy(s.activeJobs, paperId, ["ocr"]));
   const [open, setOpen] = useState(false);
   useOpenEdit(open, "訳文の修正");
   const [tab, setTab] = useState<"issues" | "edit">("issues");
@@ -45,7 +49,8 @@ function PaperReview({ paperId }: { paperId: string }) {
   // The issues tab only appears when there is something to check. Glossary warnings have a list of
   // their own there and do not count among the issues shown on the toolbar.
   const glossaryWarnings = reading?.report?.glossary_warnings ?? [];
-  const hasIssues = issues.length > 0 || glossaryWarnings.length > 0;
+  // Pages read by OCR are no issue, but their panel (what read them, 「AI で読み直す」) lives in that tab too.
+  const hasIssues = issues.length > 0 || glossaryWarnings.length > 0 || !!reading?.ocr_applied?.length;
   const view = hasIssues ? tab : "edit";
   const { data: paragraphs = [], isFetching, isError } = useQuery({ queryKey: [QK.paragraphs, paperId],
     queryFn: async () => await unwrap(api.GET("/api/papers/{paper_id}/paragraphs", { params: { path: { paper_id: paperId } } })) as Paragraph[], enabled: open && view === "edit" });
@@ -96,7 +101,7 @@ function PaperReview({ paperId }: { paperId: string }) {
   };
   return <>
     <Dialog open={open} onOpenChange={async next => {
-      if (!next && (pending || busy)) return;
+      if (!next && (pending || busyBesidesOcr)) return;
       if (!next && dirty && !await askConfirm("修正案を破棄", "保存していない修正案を破棄しますか？", "破棄")) return;
       if (!next) { setSelected(null); setText(""); setTarget(null); setUnmatched(false); }
       setOpen(next);
@@ -113,7 +118,7 @@ function PaperReview({ paperId }: { paperId: string }) {
               // A shrunk paragraph is fixed in the edit tab, which lists the page's paragraphs.
               if (shrunkPages.has(page)) setTab("edit"); else setOpen(false);
             }}>p.{page} — {messages.join(" / ")}</button>)}
-          {!!reading?.ocr_pages?.length && <p className="text-muted-foreground">要OCRのページは原文のまま表示します。OCR済みのPDFを追加し直すと翻訳できます。</p>}
+          {reading && <OcrPanel paperId={paperId} reading={reading} busy={busy} onJump={page => { jumpToPage(page); setOpen(false); }} />}
           {!!reading?.report?.skipped_blocks?.length && <p className="text-destructive">翻訳をスキップした段落が{reading.report.skipped_blocks.length}箇所あります。原文と照合してください。</p>}
           <GlossaryWarnings warnings={glossaryWarnings} />
         </div> : <div className="space-y-3 text-sm">

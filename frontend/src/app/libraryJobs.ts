@@ -1,6 +1,7 @@
 import { notifyIfAway, shell } from "@/shell";
 import { useStore } from "@/store";
 import type { JobHandlers } from "@/features/jobs/jobHandlers";
+import { offerOcrAfterImport } from "@/features/ocr/ocrActions";
 
 /** Jobs started by the library actions in ./actions: adding PDFs and writing paired PDFs. */
 export const libraryJobHandlers: JobHandlers = {
@@ -12,6 +13,8 @@ export const libraryJobHandlers: JobHandlers = {
       if (ids.length) store.setActivePaperId(ids[ids.length - 1]);
       store.setStatus(message);
       notifyIfAway("PDFを追加しました", message);
+      // Scans that were not read while being added: offer to read them now (unless OCR is 使わない).
+      void offerOcrAfterImport(event.result.needs_ocr ?? []);
     },
   },
   export: {

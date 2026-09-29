@@ -200,7 +200,7 @@ async function reportFailure(event: JobFinished, visible: boolean, queryClient: 
 /** The AI usage a succeeded job reports, if its kind reports one. */
 function resultUsage(event: JobSucceeded): Usage | null {
   switch (event.kind) {
-    case "translate": case "revision": case "article": case "ask":
+    case "translate": case "revision": case "article": case "ask": case "ocr":
       return event.result.usage ?? null;
     default:
       return null;
