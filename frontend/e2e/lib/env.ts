@@ -3,7 +3,8 @@
  *
  * Everything that could reach the user's real data points into the test's own temporary folder:
  * the library (PAPEER_DATA_DIR), LOCALAPPDATA (PapeerSync), APPDATA, the home folder (USERPROFILE,
- * HOME, CODEX_HOME), TEMP/TMP and the WebView2 profile (WEBVIEW2_USER_DATA_FOLDER). Tauri itself finds
+ * HOME, CODEX_HOME), the XDG base folders (XDG_DATA_HOME and the others, which papeer.core.paths reads
+ * on Linux), TEMP/TMP/TMPDIR and the WebView2 profile (WEBVIEW2_USER_DATA_FOLDER). Tauri itself finds
  * its folders through the Windows known-folder API, which ignores these variables: app.ts also passes
  * PAPEER_E2E_DIR, with which a debug build puts the WebView2 profile in the test's folder and leaves out
  * the window-state plugin (src-tauri/src/lib.rs), and checks the profile on WebView2's command line.
@@ -49,6 +50,8 @@ export interface IsolatedDirs {
   localAppData: string;
   appData: string;
   home: string;
+  /** The XDG base folders (data, state, cache, config) are made inside it by the sidecar as needed. */
+  xdg: string;
   temp: string;
   webview: string;
 }
@@ -60,6 +63,7 @@ export function isolatedDirs(root: string): IsolatedDirs {
     localAppData: path.join(root, "LocalAppData"),
     appData: path.join(root, "Roaming"),
     home: path.join(root, "home"),
+    xdg: path.join(root, "xdg"),
     temp: path.join(root, "temp"),
     webview: path.join(root, "webview2"),
   };
@@ -85,8 +89,13 @@ export function isolatedEnv(base: NodeJS.ProcessEnv, dirs: IsolatedDirs, extra: 
     USERPROFILE: dirs.home,
     HOME: dirs.home,
     CODEX_HOME: path.join(dirs.home, ".codex"),
+    XDG_DATA_HOME: path.join(dirs.xdg, "data"),
+    XDG_STATE_HOME: path.join(dirs.xdg, "state"),
+    XDG_CACHE_HOME: path.join(dirs.xdg, "cache"),
+    XDG_CONFIG_HOME: path.join(dirs.xdg, "config"),
     TEMP: dirs.temp,
     TMP: dirs.temp,
+    TMPDIR: dirs.temp,
     WEBVIEW2_USER_DATA_FOLDER: dirs.webview,
     // The stand-in AI is on 127.0.0.1: never through a proxy.
     NO_PROXY: "127.0.0.1,localhost",

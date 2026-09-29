@@ -17,11 +17,13 @@ test("isolatedEnv points every user folder into the test's folder and drops toke
     const env = isolatedEnv({
       PATH: "C:\\Windows", PAPEER_TOKEN: "t", PAPERDESK_DATA_DIR: "x", OPENAI_API_KEY: "k", ANTHROPIC_API_KEY: "k",
       GEMINI_API_KEY: "k", VIRTUAL_ENV: "v", WEBVIEW2_USER_DATA_FOLDER: "real", CODEX_HOME: "real", SystemRoot: "C:\\Windows",
+      XDG_STATE_HOME: "/home/me/.local/state", TMPDIR: "/tmp",
     }, dirs, { PAPEER_PORT: "8000" });
     for (const name of ["PAPEER_TOKEN", "PAPERDESK_DATA_DIR", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "VIRTUAL_ENV"]) {
       assert.equal(env[name], undefined, name);
     }
-    for (const name of ["PAPEER_DATA_DIR", "LOCALAPPDATA", "APPDATA", "USERPROFILE", "HOME", "CODEX_HOME", "TEMP", "TMP", "WEBVIEW2_USER_DATA_FOLDER"]) {
+    for (const name of ["PAPEER_DATA_DIR", "LOCALAPPDATA", "APPDATA", "USERPROFILE", "HOME", "CODEX_HOME", "TEMP", "TMP", "TMPDIR",
+      "WEBVIEW2_USER_DATA_FOLDER", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"]) {
       assert.ok(isInside(env[name] ?? "", root), `${name}=${env[name]}`);
     }
     assert.equal(env.SystemRoot, "C:\\Windows");

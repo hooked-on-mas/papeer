@@ -1,10 +1,12 @@
-"""Smoke-test the packaged sidecar exe before it goes into an installer (`just smoke-sidecar`).
+"""Smoke-test the packaged sidecar before it goes into an installer (`just smoke-sidecar`).
 
-Starts dist/sidecar/papeer-sidecar.exe (the onedir bundle `just build-sidecar` makes from sidecar.spec)
+Starts dist/sidecar/papeer-sidecar(.exe) (the onedir bundle `just build-sidecar` makes from sidecar.spec)
 the way Tauri does, with a random token and a free port, but in a throwaway environment: the data folder,
-LOCALAPPDATA and TEMP all point into a new temporary folder, so the user's library and device settings are
-never read or written, and it shows exactly that nothing is unpacked into %TEMP% (a PyInstaller onefile
-exe would make a _MEI* folder there, and leave it behind when killed). Then:
+every folder this PC's files are kept in (LOCALAPPDATA on Windows; the home folder and the XDG folders on
+macOS and Linux: papeer.core.paths) and the temporary folder (TEMP, TMP, TMPDIR) all point into a new
+temporary folder, so the user's library and device settings are never read or written, and it shows
+exactly that nothing is unpacked into the temporary folder (a PyInstaller onefile exe would make a _MEI*
+folder there, and leave it behind when killed). Then:
 
 1. /health answers; `version` is this checkout's MAJOR.MINOR.PATCH and `code_version` matches its
    extraction, layout and PDF drawing code (papeer.core.code_version.RENDER_SOURCES). An exe built
@@ -19,6 +21,10 @@ exe would make a _MEI* folder there, and leave it behind when killed). Then:
    fonts: the check reads the fonts and text of that PDF. The instructions it receives must have
    the shared prompt sections (papeer/core/prompts/_*.txt) in place of their markers.
 6. /shutdown: the process ends by itself with exit code 0, and no _MEI* folder was made at any point.
+7. Started again as the app starts it (PAPEER_WATCH_STDIN=1, a pipe as its standard input), it ends by
+   itself with exit code 0 once the pipe closes, as when the app's process ends however it ends.
+8. macOS and Linux: started again, SIGTERM (what the app sends when /shutdown is not enough, and what
+   Linux sends when the app's process ends) ends it with exit code 0.
 
 Each step prints OK; the first failure prints what went wrong and the end of the sidecar's log,
 and the exit code is 1. The sidecar is stopped (killed if need be) and the temporary folder removed
@@ -38,6 +44,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -45,6 +52,7 @@ import tempfile
 import threading
 import time
 from typing import Any, Iterator
+from unittest import mock
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -54,6 +62,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from papeer import __version__  # noqa: E402
+from papeer.core import paths  # noqa: E402
 from papeer.core.code_version import SIDECAR_DIR, SIDECAR_EXE, source_version  # noqa: E402
 from tools.bump_version import SEMVER  # noqa: E402 (the release version rule: MAJOR.MINOR.PATCH)
 
@@ -99,25 +108,51 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def sidecar_environment(base: dict[str, str], *, data_dir: Path, local_appdata: Path, temp_dir: Path,
+def pc_folders(pc_dir: Path) -> dict[str, str]:
+    """The variables every folder of this PC that papeer uses is made from (papeer.core.paths), under `pc_dir`.
+
+    LOCALAPPDATA on Windows; the home folder (~/Library/... on macOS) and the XDG base folders on Linux.
+    HOME is left alone on Windows, where Python does not read it (Path.home() is USERPROFILE).
+    """
+    folders = {
+        "LOCALAPPDATA": pc_dir / "localappdata",
+        "XDG_DATA_HOME": pc_dir / "xdg-data",
+        "XDG_STATE_HOME": pc_dir / "xdg-state",
+        "XDG_CACHE_HOME": pc_dir / "xdg-cache",
+        "XDG_CONFIG_HOME": pc_dir / "xdg-config",
+    }
+    if os.name != "nt":
+        folders["HOME"] = pc_dir / "home"
+    return {name: str(path) for name, path in folders.items()}
+
+
+def sidecar_environment(base: dict[str, str], *, data_dir: Path, pc_dir: Path, temp_dir: Path,
                         token: str, port: int) -> dict[str, str]:
     """The sidecar's environment: the caller's, minus Papeer variables and API keys, plus the smoke folders."""
     env = {name: value for name, value in base.items()
            if not name.upper().startswith(INHERITED_PREFIXES) and name.upper() not in API_KEY_VARIABLES}
     env.update({
         "PAPEER_DATA_DIR": str(data_dir),
-        # Device settings (PapeerSync) and anything else under LOCALAPPDATA stay in the smoke folder.
-        "LOCALAPPDATA": str(local_appdata),
-        # A onefile bootloader would unpack into %TEMP% (GetTempPath reads TMP first): a folder of our
-        # own shows that the onedir sidecar makes no _MEI* folder.
+        # Device settings (PapeerSync), logs and caches stay in the smoke folder on every platform.
+        **pc_folders(pc_dir),
+        # A onefile bootloader would unpack into the temporary folder (GetTempPath reads TMP first on
+        # Windows, the POSIX bootloader TMPDIR): a folder of our own shows that the onedir sidecar makes
+        # no _MEI* folder.
         "TEMP": str(temp_dir),
         "TMP": str(temp_dir),
+        "TMPDIR": str(temp_dir),
         "PAPEER_TOKEN": token,
         "PAPEER_PORT": str(port),
         # The stand-in AI server is on 127.0.0.1: never send its requests through a system proxy.
         "NO_PROXY": "127.0.0.1,localhost",
     })
     return env
+
+
+def device_directory_in(env: dict[str, str]) -> Path:
+    """Where a sidecar with environment `env` keeps this PC's files (papeer.core.paths.device_directory)."""
+    with mock.patch.dict(os.environ, env, clear=True):
+        return paths.device_directory()
 
 
 def mei_folders(temp_dir: Path) -> list[Path]:
@@ -317,15 +352,21 @@ class Smoke:
         self.frozen = frozen
         self.out = out
         self.data_dir = root / "data"
-        self.local_appdata = root / "localappdata"
+        self.pc_dir = root / "pc"
         self.temp_dir = root / "temp"
         self.log_path = root / "sidecar.log"
         self.input_dir = root / "input"
-        for folder in (self.data_dir, self.local_appdata, self.temp_dir, self.input_dir):
+        for folder in (self.data_dir, self.pc_dir, self.temp_dir, self.input_dir):
             folder.mkdir(parents=True)
         self.token = secrets.token_urlsafe(32)
         self.port = free_port()
         self.client = Client(self.port, self.token)
+        self.env = sidecar_environment(dict(os.environ), data_dir=self.data_dir, pc_dir=self.pc_dir,
+                                       temp_dir=self.temp_dir, token=self.token, port=self.port)
+        if os.name != "nt":
+            Path(self.env["HOME"]).mkdir()
+        # Where it must keep this PC's settings, by the rules of papeer.core.paths on this platform.
+        self.device_dir = device_directory_in(self.env)
         self.process: subprocess.Popen | None = None
         self._log_file: Any = None
 
@@ -344,12 +385,16 @@ class Smoke:
         if self.process is not None and self.process.poll() is not None:
             raise SmokeFailure(f"sidecar が終了しました（終了コード {self.process.returncode}）。")
 
-    def start(self) -> None:
-        env = sidecar_environment(dict(os.environ), data_dir=self.data_dir, local_appdata=self.local_appdata,
-                                  temp_dir=self.temp_dir, token=self.token, port=self.port)
-        self._log_file = self.log_path.open("wb")
-        self.process = subprocess.Popen(self.command, cwd=self.cwd, env=env, stdin=subprocess.DEVNULL,
-                                        stdout=self._log_file, stderr=subprocess.STDOUT)
+    def start(self, *, watch_stdin: bool = False) -> None:
+        """Start the sidecar (again, once it has ended); with watch_stdin as the app does, a pipe as its stdin."""
+        env = dict(self.env, PAPEER_WATCH_STDIN="1") if watch_stdin else self.env
+        if self._log_file is None:
+            self._log_file = self.log_path.open("wb")
+        # macOS and Linux: a process group of its own, which stop() ends with everything the sidecar started in it.
+        group: dict[str, Any] = {} if os.name == "nt" else {"start_new_session": True}
+        self.process = subprocess.Popen(self.command, cwd=self.cwd, env=env,
+                                        stdin=subprocess.PIPE if watch_stdin else subprocess.DEVNULL,
+                                        stdout=self._log_file, stderr=subprocess.STDOUT, **group)
 
     def wait_for_health(self) -> Any:
         deadline = time.monotonic() + HEALTH_TIMEOUT
@@ -393,9 +438,14 @@ class Smoke:
                 self.check_translation(paper_id, stub)
             with self.step("/shutdown で終了"):
                 self.check_shutdown()
-            with self.step("ログにエラーがないこと"):
-                if "Traceback" in log_tail(self.log_path, lines=100_000):
-                    raise SmokeFailure("sidecar のログに Traceback があります。")
+        with self.step("アプリの終了（標準入力のパイプが閉じる）で終了"):
+            self.check_exit_when_the_app_is_gone()
+        if os.name != "nt":
+            with self.step("SIGTERM で終了"):
+                self.check_exit_on_sigterm()
+        with self.step("ログにエラーがないこと"):
+            if "Traceback" in log_tail(self.log_path, lines=100_000):
+                raise SmokeFailure("sidecar のログに Traceback があります。")
 
     def check_authentication(self) -> None:
         cases = [
@@ -423,9 +473,12 @@ class Smoke:
         settings = self.client.call("GET", "/api/settings")
         if settings.get("provider") != "api" or settings["provider_options"]["api"].get("base_url") != stub.base_url:
             raise SmokeFailure(f"保存した設定が読み戻せません: {settings!r}")
-        # The API URL is this PC's setting (LOCALAPPDATA\\PapeerSync), the rest the library's.
-        if not (self.data_dir / "settings.json").is_file() or not (self.local_appdata / "PapeerSync").is_dir():
-            raise SmokeFailure("設定が一時データフォルダー・一時 LOCALAPPDATA に保存されていません。")
+        # The API URL is this PC's setting (paths.device_directory(): %LOCALAPPDATA%\PapeerSync on Windows,
+        # ~/Library/Application Support/PapeerSync on macOS, $XDG_STATE_HOME/papeer on Linux), the rest the library's.
+        if not (self.data_dir / "settings.json").is_file():
+            raise SmokeFailure("設定が一時データフォルダーに保存されていません。")
+        if not self.device_dir.is_dir():
+            raise SmokeFailure(f"この PC の設定が一時フォルダーの {self.device_dir} に保存されていません。")
 
     def check_import(self) -> str:
         source = self.input_dir / "smoke-sample.pdf"
@@ -470,6 +523,32 @@ class Smoke:
             raise SmokeFailure(f"終了コードが 0 ではありません: {code}")
         self.check_nothing_unpacked()
 
+    def wait_for_exit(self, after: str) -> None:
+        """The sidecar ends by itself, with exit code 0, within EXIT_TIMEOUT."""
+        assert self.process is not None
+        try:
+            code = self.process.wait(EXIT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            raise SmokeFailure(f"{after}後 {EXIT_TIMEOUT:.0f} 秒たってもプロセスが終了しません。") from None
+        if code != 0:
+            raise SmokeFailure(f"{after}後の終了コードが 0 ではありません: {code}")
+
+    def check_exit_when_the_app_is_gone(self) -> None:
+        # Tauri starts it with PAPEER_WATCH_STDIN=1 and a pipe it never writes to, which closes when the
+        # app's process ends (sidecar/routes/system.py watch_stdin).
+        self.start(watch_stdin=True)
+        self.wait_for_health()
+        assert self.process is not None and self.process.stdin is not None
+        self.process.stdin.close()
+        self.wait_for_exit("標準入力のパイプを閉じた")
+
+    def check_exit_on_sigterm(self) -> None:
+        self.start()
+        self.wait_for_health()
+        assert self.process is not None
+        self.process.send_signal(signal.SIGTERM)
+        self.wait_for_exit("SIGTERM を送った")
+
     def check_nothing_unpacked(self) -> None:
         """The onedir sidecar runs from its folder; a _MEI* folder means a onefile exe (see sidecar.spec)."""
         found = mei_folders(self.temp_dir) if self.frozen else []
@@ -485,7 +564,11 @@ class Smoke:
                 subprocess.run(["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
             else:
-                self.process.kill()
+                # Its process group (start): the sidecar and the processes it started in the group.
+                try:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             try:
                 self.process.wait(15)
             except subprocess.TimeoutExpired:
@@ -538,7 +621,7 @@ def run_smoke(command: list[str], *, cwd: Path | None, frozen: bool, keep: bool 
 
 def main(argv: list[str] | None = None, out: Any = None) -> int:
     out = sys.stdout if out is None else out
-    parser = argparse.ArgumentParser(description="配布用 sidecar exe のスモークテスト（README「ビルド」）")
+    parser = argparse.ArgumentParser(description="配布用 sidecar のスモークテスト（README「ビルド」）")
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--exe", type=Path, default=DEFAULT_EXE,
                         help=f"試す sidecar（onedir のフォルダーの中の exe。既定: {DEFAULT_EXE.relative_to(ROOT)}）")

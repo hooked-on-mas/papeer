@@ -9,6 +9,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -344,6 +345,69 @@ def window_label(minutes: int) -> str:
 
 # --- CLI processes ---
 
+def _signal_group(process: subprocess.Popen, signum: int) -> None:
+    """Send `signum` to the CLI's process group (its own session: process_kwargs); gone already is fine."""
+    if sys.platform == "win32":  # No process groups to signal (kill_tree uses taskkill there).
+        return
+    try:
+        os.killpg(process.pid, signum)
+    except ProcessLookupError:
+        pass
+
+
+# The CLI processes running now (run_cli_process, the Codex app-server), so that the sidecar can end them
+# when it has to end at once (sidecar/routes/system.py): each runs in a session of its own and would not be
+# ended with the sidecar's process group.
+_running_clis: set[subprocess.Popen] = set()
+# Re-entrant: end_running_clis can be called from a signal handler that interrupts a holder of the lock.
+_running_lock = threading.RLock()
+# How long the CLIs get to end after SIGTERM before their groups are sent SIGKILL (end_running_clis).
+CLI_TERM_GRACE = 2.0
+
+
+def track_cli(process: subprocess.Popen) -> None:
+    with _running_lock:
+        _running_clis.add(process)
+
+
+def untrack_cli(process: subprocess.Popen) -> None:
+    with _running_lock:
+        _running_clis.discard(process)
+
+
+def _group_alive(process: subprocess.Popen) -> bool:
+    if sys.platform == "win32":
+        return process.poll() is None
+    try:
+        os.killpg(process.pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def end_running_clis(grace: float = CLI_TERM_GRACE) -> int:
+    """End every running CLI with the processes it started, without waiting for the jobs that run them:
+    SIGTERM to each one's group, then SIGKILL to those still there after `grace` seconds (Windows: taskkill
+    /T /F). Returns how many there were. The jobs see their CLI fail; cancel them first (JobManager.close)
+    so that they neither record the failure nor start the CLI again."""
+    with _running_lock:
+        processes = [process for process in _running_clis if process.poll() is None]
+    for process in processes:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=10,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            _signal_group(process, signal.SIGTERM)
+    deadline = time.monotonic() + grace
+    while any(_group_alive(process) for process in processes) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    for process in processes:
+        # Only the groups still there: the pid of one that has ended may have been given to another process.
+        if sys.platform != "win32" and _group_alive(process):
+            _signal_group(process, signal.SIGKILL)
+    return len(processes)
+
+
 def kill_tree(process: subprocess.Popen) -> None:
     if process.poll() is None:
         if os.name == "nt":
@@ -351,10 +415,13 @@ def kill_tree(process: subprocess.Popen) -> None:
                            capture_output=True, timeout=10,
                            creationflags=subprocess.CREATE_NO_WINDOW)
         else:
-            os.killpg(process.pid, signal.SIGTERM)
+            _signal_group(process, signal.SIGTERM)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
+            if os.name != "nt":
+                # The whole group, so that the processes the CLI started (node, its helpers) end too.
+                _signal_group(process, signal.SIGKILL)
             process.kill()
             process.wait()
 
@@ -364,23 +431,100 @@ def kill_tree(process: subprocess.Popen) -> None:
 _APP_ENV_PREFIXES = ("PAPEER_", "PAPERDESK_")
 
 
-def child_env() -> dict[str, str]:
-    """The environment for a CLI process: ours without the app's own variables."""
-    return {name: value for name, value in os.environ.items()
-            if not name.upper().startswith(_APP_ENV_PREFIXES)}
+def _windows() -> bool:
+    return os.name == "nt"
 
 
-def process_kwargs() -> dict:
+def _version_key(name: str) -> tuple:
+    """Sorts version folder names such as v20.11.1 or 22.3.0 by their numbers (v8 before v10)."""
+    return tuple(int(part) for part in re.findall(r"\d+", name))
+
+
+def unix_bin_folders(home: Path) -> list[Path]:
+    """macOS and Linux: the folders the usual installers put the CLIs and Node.js in, in the order they are tried.
+
+    An app started from the Finder or the Dock gets launchd's PATH (/usr/bin:/bin:/usr/sbin:/sbin) and no
+    shell's, so these are looked in besides PATH (find_cli), and added to a CLI's PATH (child_env): an npm CLI
+    is a script that starts with `#!/usr/bin/env node`.
+    """
+    def newest_first(pattern: str) -> list[Path]:
+        # By the version folder the "*" stands for (…/node/v22.1.0/bin), not by the last part ("bin").
+        star = Path(pattern).parts.index("*")
+        found = [path for path in home.glob(pattern) if path.is_dir()]
+        return sorted(found, key=lambda path: _version_key(path.relative_to(home).parts[star]), reverse=True)
+
+    return [
+        home / ".local/bin",  # the Claude Code installer, pipx, uv tools
+        Path("/opt/homebrew/bin"),  # Homebrew on Apple Silicon
+        Path("/usr/local/bin"),  # Homebrew on Intel Macs, the Node.js installer
+        Path("/home/linuxbrew/.linuxbrew/bin"), home / ".linuxbrew/bin",  # Homebrew on Linux
+        home / ".volta/bin",
+        home / ".npm-global/bin",  # npm's prefix as its documentation suggests setting it
+        home / ".bun/bin",
+        *newest_first(".nvm/versions/node/*/bin"),
+        *newest_first(".local/share/fnm/node-versions/*/installation/bin"),
+        *newest_first("Library/Application Support/fnm/node-versions/*/installation/bin"),
+        home / ".local/share/mise/shims", home / ".asdf/shims",
+        Path("/snap/bin"),
+    ]
+
+
+def unix_candidates(executable: str, own: tuple[str, ...], home: Path) -> list[Path]:
+    """Where `executable` may be installed on macOS and Linux: `own` (relative to the home folder when not
+    absolute), then unix_bin_folders()."""
+    return [*(home / path for path in own), *(folder / executable for folder in unix_bin_folders(home))]
+
+
+def _cli_folders(command: list[str] | None) -> list[str]:
+    """The folders of the program that starts a CLI, as found and with its links resolved (npm links its bin)."""
+    if not command or not os.path.isabs(command[0]):
+        return []
+    return [os.path.dirname(command[0]), os.path.dirname(os.path.realpath(command[0]))]
+
+
+def _has_node(folder: str) -> bool:
+    node = os.path.join(folder, "node")
+    return os.path.isfile(node) and os.access(node, os.X_OK)
+
+
+def cli_search_path(command: list[str] | None, current: str, home: Path) -> str:
+    """macOS and Linux: PATH for a CLI. Its own folders first when they hold node (the node an npm CLI was
+    installed with, as nvm and Homebrew lay them out), then PATH, then its other folders, then the install
+    folders that exist (unix_bin_folders). A CLI in /usr/bin does not put /usr/bin before nvm or pyenv.
+    Only absolute folders: a relative one would be looked up from wherever the CLI runs."""
+    own = _cli_folders(command)
+    folders = [*(folder for folder in own if _has_node(folder)), *current.split(os.pathsep), *own,
+               *(str(folder) for folder in unix_bin_folders(home) if folder.is_dir())]
+    return os.pathsep.join(dict.fromkeys(folder for folder in folders if folder and os.path.isabs(folder)))
+
+
+def child_env(command: list[str] | None = None) -> dict[str, str]:
+    """The environment for a CLI process: ours without the app's own variables.
+
+    On macOS and Linux, PATH also holds the CLI's own folders and the usual install folders (cli_search_path).
+    """
+    env = {name: value for name, value in os.environ.items()
+           if not name.upper().startswith(_APP_ENV_PREFIXES)}
+    if not _windows():
+        env["PATH"] = cli_search_path(command, env.get("PATH", ""), Path.home())
+    return env
+
+
+def process_kwargs(command: list[str] | None = None) -> dict:
     """Popen options for a CLI run: no window, its own process group, child_env()."""
     flags: dict = ({"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
                    if os.name == "nt" else {"start_new_session": True})
-    return flags | {"env": child_env()}
+    return flags | {"env": child_env(command)}
 
 
-def hidden_window() -> dict:
-    """subprocess.run options for a short CLI call: no window, child_env()."""
+def hidden_window(command: list[str] | None = None) -> dict:
+    """subprocess.run options for a short CLI call: no window, nothing to read, child_env().
+
+    The packaged sidecar's own standard input is the app's pipe (sidecar/routes/system.py watch_stdin),
+    which a CLI must neither inherit nor read from.
+    """
     flags: dict = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-    return flags | {"env": child_env()}
+    return flags | {"stdin": subprocess.DEVNULL, "env": child_env(command)}
 
 
 def json_lines(text: str) -> list[dict]:
@@ -415,7 +559,9 @@ def run_cli_process(
         if prompt_bytes:
             stdin.write(prompt_bytes)
             stdin.seek(0)
-        process = subprocess.Popen(command, cwd=root, stdin=stdin, stdout=stdout, stderr=stderr, **process_kwargs())
+        process = subprocess.Popen(command, cwd=root, stdin=stdin, stdout=stdout, stderr=stderr,
+                                   **process_kwargs(command))
+        track_cli(process)
         deadline = time.monotonic() + timeout_seconds
         try:
             while process.poll() is None:
@@ -444,7 +590,10 @@ def run_cli_process(
                 raise AnswerRejected(f"{tool_name}の回答が空でした。")
             return result, out_text
         finally:
-            kill_tree(process)
+            try:
+                kill_tree(process)
+            finally:
+                untrack_cli(process)
 
 
 _SCRIPT_SUFFIXES = {".cmd", ".bat", ".ps1"}
@@ -476,8 +625,11 @@ def shim_target(shim: Path) -> Path | None:
 
 
 def find_cli(configured: str, executable: str, windows_candidates: tuple[str, ...], npm_entry: str,
-             missing_message: str, tool_name: str = "") -> list[str]:
+             missing_message: str, tool_name: str = "", posix_candidates: tuple[str, ...] = ()) -> list[str]:
     """The command that starts a CLI: the configured path, PATH, then known install locations.
+
+    On macOS and Linux the known locations are posix_candidates (relative to the home folder when not
+    absolute), then the usual install folders (unix_bin_folders); a program there must be executable.
 
     A configured path may be quoted and hold %VARIABLES%; it is found as Windows finds a program
     (shutil.which: a bare name on PATH, a missing extension from PATHEXT, so npm's extensionless sh
@@ -497,7 +649,7 @@ def find_cli(configured: str, executable: str, windows_candidates: tuple[str, ..
                                "設定の接続先で、パスを確かめてください。")
         configured = located
     found = configured or shutil.which(executable) or ""
-    if not found and os.name == "nt":
+    if not found and _windows():
         for candidate in windows_candidates:
             variable, _, rest = candidate.partition("/")
             base = os.environ.get(variable, "")
@@ -505,6 +657,9 @@ def find_cli(configured: str, executable: str, windows_candidates: tuple[str, ..
             if base and path.is_file():
                 found = str(path)
                 break
+    elif not found:
+        found = next((str(path) for path in unix_candidates(executable, posix_candidates, Path.home())
+                      if path.is_file() and os.access(path, os.X_OK)), "")
     if not found:
         raise RuntimeError(missing_message)
     path = Path(found)
@@ -532,6 +687,8 @@ class CliBackend:
     """
     executable: str = ""
     windows_candidates: tuple[str, ...] = ()
+    # macOS and Linux, besides the shared install folders (unix_bin_folders): paths under the home folder.
+    posix_candidates: tuple[str, ...] = ()
     npm_entry: str = ""
     missing_message: str = ""
     tool_name: str = ""
@@ -546,11 +703,12 @@ class CliBackend:
 
     def command(self) -> list[str]:
         return find_cli(self.options.get("cli_path", ""), self.executable, self.windows_candidates,
-                        self.npm_entry, self.missing_message, self.tool_name)
+                        self.npm_entry, self.missing_message, self.tool_name, self.posix_candidates)
 
     def run_status(self, timeout: float) -> subprocess.CompletedProcess:
-        return subprocess.run(self.command() + list(self.status_args), capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=timeout, **hidden_window())
+        command = self.command()
+        return subprocess.run(command + list(self.status_args), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout, **hidden_window(command))
 
     def login_status(self) -> bool | None:
         try:
@@ -560,7 +718,7 @@ class CliBackend:
 
     def login(self) -> str:
         command = self.command() + list(self.login_args)
-        if os.name == "nt":
+        if sys.platform == "win32":
             # Outside the app's job for the sidecar (frontend/src-tauri/src/job.rs), which ends its
             # processes as the app exits: the sign-in console and the browser it opens may stay open.
             # A job that does not let processes leave refuses it; then the console starts inside.
@@ -570,7 +728,10 @@ class CliBackend:
             except PermissionError:
                 subprocess.Popen(command, env=child_env(), creationflags=subprocess.CREATE_NEW_CONSOLE)
         else:
-            subprocess.Popen(command, env=child_env())
+            # Not the sidecar's stdin: the app's pipe (hidden_window). A session of its own, out of the
+            # sidecar's process group: the sign-in and the browser it opens may outlive the app, as the
+            # console does on Windows (CREATE_BREAKAWAY_FROM_JOB above).
+            subprocess.Popen(command, env=child_env(command), stdin=subprocess.DEVNULL, start_new_session=True)
         service = getattr(self.spec, "login_service", "") or self.tool_name
         return f"開いたブラウザーで{service}にログイン後、「接続を確認」を押してください。"
 

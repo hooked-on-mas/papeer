@@ -37,6 +37,20 @@ def test_names_match_the_bundle_and_the_tauri_resource():
     assert f'const SIDECAR_EXE: &str = "{SIDECAR_EXE.stem}";' in rust
 
 
+def test_the_mac_and_linux_bundles():
+    # tauri.<platform>.conf.json is merged over tauri.conf.json when building on that platform.
+    tauri = ROOT / "frontend" / "src-tauri"
+    macos = json.loads((tauri / "tauri.macos.conf.json").read_text("utf-8"))["bundle"]
+    # No Developer ID: an ad-hoc signature (Apple Silicon runs no unsigned code); macOS 13 and later.
+    assert macos["targets"] == ["app", "dmg"]
+    assert macos["macOS"] == {"signingIdentity": "-", "minimumSystemVersion": "13.0"}
+    linux = json.loads((tauri / "tauri.linux.conf.json").read_text("utf-8"))["bundle"]
+    assert linux["targets"] == ["deb"]
+    # The tray's library is only recommended: the app runs on without a tray when it is missing (lib.rs).
+    assert "libayatana-appindicator3-1" in linux["linux"]["deb"]["recommends"]
+    assert "libayatana-appindicator3.so.1" in (tauri / "src" / "lib.rs").read_text("utf-8")
+
+
 def test_replaces_the_whole_folder(tmp_path):
     source = _bundle(tmp_path / "dist" / "sidecar")
     target = tmp_path / "src-tauri" / "sidecar"

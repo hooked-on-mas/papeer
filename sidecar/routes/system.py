@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import os
+import signal
+import sys
 import threading
 import time
+from types import FrameType
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -11,6 +14,8 @@ from fastapi import APIRouter, Depends
 from papeer import __version__
 from papeer.core.code_version import application_version
 from papeer.core.errors import NotFound
+from papeer.core.paths import app_env
+from papeer.providers.common import end_running_clis
 from sidecar import deps
 from sidecar.job_types import JobInfo
 from sidecar.schemas.system import HealthResponse, UIStateModel
@@ -36,8 +41,83 @@ SHUTDOWN_REQUEST_TIMEOUT = 5.0
 
 
 def exit_process() -> None:
+    # A CLI still running (its job did not stop in time) ends now, not after the sidecar: each runs in a
+    # session of its own, which ending the sidecar's process group would not reach.
+    end_running_clis()
     # Exit code 0 tells Tauri and `just smoke-sidecar` the sidecar ended by itself.
     os._exit(0)
+
+
+def stop_work(end_clis: bool = False) -> tuple[int, bool]:
+    """Refuse new jobs, cancel the running ones and wait for them and the library requests (bounded).
+
+    With end_clis (the app is gone, or wants the sidecar gone now), the running CLIs are ended at once,
+    right after their jobs are cancelled (so that no job records the failure or starts its CLI again),
+    instead of when each job gets to it. Returns how many jobs were cancelled, and whether everything had
+    stopped in time.
+    """
+    manager = deps.job_manager
+    cancelled = manager.close()
+    if end_clis:
+        end_running_clis()
+    jobs_stopped = manager.wait_idle(SHUTDOWN_JOB_TIMEOUT)
+    requests_finished = deps.wait_for_library_requests(SHUTDOWN_REQUEST_TIMEOUT)
+    return cancelled, jobs_stopped and requests_finished
+
+
+# The packaged app starts the sidecar with PAPEER_WATCH_STDIN=1 and a pipe as its standard input, which it
+# never writes to (frontend/src-tauri/src/sidecar.rs). The pipe closes when the app's process ends, however
+# it ends (a crash, a kill): the sidecar then stops its jobs (and the CLIs they run) and exits, as after
+# /shutdown. On Windows the app's job object ends it as well; on macOS and Linux this is what does.
+WATCH_STDIN_VARIABLE = "WATCH_STDIN"
+
+
+def watch_stdin(fd: int) -> None:
+    """Read file descriptor `fd` until it ends, then stop the work and exit (run on a daemon thread).
+
+    os.read on the descriptor, not sys.stdin.buffer: a daemon thread blocked in a buffered read holds the
+    buffer's lock, and Python ending meanwhile (the port was taken, say) aborts with "Fatal Python error:
+    _enter_buffered_busy" instead of exiting with its code.
+    """
+    try:
+        while os.read(fd, 4096):
+            pass
+    except OSError:
+        pass  # A broken or closed pipe: the app is gone all the same.
+    print("標準入力が閉じたため（アプリが終了したため）、ジョブを止めて終了します。", file=sys.stderr, flush=True)
+    stop_work(end_clis=True)
+    exit_process()
+
+
+def start_watching_stdin() -> bool:
+    """Start watch_stdin on the process's standard input when the app asked for it (PAPEER_WATCH_STDIN=1)."""
+    if app_env(WATCH_STDIN_VARIABLE) != "1":
+        return False
+    try:
+        fd = sys.stdin.fileno()
+    except (AttributeError, OSError, ValueError):  # No standard input at all.
+        return False
+    threading.Thread(target=watch_stdin, args=(fd,), name="watch-stdin", daemon=True).start()
+    return True
+
+
+def stop_on_terminate() -> None:
+    """macOS and Linux: SIGTERM (sent by the app when the sidecar does not end after /shutdown, and on Linux
+    when the app's process ends: PR_SET_PDEATHSIG) stops the jobs and the CLIs they run before the exit.
+
+    uvicorn takes SIGTERM over while it serves; once it has stopped serving, it gives the signal back
+    to the handler set here (uvicorn.Server.capture_signals). Without it, the job threads (daemons) would
+    end with the process and the CLIs, each in a session of its own (providers.common.process_kwargs),
+    would keep running.
+    """
+    if os.name == "nt":
+        return
+
+    def terminate(_signum: int, _frame: FrameType | None) -> None:
+        stop_work(end_clis=True)
+        exit_process()
+
+    signal.signal(signal.SIGTERM, terminate)
 
 
 @router.post("/shutdown")
@@ -47,10 +127,7 @@ def shutdown() -> dict[str, Any]:
     The caller waits for this response, so by the time it arrives nothing is writing any more;
     new jobs are refused from the first moment.
     """
-    manager = deps.job_manager
-    cancelled = manager.close()
-    jobs_stopped = manager.wait_idle(SHUTDOWN_JOB_TIMEOUT)
-    requests_finished = deps.wait_for_library_requests(SHUTDOWN_REQUEST_TIMEOUT)
+    cancelled, stopped = stop_work()
 
     exit_now = exit_process  # looked up now, so a test's replacement is still the one called later
 
@@ -59,7 +136,7 @@ def shutdown() -> dict[str, Any]:
         exit_now()
 
     threading.Thread(target=stop, daemon=True).start()
-    return {"status": "shutting down", "cancelled": cancelled, "stopped": jobs_stopped and requests_finished}
+    return {"status": "shutting down", "cancelled": cancelled, "stopped": stopped}
 
 
 @router.get("/api/ui-state", response_model=UIStateModel)

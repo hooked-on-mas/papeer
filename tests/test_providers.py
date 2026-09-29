@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from email.message import Message
 from email.utils import format_datetime
@@ -21,6 +22,7 @@ from papeer.providers.antigravity import AntigravityProvider
 from papeer.providers.base import TRANSPORT_WAIT_LIMIT
 from papeer.providers.claude_code import ClaudeCodeProvider
 from papeer.providers.codex import CodexProvider, codex_limit_windows
+from papeer.providers import common
 from papeer.providers.common import TransientError, cli_failure, matches_schema, run_cli_process
 from papeer.providers.openai_compat import (MIN_RETRY_AFTER, STRUCTURED_TEMPERATURE, OpenAICompatProvider,
                                             forget_refused_options, retry_after)
@@ -39,6 +41,14 @@ def node_on_path(node: str | None):
     """Patch shutil.which to find `node` (or no node) and every other program as it does."""
     real = shutil.which
     return patch("shutil.which", side_effect=lambda name, *args, **kwargs: node if name == "node" else real(name, *args, **kwargs))
+
+
+def nothing_installed_on_posix():
+    """Play macOS or Linux with no CLI in any known install folder."""
+    stack = ExitStack()
+    stack.enter_context(patch("papeer.providers.common._windows", return_value=False))
+    stack.enter_context(patch("papeer.providers.common.unix_candidates", return_value=[]))
+    return stack
 
 
 def agy_stream(response: str, status: str = "SUCCESS") -> bytes:
@@ -122,7 +132,7 @@ class ProvidersTests(unittest.TestCase):
         provider = ClaudeCodeProvider(Settings(provider="claude"))
         with patch("shutil.which", return_value="/usr/bin/claude"):
             self.assertEqual(provider.command(), [str(Path("/usr/bin/claude"))])
-        with patch("shutil.which", return_value=None), patch("os.name", "posix"):
+        with patch("shutil.which", return_value=None), nothing_installed_on_posix():
             with self.assertRaisesRegex(RuntimeError, "Claude Code CLIが見つかりません"):
                 provider.command()
 
@@ -183,9 +193,213 @@ class ProvidersTests(unittest.TestCase):
         provider = AntigravityProvider(Settings(provider="antigravity"))
         with patch("shutil.which", return_value="/usr/bin/agy"):
             self.assertEqual(provider.command(), [str(Path("/usr/bin/agy"))])
-        with patch("shutil.which", return_value=None), patch("os.name", "posix"):
+        with patch("shutil.which", return_value=None), nothing_installed_on_posix():
             with self.assertRaisesRegex(RuntimeError, "Antigravity CLI"):
                 provider.command()
+
+    def test_cli_installed_where_macos_and_linux_installers_put_it_is_found_off_path(self):
+        # An app started from the Finder has launchd's PATH (/usr/bin:/bin:/usr/sbin:/sbin) only.
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+
+            def install(relative: str) -> Path:
+                path = home / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("#!/bin/sh\n", "utf-8")
+                path.chmod(0o755)
+                return path
+
+            real_folders = common.unix_bin_folders
+
+            def found(cls) -> list[str]:
+                # Only the install folders under the home folder: not whatever /usr/local/bin holds here.
+                with patch("shutil.which", return_value=None), \
+                        patch("papeer.providers.common._windows", return_value=False), \
+                        patch("papeer.providers.common.Path.home", return_value=home), \
+                        patch("papeer.providers.common.unix_bin_folders",
+                              side_effect=lambda home: [folder for folder in real_folders(home)
+                                                        if folder.is_relative_to(home)]):
+                    return cls(Settings(provider=cls.spec.id)).command()
+
+            # The newest Node.js first, by version and not by name ("v10" < "v18" < "v22" < "v8" as text).
+            for version in ("v8.17.0", "v10.24.1", "v18.20.4", "v22.1.0"):
+                install(f".nvm/versions/node/{version}/bin/codex")
+            self.assertEqual(found(CodexProvider), [str(home / ".nvm/versions/node/v22.1.0/bin/codex")])
+            nvm = [folder.parent.name for folder in real_folders(home) if ".nvm" in folder.parts]
+            self.assertEqual(nvm, ["v22.1.0", "v18.20.4", "v10.24.1", "v8.17.0"])
+            for version in ("v8.17.0", "v22.1.0", "v18.20.4", "v10.24.1"):
+                (home / f".local/share/fnm/node-versions/{version}/installation/bin").mkdir(parents=True)
+            fnm = [folder.parent.parent.name for folder in real_folders(home) if "fnm" in folder.parts]
+            self.assertEqual(fnm, ["v22.1.0", "v18.20.4", "v10.24.1", "v8.17.0"])
+            shutil.rmtree(home / ".nvm")
+            legacy = install(".claude/local/claude")
+            self.assertEqual(found(ClaudeCodeProvider), [str(legacy)])
+            native = install(".local/bin/claude")  # The Claude Code installer.
+            self.assertEqual(found(ClaudeCodeProvider), [str(legacy)])  # Its own candidates first.
+            legacy.unlink()
+            self.assertEqual(found(ClaudeCodeProvider), [str(native)])
+            agy = install(".gemini/bin/agy")
+            self.assertEqual(found(AntigravityProvider), [str(agy)])
+
+    def test_cli_path_on_macos_and_linux_holds_its_folders_and_the_install_folders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / ".volta/bin").mkdir(parents=True)
+            cli = home / ".nvm/versions/node/v22.0.0/bin/claude"
+            cli.parent.mkdir(parents=True)
+            usr_bin, bin_ = str(Path("/usr/bin").absolute()), str(Path("/bin").absolute())
+            current = os.pathsep.join([usr_bin, bin_, usr_bin, "relative/bin", ""])
+            # Without node beside it, the CLI's folder comes after PATH: a CLI in /usr/bin must not put
+            # /usr/bin before the nvm or pyenv folders of PATH.
+            folders = common.cli_search_path([str(cli), "-p"], current, home).split(os.pathsep)
+            self.assertEqual(folders[:2], [usr_bin, bin_])
+            self.assertLess(folders.index(bin_), folders.index(str(cli.parent)))
+            # With node beside it, the CLI's folder first: `#!/usr/bin/env node` finds the node it was installed with.
+            node = cli.parent / "node"
+            node.write_text("#!/bin/sh\n", "utf-8")
+            node.chmod(0o755)
+            folders = common.cli_search_path([str(cli), "-p"], current, home).split(os.pathsep)
+            self.assertEqual(folders[0], str(cli.parent))
+            self.assertIn(os.path.dirname(os.path.realpath(cli)), folders)
+            # PATH as it was, then the install folders that exist (and not those that do not); only
+            # absolute folders, each once.
+            self.assertLess(folders.index(bin_), folders.index(str(home / ".volta/bin")))
+            self.assertNotIn(str(home / ".bun/bin"), folders)
+            self.assertNotIn("relative/bin", folders)
+            self.assertTrue(all(os.path.isabs(folder) for folder in folders))
+            self.assertEqual(len(folders), len(set(folders)))
+            with patch("papeer.providers.common._windows", return_value=False), \
+                    patch("papeer.providers.common.Path.home", return_value=home), \
+                    patch.dict(os.environ, {"PATH": "/usr/bin", "PAPEER_TOKEN": "secret"}):
+                env = common.child_env([str(cli)])
+            self.assertEqual(env["PATH"].split(os.pathsep)[0], str(cli.parent))
+            self.assertNotIn("PAPEER_TOKEN", env)
+        with patch("papeer.providers.common._windows", return_value=True), patch.dict(os.environ, {"PATH": "C:\\bin"}):
+            self.assertEqual(common.child_env(["C:\\tools\\claude.exe"])["PATH"], "C:\\bin")  # Windows: as it is.
+
+    def test_running_clis_are_known_until_they_end(self):
+        seen = []
+
+        def popen(command, cwd=None, stdin=None, stdout=None, stderr=None, **kwargs):
+            process = Mock(poll=Mock(return_value=0), returncode=0, pid=1)
+            seen.append(process)
+            stdout.write(b"answer")
+            stdout.flush()
+            return process
+
+        with patch(POPEN, side_effect=popen), patch("papeer.providers.common.kill_tree"), \
+                patch("papeer.providers.common.track_cli", side_effect=common.track_cli) as track:
+            run_cli_process(["cli"], b"", threading.Event(), 30, "CLI", Path(tempfile.gettempdir()))
+        track.assert_called_once_with(seen[0])
+        self.assertNotIn(seen[0], common._running_clis)  # Forgotten once it has ended.
+
+    def test_ending_the_running_clis_sends_sigterm_then_sigkill_to_each_group(self):
+        running = Mock(poll=Mock(return_value=None), pid=41)
+        ended = Mock(poll=Mock(return_value=0), pid=42)
+        signals = []
+        # POSIX's signals, on any host.
+        posix_signals = Mock(SIGTERM=15, SIGKILL=9)
+        with patch("papeer.providers.common.sys.platform", "linux"), \
+                patch("papeer.providers.common.signal", posix_signals), \
+                patch("papeer.providers.common._signal_group",
+                      side_effect=lambda process, signum: signals.append((process.pid, signum))), \
+                patch("papeer.providers.common._group_alive", return_value=True):
+            common.track_cli(running)
+            common.track_cli(ended)
+            try:
+                self.assertEqual(common.end_running_clis(grace=0.1), 1)
+            finally:
+                common.untrack_cli(running)
+                common.untrack_cli(ended)
+        self.assertEqual(signals, [(41, 15), (41, 9)])
+
+    def test_ending_the_running_clis_does_not_kill_a_group_that_has_ended(self):
+        running = Mock(poll=Mock(return_value=None), pid=41)
+        signals = []
+        posix_signals = Mock(SIGTERM=15, SIGKILL=9)
+        with patch("papeer.providers.common.sys.platform", "linux"),                 patch("papeer.providers.common.signal", posix_signals),                 patch("papeer.providers.common._signal_group",
+                      side_effect=lambda process, signum: signals.append((process.pid, signum))),                 patch("papeer.providers.common._group_alive", return_value=False):
+            common.track_cli(running)
+            try:
+                self.assertEqual(common.end_running_clis(grace=0.1), 1)
+            finally:
+                common.untrack_cli(running)
+        self.assertEqual(signals, [(41, 15)])  # No SIGKILL: its pid may belong to another process by now.
+
+    def test_a_cli_is_forgotten_even_when_ending_it_fails(self):
+        process = Mock(poll=Mock(return_value=0), returncode=0, pid=1)
+
+        def popen(command, cwd=None, stdin=None, stdout=None, stderr=None, **kwargs):
+            stdout.write(b"answer")
+            stdout.flush()
+            return process
+
+        with patch(POPEN, side_effect=popen),                 patch("papeer.providers.common.kill_tree", side_effect=RuntimeError("taskkill timed out")):
+            with self.assertRaises(RuntimeError):
+                run_cli_process(["cli"], b"", threading.Event(), 30, "CLI", Path(tempfile.gettempdir()))
+        self.assertNotIn(process, common._running_clis)
+
+    def test_the_running_lock_can_be_taken_again_by_a_signal_handler(self):
+        self.assertIsInstance(common._running_lock, type(threading.RLock()))
+
+    @unittest.skipIf(os.name == "nt", "process groups: macOS and Linux")
+    def test_ending_the_running_clis_reaches_what_they_started(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / "child"
+            process = subprocess.Popen(["sh", "-c", f"trap '' TERM; sleep 60 & echo $! > {pid_file}; wait"],
+                                       **common.process_kwargs())
+            common.track_cli(process)
+            try:
+                deadline = time.monotonic() + 10
+                while not pid_file.is_file() or not pid_file.read_text().strip():
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.05)
+                child = int(pid_file.read_text())
+                self.assertEqual(common.end_running_clis(grace=0.5), 1)
+                process.wait(10)
+                while True:
+                    try:
+                        os.kill(child, 0)
+                    except ProcessLookupError:
+                        break
+                    self.assertLess(time.monotonic(), deadline + 10, "the CLI's own process is still running")
+                    time.sleep(0.05)
+            finally:
+                common.untrack_cli(process)
+
+    def test_sign_in_on_macos_and_linux_runs_out_of_the_sidecars_process_group(self):
+        # Ending the sidecar's group (the app exits) must not end the sign-in, as on Windows.
+        with cli(CodexProvider), patch("papeer.providers.common.sys.platform", "linux"), patch(POPEN) as popen:
+            CodexProvider(Settings()).login()
+        kwargs = popen.call_args.kwargs
+        self.assertIs(kwargs["start_new_session"], True)
+        self.assertEqual(kwargs["stdin"], __import__("subprocess").DEVNULL)
+
+    @unittest.skipIf(os.name == "nt", "process groups: macOS and Linux")
+    def test_stopping_a_cli_ends_the_processes_it_started(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / "child"
+            # A CLI that ignores SIGTERM and has started a process of its own, which ignores it as well.
+            process = subprocess.Popen(["sh", "-c", f"trap '' TERM; sleep 60 & echo $! > {pid_file}; wait"],
+                                       **common.process_kwargs())
+            deadline = time.monotonic() + 10
+            while not pid_file.is_file() or not pid_file.read_text().strip():
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.05)
+            child = int(pid_file.read_text())
+            with patch.object(process, "wait", side_effect=[subprocess.TimeoutExpired("sh", 5), 0]):
+                common.kill_tree(process)  # SIGTERM is ignored: after the wait, SIGKILL to the whole group.
+            process.wait(10)
+            while True:
+                try:
+                    os.kill(child, 0)
+                except ProcessLookupError:
+                    break
+                self.assertLess(time.monotonic(), deadline + 10, "the CLI's own process is still running")
+                time.sleep(0.05)
+            common.kill_tree(process)  # Already gone: nothing to do, no error.
 
     def test_claude_provider_execution(self):
         launched = []

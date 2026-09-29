@@ -12,8 +12,8 @@ import tomllib
 
 from papeer.providers.base import OptionField, ProviderBackend, ProviderSpec
 from papeer.providers.common import (
-    CliBackend, hidden_window, json_lines, kill_tree, process_kwargs, remember_limits, run_cli_process,
-    to_int, window_label, wrap_document_prompt,
+    CliBackend, hidden_window, json_lines, kill_tree, process_kwargs, remember_limits, run_cli_process, to_int,
+    track_cli, untrack_cli, window_label, wrap_document_prompt,
 )
 
 _FALLBACK_MODELS = [
@@ -158,8 +158,9 @@ class CodexProvider(CliBackend, ProviderBackend):
     def list_models(self) -> list[tuple[str, str]]:
         models: list[tuple[str, str]] = []
         try:
-            res = subprocess.run(self.command() + ["debug", "models"], capture_output=True, text=True,
-                                 encoding="utf-8", errors="replace", timeout=15, **hidden_window())
+            command = self.command()
+            res = subprocess.run(command + ["debug", "models"], capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", timeout=15, **hidden_window(command))
             if res.returncode == 0 and res.stdout:
                 for item in json.loads(res.stdout).get("models", []):
                     slug = item.get("slug")
@@ -186,9 +187,11 @@ class CodexProvider(CliBackend, ProviderBackend):
             {"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read"},
         ]
         with tempfile.TemporaryDirectory(prefix="papeer-codex-") as directory:
-            process = subprocess.Popen(self.command() + ["app-server"], cwd=directory,
+            command = self.command()
+            process = subprocess.Popen(command + ["app-server"], cwd=directory,
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                       **process_kwargs())
+                                       **process_kwargs(command))
+            track_cli(process)
             answer: dict = {}
 
             def read() -> None:
@@ -210,7 +213,10 @@ class CodexProvider(CliBackend, ProviderBackend):
                 reader.start()
                 reader.join(timeout)
             finally:
-                kill_tree(process)
+                try:
+                    kill_tree(process)
+                finally:
+                    untrack_cli(process)
         result = answer.get("result")
         if not isinstance(result, dict) or not isinstance(result.get("rateLimits"), dict):
             raise RuntimeError("Codexの利用状況を取得できませんでした。")

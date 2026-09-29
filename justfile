@@ -1,6 +1,7 @@
 # Papeer Task Runner
 
-# Windows では Git Bash の sh が PATH にないことが多いため PowerShell を使う
+# Windows では Git Bash の sh が PATH にないことが多いため PowerShell を使う（macOS・Linux では sh）。
+# 環境変数は [env(...)] で付け（just 1.47 以上）、シェルの構文に頼らない
 set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
 default:
@@ -32,8 +33,9 @@ test-frontend:
 # デバッグ版の papeer.exe を作り（変更がなければすぐ終わる）、sidecar・Vite・代役 API とアプリを一時フォルダーに隔離して起動し、WebView2 を CDP で操作する
 # 実際の AI は呼ばない。開発用の sidecar（8000）・Vite（1420）が動いていれば止めてから実行する（例: just e2e --repeat 3、just e2e library）
 [working-directory: 'frontend']
+[env('TAURI_CONFIG', '{"bundle":{"resources":[]}}')]
 e2e *args:
-    $env:TAURI_CONFIG = '{"bundle":{"resources":[]}}'; cargo build --manifest-path src-tauri/Cargo.toml
+    cargo build --manifest-path src-tauri/Cargo.toml
     node e2e/run.ts {{ args }}
 
 # Lint and type check (README「テストと lint」)
@@ -53,10 +55,11 @@ lint-frontend:
 
 # Run clippy on the Tauri app as CI does (README「テストと lint」)
 # sidecar のフォルダー（frontend/src-tauri/sidecar）がなくても通るよう TAURI_CONFIG で bundle.resources を外す。
-# 変数はこの行の PowerShell の中だけで効き、終われば消える（付けたまま just build するとインストーラーに sidecar が入らないため、シェルには残さない）
+# 変数はこのレシピの中だけで効き、終われば消える（付けたまま just build するとインストーラーに sidecar が入らないため、シェルには残さない）
 [working-directory: 'frontend/src-tauri']
+[env('TAURI_CONFIG', '{"bundle":{"resources":[]}}')]
 clippy:
-    $env:TAURI_CONFIG = '{"bundle":{"resources":[]}}'; cargo clippy --release --all-targets -- -D warnings
+    cargo clippy --release --all-targets -- -D warnings
 
 # Regenerate the API schema and the frontend's types from the sidecar (tools/export_openapi.py, README「API の型」)
 # frontend/openapi.json を app.openapi() から書き出し、openapi-typescript で frontend/src/api/schema.d.ts を作り直す
@@ -85,33 +88,46 @@ audit *ecosystems:
 # Run sidecar server in development
 # 前回の本アプリの sidecar がポート 8000 に残っていれば止めてから起動する
 # 認証トークンはデバッグ版 Tauri (src-tauri/src/lib.rs の DEV_TOKEN) と同じ固定値を使う
-dev-sidecar:
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/stop_stale_dev.ps1 -Port 8000
-    $env:PAPEER_TOKEN = 'dev_token'; uv run python -m sidecar
+[env('PAPEER_TOKEN', 'dev_token')]
+dev-sidecar: (stop-stale-dev '-Port 8000')
+    uv run python -m sidecar
 
 # Run frontend in development
 # 前回の Vite (1420) とデバッグ版のウィンドウが残っていれば止めてから起動する
 [working-directory: 'frontend']
-dev-frontend:
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../tools/stop_stale_dev.ps1 -Port 1420 -ExePath frontend/src-tauri/target/debug/papeer.exe
+dev-frontend: (stop-stale-dev '-Port 1420 -ExePath frontend/src-tauri/target/debug/papeer.exe')
     pnpm tauri dev
+
+# 前回の開発用のプロセス（ポートを使っているこのリポジトリの sidecar・Vite、デバッグ版のアプリ）を止める（Windows のみ）
+[private]
+[windows]
+stop-stale-dev args:
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/stop_stale_dev.ps1 {{ args }}
+
+# macOS・Linux では止めない（残っていればポートが使えず起動が失敗するので、そのプロセスを止めてからやり直す）
+[private]
+[unix]
+stop-stale-dev args:
+    @true
 
 # Build the onedir sidecar (dist/sidecar), smoke-test it, and only then place it where Tauri's bundle.resources takes it
 # 同梱ソースのハッシュは PyInstaller の前に計算して build/ に置き、配置が成功してから sidecar-sources.txt にする
 # （ビルド中にソースを編集しても、その編集を含まない sidecar が「最新」と記録されないように）
+# macOS では Mach-O ファイルすべてに ad-hoc 署名する（tools/sign_sidecar.py。ほかの OS では何もしない）
 # 配置（tools/place_sidecar.py）は frontend/src-tauri/sidecar.new にコピーしてから名前の変更で入れ替える
 build-sidecar:
     uv run python -m papeer.core.code_version code-version.txt
     uv run python -m papeer.core.code_version --record-bundle build/sidecar-sources.pending
     uv run --group build pyinstaller --noconfirm sidecar.spec
+    uv run python tools/sign_sidecar.py
     uv run python tools/smoke_sidecar.py
     uv run python tools/place_sidecar.py
     uv run python -c "import os; os.replace('build/sidecar-sources.pending', 'sidecar-sources.txt')"
 
-# Smoke-test the built sidecar exe before packaging it (tools/smoke_sidecar.py, README「ビルド」)
-# データ・LOCALAPPDATA・TEMP を一時フォルダーにして起動する。実際の AI は呼ばない（翻訳はスクリプトが 127.0.0.1 で動かす代役 API で行う）
+# Smoke-test the built sidecar before packaging it (tools/smoke_sidecar.py, README「ビルド」)
+# データ・この PC のフォルダー（LOCALAPPDATA、HOME・XDG_*）・一時フォルダーを新しい一時フォルダーにして起動する。実際の AI は呼ばない（翻訳はスクリプトが 127.0.0.1 で動かす代役 API で行う）
 # `--source` は exe の代わりに python -m sidecar を試し、`--keep` は一時フォルダー（データ・ログ）を残す、`--exe` は別の場所の exe を試す
-# dist/sidecar の exe を試す（/health の版、認証、プロンプト、PDF の取り込みと翻訳、/shutdown、%TEMP% に何も展開しないこと）
+# dist/sidecar を試す（/health の版、認証、プロンプト、PDF の取り込みと翻訳、/shutdown、アプリの終了、一時フォルダーに何も展開しないこと）
 smoke-sidecar *args:
     uv run python tools/smoke_sidecar.py {{ args }}
 

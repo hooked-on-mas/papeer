@@ -36,7 +36,7 @@ import logging
 from pathlib import Path
 import sys
 import threading
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 import urllib.request
 
 from PIL import Image
@@ -342,7 +342,7 @@ class WindowsOcrEngine:
 
     @staticmethod
     @functools.cache
-    def _winrt():
+    def _winrt() -> tuple[Any, ...] | None:  # Declared: off Windows pyright would infer None only.
         if sys.platform != "win32":
             return None
         try:

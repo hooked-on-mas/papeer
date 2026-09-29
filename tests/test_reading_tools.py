@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 import threading
 import time
 import zipfile
@@ -531,8 +532,10 @@ def test_glossary_draft_can_extend_large_global_dictionary(library):
 
 def test_backup_is_never_written_inside_the_library(library):
     lib, _ = library
+    # Windows: also through the long-path prefix.
     long_form = Path("\\\\?\\" + str(lib.root.resolve()))
-    for inside in (lib.root / "backup.zip", lib.root / "papers" / "backup.zip", long_form / "backup.zip"):
+    windows_forms = [long_form / "backup.zip"] if sys.platform == "win32" else []
+    for inside in (lib.root / "backup.zip", lib.root / "papers" / "backup.zip", *windows_forms):
         with pytest.raises(ValueError, match="データ保存フォルダーの外"):
             create_backup(lib, inside)
     assert not list(lib.root.rglob("backup.zip"))

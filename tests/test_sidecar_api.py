@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import sys
 import tempfile
 import time
 from unittest.mock import patch
@@ -489,9 +490,11 @@ def test_paper_metadata_reading_and_export_guards(test_env, tmp_path):
     blocked = client.post(f"/api/papers/{paper_id}/export", json={"kind": "translated", "destination": str(tmp_path / "x.pdf")})
     assert blocked.status_code == 400
     folder = Path(client.get(f"/api/papers/{paper_id}").json()["folder_path"])
+    # Windows: also through the long-path prefix, and a trailing space that Windows drops from a folder name.
     long_form = Path("\\\\?\\" + str(library_root.resolve()))
+    windows_forms = [long_form / "copy.pdf", Path(f"{library_root} ") / "copy.pdf"] if sys.platform == "win32" else []
     for inside in (folder / "original.pdf", folder / "copy.pdf", library_root / "library.sqlite3",
-                   library_root / "exports" / "x.pdf", long_form / "copy.pdf", Path(f"{library_root} ") / "copy.pdf"):
+                   library_root / "exports" / "x.pdf", *windows_forms):
         refused = client.post(f"/api/papers/{paper_id}/export", json={"kind": "original", "destination": str(inside)})
         assert refused.status_code == 400 and refused.json()["detail"] == "ライブラリの外に保存先を選んでください。"
     assert not (folder / "copy.pdf").exists() and not (library_root / "exports").exists()
