@@ -1,6 +1,7 @@
 import { cn } from "cn";
 import { useUiScale } from "@/app/uiScale";
 import { UI_SCALES } from "@/lib/uiScale";
+import { withShortcutLabels } from "@/lib/platform";
 
 /** 設定「表示」の「文字の大きさ」: the size of the whole UI (lib/uiScale.ts), apart from the PDF zoom. */
 export function UiScaleSection() {
@@ -30,7 +31,7 @@ export function UiScaleSection() {
       </div>
       <p className="text-[0.75rem] text-muted-foreground leading-relaxed">
         メニュー・ライブラリ・サマリー・チャット・メモなど、画面全体の文字とボタンの大きさを変えます。
-        PDFの表示倍率はリーダーの拡大・縮小（Ctrl + / Ctrl − / Ctrl+ホイール）で別に変えられます。
+        {withShortcutLabels("PDFの表示倍率はリーダーの拡大・縮小（Ctrl + / Ctrl − / Ctrl+ホイール）で別に変えられます。")}
         すぐに反映され、保存ボタンを押す必要はありません。
       </p>
     </div>

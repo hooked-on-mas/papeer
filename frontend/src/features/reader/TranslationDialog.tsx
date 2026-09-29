@@ -23,6 +23,7 @@ import {
   recordReviewedGlossary, retranslationWarning, reviewSkipMessage, startButtonLabel, translationTargetText,
   type TranslationPlan,
 } from "./translationStart";
+import { isImeKey } from "@/lib/imeKeys";
 
 interface TranslationDialogProps {
   open: boolean;
@@ -229,7 +230,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
               onChange={(e) => setRequest({ customRange: e.target.value })}
               placeholder="例: 1, 3-5, 8"
               disabled={scope !== "custom"}
-              onKeyDown={(e) => { if (e.key === "Enter") handleStart(); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && !isImeKey(e.nativeEvent)) handleStart(); }}
             />
             <p className={`text-[0.75rem] ${selection.error ? "text-destructive" : "text-muted-foreground"}`}>
               {selection.error ?? (selection.pages ? translationTargetText(selection.pages.length, planFetching ? undefined : plan) : "")}

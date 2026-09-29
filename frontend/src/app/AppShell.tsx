@@ -38,6 +38,7 @@ import { isAppClosing, setAppClosing } from "./appClosing";
 import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
 import { isJobKind, SNAPSHOT_JOBS } from "@/features/jobs/jobKinds";
 import { registerAllJobHandlers } from "./jobHandlers";
+import { withShortcutLabels } from "@/lib/platform";
 
 const TABS = ["reader", "summary", "chat", "notes", "sticky-notes"];
 
@@ -275,6 +276,21 @@ export function AppShell() {
   useCloseHandling();
   useBlockWebviewZoom();
 
+  // macOS: 「Papeer → 設定…」 in the menu bar (src-tauri/src/lib.rs).
+  useEffect(() => {
+    // @ts-ignore injected by Tauri
+    if (window.__TAURI_INTERNALS__ === undefined) return;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) => listen("open-settings-requested", () => setIsSettingsOpen(true)))
+      .then((u) => { if (disposed) u(); else unlisten = u; });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [setIsSettingsOpen]);
+
   // Opening a paper makes its folder the 追加先, as selecting it in the old tree did.
   useEffect(() => {
     if (!activePaper || lastCollectionPaper.current === activePaper.id) return;
@@ -307,7 +323,8 @@ export function AppShell() {
   };
 
   const hotkeyOptions = { preventDefault: true, enableOnFormTags: false } as const;
-  useHotkeys("f11", () => useStore.getState().setFocusMode(!useStore.getState().focusMode), { preventDefault: true });
+  // F11 on Windows and Linux; ⌃⌘F on macOS, where F11 shows the desktop (lib/platform.ts).
+  useHotkeys("f11, ctrl+meta+f", () => useStore.getState().setFocusMode(!useStore.getState().focusMode), { preventDefault: true });
   useHotkeys("esc", () => {
     // Esc on an enlarged image only closes the image.
     if (!document.querySelector("[data-lightbox]")) useStore.getState().setFocusMode(false);
@@ -336,6 +353,8 @@ export function AppShell() {
     store.setSidebarCollapsed(!store.sidebarCollapsed);
   }, hotkeyOptions);
   useHotkeys("ctrl+t, meta+t", () => emitAppEvent("open-translate-dialog"), hotkeyOptions);
+  // ⌘, is the Mac's key for an app's settings (its menu bar has 「設定…」 as well, src-tauri/src/lib.rs).
+  useHotkeys("ctrl+comma, meta+comma", () => setIsSettingsOpen(true), { preventDefault: true, enableOnFormTags: true });
   useHotkeys("f2", () => {
     const store = useStore.getState();
     if (store.selectedFolder) renameFolder(store.selectedFolder);
@@ -350,10 +369,12 @@ export function AppShell() {
   useHotkeys("left", () => { if (useStore.getState().activeTab === "reader") movePage(-1); }, pageKeyOptions);
   useHotkeys("right", () => { if (useStore.getState().activeTab === "reader") movePage(1); }, pageKeyOptions);
   // Key names follow KeyboardEvent.code; Ctrl+; / Ctrl+Shift+; is "+" on Japanese keyboards.
-  useHotkeys("ctrl+equal, meta+equal, ctrl+add, ctrl+semicolon, ctrl+shift+semicolon, ctrl+shift+equal", () => changeZoom(1), hotkeyOptions);
-  useHotkeys("ctrl+minus, meta+minus, ctrl+subtract", () => changeZoom(-1), hotkeyOptions);
+  useHotkeys("ctrl+equal, meta+equal, ctrl+add, meta+add, ctrl+semicolon, meta+semicolon, ctrl+shift+semicolon, meta+shift+semicolon, ctrl+shift+equal, meta+shift+equal",
+    () => changeZoom(1), hotkeyOptions);
+  useHotkeys("ctrl+minus, meta+minus, ctrl+subtract, meta+subtract", () => changeZoom(-1), hotkeyOptions);
   useHotkeys("ctrl+0, meta+0", () => useStore.getState().setZoom(1), hotkeyOptions);
-  useHotkeys("ctrl+1, ctrl+2, ctrl+3, ctrl+4, ctrl+5", (_e, handler) => {
+  useHotkeys("ctrl+1, ctrl+2, ctrl+3, ctrl+4, ctrl+5, meta+1, meta+2, meta+3, meta+4, meta+5", (_e, handler) => {
+    // The digit alone: handler.keys holds no modifier.
     const tab = TABS[Number(handler.keys?.join("")) - 1];
     if (!tab) return;
     const store = useStore.getState();
@@ -379,7 +400,7 @@ export function AppShell() {
               <div
                 className="h-12 flex items-center gap-2 px-4 font-semibold text-[0.9375rem] shrink-0 cursor-pointer hover:bg-muted/50 transition-colors"
                 onClick={() => useStore.getState().setSidebarCollapsed(true)}
-                title="左パネルを閉じる（Ctrl+B）"
+                title={withShortcutLabels("左パネルを閉じる（Ctrl+B）")}
               >
                 <span className="flex size-8 shrink-0 items-center justify-center">
                   <img src="/papeer.png" alt="" className="size-8 object-contain" />
@@ -402,13 +423,13 @@ export function AppShell() {
 
         {!focusMode && sidebarCollapsed && (
           <div className="w-12 bg-sidebar border-r flex flex-col items-center py-2 gap-1 shrink-0">
-            <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title="ライブラリを表示（Ctrl+B）"
+            <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title={withShortcutLabels("ライブラリを表示（Ctrl+B）")}
               onClick={() => useStore.getState().setSidebarCollapsed(false)}>
               <span className="flex size-8 shrink-0 items-center justify-center">
                 <img src="/papeer.png" alt="Papeer" className="size-8 object-contain" />
               </span>
             </button>
-            <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title="PDFを追加（Ctrl+O）" onClick={importPdfs}>
+            <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title={withShortcutLabels("PDFを追加（Ctrl+O）")} onClick={importPdfs}>
               <FilePlus2 className="w-4 h-4 text-muted-foreground" />
             </button>
             <button className="mt-auto w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title="接続・設定"
@@ -425,9 +446,9 @@ export function AppShell() {
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(String(value))} className="flex-1 flex flex-col min-h-0 gap-0">
             <div hidden={focusMode} className="border-b px-4 shrink-0 bg-background/50">
               <TabsList variant="line" className="h-10 bg-transparent border-b-0 space-x-2">
-                <TabsTrigger value="reader" title="Ctrl+1">PDFを読む</TabsTrigger>
-                <TabsTrigger value="summary" title="Ctrl+2">サマリー</TabsTrigger>
-                <TabsTrigger value="chat" title="Ctrl+3">
+                <TabsTrigger value="reader" title={withShortcutLabels("Ctrl+1")}>PDFを読む</TabsTrigger>
+                <TabsTrigger value="summary" title={withShortcutLabels("Ctrl+2")}>サマリー</TabsTrigger>
+                <TabsTrigger value="chat" title={withShortcutLabels("Ctrl+3")}>
                   チャット
                   {attachmentCount > 0 && (
                     <span className="min-w-4 rounded-full bg-primary px-1 text-[0.75rem] leading-4 text-primary-foreground" title={`添付 ${attachmentCount} 件`}>
@@ -435,8 +456,8 @@ export function AppShell() {
                     </span>
                   )}
                 </TabsTrigger>
-                <TabsTrigger value="notes" title="Ctrl+4">メモ・整理</TabsTrigger>
-                <TabsTrigger value="sticky-notes" title="Ctrl+5">付箋</TabsTrigger>
+                <TabsTrigger value="notes" title={withShortcutLabels("Ctrl+4")}>メモ・整理</TabsTrigger>
+                <TabsTrigger value="sticky-notes" title={withShortcutLabels("Ctrl+5")}>付箋</TabsTrigger>
               </TabsList>
             </div>
 

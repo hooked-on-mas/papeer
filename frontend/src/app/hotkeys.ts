@@ -1,4 +1,7 @@
-/** Shortcuts registered in AppShell, listed for the settings dialog. Keep the two in sync. */
+/**
+ * Shortcuts registered in AppShell, listed for the settings dialog. Keep the two in sync.
+ * Written as on Windows; the settings dialog shows them as the Mac's keyboard has them there (lib/platform.ts).
+ */
 export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: string }[] }[] = [
   {
     title: "PDFの書き込み（編集ツール選択中）",
@@ -19,6 +22,7 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
       { keys: ["Ctrl", "1〜4"], label: "タブを切り替え（PDF を読む / サマリー / チャット / メモ・整理）。集中表示中は右パネルに開閉" },
       { keys: ["Ctrl", "5"], label: "付箋タブを開く（集中表示を終了）" },
       { keys: ["F11"], label: "集中表示" },
+      { keys: ["Ctrl", ","], label: "接続・設定を開く" },
       { keys: ["Esc"], label: "集中表示を終了" },
     ],
   },
@@ -57,7 +61,7 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
       { keys: ["Ctrl", "+"], label: "拡大" },
       { keys: ["Ctrl", "-"], label: "縮小" },
       { keys: ["Ctrl", "0"], label: "幅に合わせる（「ページ全体」は倍率の選択から）" },
-      { keys: ["Ctrl", "ホイール"], label: "拡大・縮小" },
+      { keys: ["Ctrl", "ホイール"], label: "拡大・縮小（タッチパッドのピンチでも可）" },
       { keys: ["Ctrl", "T"], label: "翻訳ダイアログを開く" },
       { keys: ["Delete"], label: "選択した付箋を削除（付箋タブのカードでも可）" },
     ],

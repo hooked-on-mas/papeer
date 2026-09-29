@@ -123,6 +123,104 @@ fn tray_available() -> bool {
     true
 }
 
+/// Linux: WebKitGTK's DMA-BUF renderer leaves the window blank or garbled with NVIDIA's own driver
+/// (a known WebKitGTK issue). With that driver loaded, and nothing set by the user, WebKitGTK draws
+/// without it. Called before anything starts another thread: the environment is not safe to change after.
+#[cfg(target_os = "linux")]
+fn webkit_workarounds() {
+    const VARIABLE: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+    if std::env::var_os(VARIABLE).is_none()
+        && std::path::Path::new("/proc/driver/nvidia/version").exists()
+    {
+        std::env::set_var(VARIABLE, "1");
+    }
+}
+
+/// The ids of the menu bar's own items (macOS); the tray's items are "show" and "quit". Tauri hands every
+/// menu's events to every handler, so each handler looks for its own ids only.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MENU_QUIT: &str = "app-quit";
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MENU_SETTINGS: &str = "app-settings";
+
+/// What a menu bar item asks of the frontend: the same closing as the tray's 「終了」, or the settings.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn menu_event_name(id: &str) -> Option<&'static str> {
+    match id {
+        MENU_QUIT => Some("tray-quit-requested"),
+        MENU_SETTINGS => Some("open-settings-requested"),
+        _ => None,
+    }
+}
+
+/// macOS: the menu bar. Without one Tauri shows its own, whose Quit (⌘Q) ends the app at once, past the
+/// window's closing (frontend AppShell useCloseHandling: unsaved input, running jobs, the sync at exit).
+/// 「Papeer を終了」 and 「設定…」 are the app's own items (menu_event_name); the Edit menu keeps ⌘C, ⌘V,
+/// ⌘X, ⌘A and ⌘Z working in the webview's text fields; ⌘W closes the window as its close button does.
+#[cfg(target_os = "macos")]
+fn app_menu<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<Menu<R>> {
+    use tauri::menu::{AboutMetadata, PredefinedMenuItem, Submenu};
+    let settings = MenuItem::with_id(app, MENU_SETTINGS, "設定…", true, Some("CmdOrCtrl+,"))?;
+    let quit = MenuItem::with_id(app, MENU_QUIT, "Papeer を終了", true, Some("CmdOrCtrl+Q"))?;
+    let about = AboutMetadata {
+        name: Some("Papeer".into()),
+        ..Default::default()
+    };
+    let app_submenu = Submenu::with_items(
+        app,
+        "Papeer",
+        true,
+        &[
+            &PredefinedMenuItem::about(app, Some("Papeer について"), Some(about))?,
+            &PredefinedMenuItem::separator(app)?,
+            &settings,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, Some("サービス"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, Some("Papeer を隠す"))?,
+            &PredefinedMenuItem::hide_others(app, Some("ほかを隠す"))?,
+            &PredefinedMenuItem::show_all(app, Some("すべてを表示"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+    let edit = Submenu::with_items(
+        app,
+        "編集",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, Some("取り消す"))?,
+            &PredefinedMenuItem::redo(app, Some("やり直す"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, Some("カット"))?,
+            &PredefinedMenuItem::copy(app, Some("コピー"))?,
+            &PredefinedMenuItem::paste(app, Some("ペースト"))?,
+            &PredefinedMenuItem::select_all(app, Some("すべてを選択"))?,
+        ],
+    )?;
+    let window = Submenu::with_items(
+        app,
+        "ウインドウ",
+        true,
+        &[
+            &PredefinedMenuItem::minimize(app, Some("しまう"))?,
+            &PredefinedMenuItem::maximize(app, Some("拡大／縮小"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, Some("閉じる"))?,
+        ],
+    )?;
+    Menu::with_items(app, &[&app_submenu, &edit, &window])
+}
+
+/// Show the main window and bring it to the front (the tray's 「開く」, the Dock icon and the menu bar on macOS).
+fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 /// tauri.conf.json names the sidecar as `http://127.0.0.1:*` (and `ws://`), since a release build learns
 /// its port only at launch. Narrow those sources to the port the sidecar was given, so a page in the
 /// webview cannot reach other servers on this PC. Tauri reads the CSP from the config for each page.
@@ -147,6 +245,8 @@ fn pin_sidecar_port(csp: Csp, port: u16) -> Csp {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    webkit_workarounds();
     // Chosen before the app is built, so the CSP can name it (pin_sidecar_port). A debug build talks to
     // `just dev-sidecar` on 8000; `tauri dev` loads the page from Vite, which Tauri serves without the CSP.
     #[cfg(debug_assertions)]
@@ -162,6 +262,12 @@ pub fn run() {
     let mut context = tauri::generate_context!();
     let security = &mut context.config_mut().app.security;
     security.csp = security.csp.take().map(|csp| pin_sidecar_port(csp, port));
+    // zoomHotkeysEnabled lets touchpad pinch reach the page as Ctrl+wheel in WebView2. On macOS and
+    // Linux Tauri would instead add a script that zooms the whole webview on ⌘/Ctrl + - 0 and Ctrl+wheel,
+    // which are the PDF's zoom there (the reader takes pinch from WebKit's gesture events).
+    for window in &mut context.config_mut().app.windows {
+        window.zoom_hotkeys_enabled &= cfg!(windows);
+    }
 
     // Under the end-to-end tests the main window is made in setup, with its own WebView2 profile.
     #[cfg(debug_assertions)]
@@ -197,24 +303,41 @@ pub fn run() {
                 }
             }
 
+            #[cfg(target_os = "macos")]
+            {
+                app.set_menu(app_menu(app)?)?;
+                app.on_menu_event(|app, event| {
+                    if let Some(name) = menu_event_name(event.id.as_ref()) {
+                        show_main_window(app);
+                        let _ = app.emit(name, ());
+                    }
+                });
+            }
+
             let show_i = MenuItem::with_id(app, "show", "開く", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
 
             // The tray icon is a convenience: the window has everything it offers. Without it (no
             // appindicator library on Linux, no tray in the desktop), the app runs on without one.
-            if let Some(icon) = app.default_window_icon().filter(|_| tray_available()) {
+            // macOS: a black-and-white template image, which the menu bar draws in its own colours (the app
+            // icon would be a coloured square there), and the menu on a right click only: a left click
+            // shows or hides the window, as on Windows.
+            #[cfg(target_os = "macos")]
+            let icon = Some(tauri::include_image!("icons/tray-template.png"));
+            #[cfg(not(target_os = "macos"))]
+            let icon = app.default_window_icon().cloned();
+            if let Some(icon) = icon.filter(|_| tray_available()) {
                 let tray = TrayIconBuilder::with_id(TRAY_ID)
-                    .icon(icon.clone())
+                    .icon(icon)
+                    .icon_as_template(cfg!(target_os = "macos"))
+                    .show_menu_on_left_click(!cfg!(target_os = "macos"))
                     .menu(&menu)
                     .on_menu_event(|app, event| {
                         if event.id.as_ref() == "quit" {
                             let _ = app.emit("tray-quit-requested", ());
                         } else if event.id.as_ref() == "show" {
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                            show_main_window(app);
                         }
                     })
                     .on_tray_icon_event(|tray, event| {
@@ -229,8 +352,7 @@ pub fn run() {
                                 if is_visible {
                                     let _ = window.hide();
                                 } else {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
+                                    show_main_window(app);
                                 }
                             }
                         }
@@ -283,6 +405,15 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(move |app_handle, event| {
+        // macOS: clicking the Dock icon brings back a window the tray or ⌘H hid.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen {
+            has_visible_windows: false,
+            ..
+        } = event
+        {
+            show_main_window(app_handle);
+        }
         #[cfg(debug_assertions)]
         let _ = (app_handle, event);
         // Wait for the sidecar to end by itself (it has usually been sent /shutdown); kill only as a last resort.
@@ -395,6 +526,18 @@ mod tests {
                 vec![home.join("old")]
             );
         }
+    }
+
+    #[test]
+    fn menu_bar_items_ask_the_frontend_as_the_tray_does() {
+        assert_eq!(menu_event_name(MENU_QUIT), Some("tray-quit-requested"));
+        assert_eq!(
+            menu_event_name(MENU_SETTINGS),
+            Some("open-settings-requested")
+        );
+        // The tray's own items are its handler's, not the menu bar's.
+        assert_eq!(menu_event_name("quit"), None);
+        assert_eq!(menu_event_name("show"), None);
     }
 
     #[test]

@@ -21,6 +21,8 @@ import { TranslationReview } from "./TranslationReview";
 import { translationIssues } from "@/lib/translationIssues";
 import { useInkTools } from "./useInkEditor";
 import type { SidePanel } from "./sidePanel";
+import { withShortcutLabels } from "@/lib/platform";
+import { isImeKey } from "@/lib/imeKeys";
 
 /** Tabs that open beside the reader; their keys do so in focus mode, and open the tab otherwise. */
 const SIDE_PANEL_BUTTONS: { tab: SidePanel; label: string; icon: typeof ScrollText; key: string }[] = [
@@ -111,7 +113,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   // Whether the menu holds anything besides the page information.
   const folded = ["back", "ink", "review", "filter", "zoom"].some((id) => !shown(id)) || !full("zoom")
     || (!!outline?.length && !shown("outline")) || !shown("panels") || (focusMode && !shown("sticky"));
-  const panelTitle = (label: string, key: string) => `${label}を右に表示${focusMode ? `（${key}）` : ""}`;
+  const panelTitle = (label: string, key: string) => `${label}を右に表示${focusMode ? `（${withShortcutLabels(key)}）` : ""}`;
 
   const toggleInk = () => {
     if (inkPressed) {
@@ -159,12 +161,12 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
           value={pageText}
           onChange={(e) => setPageText(e.target.value.replace(/[^0-9０-９]/g, ""))}
           onKeyDown={(e) => {
-            if (e.key === "Enter") commitPage();
+            if (e.key === "Enter" && !isImeKey(e.nativeEvent)) commitPage();
             if (e.key === "Escape") { setPageText(String(currentPage)); (e.target as HTMLInputElement).blur(); }
           }}
           onBlur={commitPage}
           aria-label="ページ番号"
-          title="ページ番号を入力し、Enterで移動（Ctrl+G）"
+          title={withShortcutLabels("ページ番号を入力し、Enterで移動（Ctrl+G）")}
           className="w-11 h-6 shrink-0 text-center border rounded bg-background focus:ring-2 focus:ring-ring focus:outline-none tabular-nums"
         />
         {shown("go") && (
@@ -177,7 +179,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
         </button>
         {shown("back") && (
           <button onClick={historyBack} disabled={!canGoBack} className={button} aria-label="戻る"
-            title="リンク・目次・検索で移動する前の場所に戻る（Alt+←）">
+            title={withShortcutLabels("リンク・目次・検索で移動する前の場所に戻る（Alt+←）")}>
             <Undo2 className="w-4 h-4" />
           </button>
         )}
@@ -188,13 +190,13 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
 
         {shown("outline") && (
           <DropdownMenu>
-            <DropdownMenuTrigger className={labeled} aria-label="目次" title="PDF の目次から移動（Alt+← で戻る）">
+            <DropdownMenuTrigger className={labeled} aria-label="目次" title={withShortcutLabels("PDF の目次から移動（Alt+← で戻る）")}>
               <ListTree className="size-3.5" />{full("outline") && "目次"}
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className={outlineMenuClass}>{outlineItems}</DropdownMenuContent>
           </DropdownMenu>
         )}
-        <button className={labeled} aria-label="論文内検索" aria-pressed={searchOpen} title="論文内検索（Ctrl+F）" onClick={() => setSearchOpen(!searchOpen)}>
+        <button className={labeled} aria-label="論文内検索" aria-pressed={searchOpen} title={withShortcutLabels("論文内検索（Ctrl+F）")} onClick={() => setSearchOpen(!searchOpen)}>
           <Search className="size-3.5" />{full("search") && "検索"}
         </button>
         {shown("review") && (
@@ -226,7 +228,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
         {shown("zoom") && <div className="ml-1.5 flex items-center gap-1 shrink-0">
           {full("zoom") && (
             <button onClick={() => changeZoom(-1)} disabled={zoom <= ZOOM_LEVELS[0]} className={button} aria-label="縮小"
-              title="原文・日本語訳を縮小（Ctrl＋マウスホイール下 / Ctrl+-）">
+              title={withShortcutLabels("原文・日本語訳を縮小（Ctrl＋マウスホイール下 / Ctrl+-）")}>
               <ZoomOut className="w-4 h-4" />
             </button>
           )}
@@ -243,13 +245,13 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
           </select>
           {full("zoom") && (
             <button onClick={() => changeZoom(1)} disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]} className={button} aria-label="拡大"
-              title="原文・日本語訳を拡大（Ctrl＋マウスホイール上 / Ctrl+=）">
+              title={withShortcutLabels("原文・日本語訳を拡大（Ctrl＋マウスホイール上 / Ctrl+=）")}>
               <ZoomIn className="w-4 h-4" />
             </button>
           )}
         </div>}
         {focusMode && shown("sticky") && (
-          <button onClick={() => useStore.getState().setActiveTab("sticky-notes")} className={`${button} ml-1.5`} title="付箋タブへ（Ctrl+5）" aria-label="付箋タブへ">
+          <button onClick={() => useStore.getState().setActiveTab("sticky-notes")} className={`${button} ml-1.5`} title={withShortcutLabels("付箋タブへ（Ctrl+5）")} aria-label="付箋タブへ">
             <StickyNote className="w-4 h-4" />
           </button>
         )}
@@ -278,7 +280,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
           className={chip(focusMode)}
           aria-label={focusMode ? "集中表示を終了" : "集中表示"}
           aria-pressed={focusMode}
-          title="PDFとページ操作を大きく表示（F11で切り替え）"
+          title={withShortcutLabels("PDFとページ操作を大きく表示（F11で切り替え）")}
         >
           {focusMode ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           {full("focus") && (focusMode ? "集中表示を終了" : "集中表示")}
@@ -299,7 +301,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             </DropdownMenuGroup>
             {folded && <DropdownMenuSeparator />}
             {!shown("back") && (
-              <DropdownMenuItem disabled={!canGoBack} onClick={historyBack}><Undo2 /> 移動する前の場所に戻る（Alt+←）</DropdownMenuItem>
+              <DropdownMenuItem disabled={!canGoBack} onClick={historyBack}><Undo2 /> {withShortcutLabels("移動する前の場所に戻る（Alt+←）")}</DropdownMenuItem>
             )}
             {!shown("outline") && !!outline?.length && (
               <DropdownMenuSub>
@@ -321,11 +323,11 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
               </DropdownMenuCheckboxItem>
             ))}
             {focusMode && !shown("sticky") && (
-              <DropdownMenuItem onClick={() => useStore.getState().setActiveTab("sticky-notes")}><StickyNote /> 付箋タブへ（Ctrl+5）</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => useStore.getState().setActiveTab("sticky-notes")}><StickyNote /> {withShortcutLabels("付箋タブへ（Ctrl+5）")}</DropdownMenuItem>
             )}
             {!full("zoom") && <>
-              <DropdownMenuItem disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]} onClick={() => changeZoom(1)}><ZoomIn /> 拡大（Ctrl++）</DropdownMenuItem>
-              <DropdownMenuItem disabled={zoom <= ZOOM_LEVELS[0]} onClick={() => changeZoom(-1)}><ZoomOut /> 縮小（Ctrl+-）</DropdownMenuItem>
+              <DropdownMenuItem disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]} onClick={() => changeZoom(1)}><ZoomIn /> {withShortcutLabels("拡大（Ctrl++）")}</DropdownMenuItem>
+              <DropdownMenuItem disabled={zoom <= ZOOM_LEVELS[0]} onClick={() => changeZoom(-1)}><ZoomOut /> {withShortcutLabels("縮小（Ctrl+-）")}</DropdownMenuItem>
             </>}
             {!shown("zoom") && (
               <DropdownMenuGroup>

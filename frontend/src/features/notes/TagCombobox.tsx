@@ -3,6 +3,7 @@ import { Check, Plus } from "lucide-react";
 import { TagChip } from "@/components/ui/TagChip";
 import { movedOption, tagOptions, tagProblem, type TagOption } from "./tagOptions";
 import { pyStrip } from "@/lib/pyWhitespace";
+import { isImeKey } from "@/lib/imeKeys";
 
 /**
  * The paper's tags as a combobox (the ARIA pattern: focus stays in the input, ↑↓ move among the options,
@@ -51,7 +52,7 @@ export function TagCombobox({ choices, selected, labelledBy, onToggle }: {
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return;
+    if (isImeKey(e.nativeEvent)) return;
     if (["ArrowDown", "ArrowUp"].includes(e.key) || (shown && ["Home", "End"].includes(e.key) && !text)) {
       e.preventDefault();
       setOpen(true);
