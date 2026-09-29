@@ -3,7 +3,8 @@ import { flushSync } from "react-dom";
 import { Document, Page, pdfjs } from "react-pdf";
 import type { PageCallback } from "react-pdf/dist/shared/types.js";
 import type { PDFDocumentProxy, TextContent, TextItem } from "pdfjs-dist/types/src/display/api";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+// The legacy build, as for the main thread (vite.config.ts pdfjsLegacy): the worker must be the same release.
+import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { MessageSquareText } from "lucide-react";
