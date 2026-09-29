@@ -977,7 +977,10 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
                 # This library as it is now (the state last synced, or the side a choice just set aside), read
                 # back from the history in full: only then may the copy the swap moves aside be removed.
                 progress("このPCの履歴を確かめています…")
-                kept = local_history.verified_state(lib.root, library_hash, cancel)
+                try:
+                    kept = local_history.verified_state(lib.root, library_hash, cancel)
+                except (OSError, local_history.HistoryBusy):
+                    kept = None  # Could not be read back just now (a blob held by a virus scan, say): keep the folder.
                 if kept is not None:
                     spared.append(kept)  # Kept by the clean-up below, whatever the settings keep.
                 # All network operations succeeded; only now replace the local copy. Cancellable until the

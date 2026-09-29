@@ -8,7 +8,7 @@ import zipfile
 
 from fastapi import APIRouter, Depends, Query
 
-from papeer.core import drive_sync, reading_tools as tools
+from papeer.core import drive_sync, history_restore, reading_tools as tools
 from papeer.core.errors import Invalid
 from papeer.providers import Cancelled, check_cancel
 from papeer.core.terminology import global_glossary, save_global_glossary
@@ -190,22 +190,29 @@ def backup(body: BackupRequest) -> JobStarted:
 
 @router.post("/api/restore")
 def restore(body: RestoreRequest) -> JobStarted:
+    """Replace the library with a backup ZIP; the library as it was goes to this PC's history (history_restore)."""
     lib = deps.get_library()
+    return start_restore(lib, "バックアップを復元できませんでした",
+                         lambda cancel, progress: history_restore.restore_zip(
+                             lib, Path(body.path), cancel, progress, import_settings=body.import_settings))
+
+
+def start_restore(lib, failure: str, run) -> JobStarted:
+    """A restore job (from a backup, or from this PC's history): run(cancel, progress) replaces the library."""
     def action(cancel, progress, _page_ready):
         try:
             deps.wait_for_library_requests(cancel=cancel)
             check_cancel(cancel)
-            progress("バックアップを検証して復元しています…")
-            previous = tools.restore_backup(lib, Path(body.path), cancel, import_settings=body.import_settings)
+            result = run(cancel, progress)
         except Cancelled:
             raise Cancelled("復元を中止しました。ライブラリは変更していません。") from None
         except (OSError, ValueError, sqlite3.DatabaseError, zipfile.BadZipFile) as exc:
-            raise ValueError(f"バックアップを復元できませんでした：{exc}") from exc
-        # The backup may be older than what the sync folder holds: the next sync asks before publishing it.
+            raise ValueError(f"{failure}：{exc}") from exc
+        # The state restored may be older than what the sync folder holds: the next sync asks before publishing it.
         try:
             drive_sync.mark_restored(lib.root)
         except Exception as exc:  # noqa: BLE001 - the restore itself has succeeded; a missing mark must not report it as failed.
             print(f"警告: 復元後の同期確認の印を保存できませんでした: {exc!r}", file=sys.stderr)
         deps.library_changed()
-        return {"previous_path": str(previous)}
+        return {"previous_path": result["previous_path"]}
     return deps.submit_job(JobKind.RESTORE, action)

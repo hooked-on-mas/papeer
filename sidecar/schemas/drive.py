@@ -30,3 +30,14 @@ class HistorySettingsRequest(BaseModel):
 class LegacyRemoveRequest(BaseModel):
     # Paths as GET /api/history/legacy listed them, confirmed by the user.
     paths: list[str]
+
+
+class HistoryRestoreRequest(BaseModel):
+    entry_id: str
+    # As for a backup: take the settings and prompts of that state too, or keep the current ones.
+    import_settings: bool = False
+
+
+class OtherHistoriesRemoveRequest(BaseModel):
+    # Keys as GET /api/history/others listed them, confirmed by the user.
+    keys: list[str]

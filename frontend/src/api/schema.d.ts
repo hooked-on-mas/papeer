@@ -1061,7 +1061,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Restore */
+        /**
+         * Restore
+         * @description Replace the library with a backup ZIP; the library as it was goes to this PC's history (history_restore).
+         */
         post: operations["restore_api_restore_post"];
         delete?: never;
         options?: never;
@@ -1329,6 +1332,86 @@ export interface paths {
          */
         put: operations["history_settings_api_history_settings_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/history/{entry_id}/difference": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * History Difference
+         * @description What differs between the library and a state of the history, shown before going back to it.
+         */
+        get: operations["history_difference_api_history__entry_id__difference_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/history/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * History Restore Job
+         * @description Go back to a state of this PC's history; the library as it was is recorded as "before_restore".
+         */
+        post: operations["history_restore_job_api_history_restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/history/others": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Other Histories
+         * @description This PC's histories of libraries at other places (the data folder moved), with their sizes.
+         */
+        get: operations["other_histories_api_history_others_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/history/others/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove Other Histories
+         * @description Remove the histories the user confirmed (their keys as GET /api/history/others gave them).
+         */
+        post: operations["remove_other_histories_api_history_others_remove_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1750,6 +1833,16 @@ export interface components {
             /** Code Version */
             code_version: string;
         };
+        /** HistoryRestoreRequest */
+        HistoryRestoreRequest: {
+            /** Entry Id */
+            entry_id: string;
+            /**
+             * Import Settings
+             * @default false
+             */
+            import_settings?: boolean;
+        };
         /** HistorySettingsRequest */
         HistorySettingsRequest: {
             /** Recent */
@@ -1978,6 +2071,11 @@ export interface components {
         OptionsRequest: {
             /** Auto Sync */
             auto_sync: boolean;
+        };
+        /** OtherHistoriesRemoveRequest */
+        OtherHistoriesRemoveRequest: {
+            /** Keys */
+            keys: string[];
         };
         /**
          * PageVersion
@@ -2333,7 +2431,7 @@ export interface components {
         /** RestoreResult */
         RestoreResult: {
             /** Previous Path */
-            previous_path: string;
+            previous_path?: string | null;
         };
         /** RevisionDraftResult */
         RevisionDraftResult: {
@@ -6254,6 +6352,148 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["HistorySettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    history_difference_api_history__entry_id__difference_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    history_restore_job_api_history_restore_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HistoryRestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    other_histories_api_history_others_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_other_histories_api_history_others_remove_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OtherHistoriesRemoveRequest"];
             };
         };
         responses: {

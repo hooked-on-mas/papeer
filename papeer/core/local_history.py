@@ -56,7 +56,8 @@ import zlib
 
 from papeer import __version__
 from papeer.core.backup import DATABASE_FILES, STORED_SUFFIXES, unsafe_path
-from papeer.core.fileio import atomic_write_bytes, atomic_write_json, ensure_free_space, is_temporary, replace_file
+from papeer.core.fileio import (atomic_write_bytes, atomic_write_json, ensure_free_space, is_temporary, move_file,
+                                 sync_directory)
 from papeer.core.paths import device_directory, history_directory
 from papeer.providers import check_cancel
 
@@ -64,6 +65,10 @@ FORMAT = 2
 # The database is stored as chunks of this size: an edit changes a few of them (measured in the L1 design).
 CHUNK = 256 * 1024
 _READ_SIZE = 1024 * 1024
+# zlib's fastest level: the text files compress almost as well as at the default (6) in a fraction of the
+# time, which the first recording (the whole library) is mostly spent on. Blobs are named by their
+# uncompressed contents, so the level can change without storing anything twice.
+COMPRESSION = 1
 # A file of another PC's revision up to this size is read into memory to learn its SHA-256 before it is
 # written (most are); a larger one is written to a temporary blob while it is read.
 _IN_MEMORY = 16 * 1024**2
@@ -237,7 +242,7 @@ class _Blobs:
         digest, size = hashlib.sha256(), 0
         try:
             with os.fdopen(descriptor, "wb") as output:
-                compressor = zlib.compressobj() if compress else None
+                compressor = zlib.compressobj(COMPRESSION) if compress else None
                 for piece in pieces:
                     _check(cancel)
                     digest.update(piece)
@@ -245,11 +250,15 @@ class _Blobs:
                     output.write(compressor.compress(piece) if compressor else piece)
                 if compressor:
                     output.write(compressor.flush())
+                output.flush()
+                # On disk before it is renamed, through the handle it was written with: opening a file just
+                # written again (as fileio.replace_file does) makes a virus scanner read it once more.
+                os.fsync(output.fileno())
             value = digest.hexdigest()
             if expected is not None and value != expected:
                 raise ValueError("記録中にライブラリのファイルが変わりました。もう一度同期してください。")
             if not self.has(value, compress, size):
-                replace_file(temporary, self.folder / blob_name(value, compress))
+                move_file(temporary, self.folder / blob_name(value, compress))
                 self.names.add(blob_name(value, compress))
             return value, size
         finally:
@@ -380,11 +389,28 @@ def _public(entry: dict, names: set[str] | None = None, folder: Path | None = No
 
 def entries(root: Path) -> list[dict]:
     """The recorded states of the library at `root`, newest first; "complete" when every blob is there
-    (compressed ones by name only: verify_entry reads them)."""
+    (compressed ones by name only: verify_entry reads them). "group" places each in the list the settings
+    show: "recent" (the newest `recent` published or taken in), "daily" (the other ones published or
+    taken in: the last of a day) and "special" (set aside, before a restore)."""
     folder = history_directory(root)
     found, _ = _read_entries(folder)
     names = _blob_names(folder / "blobs")
-    return [_public(entry, names, folder) for entry in reversed(found)]
+    recent = history_settings()["recent"]
+    regular = [entry["id"] for entry in found if entry["kind"] in REGULAR]
+    newest = set(regular[max(0, len(regular) - recent):])
+    result = []
+    for entry in reversed(found):
+        item = _public(entry, names, folder)
+        item["group"] = "special" if entry["kind"] not in REGULAR else "recent" if entry["id"] in newest else "daily"
+        result.append(item)
+    return result
+
+
+@contextmanager
+def holding(root: Path):
+    """Hold the history of the library at `root` for a restore: no recording or clean-up meanwhile."""
+    with _locked(history_directory(root)):
+        yield
 
 
 def _inspect(folder: Path, entry: dict, cancel, checked: dict[str, int | None]) -> tuple[set[str], bool]:
@@ -496,11 +522,24 @@ def _new_entry(found: list[dict], kind: str, library_hash: str, counts: dict | N
 
 
 def _write_entry(folder: Path, entry: dict) -> None:
-    """Write the entry: the last step, which makes the state recorded."""
+    """Write the entry: the last step, which makes the state recorded.
+
+    Every blob it names was flushed to disk before it was renamed into place; the renames themselves are
+    flushed here, once, before the entry that relies on them (POSIX; NTFS journals a rename).
+    """
+    sync_directory(folder / "blobs")
     (folder / "entries").mkdir(parents=True, exist_ok=True)
     stamp = datetime.fromisoformat(entry["created"]).strftime("%Y%m%d-%H%M%S")
     data = gzip.compress(json.dumps(entry, ensure_ascii=False, separators=(",", ":")).encode("utf-8"), mtime=0)
     atomic_write_bytes(folder / "entries" / f"{stamp}-{entry['id']}.json.gz", data)
+
+
+def _remember_library(folder: Path, root: Path) -> None:
+    """Note which library the history belongs to (its folder is named by a digest of the path), so a history
+    left behind when the library moved can be told apart (other_histories)."""
+    marker = folder / "library.json"
+    if not marker.exists():
+        atomic_write_json(marker, {"library": str(root.resolve())}, indent=None)
 
 
 def _latest_regular(found: list[dict]) -> dict | None:
@@ -544,6 +583,7 @@ def record_folder(root: Path, source: Path, *, kind: str, library_hash: str, cou
         raise ValueError(f"unknown kind {kind!r}")
     folder = history_directory(root)
     with _locked(folder):
+        _remember_library(folder, root)
         found, _ = _read_entries(folder)
         latest = _latest_regular(found)
         if (kind in REGULAR and latest is not None and latest["hash"] == library_hash
@@ -611,6 +651,7 @@ def record_archive(root: Path, stream, *, kind: str, library_hash: str, counts: 
         raise ValueError(f"unknown kind {kind!r}")
     folder = history_directory(root)
     with _locked(folder):
+        _remember_library(folder, root)
         found, _ = _read_entries(folder)
         blobs = _Blobs(folder / "blobs", create=True)
         try:
@@ -675,6 +716,30 @@ def materialize(root: Path, entry_id: str, target: Path, cancel=None) -> dict:
         return _materialize(folder, entry_id, target, cancel)
 
 
+def materialize_database(root: Path, entry_id: str, target: Path, cancel=None) -> None:
+    """Write only the database of a recorded state to the file `target` (to compare it with the library)."""
+    folder = history_directory(root)
+    if not folder.is_dir():
+        raise ValueError("選んだ時点の記録が見つかりません。")
+    with _locked(folder):
+        found, _ = _read_entries(folder)
+        entry = next((item for item in found if item["id"] == entry_id), None)
+        if entry is None:
+            raise ValueError("選んだ時点の記録が見つかりません。")
+        _write_database(folder / "blobs", entry, target, cancel)
+
+
+def _write_database(blobs: Path, entry: dict, target: Path, cancel) -> None:
+    digest, written = hashlib.sha256(), 0
+    with target.open("wb") as output:
+        for chunk in entry["db"]["chunks"]:
+            for piece in _blob_chunks(blobs, blob_name(chunk, True), cancel):
+                digest.update(piece)
+                written += output.write(piece)
+    if digest.hexdigest() != entry["db"]["sha256"] or written != entry["db"]["size"]:
+        raise HistoryDataMissing("この時点のデータベースが破損しています。")
+
+
 def _materialize(folder: Path, entry_id: str, target: Path, cancel) -> dict:
     found, _ = _read_entries(folder)
     entry = next((item for item in found if item["id"] == entry_id), None)
@@ -693,14 +758,7 @@ def _materialize(folder: Path, entry_id: str, target: Path, cancel) -> dict:
                 written += output.write(piece)
         if written != size:
             raise HistoryDataMissing("この時点のデータの一部が破損しています。")
-    digest, written = hashlib.sha256(), 0
-    with (target / "library.sqlite3").open("wb") as output:
-        for chunk in entry["db"]["chunks"]:
-            for piece in _blob_chunks(blobs, blob_name(chunk, True), cancel):
-                digest.update(piece)
-                written += output.write(piece)
-    if digest.hexdigest() != entry["db"]["sha256"] or written != entry["db"]["size"]:
-        raise HistoryDataMissing("この時点のデータベースが破損しています。")
+    _write_database(blobs, entry, target / "library.sqlite3", cancel)
     return _public(entry)
 
 
@@ -711,7 +769,8 @@ def retained(found: list[dict], recent: int, days: int, today: date) -> set[str]
 
     The newest `recent` states published or taken in; the last of each of the `days` most recent days
     before `today` with such a state, the days counted in the order they were used (a clock set back
-    makes a later day look earlier, but not a later use); the newest SPECIAL_LIMIT of each other kind.
+    makes a later day look earlier, but not a later use); the newest SPECIAL_LIMIT of each other kind,
+    leaving out "before_restore" states that another state kept holds already.
     """
     regular = [entry for entry in found if entry["kind"] in REGULAR]
     keep = {entry["id"] for entry in regular[max(0, len(regular) - recent):]} if recent > 0 else set()
@@ -722,8 +781,16 @@ def retained(found: list[dict], recent: int, days: int, today: date) -> set[str]
                   key=lambda entry: entry["seq"], reverse=True)
     keep |= {entry["id"] for entry in past[:max(0, days)]}
     for kind in KINDS:
-        if kind not in REGULAR:
-            keep |= {entry["id"] for entry in [item for item in found if item["kind"] == kind][-SPECIAL_LIMIT:]}
+        if kind in REGULAR:
+            continue
+        candidates = [item for item in found if item["kind"] == kind]
+        if kind == "before_restore":
+            # One holding the same library as another state kept (and read from a library on this PC) adds
+            # nothing to go back to, so it takes none of the SPECIAL_LIMIT places: going back and forth between
+            # past states must not push out the state the user started from.
+            held = {item["hash"] for item in found if item["id"] in keep and item.get("verified", True) and item.get("hash")}
+            candidates = [item for item in candidates if not (item.get("hash") and item["hash"] in held)]
+        keep |= {entry["id"] for entry in candidates[-SPECIAL_LIMIT:]}
     return keep
 
 
@@ -945,3 +1012,66 @@ def remove_legacy(root: Path, paths: Iterable[str]) -> dict:
     except OSError:
         pass
     return {"removed": removed, "failed": failed, "items": legacy_items(root)}
+
+
+# --- Histories of libraries at other places ---
+
+def other_histories(root: Path) -> list[dict]:
+    """The histories on this PC that belong to no library at `root`: left behind when the library moved
+    (the data folder changed), or those of another data folder. Newest first, each with its size.
+
+    "library" is the path it was recorded for (None when not noted: made before that was noted), and
+    "library_exists" whether a library is still there (then it is that library's own history).
+    """
+    base = device_directory() / "history"
+    current = history_directory(root).name
+    result = []
+    try:
+        folders = [path for path in base.iterdir() if _DIGEST.fullmatch(path.name) and path.name != current]
+    except FileNotFoundError:
+        return []
+    for folder in folders:
+        if not _real_folder(folder):
+            continue
+        try:
+            library = json.loads((folder / "library.json").read_text("utf-8")).get("library")
+        except (OSError, ValueError, AttributeError):
+            library = None
+        library = library if isinstance(library, str) else None
+        found = _entry_files(folder)
+        times = [path.stat().st_mtime for path in found if path.exists()]
+        result.append({"key": folder.name, "library": library,
+                       "library_exists": bool(library) and (Path(library) / "library.sqlite3").is_file(),
+                       "size": _folder_size(folder), "entries": len(found),
+                       "modified": datetime.fromtimestamp(max(times), timezone.utc).isoformat() if times else _modified(folder)})
+    result.sort(key=lambda item: item["modified"] or "", reverse=True)
+    return result
+
+
+def remove_other_histories(root: Path, keys: Iterable[str]) -> dict:
+    """Remove the histories of other_histories with these keys, which the user confirmed; others are ignored.
+
+    One in use by another Papeer (its lock held) is left as it is. {"removed", "failed", "items"}.
+    """
+    listed = {item["key"] for item in other_histories(root)}
+    base = device_directory() / "history"
+    removed, failed = [], []
+    for key in dict.fromkeys(keys):
+        if key not in listed:
+            continue
+        folder = base / key
+        try:
+            with _locked(folder):
+                for path in list(folder.iterdir()):
+                    if path.name == ".lock":
+                        continue
+                    if path.is_dir() and not path.is_symlink() and not path.is_junction():
+                        shutil.rmtree(path, onexc=_writable_again)
+                    else:
+                        path.unlink()
+            shutil.rmtree(folder, onexc=_writable_again)
+        except (OSError, HistoryBusy):
+            failed.append(key)
+            continue
+        removed.append(key)
+    return {"removed": removed, "failed": failed, "items": other_histories(root)}

@@ -145,7 +145,7 @@ export function DriveSection() {
   };
   const sync = async (choice?: string, confirm = false, heads = data?.conflicts.map(item => item.id)) => {
     if (choice && !await askConfirm("同期するデータを選択",
-      "選んだライブラリ全体を使います。項目ごとの自動結合は行いません。選ばなかった側のデータはこのPCに退避し、設定 → バックアップの「退避データから復元」で戻せます。",
+      "選んだライブラリ全体を使います。項目ごとの自動結合は行いません。選ばなかった側のデータはこのPCの履歴に退避し、設定 → バックアップの「このPCの履歴から戻す」で戻せます。",
       "このデータを使う")) return;
     if (!await confirmOpenEdits()) return;
     try { await syncDrive(choice, heads, confirm); }
@@ -208,7 +208,7 @@ export function DriveSection() {
       <div className="flex gap-2"><Button disabled={busy} onClick={() => void sync()}>今すぐ同期</Button>
         <Button variant="outline" disabled={busy} onClick={() => void disconnect()}>ローカル保存に戻す</Button></div>
       {!!data.conflicts.length && <div className="space-y-3 rounded border p-3">
-        <p>使用するライブラリを選んでください。初回接続時も、既存のデータを確認してから取り込みます。選ばなかった側のデータはこのPCに退避し、設定 → バックアップの「退避データから復元」で戻せます。</p>
+        <p>使用するライブラリを選んでください。初回接続時も、既存のデータを確認してから取り込みます。選ばなかった側のデータはこのPCの履歴に退避し、設定 → バックアップの「このPCの履歴から戻す」で戻せます。</p>
         <Button variant="outline" disabled={busy} onClick={() => void sync("local")}>このPCのデータを使う</Button>
         {data.conflicts.map(item => <div key={item.id} className="space-y-1">
           <Button variant="outline" disabled={busy} onClick={() => void sync(item.id)}>
@@ -220,11 +220,11 @@ export function DriveSection() {
         </div>)}
       </div>}
       {!!data.not_set_aside?.length && <div role="alert" className="text-amber-700 dark:text-amber-400">
-        <p>選ばなかった次の同期データは、読み取れないか破損していたため退避できませんでした（同期フォルダーの履歴には残っています）。</p>
+        <p>選ばなかった次の同期データは、読み取れないか破損していたため、このPCの履歴に退避できませんでした（同期フォルダーの履歴には残っています）。</p>
         <ul className="list-disc pl-5">{data.not_set_aside.map(item =>
           <li key={item.id}>{item.device} — {new Date(item.created).toLocaleString()}</li>)}</ul>
       </div>}
-      {data.previous_path && <p className="break-all text-xs">取り込み前のデータ：{data.previous_path}</p>}
+      {data.previous_path && <p className="break-all text-xs">取り込み前のデータ（このPCの履歴で確かめられなかったため、フォルダーに残しています）：{data.previous_path}</p>}
     </>}
     <VersionNoticeSetting />
     <p className="text-xs text-muted-foreground">PC間の転送はPC版Google Driveが行います。「今すぐ同期」の後、Google Drive側の同期完了も確認してから別PCに移ってください。別PCでは同じ同期フォルダーを指定します。変更時はライブラリ全体を保存し、履歴の分だけ容量を使います。</p>

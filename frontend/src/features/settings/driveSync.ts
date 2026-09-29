@@ -149,7 +149,7 @@ export async function runDriveSync(choice?: string, heads?: string[], confirm = 
         } else if (event.result.not_set_aside?.length) {
           showToast({ title: "選んだデータで同期しました", description: "選ばなかった同期データの一部は退避できませんでした（設定 → 保存先・同期）。", tone: "error" });
         } else if (event.result.set_aside?.length) {
-          showToast({ title: "選んだデータで同期しました", description: "選ばなかったデータは退避しています（設定 → バックアップ → 退避データから復元）。", tone: "success" });
+          showToast({ title: "選んだデータで同期しました", description: "選ばなかったデータはこのPCの履歴に退避しています（設定 → バックアップ → このPCの履歴から戻す）。", tone: "success" });
         } else if (background) {
           // The automatic sync every minute: the status bar only, which clears itself.
           useStore.getState().setStatus("同期フォルダーに保存しました。PC間の転送状況はGoogle Driveで確認してください。");

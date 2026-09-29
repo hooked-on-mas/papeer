@@ -293,3 +293,19 @@ def test_the_state_that_stands_for_the_replaced_library_outlives_the_clean_up(pc
     # recent=1 keeps only the newest, but the state the folder was removed for stays until the next sync.
     replaced = next(entry for entry in b.history() if entry["hash"] == before_hash)
     assert b.state(replaced["id"], tmp_path / "replaced").paper(identity)["note"] == ""
+
+
+def test_a_history_that_cannot_be_read_back_just_now_keeps_the_folder(pcs, monkeypatch):
+    a, b, identity = pcs
+    edit(a, identity, note="second")
+    a.sync()
+    transfer(a, b)
+
+    def held(*_args, **_kwargs):
+        raise PermissionError("a virus scan holds a blob")
+
+    monkeypatch.setattr(local_history, "verified_state", held)
+    before = b.moved_aside()
+    result = b.sync()
+    assert result["reloaded"] is True and note(b, identity) == "second"
+    assert result["previous_path"] and len(b.moved_aside()) == len(before) + 1

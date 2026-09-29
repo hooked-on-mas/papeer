@@ -5550,6 +5550,7 @@
     "/api/restore": {
       "post": {
         "summary": "Restore",
+        "description": "Replace the library with a backup ZIP; the library as it was goes to this PC's history (history_restore).",
         "operationId": "restore_api_restore_post",
         "parameters": [
           {
@@ -6819,6 +6820,281 @@
         }
       }
     },
+    "/api/history/{entry_id}/difference": {
+      "get": {
+        "summary": "History Difference",
+        "description": "What differs between the library and a state of the history, shown before going back to it.",
+        "operationId": "history_difference_api_history__entry_id__difference_get",
+        "parameters": [
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entry Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/history/restore": {
+      "post": {
+        "summary": "History Restore Job",
+        "description": "Go back to a state of this PC's history; the library as it was is recorded as \"before_restore\".",
+        "operationId": "history_restore_job_api_history_restore_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoryRestoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/history/others": {
+      "get": {
+        "summary": "Other Histories",
+        "description": "This PC's histories of libraries at other places (the data folder moved), with their sizes.",
+        "operationId": "other_histories_api_history_others_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/history/others/remove": {
+      "post": {
+        "summary": "Remove Other Histories",
+        "description": "Remove the histories the user confirmed (their keys as GET /api/history/others gave them).",
+        "operationId": "remove_other_histories_api_history_others_remove_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtherHistoriesRemoveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/history/legacy": {
       "get": {
         "summary": "Legacy",
@@ -7849,6 +8125,24 @@
         ],
         "title": "HealthResponse"
       },
+      "HistoryRestoreRequest": {
+        "properties": {
+          "entry_id": {
+            "type": "string",
+            "title": "Entry Id"
+          },
+          "import_settings": {
+            "type": "boolean",
+            "title": "Import Settings",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "entry_id"
+        ],
+        "title": "HistoryRestoreRequest"
+      },
       "HistorySettingsRequest": {
         "properties": {
           "recent": {
@@ -8486,6 +8780,22 @@
           "auto_sync"
         ],
         "title": "OptionsRequest"
+      },
+      "OtherHistoriesRemoveRequest": {
+        "properties": {
+          "keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Keys"
+          }
+        },
+        "type": "object",
+        "required": [
+          "keys"
+        ],
+        "title": "OtherHistoriesRemoveRequest"
       },
       "PageVersion": {
         "properties": {
@@ -9249,14 +9559,18 @@
       "RestoreResult": {
         "properties": {
           "previous_path": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Previous Path"
           }
         },
         "type": "object",
-        "required": [
-          "previous_path"
-        ],
         "title": "RestoreResult"
       },
       "RevisionDraftResult": {
