@@ -28,6 +28,10 @@ def test_names_match_the_bundle_and_the_tauri_resource():
     preinstall = hooks.read_text("utf-8").split("!macro NSIS_HOOK_PREINSTALL")[1].split("!macroend")[0]
     assert f'RMDir /r "$INSTDIR\\{SIDECAR_DIR.name}"' in preinstall
     assert 'Delete "$INSTDIR\\sidecar.exe"' in preinstall
+    # The hook runs before the template checks that the app is closed: nothing is removed while it runs.
+    rmdir = preinstall.index("RMDir")
+    assert preinstall.index('"${MAINBINARYNAME}.exe"') < rmdir
+    assert preinstall.index(f'"{SIDECAR_EXE.stem}.exe"') < rmdir
     rust = (ROOT / "frontend" / "src-tauri" / "src" / "sidecar.rs").read_text("utf-8")
     assert f'const SIDECAR_DIR: &str = "{SIDECAR_DIR.name}";' in rust
     assert f'const SIDECAR_EXE: &str = "{SIDECAR_EXE.stem}";' in rust
