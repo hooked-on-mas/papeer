@@ -45,6 +45,9 @@ PITCH_EM = 1.18
 
 _CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ]")
 _LATIN_WORD = re.compile(r"[A-Za-z]{3,}")
+# A word as English prints it: a letter then lower-case ones. The English model reading Japanese gives
+# runs of capitals and mixed case ("IiIl", "RJEE") far more than such words.
+_ENGLISH_WORD = re.compile(r"[A-Za-z][a-z]{2,}")
 _MATH_SIGN = re.compile(r"[=<>≤≥≠≈±×÷∑∏∫√∞∂∇∈⊂⊆∀∃|^_{}\\]")
 
 
@@ -345,15 +348,17 @@ PROBE_LINES = 4
 JA_SURE = .6
 JA_LEAST = .45
 JA_LEAST_IN_ENGLISH = .6
-# Share of an English reading in Latin words of three letters or more above which the lines are English:
-# English papers read 0.8-0.9, Japanese text read by the English model 0.55 (letter salad).
-EN_WORDS = .7
+# Share of an English reading in English words (_ENGLISH_WORD) above which the lines are English. Measured
+# on the first lines of 23 English pages (synthetic, ResNet, a sample paper; 150 and 300 dpi) and 7 Japanese
+# ones (synthetic, a line, a title): English 0.73-0.94, Japanese read by the English model 0.06-0.21. Counting
+# any three letters instead gave Japanese 0.61-0.71 (letter salad), too close to English's 0.76-0.94.
+EN_WORDS = .5
 
 
 def _latin_word_share(lines: list[OcrLine]) -> float:
     text = " ".join(w.text for line in lines for w in line.words)
     chars = sum(not c.isspace() for c in text)
-    return sum(len(word) for word in _LATIN_WORD.findall(text)) / chars if chars else 0.0
+    return sum(len(word) for word in _ENGLISH_WORD.findall(text)) / chars if chars else 0.0
 
 
 def _probe_language(layout: PageLayout, engines: EngineSet, document_lang: str | None = None) -> str:
@@ -366,9 +371,12 @@ def _probe_language(layout: PageLayout, engines: EngineSet, document_lang: str |
     same lines as English.
     """
     order = engines.order("ja")
-    if not layout.blocks or not order:
+    # A page of a line or two (a title, an appendix heading) may have no text block: its largest region
+    # that is no figure (a formula it was unsure of included) is looked at instead.
+    boxes = [b.box for b in layout.blocks] or [r.box for r in layout.regions if r.kind != "figure"]
+    if not boxes or not order:
         return "en"
-    box = max((b.box for b in layout.blocks), key=_area)
+    box = max(boxes, key=_area)
     sample = (box[0], box[1], box[2], min(box[3], box[1] + int(PROBE_LINES * 1.6 * layout.line_height)))
     crop = layout.image.crop(sample)
     try:
