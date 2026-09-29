@@ -149,7 +149,7 @@ effort、依頼にだけ添える前後の文脈、依頼の形（送る項目�
 
 - `layout`・`pdf`・`translation`・`providers` のモジュールは、`RENDER_SOURCES` か `RENDER_EXCLUDED` のどちらかに必ず載せます（`tests/test_code_version.py` が検査します）。ファイルを新設・移動したときは一覧を更新してください。
 - 改行コードだけの変更は識別値に影響しません。
-- 開発時は起動時にソースから計算します。配布ビルドでは `just build-sidecar` が生成する `code-version.txt` を同梱し、同梱ソース全体（`papeer`・`sidecar`・`sidecar.spec`・`pyproject.toml`・`uv.lock`）の内容ハッシュを PyInstaller の実行前に計算し、sidecar のコピーが成功してから `sidecar-sources.txt` に記録します（ビルド中の編集を含まない sidecar が最新と記録されないように）。`just build-app` の前に `just check-sidecar` が、`code-version.txt` と `sidecar-sources.txt` が現在のソースと一致することを確かめます（内容で比べるので、git checkout でファイルの更新日時や改行コードが変わっただけでは失敗しません）。
+- 開発時は起動時にソースから計算します。配布ビルドでは `just build-sidecar` が生成する `code-version.txt` を同梱し、同梱ソース全体（`papeer`・`sidecar`・`sidecar.spec`・`pyproject.toml`・`uv.lock`）の内容ハッシュを PyInstaller の実行前に計算し、sidecar のフォルダー（onedir）の配置が成功してから `sidecar-sources.txt` に記録します（ビルド中の編集を含まない sidecar が最新と記録されないように）。`just build-app` の前に `just check-sidecar` が、`code-version.txt` と `sidecar-sources.txt` が現在のソースと一致することを確かめます（内容で比べるので、git checkout でファイルの更新日時や改行コードが変わっただけでは失敗しません）。
 
 ## OCR（試験中）
 

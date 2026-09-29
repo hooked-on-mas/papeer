@@ -5,8 +5,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from papeer.core.code_version import (RENDER_DIRECTORIES, RENDER_EXCLUDED, RENDER_SOURCES, SIDECAR_BINARY,
-                                      application_version, bundle_version, check_build, source_version)
+from papeer.core.code_version import (RENDER_DIRECTORIES, RENDER_EXCLUDED, RENDER_SOURCES, SIDECAR_DIR,
+                                      SIDECAR_EXE, application_version, bundle_version, check_build, source_version)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -83,8 +83,16 @@ class CodeVersionTests(unittest.TestCase):
             self.assertEqual(len(check_build(root, record, bundle)), 3)
             record.write_text(source_version(root) + '\n', encoding='utf-8')
             bundle.write_text(bundle_version(root) + '\n', encoding='utf-8')
-            (root / SIDECAR_BINARY).parent.mkdir(parents=True)
-            (root / SIDECAR_BINARY).write_bytes(b'exe')
+            (root / SIDECAR_EXE).parent.mkdir(parents=True)
+            (root / SIDECAR_EXE).write_bytes(b'exe')
+            # The sidecar folder carries the code-version.txt it was built with (sidecar.spec datas).
+            bundled = root / SIDECAR_DIR / '_internal' / 'code-version.txt'
+            self.assertEqual(check_build(root, record, bundle),
+                             [f'{SIDECAR_DIR.as_posix()}/_internal/code-version.txt が code-version.txt と一致しません。'])
+            bundled.parent.mkdir()
+            bundled.write_text('code-sha256-' + '0' * 64 + '\n', encoding='utf-8')
+            self.assertEqual(len(check_build(root, record, bundle)), 1)
+            bundled.write_bytes(record.read_bytes().replace(b'\n', b'\r\n'))
             self.assertEqual(check_build(root, record, bundle), [])
             # A checkout touches file times and may convert line endings; neither is a change.
             later = time.time() + 3600
@@ -111,7 +119,7 @@ class CodeVersionTests(unittest.TestCase):
             self.assertEqual(problems[0], 'code-version.txt が現在のソースと一致しません。')
             self.assertEqual(len(problems), 2)
             (root / 'papeer' / RENDER_SOURCES[0]).write_bytes(b'x = 1\n')
-            (root / SIDECAR_BINARY).unlink()
+            (root / SIDECAR_EXE).unlink()
             self.assertEqual(len(check_build(root, record, bundle)), 1)
 
     def test_frozen_app_uses_build_identity_and_rejects_invalid_record(self):

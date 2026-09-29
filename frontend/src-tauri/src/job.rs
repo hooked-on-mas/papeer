@@ -1,10 +1,10 @@
 //! A Windows job object that holds the packaged sidecar's processes (sidecar.rs).
 //!
-//! The sidecar exe is a PyInstaller onefile bootloader that runs Python as its child, and killing the
-//! bootloader alone (what `CommandChild::kill` does) leaves the Python process serving its port and
-//! holding the library's files. A process started by a process in a job belongs to the job as well, so
-//! the job holds the bootloader, the Python process and the CLIs that one runs. It ends them all when
-//! its last handle closes: when the app exits, however it exits (a crash, 「タスクの終了」).
+//! The sidecar (a PyInstaller onedir launcher running Python in its own process) runs CLIs such as
+//! claude and codex, and killing the sidecar alone (what `Child::kill` does) would leave them running.
+//! A process started by a process in a job belongs to the job as well, so the job holds the sidecar and
+//! the CLIs it runs. It ends them all when its last handle closes: when the app exits, however it exits
+//! (a crash, 「タスクの終了」).
 //!
 //! The job lets its processes start one outside it (JOB_OBJECT_LIMIT_BREAKAWAY_OK, when asked with
 //! CREATE_BREAKAWAY_FROM_JOB): the sign-in console of a CLI, and the browser it opens, may outlive the app.
@@ -58,8 +58,8 @@ mod windows {
 
     impl Job {
         /// A new job holding process `pid`, which must not have started processes of its own yet:
-        /// those are not moved into the job. The sidecar's bootloader first unpacks Python into
-        /// %TEMP%\_MEI* (a second or more), and the job holds it within milliseconds of its start.
+        /// those are not moved into the job. The sidecar starts processes only when asked through its
+        /// API (seconds later at the earliest), and the job holds it within milliseconds of its start.
         pub fn contain(pid: u32) -> io::Result<Job> {
             // SAFETY: no security attributes and no name.
             let job = Job(owned(unsafe {
@@ -86,7 +86,7 @@ mod windows {
 
         /// The ids of the processes in the job (for the tests).
         #[cfg(test)]
-        fn pids(&self) -> io::Result<Vec<u32>> {
+        pub fn pids(&self) -> io::Result<Vec<u32>> {
             use windows_sys::Win32::System::JobObjects::{
                 JobObjectBasicProcessIdList, QueryInformationJobObject,
             };
@@ -138,8 +138,8 @@ mod windows {
 
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-        /// cmd.exe in a job, running `ping` as its child: a parent and a child process, as the sidecar's
-        /// bootloader and Python are. Returned once the second ping has started, which cmd starts while
+        /// cmd.exe in a job, running `ping` as its child: a parent and a child process, as the sidecar and
+        /// a CLI it runs are. Returned once the second ping has started, which cmd starts while
         /// it is in the job (the first may have started before), with the ids of the job's processes.
         fn tree_in_job() -> (Child, Job, Vec<u32>) {
             let parent = Command::new("cmd")

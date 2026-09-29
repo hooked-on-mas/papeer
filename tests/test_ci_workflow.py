@@ -66,5 +66,8 @@ def test_ci_runs_the_checks_of_just_test_and_just_lint():
     rust = jobs["rust"]
     assert _runs(rust) == ["cargo fmt --check", "cargo clippy --release --all-targets -- -D warnings",
                            "cargo test --release"]
-    # Without the sidecar exe (made by `just build-sidecar`), tauri-build fails on the externalBin entry.
-    assert rust["env"]["TAURI_CONFIG"] == '{"bundle":{"externalBin":[]}}'
+    # Without the onedir sidecar folder (made by `just build-sidecar`), tauri-build fails on bundle.resources;
+    # `just clippy` and `just e2e` drop it the same way.
+    assert rust["env"]["TAURI_CONFIG"] == '{"bundle":{"resources":[]}}'
+    justfile = (ROOT / "justfile").read_text("utf-8")
+    assert justfile.count("$env:TAURI_CONFIG = '" + rust["env"]["TAURI_CONFIG"] + "';") == 2
