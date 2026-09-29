@@ -23,8 +23,8 @@ the end of this module) does not make its descendants look incomplete: that it w
 in them. The folder keeps the heads and the base of each PC that synced recently; the rest, and the blobs
 only they used, are removed by whichever PC cleans up first.
 
-This module reads and writes the folder; what a sync does with it is drive_sync_v2. It is not used by the
-sync the app runs yet (the first format stays in use until the migration of a later stage).
+This module reads and writes the folder; what a sync does with it is drive_sync_v2, and moving a folder of
+the first format to it is folder_sync's.
 """
 from __future__ import annotations
 
@@ -274,6 +274,13 @@ class View:
             age = None if self.now is None else _age(device.get("updated"), self.now)
             if device.get("base") and (self.now is None or (age is not None and age <= DEVICE_KEPT)):
                 keep.add(device["base"])
+        # The base that shows a generation superseded, however long ago its PC synced, while that generation
+        # is here: removed, and once out of every lineage, it would no longer tell, and the generation would
+        # come back as a head.
+        for identity in self.superseded():
+            device = self.devices.get(self.generations[identity]["device_id"])
+            if device and device.get("base"):
+                keep.add(device["base"])
         return keep & self.ids()
 
     def base_status(self, base: str | None) -> str | None:
@@ -317,14 +324,14 @@ class GenerationStore:
         self.gens, self.blobs, self.devices = self.root / "gens", self.root / "blobs", self.root / "devices"
 
     @classmethod
-    def initialize(cls, folder: Path) -> GenerationStore:
+    def initialize(cls, folder: Path, *, migrate: bool = False) -> GenerationStore:
         """Start the new format in `folder`: format.json, written once, and the folders.
 
-        A folder that holds revisions of the first format is left alone: moving it to the new format is the
-        migration's to do (a later stage), which keeps them readable meanwhile.
+        A folder that holds revisions of the first format is left alone unless this is the migration
+        (migrate=True, folder_sync), which takes them over and leaves them readable.
         """
         store = cls(folder)
-        if not store.exists() and any(folder.glob("*.papeer-sync")):
+        if not migrate and not store.exists() and any(folder.glob("*.papeer-sync")):
             raise ValueError("この同期フォルダーには以前の形式の同期データがあります。")
         for place in (store.root, store.gens, store.blobs, store.devices):
             place.mkdir(exist_ok=True)
@@ -335,6 +342,10 @@ class GenerationStore:
 
     def exists(self) -> bool:
         return (self.root / "format.json").is_file()
+
+    def has_generations(self) -> bool:
+        """Whether a generation file is here (read or not): the folder is then in this format (folder_sync)."""
+        return any(entry.name.endswith(".gen") and _ID.fullmatch(entry.name[:-4]) for entry in _scan(self.gens))
 
     def check_format(self) -> None:
         """Refuse a folder of another format: NewerFormatError when newer, ValueError when not started."""

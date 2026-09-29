@@ -26,7 +26,7 @@ import uuid
 import zipfile
 
 from papeer import __version__
-from papeer.core import local_history
+from papeer.core import local_history, sync_store
 from papeer.core.errors import Invalid
 from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
 from papeer.core.paths import fingerprint_cache_path, sync_state_path
@@ -101,7 +101,14 @@ def _connect(root: Path, value: str) -> dict:
             stream.write(b"ok")
     finally:
         probe.unlink(missing_ok=True)
-    FolderDrive(target).revisions()
+    store = sync_store.GenerationStore(target)
+    if store.exists():
+        # Moved to the new format: its own format is checked; of this format's revisions only the markers
+        # may be left, their parents removed (folder_sync.remove_old_data).
+        store.check_format()
+        FolderDrive(target).revisions(strict=False)
+    else:
+        FolderDrive(target).revisions()
     state = read_state(root)
     if state.get("folder") != str(target):
         state = {}  # Never reuse another folder's common ancestor.
@@ -154,7 +161,10 @@ def start_new_library(root: Path) -> dict:
     if not library_missing(root):
         raise ValueError("データフォルダーは見つかっています。")
     state = read_state(root)
-    for key in ("base", "hash", "counts", "restored", "review"):
+    # Also what the new format (drive_sync_v2) and a migration in progress (folder_sync) keep of the base;
+    # the device ID stays (it names this PC in the sync folder).
+    for key in ("base", "hash", "counts", "restored", "review", "base_created", "waiting", "bad_blobs",
+                "checked_blobs", "gc_last", "migration"):
         state.pop(key, None)
     state.update(error=None, conflicts=[])
     save_state(root, state)
@@ -367,6 +377,22 @@ def _set_aside(lib: Library, remote, heads: list[dict], choice: str, library_has
     writing the history on this PC (a full drive, no permission...) or recording this PC's library stops
     the choice.
     """
+    skipped = set_aside_revisions(lib, remote, heads, choice, chosen_hash, cancel, progress, recorded)
+    if choice != "local" and library_hash != chosen_hash and counts.get("papers"):
+        check_cancel(cancel)
+        progress("選ばなかったデータを退避しています…")
+        entry = local_history.record_folder(lib.root, lib.root, kind="set_aside", library_hash=library_hash,
+                                            counts=counts, files=local_files, cancel=cancel, progress=progress,
+                                            side="local")
+        if entry is not None:
+            recorded.append(entry)
+    return skipped
+
+
+def set_aside_revisions(lib: Library, remote, heads: list[dict], choice: str, chosen_hash: str, cancel, progress,
+                        recorded: list[str]) -> list[dict]:
+    """The heads' part of _set_aside (also for the revisions of this format a choice in the new one leaves
+    out, drive_sync_v2): each recorded from its archive, those that could not be read returned."""
     skipped = []
     for head in heads:
         if head["id"] == choice or head["hash"] == chosen_hash or head.get("counts", {}).get("papers") == 0:
@@ -389,14 +415,6 @@ def _set_aside(lib: Library, remote, heads: list[dict], choice: str, library_has
             skipped.append({k: head[k] for k in ("id", "device", "created")})
             continue
         recorded.append(entry)
-    if choice != "local" and library_hash != chosen_hash and counts.get("papers"):
-        check_cancel(cancel)
-        progress("選ばなかったデータを退避しています…")
-        entry = local_history.record_folder(lib.root, lib.root, kind="set_aside", library_hash=library_hash,
-                                            counts=counts, files=local_files, cancel=cancel, progress=progress,
-                                            side="local")
-        if entry is not None:
-            recorded.append(entry)
     return skipped
 
 
@@ -413,6 +431,22 @@ def forget_previous_path(root: Path, removed: Sequence[str]) -> None:
     if state.get("previous_path") and state["previous_path"] in removed:
         state["previous_path"] = None
         save_state(root, state)
+
+
+# --- The marker of a folder moved to the new format (sync_store, folder_sync) ---
+#
+# Once a sync folder has moved to the new format, a small revision of this format stands in it over every
+# revision the new format took over: a marker. It says it was made with a database version no Papeer has
+# (MARKER_SCHEMA), so an earlier Papeer stops before taking it in and tells the user to update (sync(): "この
+# 同期データは新しいバージョンのPapeer（x.y.z）で作成されたため取り込めません…"); one with changes of its own is
+# offered the usual choice, where either side keeps its data, and what it then publishes the new format offers
+# as a choice in turn (drive_sync_v2). "successor" names the generation of the new format it stands for.
+MARKER_SCHEMA = 999999
+
+
+def is_marker(revision: dict) -> bool:
+    successor = revision.get("successor")
+    return isinstance(successor, dict) and type(successor.get("format")) is int
 
 
 # What revisions() read from each archive, by (path, size, modification time); shared by every FolderDrive,
@@ -432,47 +466,80 @@ class FolderDrive:
         if not folder.is_dir():
             raise ValueError("同期フォルダーが見つかりません。PC版Google Driveを確認してください。")
 
-    def revisions(self) -> list[dict]:
+    def revisions(self, *, strict: bool = True) -> list[dict]:
+        """The revisions in the folder. strict=False (for a folder moved to the new format, whose revisions of
+        this format may have been removed but for the markers) skips a file that cannot be read, and does
+        not ask for every parent to be there."""
         result = []
         seen = set()
         for path in sorted(self.folder.glob("*.papeer-sync")):
-            # A revision is never rewritten once published, so what was read from it stays valid while the
-            # file keeps its size and time; the automatic check then need not open every archive each minute.
-            stat = path.stat()
-            key = (str(path), stat.st_size, stat.st_mtime_ns)
-            seen.add(key)
-            with _REVISION_LOCK:
-                cached = deepcopy(_REVISION_CACHE.get(key))
-            if cached is not None:
-                result.append(cached)
-                continue
-            with zipfile.ZipFile(path) as archive:
-                info = archive.getinfo("revision.json")
-                if info.file_size > 1024 * 1024:
-                    raise ValueError("同期履歴の形式が不正です。")
-                meta = json.loads(archive.read(info))
-                if (meta.get("format") != FORMAT or meta.get("id") != path.stem
-                        or not re.fullmatch(r"[0-9a-f]{32}", str(meta.get("id", "")))
-                        or not isinstance(meta.get("parents"), list)
-                        or not all(isinstance(p, str) for p in meta["parents"])
-                        or not all(isinstance(meta.get(k), str) for k in ("hash", "archive_hash", "device", "created"))
-                        # Both are absent from revisions made before schema versioning (version 0).
-                        or type(meta.get("schema_version", 0)) is not int or meta.get("schema_version", 0) < 0
-                        or not isinstance(meta.get("app_version", ""), str)
-                        # Absent from revisions made before the counts were recorded.
-                        or not _valid_counts(meta.get("counts", {}))):
-                    raise ValueError("同期履歴の形式が不正です。")
-                archive.getinfo("library.zip")
-                result.append(meta)
+            try:
+                # A revision is never rewritten once published, so what was read from it stays valid while the
+                # file keeps its size and time; the automatic check then need not open every archive each minute.
+                stat = path.stat()
+                key = (str(path), stat.st_size, stat.st_mtime_ns)
+                seen.add(key)
                 with _REVISION_LOCK:
-                    _REVISION_CACHE[key] = deepcopy(meta)
+                    cached = deepcopy(_REVISION_CACHE.get(key))
+                if cached is None:
+                    cached = self._read_revision(path)
+                    with _REVISION_LOCK:
+                        _REVISION_CACHE[key] = deepcopy(cached)
+            except _READ_ERRORS:
+                if strict:
+                    raise
+                continue
+            result.append(cached)
         with _REVISION_LOCK:
             for key in [key for key in _REVISION_CACHE if Path(key[0]).parent == self.folder and key not in seen]:
                 del _REVISION_CACHE[key]
         ids = {item["id"] for item in result}
-        if any(parent not in ids for item in result for parent in item["parents"]):
+        if strict and any(parent not in ids for item in result for parent in item["parents"]):
             raise ValueError("同期データがまだ揃っていません。Google Driveの同期完了後に再試行してください。")
         return result
+
+    @staticmethod
+    def _read_revision(path: Path) -> dict:
+        with zipfile.ZipFile(path) as archive:
+            info = archive.getinfo("revision.json")
+            if info.file_size > 1024 * 1024:
+                raise ValueError("同期履歴の形式が不正です。")
+            meta = json.loads(archive.read(info))
+            if (not isinstance(meta, dict) or meta.get("format") != FORMAT or meta.get("id") != path.stem
+                    or not re.fullmatch(r"[0-9a-f]{32}", str(meta.get("id", "")))
+                    or not isinstance(meta.get("parents"), list)
+                    or not all(isinstance(p, str) for p in meta["parents"])
+                    or not all(isinstance(meta.get(k), str) for k in ("hash", "archive_hash", "device", "created"))
+                    # Both are absent from revisions made before schema versioning (version 0).
+                    or type(meta.get("schema_version", 0)) is not int or meta.get("schema_version", 0) < 0
+                    or not isinstance(meta.get("app_version", ""), str)
+                    # Absent from revisions made before the counts were recorded.
+                    or not _valid_counts(meta.get("counts", {}))):
+                raise ValueError("同期履歴の形式が不正です。")
+            archive.getinfo("library.zip")
+        return meta
+
+    def path(self, revision: str) -> Path:
+        if not re.fullmatch(r"[0-9a-f]{32}", revision):
+            raise ValueError("同期データのIDが不正です。")
+        return self.folder / (revision + ".papeer-sync")
+
+    def write_marker(self, parents: list[str], successor: str, counts: dict, cancel: threading.Event) -> str:
+        """Publish a marker (see MARKER_SCHEMA) over `parents` for the generation `successor` of the new
+        format; its ID. An ordinary revision of this format, whose archive is an empty ZIP."""
+        with tempfile.TemporaryDirectory() as directory:
+            empty = Path(directory) / "library.zip"
+            with zipfile.ZipFile(empty, "w"):
+                pass
+            with empty.open("rb") as stream:
+                archive_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+            # The hash of no library: an earlier Papeer never takes the marker for the library it holds.
+            marker_hash = hashlib.sha256(b"papeer-sync-marker:" + successor.encode()).hexdigest()
+            return self.upload(empty, {"parents": sorted(set(parents)), "hash": marker_hash,
+                                       "archive_hash": archive_hash, "device": platform.node(),
+                                       "schema_version": MARKER_SCHEMA, "app_version": __version__,
+                                       "counts": counts, "successor": {"format": 2, "gen": successor}},
+                               cancel, lambda _: None)
 
     def upload(self, path: Path, metadata: dict, cancel, progress) -> str:
         identity = uuid.uuid4().hex
@@ -796,12 +863,18 @@ def sync_connected(root: Path, cancel: threading.Event, progress: Callable[[str]
     The failure is raised as a ValueError with the message the user sees: a ValueError's own, else
     SYNC_FAILED. Stopping is not a failure: nothing is recorded, so automatic sync resumes next time.
     """
+    return recording_failure(root, lambda folder: sync(
+        Library(root), FolderDrive(folder), cancel, progress,
+        choice=choice, expected_heads=expected_heads, confirm=confirm, background=background))
+
+
+def recording_failure(root: Path, action: Callable[[Path], dict]) -> dict:
+    """action(the folder chosen on this PC), its failure recorded as sync_connected says."""
     try:
         state = read_state(root)
         if not state.get("connected") or not state.get("folder"):
             raise ValueError("同期フォルダーを指定してください。")
-        return sync(Library(root), FolderDrive(Path(state["folder"])), cancel, progress,
-                    choice=choice, expected_heads=expected_heads, confirm=confirm, background=background)
+        return action(Path(state["folder"]))
     except Cancelled:
         raise Cancelled(SYNC_CANCELLED) from None
     except Exception as exc:  # noqa: BLE001 - recorded as the status's error and raised again

@@ -143,15 +143,20 @@ class RestoreResult(BaseModel):
 
 
 class DriveSyncResult(BaseModel):
-    """drive_sync.sync: "synced", or why it did not (yet): "deferred", "conflict", "review"."""
+    """folder_sync.sync_connected (drive_sync.sync, drive_sync_v2.sync) and folder_sync.migrate: "synced", or
+    why it did not (yet): "deferred", "conflict", "review", "waiting" (the new format: another PC's data is
+    still arriving)."""
     model_config = ConfigDict(extra="allow")
-    status: Literal["synced", "deferred", "conflict", "review"]
+    status: Literal["synced", "deferred", "conflict", "review", "waiting"]
     reloaded: bool = False  # Another PC's library was taken in: the page reloads.
     previous_path: str | None = None
     set_aside: list[str] = Field(default_factory=list)
     not_set_aside: list[dict[str, Any]] = Field(default_factory=list)
     conflicts: list[dict[str, Any]] | None = None  # "conflict"
     review: dict[str, Any] | None = None  # "review"
+    waiting: dict[str, Any] | None = None  # "waiting": what is waited for (drive_sync_v2.waiting_status)
+    heads: list[str] | None = None  # "waiting": the heads, as expected_heads for going on without waiting
+    migrated: bool | None = None  # folder_sync.migrate: whether the sync folder is in the new format now
 
 
 # check: the connection's answer as one line of text.
