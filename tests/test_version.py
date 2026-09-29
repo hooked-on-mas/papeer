@@ -145,13 +145,26 @@ def test_release_workflow_builds_on_version_tags():
     yaml = pytest.importorskip("yaml")
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     # PyYAML reads the bare key `on` as True.
-    assert workflow[True] == {"push": {"tags": ["v*"]}}
+    # By hand: the installers of a branch as the run's artifacts, without a release.
+    assert workflow[True] == {"push": {"tags": ["v*"]}, "workflow_dispatch": None}
     assert workflow["permissions"] == {"contents": "read"}
     build, release = workflow["jobs"]["build"], workflow["jobs"]["release"]
-    assert build["runs-on"] == "windows-latest" and build["permissions"] == {"contents": "read"}
-    # Only the job that creates the release may write, and it runs no project code or setup action.
+    assert build["runs-on"] == "${{ matrix.os }}" and build["permissions"] == {"contents": "read"}
+    # Windows, both Macs (one disk image each: no universal sidecar) and Linux (.deb only).
+    rows = {row["name"]: (row["os"], row["installers"]) for row in build["strategy"]["matrix"]["include"]}
+    assert rows == {"windows-x64": ("windows-latest", "nsis/*-setup.exe msi/*.msi"),
+                    "macos-arm64": ("macos-latest", "dmg/*.dmg"), "macos-x64": ("macos-15-intel", "dmg/*.dmg"),
+                    "linux-x64": ("ubuntu-22.04", "deb/*.deb")}
+    # Only the job that creates the release may write, it runs on a tag only, and it runs no project code or
+    # setup action.
     assert release["needs"] == "build" and release["permissions"] == {"contents": "write"}
+    assert release["if"] == "startsWith(github.ref, 'refs/tags/v')"
     assert [step["uses"].split("@")[0] for step in release["steps"] if "uses" in step] == ["actions/download-artifact"]
+    # The Mac app's ad-hoc signatures and the .deb are checked before they are collected.
+    scripts = {step.get("name"): step.get("run", "") for step in build["steps"]}
+    assert "Signature=adhoc" in scripts["Check the ad-hoc signatures"]
+    assert "tools/sign_sidecar.py --verify" in scripts["Check the ad-hoc signatures"]
+    assert "papeer-sidecar" in scripts["Check the .deb"]
     checkout = next(step for step in build["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["persist-credentials"] is False
     for job in (build, release):

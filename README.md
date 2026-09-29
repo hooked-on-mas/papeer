@@ -52,16 +52,16 @@ docs/             仕様ドキュメント
 .github/          GitHub Actions (タグでインストーラーを作るリリース)
 ```
 
-フロントエンドは sidecar の REST API と WebSocket でバックエンドと通信します。本番ビルドでは Tauri が空きポートと起動ごとの認証トークンを決め、PyInstaller で単一 exe 化した sidecar を起動します。翻訳・書き込み・同期などの仕様は [docs/](docs/) にあります。
+フロントエンドは sidecar の REST API と WebSocket でバックエンドと通信します。本番ビルドでは Tauri が空きポートと起動ごとの認証トークンを決め、PyInstaller でフォルダー形式（onedir）にまとめた sidecar を起動します。翻訳・書き込み・同期などの仕様は [docs/](docs/) にあります。
 
 ## 開発環境のセットアップ
 
-Windows 11 x64 を対象にしています。次のツールを用意してください。
+Windows 11 x64 を対象にしています。macOS（13 以降、Apple Silicon・Intel）と Linux（Ubuntu 22.04 以降、x86_64 の `.deb`）向けのビルドと検査も CI で行っていますが、実機では確かめていません（「リリース」）。次のツールを用意してください。
 
 - [uv](https://docs.astral.sh/uv/)（Python 3.12 は uv が自動で導入します）
 - [Node.js](https://nodejs.org/) 22.18 以上と [pnpm](https://pnpm.io/)（フロントエンドのテストは Node が `.ts` を直接実行します）
 - [Rust](https://www.rust-lang.org/tools/install) と [Tauri の前提条件](https://tauri.app/start/prerequisites/)
-- [just](https://github.com/casey/just) 1.38 以上（`winget install Casey.Just`）
+- [just](https://github.com/casey/just) 1.47 以上（`winget install Casey.Just`。レシピの環境変数を `[env(...)]` で付けるため）
 
 ```bash
 just setup
@@ -93,7 +93,9 @@ just lint   # ruff, pyright, ESLint, tsc
 
 pytest は `tests/conftest.py` で `LOCALAPPDATA`・`XDG_DATA_HOME`・`XDG_STATE_HOME`・`XDG_CACHE_HOME`（Windows 以外では `HOME` も）と `PAPEER_DATA_DIR` をテストごとの一時フォルダーに向けます（`tests/_isolation.py` の `point_pc_folders`）。実際のデータフォルダー（`%LOCALAPPDATA%\Papeer`、`PaperDesk`、`PapeerSync`、macOS・Linux で同じ役目のフォルダー）でファイルを開いたり書き込んだりすると、そのテストは失敗します。同梱フォントの変換結果（約30秒かけて作る）だけは `PAPEER_FONT_CACHE_DIR` で `.pytest_cache` 内に置き、次回以降の実行でも使い回します。
 
-CI（`.github/workflows/ci.yml`）は push ごとに Windows で、`just lint`・`just test` と同じ検査に加えて `frontend/openapi.json` とライセンス台帳が最新か（`--check`）、`pnpm build`、Rust の `cargo fmt --check`・`cargo clippy --release --all-targets -- -D warnings`・`cargo test --release`（`lib.rs` の単体テスト）を実行します。同じリポジトリのブランチからの pull request は push したときの結果を使い、pull request として検査するのは fork からのものだけです。実際の AI は呼びません。
+CI（`.github/workflows/ci.yml`）は push ごとに Windows と Linux（ubuntu-22.04）で、`just lint`・`just test` と同じ検査に加えて `frontend/openapi.json` とライセンス台帳が最新か（`--check`）、Rust の `cargo fmt --check`・`cargo clippy --release --all-targets -- -D warnings`・`cargo test --release`（`lib.rs`・`sidecar.rs` の単体テスト）を実行します。フロントエンドの検査（tsc・ESLint・node:test・`pnpm build`）は OS に依存しないため Windows だけで行います。同じリポジトリのブランチからの pull request は push したときの結果を使い、pull request として検査するのは fork からのものだけです。実際の AI は呼びません。
+
+GitHub の Actions の画面から手動で実行（Run workflow）すると、macOS（Apple Silicon）での同じ検査と、各 OS で sidecar を `just build-sidecar` で作ってスモークテストし、`sidecar.rs` の `#[ignore]` のテスト（作った sidecar をアプリと同じように起動し、`/shutdown` と、標準入力のパイプが閉じたときに自分で終わること）を通すジョブも選べます。非公開のリポジトリでは Actions の実行時間が無料枠から引かれ、Linux の 1 分は 1 分、Windows は 2 分、macOS は 10 分として数えられるため、macOS と sidecar のビルドは push では動かしません。
 
 ### E2E テスト
 
@@ -144,12 +146,20 @@ just build
 次の処理を順に行います。
 
 1. `code-version.txt`（抽出・PDF 生成コードの識別値）と、同梱ソースと依存関係の内容ハッシュを生成する
-2. PyInstaller で `sidecar.spec` から sidecar をフォルダー形式（onedir）で作る。`dist/sidecar/` に起動用の `papeer-sidecar.exe` と、Python・ライブラリ・同梱データの入った `_internal/` ができる
-3. その exe を `just smoke-sidecar` と同じ手順で試す（次節）。失敗したらここで止まる
-4. 試したフォルダーを `frontend/src-tauri/sidecar/` に置き（`tools/place_sidecar.py`。隣にコピーしてから名前の変更で入れ替えるので、途中で失敗しても中途半端なフォルダーは残らない）、成功したら 1 の内容ハッシュを `sidecar-sources.txt` に記録する
-5. `code-version.txt` と sidecar が現在のソースから作られたこと（と `frontend/src-tauri/sidecar/papeer-sidecar.exe` があること）を確かめ（`just check-sidecar`）、`pnpm tauri build` でインストーラーを作る
+2. PyInstaller で `sidecar.spec` から sidecar をフォルダー形式（onedir）で作る。`dist/sidecar/` に起動用の `papeer-sidecar.exe`（macOS・Linux では `papeer-sidecar`）と、Python・ライブラリ・同梱データの入った `_internal/` ができる
+3. macOS では、その中の Mach-O ファイル（起動用のプログラムと、Python・拡張モジュール・`.dylib`）すべてに ad-hoc 署名して確かめる（`tools/sign_sidecar.py`。ほかの OS では何もしない）
+4. そのフォルダーを `just smoke-sidecar` と同じ手順で試す（次節）。失敗したらここで止まる
+5. 試したフォルダーを `frontend/src-tauri/sidecar/` に置き（`tools/place_sidecar.py`。隣にコピーしてから名前の変更で入れ替えるので、途中で失敗しても中途半端なフォルダーは残らない）、成功したら 1 の内容ハッシュを `sidecar-sources.txt` に記録する
+6. `code-version.txt` と sidecar が現在のソースから作られたこと（と `frontend/src-tauri/sidecar/papeer-sidecar(.exe)` があること）を確かめ（`just check-sidecar`）、`pnpm tauri build` でインストーラーを作る（Windows は NSIS と MSI、macOS は `.app` と `.dmg`（`tauri.macos.conf.json`）、Linux は `.deb`（`tauri.linux.conf.json`））
 
-インストーラーは `frontend/src-tauri/target/release/bundle/` に出力されます。sidecar のフォルダーは `tauri.conf.json` の `bundle.resources` でそのまま同梱され、インストール先では `papeer.exe` の隣の `sidecar\` に入ります。アプリはリソースフォルダーの中の `sidecar\papeer-sidecar.exe` を起動し（`frontend/src-tauri/src/sidecar.rs`）、ジョブオブジェクトに入れて、終了時は `/shutdown` で自分で終わるのを待ちます（30 秒で終わらなければジョブごと止める）。以前の onefile の exe と違い、起動のたびに `%TEMP%\_MEI*` へ展開しないため、起動が速く、強制終了しても何も残りません。NSIS のインストーラーは、ファイルを置く前にインストール先の古い `sidecar\` と 0.2.0 以前の `sidecar.exe` を消します（`frontend/src-tauri/windows/hooks.nsh`）。ただし Papeer か sidecar が動いている間は `sidecar\` を消しません（このフックはアプリを閉じるよう求める確認より前に動くため、そこで取り消されても起動できなくならないように）。MSI は置き換える版のファイルを自分で消します。
+インストーラーは `frontend/src-tauri/target/release/bundle/` に出力されます。sidecar のフォルダーは `tauri.conf.json` の `bundle.resources` でそのまま同梱され、インストール先では `papeer.exe` の隣の `sidecar\` に入ります。アプリはリソースフォルダーの中の `sidecar\papeer-sidecar.exe` を起動し（`frontend/src-tauri/src/sidecar.rs`）、ジョブオブジェクトに入れて、終了時は `/shutdown` で自分で終わるのを待ちます（30 秒で終わらなければジョブごと止める）。以前の onefile の exe と違い、起動のたびに `%TEMP%\_MEI*` へ展開しないため、起動が速く、強制終了しても何も残りません。
+
+アプリがどう終わっても（異常終了・強制終了を含む）sidecar と、それが動かしている CLI が残らないよう、次を組み合わせています（`sidecar.rs`）。
+
+- どの OS でも、sidecar の標準入力はアプリが何も書き込まないパイプで、アプリのプロセスが終わると閉じます。アプリは `PAPEER_WATCH_STDIN=1` を付けて起動し、sidecar はパイプが閉じたら `/shutdown` と同じようにジョブ（と CLI）を止めて終わります（`sidecar/routes/system.py` の `watch_stdin`）。
+- Windows では、上のジョブオブジェクトがアプリの終了と一緒に sidecar と CLI を止めます。
+- macOS・Linux では、sidecar を専用のプロセスグループで起動し、`/shutdown` で終わらなければグループに SIGTERM を、5 秒たっても残っていれば SIGKILL を送ります。sidecar は SIGTERM を受けるとジョブと CLI を止めてから終わります。Linux では、アプリのプロセスが終わると sidecar に SIGTERM が届くようにもしています（`PR_SET_PDEATHSIG`）。
+- macOS・Linux では、Finder や Dock から開いたアプリの PATH は最小限（`/usr/bin:/bin:/usr/sbin:/sbin`）なので、sidecar を起動する前にログインシェルから PATH を読み、先頭に足します（5 秒で答えなければ使わない。端末から起動したときは読まない）。NSIS のインストーラーは、ファイルを置く前にインストール先の古い `sidecar\` と 0.2.0 以前の `sidecar.exe` を消します（`frontend/src-tauri/windows/hooks.nsh`）。ただし Papeer か sidecar が動いている間は `sidecar\` を消しません（このフックはアプリを閉じるよう求める確認より前に動くため、そこで取り消されても起動できなくならないように）。MSI は置き換える版のファイルを自分で消します。
 
 `target/release/papeer.exe` をインストールせずにそのまま起動するときは、`target/release/sidecar/` を使います。tauri-build はビルドのたびにこのフォルダーへ上書きでコピーするだけなので、前のビルドにしかないファイルが残ることがあります。おかしいときは `target/release/sidecar/` を消してからビルドし直してください（インストーラーには `frontend/src-tauri/sidecar/` の中身だけが入ります）。
 
@@ -157,16 +167,18 @@ PyInstaller は依存グループ `build` にあり、`just build-sidecar` が `
 
 ### sidecar のスモークテスト
 
-`just smoke-sidecar`（`tools/smoke_sidecar.py`）は、`just build-sidecar` で作った `dist/sidecar/papeer-sidecar.exe` を Tauri と同じように乱数のトークンと空きポートで起動し、次を確かめます。PyInstaller の `hiddenimports`・`datas` の漏れ（同梱し忘れたモジュール・プロンプト・フォント）は、ここで起動や翻訳の失敗として見つかります。
+`just smoke-sidecar`（`tools/smoke_sidecar.py`）は、`just build-sidecar` で作った `dist/sidecar/papeer-sidecar(.exe)` を Tauri と同じように乱数のトークンと空きポートで起動し、次を確かめます。PyInstaller の `hiddenimports`・`datas` の漏れ（同梱し忘れたモジュール・プロンプト・フォント）は、ここで起動や翻訳の失敗として見つかります。
 
 1. `/health` が応答し、`version` がソースの版（`MAJOR.MINOR.PATCH`）、`code_version` がソースの抽出・PDF 生成コードの識別値（`code-version.txt` と同じ値）と一致する（版か抽出・PDF 生成のコードが変わった後に exe を作り直していなければ失敗する。それ以外のコードの変更はどちらの値にも表れないため、ここでは見つからない。同梱ソース全体の一致は `just check-sidecar` が確かめる）
 2. トークンなし・誤ったトークンは 401、正しいトークン（`Authorization` ヘッダーと `token` クエリ）は 200 になる
 3. 同梱のプロンプトが `papeer/core/prompts` と一致し、設定を保存できる
 4. `tests/fixtures/sample.pdf` を取り込み、テキストを抽出・検索できる
 5. その論文を翻訳し、同梱の日本語フォント（源ノ明朝）を埋め込んだ `translated.pdf` ができる。翻訳の依頼先は、スクリプトが `127.0.0.1` で動かす OpenAI 互換の代役サーバーで、実際の AI は呼ばず、PC の外にも通信しない。翻訳の指示に共通部分（`papeer/core/prompts/_*.txt`）が差し込まれていることも確かめる
-6. `/shutdown` でプロセスが終了コード 0 で終わる。起動してから終わるまで、`TEMP` に `_MEI*`（onefile の展開フォルダー）が作られない（作られたら onefile の exe を試している）
+6. `/shutdown` でプロセスが終了コード 0 で終わる。起動してから終わるまで、一時フォルダーに `_MEI*`（onefile の展開フォルダー）が作られない（作られたら onefile の exe を試している）
+7. アプリと同じように（`PAPEER_WATCH_STDIN=1`、標準入力をパイプにして）起動し直し、パイプを閉じると（アプリが異常終了したときと同じ）終了コード 0 で終わる
+8. macOS・Linux では、もう一度起動し直し、SIGTERM で終了コード 0 で終わる
 
-データフォルダー・`LOCALAPPDATA`・`TEMP` は毎回新しい一時フォルダーに向けるため、実際のライブラリや PC ごとの設定には触れません（`TEMP` に何も展開されないことも、そこで正確に確かめられます）。失敗すると、失敗した確認と sidecar のログの末尾を表示して終了コード 1 で終わります。どの場合も sidecar は止め（応答しなければ強制終了）、一時フォルダーは消します。`--keep` で一時フォルダー（データとログ）を残し、`--exe` で別の場所の exe（インストーラーを展開したフォルダーの `sidecar\papeer-sidecar.exe` など）を、`--source` で exe の代わりに `python -m sidecar` を同じ手順で試せます（`tests/test_smoke_sidecar.py` はこちらを使い、exe なしでスクリプト自体を検査します）。`just build-sidecar`（`just build` とリリースのワークフローも使う）は sidecar を作った直後にこのテストを実行し、通ったフォルダーだけを `frontend/src-tauri/sidecar/` に置きます。
+データフォルダー、この PC のフォルダーの元になる変数（Windows の `LOCALAPPDATA`、macOS・Linux の `HOME` と `XDG_DATA_HOME`・`XDG_STATE_HOME`・`XDG_CACHE_HOME`・`XDG_CONFIG_HOME`）、一時フォルダー（`TEMP`・`TMP`・`TMPDIR`）は毎回新しい一時フォルダーに向けるため、実際のライブラリや PC ごとの設定には触れません（一時フォルダーに何も展開されないことも、そこで正確に確かめられます）。PC ごとの設定が保存される場所は、`papeer.core.paths.device_directory()` と同じ規則で確かめます。失敗すると、失敗した確認と sidecar のログの末尾を表示して終了コード 1 で終わります。どの場合も sidecar は止め（応答しなければ強制終了）、一時フォルダーは消します。`--keep` で一時フォルダー（データとログ）を残し、`--exe` で別の場所の exe（インストーラーを展開したフォルダーの `sidecar\papeer-sidecar.exe` など）を、`--source` で exe の代わりに `python -m sidecar` を同じ手順で試せます（`tests/test_smoke_sidecar.py` はこちらを使い、exe なしでスクリプト自体を検査します）。`just build-sidecar`（`just build` とリリースのワークフローも使う）は sidecar を作った直後にこのテストを実行し、通ったフォルダーだけを `frontend/src-tauri/sidecar/` に置きます。
 
 `just clean` はリポジトリ直下の `build/`・`dist/`・`output/`・`tmp/` とその容量を一覧表示するだけで、`just clean yes` で削除します。それ以外のフォルダーは消しません。
 
@@ -178,11 +190,36 @@ PyInstaller は依存グループ `build` にあり、`just build-sidecar` が `
 2. `just bump 0.3.0` で全ファイルの版を書き換え、`[Unreleased]` の内容を `[0.3.0] - 日付` の節に移す（版を下げる・`[Unreleased]` が空のときは何も変更せずに止まる）
 3. 差分を確認してコミットし、`git tag v0.3.0` を付けて、コミットとタグを push する
 
-タグ `v*` の push で `.github/workflows/release.yml` が動き、windows-latest 上で `just build`（sidecar の exe を含む）を実行して、NSIS のセットアップ（`.exe`）と MSI を下書きの GitHub Release に添付します。リリースノートは `CHANGELOG.md` の該当する節です。タグと全ファイルの版が一致しないときはビルドしません。内容を確かめてから GitHub 上で下書きを公開してください。ビルドするジョブはリポジトリの読み取り権限だけで動き、Release を作る後続のジョブだけが書き込み権限を持ちます。依存のキャッシュは使わず、毎回まっさらな状態からビルドします。
+タグ `v*` の push で `.github/workflows/release.yml` が動き、OS ごとのランナーで `just build`（sidecar を含む）を実行して、次のインストーラーを下書きの GitHub Release に添付します。
+
+| OS | ランナー | インストーラー |
+| --- | --- | --- |
+| Windows x64 | windows-latest | NSIS のセットアップ（`.exe`）と MSI |
+| macOS（Apple Silicon） | macos-latest | `Papeer_<版>_aarch64.dmg` |
+| macOS（Intel） | macos-15-intel | `Papeer_<版>_x64.dmg` |
+| Linux x64 | ubuntu-22.04 | `Papeer_<版>_amd64.deb`（glibc 2.35 でビルドするので Ubuntu 22.04・Debian 12 以降） |
+
+PyInstaller は両方のアーキテクチャを含む sidecar（universal2）を作れないため、Mac は 2 つのディスクイメージに分けています。リリースノートは `CHANGELOG.md` の該当する節です。タグと全ファイルの版が一致しないときはビルドしません。内容を確かめてから GitHub 上で下書きを公開してください。ビルドするジョブはリポジトリの読み取り権限だけで動き、Release を作る後続のジョブだけが書き込み権限を持ちます。依存のキャッシュは使わず、毎回まっさらな状態からビルドします。
 
 MSI は Tauri が WiX Toolset v3 で作り、WiX v3 は Windows の VBScript（オプション機能）に依存します。GitHub のランナーや手元の PC で VBScript が無効・削除されていると MSI の作成に失敗するため、最初のリリースでは実機（または Actions の実行結果）で MSI と NSIS の両方ができ、インストールと起動ができることを確認してください。
 
 このワークフローは自動で発行される `GITHUB_TOKEN` だけを使い、追加のシークレットは不要です。インストーラーはコード署名をしていないため、初回の実行時に Windows SmartScreen の警告が出ます（署名する場合は証明書をシークレットに登録し、`tauri.conf.json` の `bundle.windows` に署名の設定を加えます）。自動更新は未対応です。
+
+Actions の画面から手動で実行（Run workflow）すると、選んだブランチのインストーラーを同じ手順で作り、Release は作らずに実行結果の成果物（Artifacts）として残します。タグを付ける前の試しに使えます（Mac の 2 つのビルドは、非公開のリポジトリでは 1 分が 10 分として数えられます）。
+
+### macOS・Linux 版
+
+Apple の開発者登録をしていないため、Mac 版は Developer ID で署名しておらず、公証（notarization）もしていません。アプリ全体（`tauri.macos.conf.json` の `signingIdentity: "-"`）と、同梱の sidecar の中のプログラムとライブラリ一つひとつ（`tools/sign_sidecar.py`）に ad-hoc 署名だけをしています（Apple Silicon は署名のないプログラムを実行しないため）。リリースのワークフローは `codesign --verify` でこれを確かめます。最低の版は macOS 13 です。初めて開くときは次の手順が必要です。
+
+1. ディスクイメージから「アプリケーション」フォルダーにコピーする（ダウンロードフォルダーのまま開くと、読み取り専用の仮の場所から動いてしまう）
+2. 開くと「“Papeer”は開いていません」と出るので「完了」を押し、「システム設定」→「プライバシーとセキュリティ」の下にある「このまま開く」を押す
+3. 「壊れているため開けません」と出る場合は、ターミナルで `xattr -dr com.apple.quarantine /Applications/Papeer.app` を実行してから開く
+
+ad-hoc 署名は版ごとに変わるため、更新するたびに書類フォルダーなどへのアクセスの許可を聞き直されることがあります。
+
+Linux 版は `.deb` だけで、WebKitGTK 4.1 と GTK 3 に依存します。タスクトレイのアイコンは `libayatana-appindicator3-1` があるときだけ表示し（推奨パッケージ。ないときはトレイなしで動きます）、日本語の表示には `fonts-noto-cjk` を推奨します。
+
+どちらも、CI でのビルドとテスト（sidecar のスモークテストを含む）までしか確かめていません。
 
 ## 依存ライブラリ
 
@@ -239,7 +276,7 @@ mermaid が使う chevrotain は脆弱性のある `lodash-es` 4.17.23 に固定
 | Gemini | Antigravity CLI の `agy` コマンド |
 | OpenAI 互換 API | ベース URL と API キー |
 
-CLI は PATH と既定のインストール先から自動検出します。見つからない場合は設定画面でパスを指定してください。npm・pnpm 版の `.cmd` は cmd.exe を経由するためそのまま実行せず、`.cmd` と同じフォルダー配下にある本体（npm の既定の配置、なければ `.cmd` が起動するもの）を直接起動します（JavaScript なら Node.js で、`.exe` ならそのまま）。本体が見つからない `.cmd`・`.bat`・`.ps1` は使えないので、yarn などで入れた場合は `.exe` か npm 版のパスを指定してください。API キーはファイルに保存せず、起動中のセッションだけで保持します。
+CLI は PATH と既定のインストール先から自動検出します（macOS・Linux では `~/.local/bin`、Homebrew（`/opt/homebrew/bin`・`/usr/local/bin`）、nvm・fnm・Volta・`~/.npm-global` など npm の置き場所も探し、CLI を起動するときの PATH にもそのフォルダーを足します。npm 版の CLI は Node.js で動くため）。見つからない場合は設定画面でパスを指定してください。npm・pnpm 版の `.cmd` は cmd.exe を経由するためそのまま実行せず、`.cmd` と同じフォルダー配下にある本体（npm の既定の配置、なければ `.cmd` が起動するもの）を直接起動します（JavaScript なら Node.js で、`.exe` ならそのまま）。本体が見つからない `.cmd`・`.bat`・`.ps1` は使えないので、yarn などで入れた場合は `.exe` か npm 版のパスを指定してください。API キーはファイルに保存せず、起動中のセッションだけで保持します。
 
 PDF の本文は信頼できない入力として扱い、CLI にはツールを使わせない指定で渡します。Claude Code はツール・MCP サーバー・プロジェクト設定・スキルを無効にし、Codex は読み取り専用サンドボックスでシェル・Web 検索・プラグイン・アプリと `config.toml` の MCP サーバーを無効にします。Antigravity は `--sandbox` で起動し、本文はコマンドラインではなく標準入力で渡します（Windows のコマンドライン長の上限を超える長いチャットも送れます）。CLI には Papeer 自身の環境変数（`PAPEER_*`、sidecar の認証トークンなど）を引き継ぎません。
 
@@ -321,6 +358,7 @@ PapeerSync/                   このPCだけの設定（同期・バックアッ
 | `PAPEER_FONT_CACHE_DIR` | 同梱フォントの変換結果の置き場所（既定は Windows `%LOCALAPPDATA%\PapeerSync\font-cache`、macOS `~/Library/Caches/Papeer/font-cache`、Linux `~/.cache/papeer/font-cache`。pytest は `.pytest_cache` 内を使う） |
 | `PAPEER_DEV_NO_AUTH` | `1` のとき、`PAPEER_TOKEN` なしで認証なしの sidecar を起動する（開発専用。PyInstaller で作った sidecar では無視） |
 | `PAPEER_API_KEY` | API 接続で使う API キーの初期値（未設定なら `OPENAI_API_KEY`、次に `GEMINI_API_KEY`） |
+| `PAPEER_WATCH_STDIN` | `1` のとき、標準入力が閉じたら（パイプの向こうのアプリが終わったら）ジョブを止めて終了する。本番のアプリが sidecar に付ける |
 | `PAPEER_E2E_DIR` | E2E テスト専用（デバッグ版のアプリだけが読む）。メインウィンドウの WebView2 のプロファイルをこのフォルダーに作り、ウィンドウの位置を保存・復元しない（README「E2E テスト」） |
 
 ## キーボードショートカット
