@@ -78,7 +78,7 @@ export function OcrSettingsView({ status }: { status: OcrStatus }) {
         </li>)}
         {status.system && <li>{status.system.label}：{status.system.languages.length
           ? `${status.system.languages.map(lang => LANG_LABELS[lang]).join("・")}を読めます`
-          : "このPCには認識器がありません（Windows では「設定 → 時刻と言語 → 言語」で言語を追加すると使えます）"}</li>}
+          : `このPCには認識器がありません${status.system.name === "windows" ? "（Windows では「設定 → 時刻と言語 → 言語」で言語を追加すると使えます）" : ""}`}</li>}
         <li>AI で読み直す（翻訳の確認・修正から 1 ページずつ）：{status.ai.available
           ? `${status.ai.label} で使えます。ページの画像を接続先に送り、利用枠を使います。`
           : <span className="text-amber-700 dark:text-amber-400">{status.ai.reason}</span>}</li>

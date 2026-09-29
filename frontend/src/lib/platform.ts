@@ -79,3 +79,22 @@ export function shortcutKeys(keys: string[], platform: Platform = PLATFORM): str
   if (joined === "Ctrl+Z / Y") return ["⌘", "Z / ⇧Z"];
   return keys.map(key => MAC_MODIFIERS[key] ?? (key === "Delete" ? "⌫" : withShortcutLabels(key, platform)));
 }
+
+/**
+ * What carries the sync folder between PCs, as the sync's texts name it (papeer/core/sync_client.py): Google
+ * Drive for desktop on Windows and macOS; on Linux, which has no official client, the user's own sync software.
+ */
+export function syncClientNames(platform: Platform = PLATFORM): {
+  /** The program: 「{app}が行います」. */ app: string;
+  /** Where to look at the transfer: 「{service}側の同期完了」. */ service: string;
+  /** What the library is synced with: 「{remote}との変更が競合」. */ remote: string;
+  /** A sync folder's path on this OS, as an example. */ folderExample: string;
+} {
+  if (platform === "linux") {
+    return { app: "同期ソフト", service: "同期ソフト", remote: "同期フォルダー", folderExample: "~/Sync/Papeer-sync" };
+  }
+  return {
+    app: "PC版Google Drive", service: "Google Drive", remote: "Google Drive",
+    folderExample: platform === "macos" ? "~/Library/CloudStorage/GoogleDrive-…/My Drive/Papeer-sync" : String.raw`G:\マイドライブ\Papeer-sync`,
+  };
+}

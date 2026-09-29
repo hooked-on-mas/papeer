@@ -14,6 +14,7 @@ import pytest
 
 from papeer.core import drive_sync_v2 as v2, local_history, sync_store
 from papeer.core.local_history import SourceUnreadable
+from papeer.core.sync_client import SYNC_CLIENT
 from papeer.core.sync_store import GenerationStore, NewerFormatError, View
 
 NOW = datetime(2026, 9, 29, tzinfo=timezone.utc)
@@ -249,7 +250,7 @@ def test_a_wait_is_told_more_firmly_after_a_day(monkeypatch):
     assert told["message"] == "PC-A のデータが届くのを待っています（残り 12 ファイル）。" and not told["overdue"]
     state["waiting"]["since"] = (NOW - timedelta(hours=25)).isoformat()
     told = v2.waiting_status(state)
-    assert told["overdue"] and "PC-A のPC版Google Driveの同期が止まっていないか" in told["message"]
+    assert told["overdue"] and f"PC-A の{SYNC_CLIENT}の同期が止まっていないか" in told["message"]
     assert v2.waiting_status({"waiting": {"reason": "base", "since": NOW.isoformat()}})["message"] \
         == "前回の同期データが届くのを待っています。"
     assert v2.waiting_status({}) is None

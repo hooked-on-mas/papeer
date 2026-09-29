@@ -435,6 +435,11 @@ def _windows() -> bool:
     return os.name == "nt"
 
 
+def cli_path_hint(windows: str, posix: str) -> str:
+    """The hint of a CLI's path setting, with what is found on this OS (an npm .cmd shim is Windows only)."""
+    return f"空欄なら自動検出（{windows if _windows() else posix} など）"
+
+
 def _version_key(name: str) -> tuple:
     """Sorts version folder names such as v20.11.1 or 22.3.0 by their numbers (v8 before v10)."""
     return tuple(int(part) for part in re.findall(r"\d+", name))

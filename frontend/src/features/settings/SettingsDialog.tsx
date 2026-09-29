@@ -19,6 +19,7 @@ import { DriveSection } from "./DriveSection";
 import { OcrSection } from "./OcrSection";
 import { NoteTemplates, type TemplateLeaveGuard } from "../notes/NoteTemplates";
 import { useSettingsNavigation, type SettingsSection } from "./settingsNavigation";
+import { syncClientNames } from "@/lib/platform";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -36,7 +37,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon; descript
   { id: "ocr", label: "OCR", icon: ScanText, description: "スキャンした PDF の文字を読み取る方法（このPCの設定・自動保存）" },
   { id: "shortcuts", label: "ショートカット", icon: Keyboard, description: "キーボード操作の一覧" },
   { id: "backup", label: "バックアップ", icon: FileText, description: "ライブラリ全体の保存と復元" },
-  { id: "drive", label: "保存先・同期", icon: FileText, description: "Google DriveでほかのPCと同期" },
+  { id: "drive", label: "保存先・同期", icon: FileText, description: `${syncClientNames().service}でほかのPCと同期` },
 ];
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {

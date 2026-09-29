@@ -7,7 +7,9 @@ import subprocess
 import tempfile
 
 from papeer.providers.base import OptionField, ProviderBackend, ProviderSpec
-from papeer.providers.common import AnswerRejected, CliBackend, cli_failure, hidden_window, json_lines, run_cli_process, to_int, wrap_document_prompt
+from papeer.providers.common import (
+    AnswerRejected, CliBackend, cli_failure, cli_path_hint, hidden_window, json_lines, run_cli_process, to_int, wrap_document_prompt,
+)
 
 _FALLBACK_MODELS = [
     ("gemini-3.8-flash-medium", "gemini-3.8-flash-medium (Gemini 3.8 Flash)"),
@@ -48,7 +50,7 @@ class AntigravityProvider(CliBackend, ProviderBackend):
         kind="cli",
         needs_login=True,
         login_service="Antigravity",
-        fields=(OptionField("cli_path", "agy のパス", "空欄なら自動検出（agy.exe など）"),),
+        fields=(OptionField("cli_path", "agy のパス", cli_path_hint("agy.exe", "~/.gemini/bin/agy")),),
     )
     executable = "agy"
     windows_candidates = (

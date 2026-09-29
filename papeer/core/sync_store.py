@@ -48,6 +48,7 @@ from papeer import __version__
 from papeer.core import local_history
 from papeer.core.backup import _RESERVED_NAMES as _RESERVED, DATABASE_FILES, unsafe_path
 from papeer.core.fileio import atomic_write_bytes, atomic_write_json, ensure_free_space, is_temporary, move_file
+from papeer.core.sync_client import SYNC_CLIENT
 from papeer.providers import check_cancel
 
 FORMAT = 2
@@ -311,7 +312,7 @@ class GenerationStore:
 
     def __init__(self, folder: Path):
         if not folder.is_dir():
-            raise ValueError("同期フォルダーが見つかりません。PC版Google Driveを確認してください。")
+            raise ValueError(f"同期フォルダーが見つかりません。{SYNC_CLIENT}を確認してください。")
         self.folder = folder
         self.root = folder / FOLDER
         self.gens, self.blobs, self.devices = self.root / "gens", self.root / "blobs", self.root / "devices"
@@ -343,7 +344,7 @@ class GenerationStore:
         except FileNotFoundError:
             raise ValueError("この同期フォルダーには新しい形式の同期データがありません。") from None
         except (OSError, ValueError) as exc:
-            raise ValueError("同期フォルダーの形式を読み取れませんでした。PC版Google Driveの同期完了後に再試行してください。") from exc
+            raise ValueError(f"同期フォルダーの形式を読み取れませんでした。{SYNC_CLIENT}の同期完了後に再試行してください。") from exc
         if not isinstance(value, dict) or type(value.get("format")) is not int:
             raise ValueError("同期フォルダーの形式を読み取れませんでした。")
         if value["format"] > FORMAT:

@@ -4,12 +4,13 @@
  * through (or a different state) it is told again. Kept free of React and the stores so that
  * tests/syncWarnings.test.ts can check the rules.
  */
+import { syncClientNames } from "../../lib/platform.ts";
 
 export type SyncWarning = "conflict" | "review" | "failed";
 
 export const SYNC_WARNINGS: Record<SyncWarning, { title: string; description: string }> = {
   conflict: {
-    title: "Google Driveとの変更が競合しています",
+    title: `${syncClientNames().remote}との変更が競合しています`,
     description: "どちらのデータを使うか、設定 → 保存先・同期で確認してください。",
   },
   review: {

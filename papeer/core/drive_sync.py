@@ -33,6 +33,7 @@ from papeer.core.paths import fingerprint_cache_path, sync_state_path
 from papeer.core.backup import create_backup, restore_backup
 from papeer.core.storage import (SCHEMA_VERSION, Library, NewerSchemaError, database_version, library_missing,
                                   newer_papeer)
+from papeer.core.sync_client import SYNC_CLIENT, permission_hint
 from papeer.providers import Cancelled, check_cancel
 
 FORMAT = "papeer-folder-sync-v1"
@@ -77,7 +78,7 @@ def connect(root: Path, value: str) -> dict:
     try:
         return _connect(root, value)
     except OSError as exc:  # A folder that cannot be read or written: the user picks another.
-        raise Invalid(str(exc)) from exc
+        raise Invalid(" ".join(filter(None, (str(exc), permission_hint(exc))))) from exc
     except (KeyError, json.JSONDecodeError, UnicodeError, zipfile.BadZipFile) as exc:
         # A broken file in the sync folder: say so, rather than show a bare key such as 'heads'.
         raise Invalid(f"同期フォルダーのデータが壊れているため読み取れませんでした（{type(exc).__name__}: {exc}）。"
@@ -93,7 +94,7 @@ def _connect(root: Path, value: str) -> dict:
         raise ValueError("作業用データと重ならない別のフォルダーを選択してください。")
     # The parent must already exist: don't recreate a disconnected/missing Drive mount.
     if not target.parent.is_dir():
-        raise ValueError("親フォルダーが見つかりません。PC版Google Driveを確認してください。")
+        raise ValueError(f"親フォルダーが見つかりません。{SYNC_CLIENT}を確認してください。")
     target.mkdir(exist_ok=True)
     probe = target / (".papeer-write-test-" + uuid.uuid4().hex)
     try:
@@ -430,7 +431,7 @@ class FolderDrive:
     def __init__(self, folder: Path):
         self.folder = folder
         if not folder.is_dir():
-            raise ValueError("同期フォルダーが見つかりません。PC版Google Driveを確認してください。")
+            raise ValueError(f"同期フォルダーが見つかりません。{SYNC_CLIENT}を確認してください。")
 
     def revisions(self) -> list[dict]:
         result = []
@@ -786,7 +787,7 @@ def check_connected(root: Path) -> dict:
 
 # What a stopped or failed sync_connected reports.
 SYNC_CANCELLED = "同期を中止しました。"
-SYNC_FAILED = "同期フォルダーを読み書きできませんでした。保存先とPC版Google Driveを確認して再試行してください。"
+SYNC_FAILED = f"同期フォルダーを読み書きできませんでした。保存先と{SYNC_CLIENT}を確認して再試行してください。"
 
 
 def sync_connected(root: Path, cancel: threading.Event, progress: Callable[[str], None], *, choice: str | None = None,
@@ -805,7 +806,7 @@ def sync_connected(root: Path, cancel: threading.Event, progress: Callable[[str]
     except Cancelled:
         raise Cancelled(SYNC_CANCELLED) from None
     except Exception as exc:  # noqa: BLE001 - recorded as the status's error and raised again
-        message = str(exc) if isinstance(exc, ValueError) else SYNC_FAILED
+        message = str(exc) if isinstance(exc, ValueError) else SYNC_FAILED + permission_hint(exc)
         state = read_state(root)
         state["error"] = message
         save_state(root, state)

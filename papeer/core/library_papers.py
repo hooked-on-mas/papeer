@@ -189,7 +189,9 @@ class PaperRecords(LibraryBase):
         if (not stem.strip() or stem.endswith((" ", ".")) or
                 re.search(r'[<>:"/\\|?*\x00-\x1f]', name) or len(name) > 255 or
                 stem.split(".")[0].upper() in {"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)], *[f"LPT{i}" for i in range(1, 10)]}):
-            raise ValueError("Windowsで使用できるファイル名を入力してください。")
+            # Names that any PC can use, Windows' rules being the strictest: a synced library may reach one.
+            raise ValueError("どのPCでも使えるファイル名を入力してください（\\ / : * ? \" < > | と、"
+                             "末尾の空白・ピリオド、CON・NUL などの名前は使えません）。")
         with self.connection() as db:
             if not db.execute("SELECT id FROM papers WHERE id=?", (paper_id,)).fetchone():
                 raise NotFound("論文が見つかりません。")

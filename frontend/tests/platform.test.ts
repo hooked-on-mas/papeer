@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { detectPlatform, shortcutKeys, shortcutLabel, withShortcutLabels } from "../src/lib/platform.ts";
+import { detectPlatform, shortcutKeys, shortcutLabel, syncClientNames, withShortcutLabels } from "../src/lib/platform.ts";
 import { SHORTCUT_GROUPS } from "../src/app/hotkeys.ts";
 
 test("the platform comes from navigator.platform, then the user agent", () => {
@@ -52,4 +52,14 @@ test("every key of the shortcut list has a Mac form without Ctrl, Alt, F11 or De
   assert.deepEqual(shortcutKeys(["Alt", "← / →"], "macos"), ["⌘", "[ / ]"]);
   assert.deepEqual(shortcutKeys(["Ctrl", "Shift", "F"], "macos"), ["⌘", "⇧", "F"]);
   assert.deepEqual(shortcutKeys(["Delete"], "macos"), ["⌫"]);
+});
+
+test("the sync's texts name Google Drive on Windows and macOS, the user's sync software on Linux", () => {
+  assert.equal(syncClientNames("windows").app, "PC版Google Drive");
+  assert.equal(syncClientNames("windows").folderExample, String.raw`G:\マイドライブ\Papeer-sync`);
+  assert.equal(syncClientNames("macos").app, "PC版Google Drive");
+  assert.match(syncClientNames("macos").folderExample, /^~\/Library\/CloudStorage\/GoogleDrive-/);
+  assert.equal(syncClientNames("linux").app, "同期ソフト");
+  assert.equal(syncClientNames("linux").remote, "同期フォルダー");
+  assert.doesNotMatch(Object.values(syncClientNames("linux")).join(" "), /Google/);
 });
