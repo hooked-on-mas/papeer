@@ -1,0 +1,422 @@
+"""The sync folder's new format (v2): each content stored once, and generations that list what they use.
+
+Inside the folder the user chose for folder sync (beside the revisions of the first format, drive_sync):
+
+    v2/format.json          the format of what follows (FORMAT), written once
+    v2/gens/<id>.gen        a generation: the library at one sync, as a manifest (gzip-compressed JSON).
+                            Never rewritten once written.
+    v2/blobs/<sha256>[.z]   each content once, named and compressed as in this PC's history (local_history):
+                            PDFs and images as they are, the rest zlib-compressed (".z"), the database as
+                            chunks of local_history.CHUNK bytes
+    v2/devices/<id>.json    one per PC, written by that PC only: the generation it last synced on (its base)
+                            and the blobs it found damaged
+
+Google Drive for desktop uploads one file at a time, in no particular order, and a file shows in another
+PC's folder only once it has arrived whole. So a generation is written last, after every blob it uses,
+each to a temporary file renamed into place; a generation whose blobs have not all arrived is incomplete,
+and the sync waits for it (drive_sync_v2) instead of failing.
+
+A generation names its parents (the heads it was made over) and its lineage: its ancestors made within
+LINEAGE_DAYS (the parents always), newest first, at most LINEAGE_LIMIT. A head is a generation in no other
+generation's lineage, so a generation removed from the folder (as the clean-up of a later stage will) does
+not make its descendants look incomplete: that it was taken over is written in them.
+
+This module reads and writes the folder; what a sync does with it is drive_sync_v2. It is not used by the
+sync the app runs yet (the first format stays in use until the migration of a later stage).
+"""
+from __future__ import annotations
+
+from collections.abc import Iterable
+from copy import deepcopy
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+import gzip
+import hashlib
+import io
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import tempfile
+import threading
+from typing import cast
+import zlib
+
+from papeer import __version__
+from papeer.core import local_history
+from papeer.core.backup import _RESERVED_NAMES as _RESERVED, DATABASE_FILES, unsafe_path
+from papeer.core.fileio import atomic_write_bytes, atomic_write_json, ensure_free_space, is_temporary, move_file
+from papeer.providers import check_cancel
+
+FORMAT = 2
+FOLDER = "v2"
+# A generation keeps in its lineage the ancestors made this recently (and its parents, however old), at
+# most LINEAGE_LIMIT of them; a PC whose base is older than that compares whole libraries (drive_sync_v2).
+LINEAGE_DAYS = 60
+LINEAGE_LIMIT = 5000
+# A generation file larger than this, or unpacking to more, is not read (about 200 KB for 300 papers).
+GENERATION_LIMIT = 64 * 1024**2
+GENERATION_CONTENT_LIMIT = 64 * 1024**2
+# A library larger than this is not put together from a generation (as a backup larger is not restored).
+LIBRARY_LIMIT = 20 * 1024**3
+DEVICE_LIMIT = 1024**2
+
+_ID = re.compile(r"[0-9a-f]{32}")
+_DIGEST = re.compile(r"[0-9a-f]{64}")
+_BLOB = re.compile(r"[0-9a-f]{64}(\.z)?")
+
+NEWER_FORMAT = "この同期データは新しい形式（{}）で保存されています。Papeerを最新版に更新してください。"
+
+
+def _now() -> datetime:
+    """The time generations and device files are written at (replaced in tests)."""
+    return datetime.now(timezone.utc)
+
+
+def _seconds(value: str) -> int:
+    """An ISO time as whole seconds since the epoch (a time without a zone is taken as UTC)."""
+    moment = datetime.fromisoformat(value)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return int(moment.timestamp())
+
+
+def _newer_papeer(app_version: object) -> str:
+    if isinstance(app_version, str) and re.fullmatch(r"[0-9A-Za-z.+-]{1,40}", app_version):
+        return f"Papeer {app_version} 以降"
+    return "新しいバージョンのPapeer"
+
+
+class NewerFormatError(ValueError):
+    """The sync folder, or a generation, was written in a format newer than this Papeer reads."""
+
+
+def blob_names(manifest: dict) -> set[str]:
+    """The blobs a generation (or any manifest with "files" and "db") uses."""
+    return local_history.referenced(manifest)
+
+
+# Characters Windows does not allow in a file name, and control characters.
+_FORBIDDEN = re.compile(r'[\x00-\x1f\x7f<>:"|?*]')
+_DATABASE_KEYS = frozenset(name.casefold() for name in DATABASE_FILES)
+
+
+def _valid_files(files: object) -> bool:
+    """Whether every path of a generation may be written in a library folder on any PC: relative, in its
+    plain form ("a/b", not "a/./b" or "a//b"), a name Windows can create (backup.unsafe_path, and none of
+    the characters it refuses, nor a device name before a space), not the database, and no two paths
+    Windows cannot tell apart, nor a file where another path needs a folder."""
+    if not isinstance(files, dict):
+        return False
+    keys = set()
+    for rel, item in files.items():
+        if (not isinstance(rel, str) or unsafe_path(rel) or _FORBIDDEN.search(rel)
+                or "/".join(PurePosixPath(rel).parts) != rel
+                or any(part.split(".")[0].rstrip(" ").upper() in _RESERVED for part in PurePosixPath(rel).parts)
+                or not isinstance(item, list) or len(item) != 2 or not isinstance(item[0], str)
+                or not _DIGEST.fullmatch(item[0]) or type(item[1]) is not int or item[1] < 0):
+            return False
+        key = rel.casefold()
+        if key in keys or key in _DATABASE_KEYS:
+            return False
+        keys.add(key)
+    folders = {"/".join(key.split("/")[:end]) for key in keys for end in range(1, key.count("/") + 1)}
+    return not keys & folders
+
+
+def _valid_generation(value: object, identity: str) -> bool:
+    if not isinstance(value, dict):
+        return False
+    db, lineage = value.get("db"), value.get("lineage")
+    return (value.get("format") == FORMAT and value.get("id") == identity
+            and all(isinstance(value.get(key), str) for key in ("created", "device_id", "device", "app_version"))
+            and isinstance(value.get("hash"), str) and bool(_DIGEST.fullmatch(value["hash"]))
+            and type(value.get("schema_version")) is int and value["schema_version"] >= 0
+            and isinstance(value.get("parents"), list)
+            and all(isinstance(p, str) and _ID.fullmatch(p) for p in value["parents"])
+            and isinstance(lineage, list) and len(lineage) <= LINEAGE_LIMIT + len(value["parents"])
+            and all(isinstance(item, list) and len(item) == 2 and isinstance(item[0], str) and _ID.fullmatch(item[0])
+                    and type(item[1]) is int for item in lineage)
+            and (value.get("counts") is None or _valid_counts(value["counts"]))
+            and isinstance(db, dict) and type(db.get("size")) is int and db["size"] >= 0
+            and isinstance(db.get("sha256"), str) and bool(_DIGEST.fullmatch(db["sha256"]))
+            and isinstance(db.get("chunks"), list)
+            and all(isinstance(c, str) and _DIGEST.fullmatch(c) for c in db["chunks"])
+            and _valid_files(value.get("files"))
+            and sum(size for _digest, size in value["files"].values()) + db["size"] <= LIBRARY_LIMIT
+            and _valid_created(value["created"]))
+
+
+def _valid_counts(value: object) -> bool:
+    return isinstance(value, dict) and all(isinstance(k, str) and type(v) is int and v >= 0 for k, v in value.items())
+
+
+def _valid_created(value: str) -> bool:
+    try:
+        _seconds(value)
+    except (ValueError, OverflowError, OSError):
+        return False
+    return True
+
+
+# What was read from each generation file, by (path, size, modification time): a generation is never
+# rewritten, so the automatic check need not read every one each minute. Shared by every store.
+_CACHE: dict[tuple[str, int, int], tuple[str, object]] = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def _read_generation(path: Path) -> tuple[str, object]:
+    """("ok", generation), ("newer", app_version) or ("unreadable", None)."""
+    try:
+        with path.open("rb") as stream:
+            packed = stream.read(GENERATION_LIMIT + 1)
+        if len(packed) > GENERATION_LIMIT:
+            return "unreadable", None
+        with gzip.GzipFile(fileobj=io.BytesIO(packed)) as unpacked:
+            data = unpacked.read(GENERATION_CONTENT_LIMIT + 1)
+        if len(data) > GENERATION_CONTENT_LIMIT:
+            return "unreadable", None
+        value = json.loads(data)
+    except Exception:  # noqa: BLE001 - damaged in any way (gzip, zlib, JSON, UTF-8...): that generation only
+        return "unreadable", None
+    if isinstance(value, dict) and type(value.get("format")) is int and value["format"] > FORMAT:
+        return "newer", value.get("app_version")
+    return ("ok", value) if _valid_generation(value, path.stem) else ("unreadable", None)
+
+
+@dataclass
+class View:
+    """What the sync folder held when it was looked at."""
+    generations: dict[str, dict] = field(default_factory=dict)
+    # Generation files that could not be read (damaged, or still being replaced), and those of a newer format.
+    unreadable: set[str] = field(default_factory=set)
+    newer: dict[str, object] = field(default_factory=dict)
+    # Each blob present, with its size and modification time.
+    blobs: dict[str, tuple[int, int]] = field(default_factory=dict)
+    devices: dict[str, dict] = field(default_factory=dict)
+
+    def ids(self) -> set[str]:
+        return set(self.generations) | self.unreadable | set(self.newer)
+
+    def covered(self) -> set[str]:
+        """The generations some generation was made over: its parents and the rest of its lineage."""
+        result: set[str] = set()
+        for generation in self.generations.values():
+            result.update(generation["parents"])
+            result.update(identity for identity, _time in generation["lineage"])
+        return result
+
+    def heads(self) -> list[str]:
+        """The generations no other takes over, sorted; one normally, more when PCs synced at once.
+
+        A generation that cannot be read is a head unless one that can be read takes it over: what it
+        holds must not be dropped unseen.
+        """
+        covered = self.covered()
+        return sorted(identity for identity in self.ids() if identity not in covered)
+
+    def base_status(self, base: str | None) -> str | None:
+        """How this PC's base stands: None (no base), "visible" (its file is here), "inherited" (not here,
+        but a generation here was made over it: taken over, and removed since) or "unknown" (neither: not
+        arrived yet, or older than any lineage reaches)."""
+        if not base:
+            return None
+        if base in self.ids():
+            return "visible"
+        return "inherited" if base in self.covered() else "unknown"
+
+    def missing(self, generation: dict) -> set[str]:
+        """The blobs a generation uses that are not here, or (stored as they are, so of a known size) are
+        here with another size: still arriving."""
+        wanted = blob_names(generation)
+        result = {name for name in wanted if name not in self.blobs}
+        for rel, (digest, size) in generation["files"].items():
+            name = local_history.blob_name(digest, local_history.compressed(rel))
+            if not name.endswith(".z") and name in self.blobs and self.blobs[name][0] != size:
+                result.add(name)
+        return result
+
+    def complete(self, identity: str) -> bool:
+        generation = self.generations.get(identity)
+        return generation is not None and not self.missing(generation)
+
+    def created(self, identity: str) -> int | None:
+        generation = self.generations.get(identity)
+        return _seconds(generation["created"]) if generation is not None else None
+
+
+class GenerationStore:
+    """The v2 folder of one sync folder."""
+
+    def __init__(self, folder: Path):
+        if not folder.is_dir():
+            raise ValueError("同期フォルダーが見つかりません。PC版Google Driveを確認してください。")
+        self.folder = folder
+        self.root = folder / FOLDER
+        self.gens, self.blobs, self.devices = self.root / "gens", self.root / "blobs", self.root / "devices"
+
+    @classmethod
+    def initialize(cls, folder: Path) -> GenerationStore:
+        """Start the new format in `folder`: format.json, written once, and the folders.
+
+        A folder that holds revisions of the first format is left alone: moving it to the new format is the
+        migration's to do (a later stage), which keeps them readable meanwhile.
+        """
+        store = cls(folder)
+        if not store.exists() and any(folder.glob("*.papeer-sync")):
+            raise ValueError("この同期フォルダーには以前の形式の同期データがあります。")
+        for place in (store.root, store.gens, store.blobs, store.devices):
+            place.mkdir(exist_ok=True)
+        if not store.exists():
+            atomic_write_json(store.root / "format.json", {"format": FORMAT, "app_version": __version__}, indent=None)
+        store.check_format()
+        return store
+
+    def exists(self) -> bool:
+        return (self.root / "format.json").is_file()
+
+    def check_format(self) -> None:
+        """Refuse a folder of another format: NewerFormatError when newer, ValueError when not started."""
+        try:
+            value = json.loads((self.root / "format.json").read_text("utf-8"))
+        except FileNotFoundError:
+            raise ValueError("この同期フォルダーには新しい形式の同期データがありません。") from None
+        except (OSError, ValueError) as exc:
+            raise ValueError("同期フォルダーの形式を読み取れませんでした。PC版Google Driveの同期完了後に再試行してください。") from exc
+        if not isinstance(value, dict) or type(value.get("format")) is not int:
+            raise ValueError("同期フォルダーの形式を読み取れませんでした。")
+        if value["format"] > FORMAT:
+            raise NewerFormatError(NEWER_FORMAT.format(_newer_papeer(value.get("app_version"))))
+        if value["format"] != FORMAT:
+            raise ValueError("同期フォルダーの形式を読み取れませんでした。")
+
+    # --- Reading ---
+
+    def view(self) -> View:
+        result = View()
+        seen = set()
+        for entry in _scan(self.gens):
+            name = entry.name
+            if not name.endswith(".gen") or not _ID.fullmatch(name[:-4]):
+                continue  # A temporary file, or a copy Drive named "<name> (1)".
+            stat = entry.stat()
+            key = (entry.path, stat.st_size, stat.st_mtime_ns)
+            seen.add(key)
+            with _CACHE_LOCK:
+                cached = _CACHE.get(key)
+            if cached is None:
+                # One that cannot be read is remembered too: mended in place, its size or time changes.
+                cached = _read_generation(Path(entry.path))
+                with _CACHE_LOCK:
+                    _CACHE[key] = cached
+            status, value = cached
+            identity = name[:-4]
+            if status == "ok":
+                result.generations[identity] = cast(dict, deepcopy(value))
+            elif status == "newer":
+                result.newer[identity] = value
+            else:
+                result.unreadable.add(identity)
+        with _CACHE_LOCK:
+            for key in [key for key in _CACHE if Path(key[0]).parent == self.gens and key not in seen]:
+                del _CACHE[key]
+        for entry in _scan(self.blobs):
+            if _BLOB.fullmatch(entry.name):
+                stat = entry.stat()
+                result.blobs[entry.name] = (stat.st_size, stat.st_mtime_ns)
+        for entry in _scan(self.devices):
+            name = entry.name
+            if name.endswith(".json") and _ID.fullmatch(name[:-5]):
+                device = _read_device(Path(entry.path), name[:-5])
+                if device is not None:
+                    result.devices[name[:-5]] = device
+        return result
+
+    def blob_path(self, name: str) -> Path:
+        if not _BLOB.fullmatch(name):
+            raise ValueError("同期データの名前が不正です。")
+        return self.blobs / name
+
+    # --- Writing ---
+
+    def put_blob(self, source: Path, cancel=None, limit: int | None = None) -> None:
+        """Copy a blob of this PC's history (its file `source`) as it is stored, checked against its name
+        (local_history.copy_blob: nothing is written unless it matches)."""
+        local_history.copy_blob(source, self.blobs, cancel, limit)
+
+    def put_content(self, name: str, path: Path, cancel=None) -> None:
+        """Store the file `path` (of the library) as the blob `name`, compressed when the name says so;
+        ValueError when its content is not the one named (the file changed)."""
+        descriptor, temporary_name = tempfile.mkstemp(dir=self.blobs, prefix=".blob.", suffix=".tmp")
+        temporary = Path(temporary_name)
+        try:
+            digest = hashlib.sha256()
+            compressor = zlib.compressobj(local_history.COMPRESSION) if name.endswith(".z") else None
+            with os.fdopen(descriptor, "wb") as output, path.open("rb") as source:
+                while piece := source.read(1024**2):
+                    if cancel is not None:
+                        check_cancel(cancel)
+                    digest.update(piece)
+                    output.write(compressor.compress(piece) if compressor else piece)
+                if compressor:
+                    output.write(compressor.flush())
+                output.flush()
+                os.fsync(output.fileno())
+            if digest.hexdigest() != name.removesuffix(".z"):
+                raise ValueError("記録中にライブラリのファイルが変わりました。もう一度同期してください。")
+            move_file(temporary, self.blobs / name)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def write_generation(self, generation: dict) -> None:
+        """Write a generation: the last step of publishing, once every blob it names is here."""
+        data = gzip.compress(json.dumps(generation, ensure_ascii=False, separators=(",", ":")).encode("utf-8"), mtime=0)
+        ensure_free_space({self.gens: len(data)})
+        atomic_write_bytes(self.gens / (generation["id"] + ".gen"), data)
+
+    def write_device(self, device: dict) -> None:
+        atomic_write_json(self.devices / (device["device_id"] + ".json"), device, indent=None)
+
+
+def _scan(folder: Path) -> list[os.DirEntry]:
+    """The files of a folder of the store, leaving out temporary files; none when the folder is missing."""
+    try:
+        with os.scandir(folder) as entries:
+            return [entry for entry in entries if entry.is_file() and not is_temporary(Path(entry.name))]
+    except FileNotFoundError:
+        return []
+
+
+def _read_device(path: Path, identity: str) -> dict | None:
+    try:
+        with path.open("rb") as stream:
+            data = stream.read(DEVICE_LIMIT + 1)
+        value = json.loads(data) if len(data) <= DEVICE_LIMIT else None
+    except (OSError, ValueError):
+        return None
+    if (not isinstance(value, dict) or value.get("device_id") != identity
+            or not all(isinstance(value.get(key), str) for key in ("device", "updated"))
+            or not (value.get("base") is None or (isinstance(value["base"], str) and _ID.fullmatch(value["base"])))
+            or not isinstance(value.get("bad_blobs", []), list)):
+        return None
+    value["bad_blobs"] = [name for name in value.get("bad_blobs", []) if isinstance(name, str) and _BLOB.fullmatch(name)]
+    return value
+
+
+def lineage(view: View, parents: Iterable[str], now: datetime) -> list[list]:
+    """The lineage of a generation made now over `parents`: each parent (however old), and every ancestor
+    the parents' lineages name that was made within LINEAGE_DAYS, newest first, at most LINEAGE_LIMIT
+    besides the parents. [ID, seconds since the epoch] each; a parent that cannot be read counts as made now."""
+    moment = int(now.timestamp())
+    horizon = int((now - timedelta(days=LINEAGE_DAYS)).timestamp())
+    parents = list(dict.fromkeys(parents))
+    own: dict[str, int] = {identity: view.created(identity) or moment for identity in parents}
+    ancestors: dict[str, int] = {}
+    for identity in parents:
+        generation = view.generations.get(identity)
+        for ancestor, made in generation["lineage"] if generation else []:
+            if ancestor not in own and made >= horizon:
+                ancestors[ancestor] = max(int(made), ancestors.get(ancestor, 0))
+    newest = sorted(ancestors.items(), key=lambda item: (-item[1], item[0]))[:LINEAGE_LIMIT]
+    ordered = sorted(own.items(), key=lambda item: (-item[1], item[0])) + newest
+    return [[identity, made] for identity, made in ordered]
