@@ -104,6 +104,25 @@ fn library_directories(
     }
 }
 
+/// Whether a tray icon can be made. Linux: whether one of the libraries it uses loads (tray-icon loads
+/// one at run time, and panics when there is none: the .deb only recommends libayatana-appindicator3-1,
+/// tauri.linux.conf.json).
+#[cfg(target_os = "linux")]
+fn tray_available() -> bool {
+    ["libayatana-appindicator3.so.1", "libappindicator3.so.1"]
+        .iter()
+        .any(|name| {
+            let name = std::ffi::CString::new(*name).expect("no NUL");
+            // SAFETY: a library name without NUL; the handle is kept (tray-icon loads the same library).
+            !unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_LAZY) }.is_null()
+        })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn tray_available() -> bool {
+    true
+}
+
 /// tauri.conf.json names the sidecar as `http://127.0.0.1:*` (and `ws://`), since a release build learns
 /// its port only at launch. Narrow those sources to the port the sidecar was given, so a page in the
 /// webview cannot reach other servers on this PC. Tauri reads the CSP from the config for each page.
@@ -179,8 +198,10 @@ pub fn run() {
             let quit_i = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
 
-            if let Some(icon) = app.default_window_icon() {
-                let _tray = TrayIconBuilder::with_id(TRAY_ID)
+            // The tray icon is a convenience: the window has everything it offers. Without it (no
+            // appindicator library on Linux, no tray in the desktop), the app runs on without one.
+            if let Some(icon) = app.default_window_icon().filter(|_| tray_available()) {
+                let tray = TrayIconBuilder::with_id(TRAY_ID)
                     .icon(icon.clone())
                     .menu(&menu)
                     .on_menu_event(|app, event| {
@@ -211,7 +232,12 @@ pub fn run() {
                             }
                         }
                     })
-                    .build(app)?;
+                    .build(app);
+                if let Err(error) = tray {
+                    eprintln!(
+                        "タスクトレイのアイコンを作れませんでした（トレイなしで続けます）: {error}"
+                    );
+                }
             }
 
             #[cfg(debug_assertions)]
