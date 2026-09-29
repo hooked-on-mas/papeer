@@ -41,6 +41,13 @@ def nfc(text: str) -> str:
     return unicodedata.normalize("NFC", text)
 
 
+def search_forms(query: str) -> list[str]:
+    """The forms of a search term to look for: composed (NFC) and, if it differs, decomposed (NFD)."""
+    composed = nfc(query.strip())
+    decomposed = unicodedata.normalize("NFD", composed)
+    return [composed] if decomposed == composed else [composed, decomposed]
+
+
 class PaperRecords(LibraryBase):
     """The papers of the library (papers, pages) and their files."""
 
@@ -90,12 +97,16 @@ class PaperRecords(LibraryBase):
         sql = "SELECT p.* FROM papers p WHERE 1=1"
         arguments = []
         if query.strip():
-            sql += """ AND (instr(lower(p.title),lower(?))>0 OR instr(lower(p.note),lower(?))>0
+            # Both the composed (NFC) and decomposed (NFD) forms are looked for: names kept before nfc() may be NFD.
+            one = """(instr(lower(p.title),lower(?))>0 OR instr(lower(p.note),lower(?))>0
                 OR instr(lower(p.first_author),lower(?))>0 OR instr(p.publication_year,?)>0
                 OR instr(lower(p.collection_name),lower(?))>0 OR instr(lower(p.original_name),lower(?))>0
                 OR instr(lower(p.tags),lower(?))>0 OR EXISTS
                 (SELECT 1 FROM pages x WHERE x.paper_id=p.id AND instr(lower(x.text),lower(?))>0))"""
-            arguments += [nfc(query.strip())] * 8
+            forms = search_forms(query)
+            sql += " AND (" + " OR ".join([one] * len(forms)) + ")"
+            for form in forms:
+                arguments += [form] * 8
         sql += " ORDER BY created_at DESC, id"
         with self.connection() as db:
             return [self._paper(row) for row in db.execute(sql, arguments)]

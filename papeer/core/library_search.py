@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 
 from papeer.core import search_index
-from papeer.core.library_papers import nfc
+from papeer.core.library_papers import search_forms
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library
 
@@ -16,6 +16,20 @@ def _metadata_text(paper: dict) -> str:
 
 
 def library_search(lib: Library, query: str, limit: int = 200) -> dict:
+    """_library_search for the composed (NFC) and the decomposed (NFD) form of `query`, the results joined:
+    what was kept decomposed (names from macOS, before they were composed) is found by either."""
+    terms = [form.casefold() for form in search_forms(query)]
+    found = _library_search(lib, terms[0], limit)
+    for term in terms[1:]:
+        more = _library_search(lib, term, limit)
+        seen = {(r["paper_id"], r["side"], r["page"], r["snippet"]) for r in found["results"]}
+        found["results"] += [r for r in more["results"] if (r["paper_id"], r["side"], r["page"], r["snippet"]) not in seen]
+        found["limited"] = found["limited"] or more["limited"] or len(found["results"]) > limit
+        found["results"] = found["results"][:limit]
+    return found
+
+
+def _library_search(lib: Library, term: str, limit: int) -> dict:
     """Where `query` occurs across the library (casefolded, as a whole): at most `limit` places, one for each
     paper's metadata, memo, page ("original") and translated section that contains it.
 
@@ -25,7 +39,6 @@ def library_search(lib: Library, query: str, limit: int = 200) -> dict:
     Within a paper: metadata, memo, pages, sections. The index (search_index) says where to look; each place
     is checked against the text itself, and papers it does not cover yet are looked through whole.
     """
-    term = nfc(query.strip()).casefold()  # As the names are kept (library_papers.nfc).
     if not term:
         return {"results": [], "limited": False}
     if len(term) > 200:

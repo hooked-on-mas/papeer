@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use tauri::ipc::CapabilityBuilder;
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::utils::config::{Csp, CspDirectiveSources};
 use tauri::Emitter;
 use tauri::Manager;
@@ -116,6 +116,19 @@ fn tray_available() -> bool {
             // SAFETY: a library name without NUL; the handle is kept (tray-icon loads the same library).
             !unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_LAZY) }.is_null()
         })
+}
+
+/// The tray icon reports a click twice, when the button goes down and when it comes up: only the release
+/// of a left click shows or hides the window (once for each click).
+fn is_left_click_release(event: &TrayIconEvent) -> bool {
+    matches!(
+        event,
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        }
+    )
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -341,11 +354,7 @@ pub fn run() {
                         }
                     })
                     .on_tray_icon_event(|tray, event| {
-                        if let TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            ..
-                        } = event
-                        {
+                        if is_left_click_release(&event) {
                             let app = tray.app_handle();
                             if let Some(window) = app.get_webview_window("main") {
                                 let is_visible = window.is_visible().unwrap_or(false);
@@ -429,6 +438,30 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_release_of_a_left_click_toggles_the_window() {
+        use tauri::tray::TrayIconId;
+        let click = |button, button_state| TrayIconEvent::Click {
+            id: TrayIconId::new("t"),
+            position: Default::default(),
+            rect: Default::default(),
+            button,
+            button_state,
+        };
+        assert!(is_left_click_release(&click(
+            MouseButton::Left,
+            MouseButtonState::Up
+        )));
+        assert!(!is_left_click_release(&click(
+            MouseButton::Left,
+            MouseButtonState::Down
+        )));
+        assert!(!is_left_click_release(&click(
+            MouseButton::Right,
+            MouseButtonState::Up
+        )));
+    }
 
     fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
         move |name| {

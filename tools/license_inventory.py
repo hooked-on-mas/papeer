@@ -22,8 +22,8 @@ platform) is recorded with license "unknown".
 
 Each inventory records the sha256 of the lock files it was made from (sourceFiles);
 tests/test_license_inventory.py fails when they no longer match, so a dependency change must come
-with regenerated inventories. The Windows one must be there; one for another platform is checked when it
-has been made. `just bump` changes only the project's own version in those files and refreshes the hashes
+with regenerated inventories. The Windows one must be there and current; one for another platform is
+checked when it has been made, but a stale one only warns (--check exits 0), as it can be made only by hand on CI. `just bump` changes only the project's own version in those files and refreshes the hashes
 itself (refresh_source_hashes) in each inventory that was current before the bump.
 """
 from __future__ import annotations
@@ -161,9 +161,12 @@ def inventory_files(root: Path = ROOT) -> list[str]:
     return [target.inventory for target in TARGETS.values() if (root / target.inventory).exists()]
 
 
-def check(root: Path = ROOT, out=None) -> bool:
-    """Whether every inventory there is was made from the lock files as they are; the Windows one must be there."""
+def check(root: Path = ROOT, out=None, err=None) -> bool:
+    """Whether the Windows inventory (which must be there) was made from the lock files as they are. Another
+    platform's, made by hand on CI, being out of date only warns (to `err`): a dependency update would fail
+    every time until someone ran CI by hand (a Mac minute counts as ten)."""
     out = sys.stdout if out is None else out
+    err = sys.stderr if err is None else err
     current = True
     for target in TARGETS.values():
         try:
@@ -179,11 +182,15 @@ def check(root: Path = ROOT, out=None) -> bool:
         if not stale:
             print(f"{target.inventory} はロックファイルと一致しています。", file=out)
             continue
-        where = "Windows で just licenses" if target is WINDOWS else "CI の licenses ジョブ"
-        print(f"{target.inventory} の作成後に変更されたファイルがあります。{where}で作り直してください:", file=out)
+        if target is WINDOWS:
+            print(f"{target.inventory} の作成後に変更されたファイルがあります。Windows で just licenses を実行して作り直してください:", file=out)
+        else:
+            print(f"警告: {target.inventory} の作成後に変更されたファイルがあります（この検査は失敗にしません）。"
+                  "CI の licenses ジョブを手動で実行して作り直してください:", file=err)
         for path in stale:
-            print(f"  {path}", file=out)
-        current = False
+            print(f"  {path}", file=out if target is WINDOWS else err)
+        if target is WINDOWS:
+            current = False
     return current
 
 

@@ -137,19 +137,29 @@ def test_check_passes_for_the_current_files(repo):
     out = io.StringIO()
     assert check(repo, out=out)
     assert "一致" in out.getvalue()
-    # Another platform's inventory is checked once it has been made: when it no longer matches, it fails.
+    # Another platform's inventory is checked once it has been made (see the test below for when it is stale).
     assert "まだ作られていません" in out.getvalue()
     linux = repo / TARGETS["linux-x64"].inventory
     inventory = json.loads((repo / INVENTORY).read_bytes())
     linux.write_bytes(dumps(inventory).encode("utf-8"))
     assert check(repo, out=io.StringIO())
-    linux.write_bytes(dumps({**inventory, "sourceFiles": []}).encode("utf-8"))
-    out = io.StringIO()
-    assert not check(repo, out=out)
-    assert "licenses ジョブ" in out.getvalue()
     linux.unlink()
     (repo / INVENTORY).unlink()
     assert not check(repo, out=io.StringIO())
+
+
+def test_a_stale_inventory_for_another_platform_only_warns(repo):
+    inventory = json.loads((repo / INVENTORY).read_bytes())
+    linux = repo / TARGETS["linux-x64"].inventory
+    linux.write_bytes(dumps({**inventory, "sourceFiles": []}).encode("utf-8"))
+    out, err = io.StringIO(), io.StringIO()
+    assert check(repo, out=out, err=err)
+    assert "警告" in err.getvalue() and "licenses ジョブ" in err.getvalue() and "uv.lock" in err.getvalue()
+    assert "警告" not in out.getvalue()
+    # The Windows one being stale still fails.
+    lock = repo / "frontend/pnpm-lock.yaml"
+    lock.write_bytes(lock.read_bytes() + b"\n")
+    assert not check(repo, out=io.StringIO(), err=io.StringIO())
 
 
 def test_refresh_replaces_only_the_given_hashes(repo):

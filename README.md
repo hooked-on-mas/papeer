@@ -229,6 +229,8 @@ Apple の開発者登録をしていないため、Mac 版は Developer ID で�
 
 ad-hoc 署名は版ごとに変わるため、更新するたびに書類フォルダーなどへのアクセスの許可を聞き直されることがあります。
 
+Mac 版で保存・確認・同期を通して終わるのは、⌘Q とメニュー、ウィンドウを閉じる操作です。Dock の「終了」とログアウト、Apple Event による終了は、その処理を通らずにすぐ終わります。ライブラリへの書き込みは sidecar の終了処理で守られます。
+
 Mac 版はメニューバーにアプリのメニュー（「Papeer」「編集」「ウインドウ」）と、白黒のアイコンを出します。アイコンは左クリックでウィンドウの表示・非表示、右クリックでメニューです（キーの違いは「キーボードショートカット」）。
 
 Linux 版は `.deb` だけで、WebKitGTK 4.1 と GTK 3 に依存します。タスクトレイのアイコンは `libayatana-appindicator3-1` があるときだけ表示し（推奨パッケージ。ないときはトレイなしで動きます）、日本語の表示には `fonts-noto-cjk` を推奨します。NVIDIA のドライバー（`/proc/driver/nvidia/version` があるとき）では、WebKitGTK の画面が真っ白になる既知の問題を避けるため、`WEBKIT_DISABLE_DMABUF_RENDERER=1` を付けて起動します（自分で設定した値があればそれを使います）。
@@ -242,7 +244,7 @@ Linux 版は `.deb` だけで、WebKitGTK 4.1 と GTK 3 に依存します。タ
 [docs/dependency-license-inventory.json](docs/dependency-license-inventory.json)（Windows。ほかの OS は下記）に、ロックファイル（`uv.lock`・`frontend/pnpm-lock.yaml`・`frontend/src-tauri/Cargo.lock`）にあるすべての依存の版・宣言されたライセンス・本番/開発の区別と、同梱のフォント・PDFium などを記録しています。依存を追加・更新したら `just licenses`（`tools/license_inventory.py`）で作り直し、台帳もコミットしてください。
 
 - ネットワークは使いません。依存関係はロックファイルから、ライセンスは手元にインストール済みの情報（`.venv` の METADATA、`frontend/node_modules` の `package.json`、`cargo metadata --offline` で読む Cargo のキャッシュ）から読みます。先に `just setup` を実行し、Rust の crate は一度ビルドするか `frontend/src-tauri` で `cargo fetch` を実行して取得しておいてください。
-- 台帳は配布する OS ごとに作ります。Windows x64 のものが `docs/dependency-license-inventory.json`、macOS（Apple Silicon・Intel）と Linux x64 のものが `docs/dependency-license-inventory.macos-arm64.json`・`.macos-x64.json`・`.linux-x64.json` です。OS ごとに使う依存（Python の環境マーカー、npm の `os`・`cpu`・`libc`、Rust の target）と、インストールされたライセンスの情報が違うため、それぞれの OS の上で作ります。Windows のものは Windows で `just licenses`、macOS と Linux のものは CI を手動で実行して `licenses` を選ぶ（Mac は `macos` も選ぶ）と作られるので、成果物をダウンロードして `docs/` にコミットしてください。まだ作っていない OS の台帳は `--check` で確かめません（作ったものは確かめます）。
+- 台帳は配布する OS ごとに作ります。Windows x64 のものが `docs/dependency-license-inventory.json`、macOS（Apple Silicon・Intel）と Linux x64 のものが `docs/dependency-license-inventory.macos-arm64.json`・`.macos-x64.json`・`.linux-x64.json` です。OS ごとに使う依存（Python の環境マーカー、npm の `os`・`cpu`・`libc`、Rust の target）と、インストールされたライセンスの情報が違うため、それぞれの OS の上で作ります。Windows のものは Windows で `just licenses`、macOS と Linux のものは CI を手動で実行して `licenses` を選ぶ（Mac は `macos` も選ぶ）と作られるので、成果物をダウンロードして `docs/` にコミットしてください。まだ作っていない OS の台帳は `--check` で確かめません。作った macOS・Linux の台帳がロックファイルより古くなったときは、`--check` は標準エラーに警告を出すだけで失敗にしません（Windows の台帳が古いときだけ失敗です）。これらの台帳は各 OS でしか作れず、Mac の実行時間は 10 倍で数えられるため、依存を更新するたびに CI を落とさないようにしています。作り直すには CI を手動で実行して `licenses` を選び、成果物を `docs/` にコミットします。
 - 台帳には元にしたロックファイルの sha256（`sourceFiles`）を記録します。直接依存もロックファイルに記録されるので、依存を変えればロックファイルが変わり、台帳を作り直すまで `tests/test_license_inventory.py` が失敗します（ツールの設定や scripts だけの変更では失敗しません）。`just licenses check` はこの一致だけを確かめます。
 - 並列のブランチで台帳がマージ時に衝突したら、どちらか片方を採ってから `just licenses` で作り直してください。
 - `just bump` は自パッケージの版しか変えないため、台帳が最新なら同時にハッシュを書き換えます（最新でなければ `just licenses` を促します）。
