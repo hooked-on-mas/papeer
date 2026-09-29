@@ -83,7 +83,10 @@ sidecar は `/health` 以外のすべての API と WebSocket に認証トーク
 ```bash
 just test   # pytest、TypeScript の型チェック、フロントエンドのテスト (node:test)
 just lint   # ruff, pyright, ESLint, tsc
+uv run pytest -m slow   # 時間のかかる性質のテスト（フォルダー同期の乱数テストの種を増やしたもの、厳しい届き方）だけ
 ```
+
+pytest は既定で `slow` の印のテストを外します（`pyproject.toml` の `addopts`。`just test` と CI も同じ）。フォルダー同期の新しい形式を変えたときは `uv run pytest -m slow` も実行してください。
 
 静的チェックの範囲と約束は次のとおりです。
 

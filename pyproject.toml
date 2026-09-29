@@ -74,3 +74,7 @@ ignore = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Long property runs (more seeds, harsher deliveries) are left out of the usual run and CI:
+# uv run pytest -m slow runs them.
+markers = ["slow: long property runs, left out unless asked for with -m slow"]
+addopts = ["-m", "not slow"]

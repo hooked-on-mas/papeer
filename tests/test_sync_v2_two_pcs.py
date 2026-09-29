@@ -40,6 +40,13 @@ class PC:
         self.root = tmp_path / name / "library"
         self.drive.mkdir()
         self.known: set[str] = set()
+        # What this PC's clean-up removed from its sync folder, with the size and time each had:
+        # Google Drive removes the same file (that version of it) from the other PCs' folders.
+        self.removed: dict[str, tuple[int, int]] = {}
+        # With by_file, a removal takes the file of that name whatever version the other folder holds (the
+        # harsher way Google Drive may deliver one); removals_done: those that reached this PC's folder.
+        self.by_file = False
+        self.removals_done: set[tuple[str, tuple[int, int]]] = set()
 
     def __enter__(self) -> Library:
         self.monkeypatch.setenv("LOCALAPPDATA", str(self.device))
@@ -103,7 +110,8 @@ KINDS = ("blobs", "gens", "devices", "format.json")
 
 
 def pending(source: PC, target: PC) -> list[str]:
-    """The files of source's sync folder that target's lacks or holds otherwise, as paths below "v2"."""
+    """What of source's sync folder has not reached target's, as paths below "v2": the files target lacks or
+    holds otherwise, and, marked "-", those source's clean-up removed that target still holds as they were."""
     result = []
     base = source.drive / "v2"
     for path in base.rglob("*"):
@@ -112,16 +120,43 @@ def pending(source: PC, target: PC) -> list[str]:
         rel = path.relative_to(base).as_posix()
         other = target.drive / "v2" / rel
         if not other.exists() or other.read_bytes() != path.read_bytes():
-            result.append((KINDS.index(rel.split("/")[0]), path.stat().st_mtime_ns, rel))
+            # Not the version target's clean-up removed: Google Drive removed that one everywhere.
+            if target.removed.get(rel) != _version(path):
+                result.append((KINDS.index(rel.split("/")[0]), path.stat().st_mtime_ns, rel))
+    for rel, version in source.removed.items():
+        other = target.drive / "v2" / rel
+        if source.by_file:
+            if (rel, version) not in target.removals_done and other.exists():
+                result.append((KINDS.index(rel.split("/")[0]), version[1], "-" + rel))
+        elif not (base / rel).exists() and other.exists() and _version(other) == version:
+            result.append((KINDS.index(rel.split("/")[0]), version[1], "-" + rel))
     return [rel for _kind, _time, rel in sorted(result)]
 
 
+def _version(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_size, stat.st_mtime_ns
+
+
 def deliver(source: PC, target: PC, rel: str) -> None:
-    """One file arrives whole (Google Drive for desktop shows a file only once it is downloaded)."""
+    """One file arrives whole (Google Drive for desktop shows a file only once it is downloaded), or one
+    removal ("-" and the path): the version of the file source removed goes from target's folder."""
+    if rel.startswith("-"):
+        path = target.drive / "v2" / rel[1:]
+        version = source.removed.get(rel[1:])
+        if source.by_file:
+            target.removals_done.add((rel[1:], version))
+            path.unlink(missing_ok=True)
+        elif path.exists() and _version(path) == version:
+            path.unlink()
+        return
+    origin = source.drive / "v2" / rel
+    if not origin.exists():
+        return  # Removed since by source's clean-up.
     destination = target.drive / "v2" / rel
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
-    shutil.copy2(source.drive / "v2" / rel, temporary)
+    shutil.copy2(origin, temporary)
     os.replace(temporary, destination)
 
 
@@ -137,7 +172,7 @@ def remove(pc: PC, rel: str) -> None:
 
 
 def is_blob(rel: str) -> bool:
-    return rel.startswith("blobs/")
+    return rel.lstrip("-").startswith("blobs/")
 
 
 @pytest.fixture
@@ -145,6 +180,15 @@ def pcs(tmp_path, monkeypatch):
     # Files are recorded for the check at once, as if written long before (drive_sync.RACY_NS).
     monkeypatch.setattr(drive_sync, "_now_ns", lambda: time.time_ns() + 10 * drive_sync.RACY_NS)
     a, b = PC("a", tmp_path, monkeypatch), PC("b", tmp_path, monkeypatch)
+    unlink = sync_store.Cleaner._unlink
+
+    def logged(self, path):
+        for pc in (a, b):
+            if path.is_relative_to(pc.drive) and path.exists():
+                pc.removed[path.relative_to(pc.drive / "v2").as_posix()] = _version(path)
+        unlink(self, path)
+
+    monkeypatch.setattr(sync_store.Cleaner, "_unlink", logged)
     a.connect()
     b.connect()
     with a as lib:
@@ -191,12 +235,12 @@ def test_a_change_travels_as_the_blobs_it_changed(pcs):
     gens = a.files("gens")
     assert b.sync()["reloaded"] is False
     transfer(b, a)
-    assert a.sync()["reloaded"] is False and a.files("gens") == gens
+    assert a.sync()["reloaded"] is False and not a.files("gens") - gens
     assert a.check() == "none" and b.check() == "none"
-    # Each generation takes over the one before it, however few the folder still holds.
+    # Both PCs are on the head, so the clean-up left only it; its lineage names those it took over.
     generations = a.store().view().generations
     head = generations[heads(a)[0]]
-    assert {identity for identity, _time in head["lineage"]} == set(generations) - {head["id"]}
+    assert set(generations) == {head["id"]} and len(head["lineage"]) >= 2
 
 
 def test_a_generation_that_arrives_before_its_blobs_is_waited_for(pcs):
@@ -385,8 +429,14 @@ def test_a_base_older_than_any_lineage_compares_the_libraries_whole(pcs, monkeyp
     clock["now"] = start + timedelta(days=1)
     a.edit(identity, note="second")
     a.sync()
+    # b has not synced for 62 days: its base is no longer kept, and a's clean-up removes it.
     clock["now"] = start + timedelta(days=62)
     a.edit(identity, note="third")
+    a.sync()
+    assert b.state()["base"] + ".gen" not in a.files("gens")
+    # Still named in the lineage of the generation made while it was in the folder, but not in the next.
+    clock["now"] = start + timedelta(days=63)
+    a.edit(identity, note="fourth")
     a.sync()
     head = a.store().view().generations[heads(a)[0]]
     assert b.state()["base"] not in {identity for identity, _time in head["lineage"]}
@@ -402,7 +452,7 @@ def test_a_base_older_than_any_lineage_compares_the_libraries_whole(pcs, monkeyp
     assert result["status"] == "conflict" and b.note(identity) == ""
     assert "長い期間" in b.state()["error"]
     assert b.sync(choice=head["id"], expected_heads=[head["id"]])["reloaded"] is True
-    assert b.note(identity) == "third"
+    assert b.note(identity) == "fourth"
 
 
 def test_emptying_the_library_asks_on_both_pcs_and_an_automatic_sync_takes_nothing_in(pcs):
@@ -698,6 +748,364 @@ def test_any_order_of_arrival_loses_nothing_and_ends_alike(pcs, seed, tmp_path):
                 local_history.materialize(pc.root, entry["id"], target)
                 kept.add(Library(target).paper(identity)["note"])
     assert {f"a{seed}", f"b{seed}"} <= kept
+
+
+# --- The clean-up (S5) ---
+
+@pytest.fixture
+def eager(monkeypatch):
+    """The clean-up at every sync, with no grace: the harshest it can be."""
+    monkeypatch.setattr(sync_store, "BLOB_GRACE", timedelta(0))
+    monkeypatch.setattr(v2, "GC_INTERVAL", timedelta(0))
+
+
+def unused_blobs(pc: PC) -> set[str]:
+    view = pc.store().view()
+    return set(view.blobs) - set().union(*(sync_store.blob_names(item) for item in view.generations.values()))
+
+
+def test_the_clean_up_leaves_the_head_and_what_it_uses(pcs, eager):
+    a, b, identity = pcs
+    for n in range(3):
+        a.edit(identity, note=f"n{n}", article=f"article {n}")
+        a.sync()
+        transfer(a, b)
+        assert b.sync()["reloaded"] is True
+        transfer(b, a)
+        a.sync()
+    for pc in (a, b):
+        assert pc.files("gens") == {heads(pc)[0] + ".gen"} and unused_blobs(pc) == set()
+    assert a.files("blobs") == b.files("blobs") and article(b, identity) == "article 2"
+    # What was removed went to Drive's trash as a few files a sync, never the PDF.
+    assert all(not rel.endswith(".pdf") for rel in a.removed)
+
+
+def test_by_default_blobs_wait_three_days_and_the_clean_up_runs_once_a_day(pcs, monkeypatch):
+    a, b, identity = pcs
+    a.edit(identity, article="replaced")
+    a.sync()
+    transfer(a, b)
+    b.sync()  # b moves on too, so its base (which used the old article) is no longer kept.
+    transfer(b, a)
+    a.sync()
+    old = local_history.blob_name(hashlib.sha256(b"summary one").hexdigest(), True)
+    assert old in unused_blobs(a)
+    start = sync_store._now()
+    written = start.timestamp() - 5 * 86400
+    os.utime(a.drive / "v2" / "blobs" / old, (written, written))  # Written long ago.
+    for days, present in ((1, True), (2, True), (4.5, False)):
+        later = start + timedelta(days=days)
+        monkeypatch.setattr(sync_store, "_now", lambda moment=later: moment)
+        a.sync()
+        # First seen as it is now at day 1: kept for three days from then.
+        assert (old in a.files("blobs")) is present, days
+
+
+def test_a_clean_up_stopped_halfway_goes_on_next_time(pcs, eager, monkeypatch):
+    a, b, identity = pcs
+    a.edit(identity, note="second", article="summary two")
+    unlink = sync_store.Cleaner._unlink
+    calls = []
+
+    def stopped(self, path):
+        calls.append(path)
+        if len(calls) == 2:
+            raise Cancelled("stopped")
+        return unlink(self, path)
+
+    monkeypatch.setattr(sync_store.Cleaner, "_unlink", stopped)
+    # The sync itself went through: only the clean-up stopped.
+    assert a.sync()["status"] == "synced"
+    assert len(a.files("gens")) >= 2 or unused_blobs(a)
+    monkeypatch.setattr(sync_store.Cleaner, "_unlink", unlink)
+    assert a.sync()["status"] == "synced"
+    assert a.files("gens") == {heads(a)[0] + ".gen"} or b.state()["base"] + ".gen" in a.files("gens")
+    assert unused_blobs(a) == set()
+    transfer(a, b)
+    assert b.sync()["reloaded"] is True and article(b, identity) == "summary two"
+
+
+def test_two_pcs_cleaning_up_at_once_keep_what_either_needs(pcs, eager):
+    a, b, identity = pcs
+    # Both change and clean up before seeing each other's.
+    a.edit(identity, note="from a", article="summary two")
+    b.edit(identity, note="from b")
+    a.sync()
+    b.sync()
+    transfer(a, b)
+    transfer(b, a)
+    result = a.sync()
+    ids = [item["id"] for item in result["conflicts"]]
+    assert a.sync(choice="local", expected_heads=ids)["status"] == "synced"
+    transfer(a, b)
+    transfer(b, a)
+    assert b.sync()["reloaded"] is True and b.note(identity) == "from a"
+    transfer(b, a)
+    transfer(a, b)
+    for pc in (a, b):
+        assert pc.sync()["status"] == "synced"
+    assert a.fingerprint() == b.fingerprint() and a.files("blobs") == b.files("blobs")
+
+
+def test_a_blob_one_pc_removes_while_the_other_uses_it_again_is_written_anew(pcs, eager):
+    """§2.4: b puts back contents a's clean-up removes meanwhile; b writes the blob anew, so a's removal,
+    arriving later, does not take b's copy, and a's folder gets it back."""
+    a, b, identity = pcs
+    old = local_history.blob_name(hashlib.sha256(b"summary one").hexdigest(), True)
+    a.edit(identity, article="summary two")
+    a.sync()
+    transfer(a, b, only=lambda rel: not rel.startswith("-"))
+    assert b.sync()["reloaded"] is True
+    transfer(b, a)  # b's device file: b stands on a's generation now.
+    a.sync()  # a removes the blob of "summary one" (no generation uses it).
+    assert old not in a.files("blobs")
+    b.edit(identity, article="summary one")
+    b.sync()
+    assert old in b.files("blobs")
+    transfer(a, b)  # a's removal of the old version arrives late: b's new copy stays.
+    assert old in b.files("blobs")
+    transfer(b, a)
+    assert a.sync()["reloaded"] is True and article(a, identity) == "summary one"
+
+
+def test_a_clean_up_while_blobs_are_on_their_way(pcs, eager):
+    a, b, identity = pcs
+    a.edit(identity, note="second", article="summary two")
+    a.sync()
+    # The generation reaches b, its blobs do not yet: b waits and does not clean up.
+    transfer(a, b, only=lambda rel: rel.startswith("gens/"))
+    before = b.files("blobs")
+    assert b.sync()["status"] == "waiting" and b.files("blobs") == before
+    # a cleans up meanwhile: the head uses them, so they stay.
+    a.sync()
+    transfer(a, b)
+    assert b.sync()["reloaded"] is True and b.note(identity) == "second"
+
+
+def test_blobs_that_arrive_before_their_generation_and_are_cleaned_up_are_written_again(pcs, eager):
+    """With no grace at all, b removes blobs no generation it has uses yet; a writes its own again."""
+    a, b, identity = pcs
+    a.edit(identity, note="second", article="summary two")
+    a.sync()
+    transfer(a, b, only=is_blob)
+    b.edit(identity, note="b meanwhile")  # b syncs (and cleans up) before a's generation arrives.
+    b.sync()
+    transfer(b, a)
+    transfer(a, b)
+    statuses = []
+    for _round in range(3):
+        for pc, other in ((a, b), (b, a)):
+            result = pc.sync()
+            if result["status"] == "conflict":
+                ids = [item["id"] for item in result["conflicts"]]
+                result = pc.sync(choice="local", expected_heads=ids)
+            statuses.append(result["status"])
+            transfer(pc, other)
+    assert a.fingerprint() == b.fingerprint()
+    assert set(statuses) <= {"synced", "waiting"}
+
+
+def contents(pc: PC) -> dict[str, bytes]:
+    base = pc.drive / "v2"
+    return {path.relative_to(base).as_posix(): path.read_bytes() for path in base.rglob("*")
+            if path.is_file() and not is_temporary(path)}
+
+
+def arrive_in_any_order(pcs, seed: int, tmp_path: Path, *, by_file: bool = False) -> None:
+    """Files and removals arrive one at a time, in an order the seed picks, with syncs (each cleaning up)
+    in between; then everything arrives and the user settles any choice. Nothing either PC saved is lost,
+    both end alike, their sync folders too, and every generation kept has all its blobs."""
+    a, b, identity = pcs
+    a.by_file = b.by_file = by_file
+    rng = random.Random(seed)
+    for turn in range(2):
+        for pc in rng.sample((a, b), 2):
+            pc.edit(identity, note=f"{pc.name}{seed}-{turn}", article=f"{pc.name} article {seed}-{turn}")
+            pc.sync()
+        for step in range(30):
+            queue = [(a, b, rel) for rel in pending(a, b)] + [(b, a, rel) for rel in pending(b, a)]
+            if not queue:
+                break
+            source, target, rel = rng.choice(queue)
+            print(f"{source.name}->{target.name} {rel}")
+            deliver(source, target, rel)
+            if step % 3 == 2:
+                pc = rng.choice((a, b))
+                result = pc.sync()
+                print(f"  {pc.name} {result['status']}")
+                assert result["status"] in ("synced", "waiting", "conflict")
+    for _round in range(4):
+        transfer(a, b)
+        transfer(b, a)
+        result = a.sync()
+        print("settle a", result["status"], result.get("waiting"))
+        if result["status"] == "conflict":
+            ids = [item["id"] for item in result["conflicts"]]
+            a.sync(choice="local", expected_heads=ids)
+        transfer(a, b)
+        transfer(b, a)
+        result = b.sync()
+        print("settle b", result["status"], b.state().get("waiting"))
+        if result["status"] == "conflict":  # b's own change, not published yet, against a's choice.
+            ids = [item["id"] for item in result["conflicts"]]
+            b.sync(choice="local", expected_heads=ids)
+    assert a.fingerprint() == b.fingerprint()
+    kept = {a.note(identity)}
+    for pc in (a, b):
+        for entry in pc.history():
+            target = tmp_path / f"{pc.name}-{entry['id']}"
+            with pc:
+                local_history.materialize(pc.root, entry["id"], target)
+                kept.add(Library(target).paper(identity)["note"])
+    assert {f"a{seed}-1", f"b{seed}-1"} <= kept
+    # Everything delivered: the two sync folders hold the same, and what they keep is whole.
+    for _round in range(3):
+        if not (transfer(a, b) + transfer(b, a)):
+            break
+    assert contents(a) == contents(b)
+    for pc in (a, b):
+        view = pc.store().view()
+        assert [identity for identity in view.kept(pc.state().get("base")) if not view.complete(identity)] == []
+        assert unused_blobs(pc) == set()
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_any_order_of_arrival_with_the_clean_up_loses_nothing(pcs, eager, seed, tmp_path):
+    arrive_in_any_order(pcs, seed, tmp_path)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("seed", range(8, 40))
+def test_any_order_of_arrival_with_the_clean_up_more_seeds(pcs, eager, seed, tmp_path):
+    arrive_in_any_order(pcs, seed, tmp_path)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("seed", range(16))
+def test_any_order_of_arrival_with_removals_that_take_any_version(pcs, eager, seed, tmp_path):
+    """The harsher delivery: a removal takes the file of that name, even a copy written anew since.
+    The PC whose generation uses it writes it again (drive_sync_v2._repair)."""
+    arrive_in_any_order(pcs, seed, tmp_path, by_file=True)
+
+
+def test_a_failing_clean_up_still_counts_as_the_day_s(pcs, eager, monkeypatch):
+    a, _b, identity = pcs
+    monkeypatch.setattr(v2, "GC_INTERVAL", timedelta(days=1))
+
+    def held(self, own_device, now):
+        raise PermissionError("a file held by Google Drive")
+
+    monkeypatch.setattr(sync_store.Cleaner, "leftovers", held)
+    runs = []
+    removable = sync_store.removable_blobs
+    monkeypatch.setattr(sync_store, "removable_blobs", lambda *args: runs.append(1) or removable(*args))
+    with a:
+        state = drive_sync.read_state(a.root)
+        state.pop("gc_last", None)
+        drive_sync.save_state(a.root, state)
+    for n in range(3):
+        a.edit(identity, note=f"n{n}")
+        assert a.sync()["status"] == "synced"
+    # Counted as the day's at once: the next syncs of the day do not clean up blobs again.
+    assert a.state().get("gc_last") is not None and len(runs) == 1
+
+
+def test_a_file_that_cannot_be_removed_is_passed_over(pcs, eager, monkeypatch):
+    a, b, identity = pcs
+    a.edit(identity, note="second", article="summary two")
+    a.sync()
+    transfer(a, b)
+    b.sync()
+    # b's device file reaches a, b's own removals not yet: a cleans up the same itself.
+    transfer(b, a, only=lambda rel: not rel.startswith("-"))
+    held = []
+    unlink = Path.unlink
+
+    def refusing(self, missing_ok=False):
+        if self.parent.name == "blobs" and not held:
+            held.append(self.name)
+            raise PermissionError("held by Google Drive")
+        return unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refusing)
+    assert a.sync()["status"] == "synced"
+    monkeypatch.setattr(Path, "unlink", unlink)
+    # The one held stays, the others went; the next clean-up takes it.
+    assert held and held[0] in a.files("blobs") and unused_blobs(a) == {held[0]}
+    a.sync()
+    assert unused_blobs(a) == set()
+
+
+def test_a_copy_that_does_not_hold_the_blob_starts_one_sync_not_one_each_check(pcs, monkeypatch):
+    a, b, identity = pcs
+    a.edit(identity, note="second", article="summary two")
+    a.sync()
+    name = local_history.blob_name(hashlib.sha256(b"summary two").hexdigest(), True)
+    transfer(a, b, only=lambda rel: rel != "blobs/" + name)
+    assert b.sync()["status"] == "waiting" and b.check() == "none"
+    (b.drive / "v2" / "blobs" / (name.removesuffix(".z") + " (1).z")).write_bytes(zlib.compress(b"not it"))
+    reads = []
+    recover = sync_store.GenerationStore.recover
+    monkeypatch.setattr(sync_store.GenerationStore, "recover",
+                        lambda self, names, cancel=None: reads.append(1) or recover(self, names, cancel))
+    # The new copy is worth one look; found not to hold the blob, it is not looked at again.
+    assert b.check() == "quiet"
+    assert b.sync()["status"] == "waiting" and len(reads) == 1
+    assert [b.check() for _ in range(3)] == ["none"] * 3
+    # The blob itself arrives: taken in.
+    transfer(a, b)
+    assert b.check() == "pull" and b.sync()["reloaded"] is True
+
+
+def test_a_blob_left_only_under_a_copy_name_is_put_back(pcs):
+    """Another PC's clean-up removed "X (1)" as a copy, and that removal took this folder's X: only the
+    copy Google Drive named "X (1)" is left here. The sync puts it back rather than wait for ever."""
+    a, b, identity = pcs
+    a.edit(identity, note="second", article="summary two")
+    a.sync()
+    name = local_history.blob_name(hashlib.sha256(b"summary two").hexdigest(), True)
+    transfer(a, b, only=lambda rel: rel != "blobs/" + name)
+    assert b.sync()["status"] == "waiting" and b.check() == "none"
+    shutil.copy2(a.drive / "v2" / "blobs" / name, b.drive / "v2" / "blobs" / (name.removesuffix(".z") + " (1).z"))
+    assert b.check() == "quiet"
+    result = b.sync()
+    assert result["status"] == "synced" and b.note(identity) == "second" and name in b.files("blobs")
+    assert not any("(" in item for item in b.files("blobs"))
+
+
+def test_a_right_copy_that_could_not_be_read_at_the_sync_is_tried_again_by_the_check(pcs, monkeypatch):
+    a, b, identity = pcs
+    a.edit(identity, note="second", article="summary two")
+    a.sync()
+    name = local_history.blob_name(hashlib.sha256(b"summary two").hexdigest(), True)
+    transfer(a, b, only=lambda rel: rel != "blobs/" + name)
+    assert b.sync()["status"] == "waiting" and b.check() == "none"
+    shutil.copy2(a.drive / "v2" / "blobs" / name, b.drive / "v2" / "blobs" / (name.removesuffix(".z") + " (1).z"))
+    state = sync_store._content_state
+    held = [True]
+    monkeypatch.setattr(sync_store, "_content_state",
+                        lambda path, n: "unreadable" if held[0] and " (1)" in path.name else state(path, n))
+    # Held for a moment: the sync waits on, and does not take the copy as seen.
+    assert b.check() == "quiet" and b.sync()["status"] == "waiting"
+    held[0] = False
+    assert b.check() == "quiet"
+    result = b.sync()
+    assert result["status"] == "synced" and b.note(identity) == "second" and name in b.files("blobs")
+
+
+def test_a_right_copy_beside_a_blob_that_is_damaged_is_put_back(pcs):
+    a, b, identity = pcs
+    a.edit(identity, note="second", article="summary two")
+    a.sync()
+    name = local_history.blob_name(hashlib.sha256(b"summary two").hexdigest(), True)
+    transfer(a, b)
+    blobs = b.drive / "v2" / "blobs"
+    shutil.copy2(blobs / name, blobs / (name.removesuffix(".z") + " (1).z"))
+    (blobs / name).write_bytes(zlib.compress(b"garbage!"))
+    result = b.sync()
+    if result["status"] == "waiting":  # The copy is taken in by the next sync.
+        result = b.sync()
+    assert result["status"] == "synced" and b.note(identity) == "second"
 
 
 # --- The first format is left as it is ---

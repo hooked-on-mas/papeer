@@ -17,9 +17,11 @@ each to a temporary file renamed into place; a generation whose blobs have not a
 and the sync waits for it (drive_sync_v2) instead of failing.
 
 A generation names its parents (the heads it was made over) and its lineage: its ancestors made within
-LINEAGE_DAYS (the parents always), newest first, at most LINEAGE_LIMIT. A head is a generation in no other
-generation's lineage, so a generation removed from the folder (as the clean-up of a later stage will) does
-not make its descendants look incomplete: that it was taken over is written in them.
+LINEAGE_DAYS or still in the folder (the parents always), newest first, at most LINEAGE_LIMIT. A head is a
+generation in no other generation's lineage, so a generation removed from the folder (by the clean-up at
+the end of this module) does not make its descendants look incomplete: that it was taken over is written
+in them. The folder keeps the heads and the base of each PC that synced recently; the rest, and the blobs
+only they used, are removed by whichever PC cleans up first.
 
 This module reads and writes the folder; what a sync does with it is drive_sync_v2. It is not used by the
 sync the app runs yet (the first format stays in use until the migration of a later stage).
@@ -59,6 +61,8 @@ GENERATION_LIMIT = 64 * 1024**2
 GENERATION_CONTENT_LIMIT = 64 * 1024**2
 # A library larger than this is not put together from a generation (as a backup larger is not restored).
 LIBRARY_LIMIT = 20 * 1024**3
+# The base of a PC whose device file is older than this is no longer kept for it: the PC may be gone for good.
+DEVICE_KEPT = timedelta(days=30)
 DEVICE_LIMIT = 1024**2
 
 _ID = re.compile(r"[0-9a-f]{32}")
@@ -79,6 +83,18 @@ def _seconds(value: str) -> int:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     return int(moment.timestamp())
+
+
+def _age(value: object, now: datetime) -> timedelta | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return now - moment
 
 
 def _newer_papeer(app_version: object) -> str:
@@ -165,8 +181,9 @@ _CACHE: dict[tuple[str, int, int], tuple[str, object]] = {}
 _CACHE_LOCK = threading.Lock()
 
 
-def _read_generation(path: Path) -> tuple[str, object]:
-    """("ok", generation), ("newer", app_version) or ("unreadable", None)."""
+def _read_generation(path: Path, identity: str | None = None) -> tuple[str, object]:
+    """("ok", generation), ("newer", app_version) or ("unreadable", None); the generation must have the ID
+    `identity` (by default the one its file name says)."""
     try:
         with path.open("rb") as stream:
             packed = stream.read(GENERATION_LIMIT + 1)
@@ -181,7 +198,7 @@ def _read_generation(path: Path) -> tuple[str, object]:
         return "unreadable", None
     if isinstance(value, dict) and type(value.get("format")) is int and value["format"] > FORMAT:
         return "newer", value.get("app_version")
-    return ("ok", value) if _valid_generation(value, path.stem) else ("unreadable", None)
+    return ("ok", value) if _valid_generation(value, identity or path.stem) else ("unreadable", None)
 
 
 @dataclass
@@ -194,6 +211,11 @@ class View:
     # Each blob present, with its size and modification time.
     blobs: dict[str, tuple[int, int]] = field(default_factory=dict)
     devices: dict[str, dict] = field(default_factory=dict)
+    # When it was looked at (None: never compared with the time, as in a view made by hand).
+    now: datetime | None = None
+    # The copies Google Drive named "<blob> (1)", by the blob name they stand for, each with its size and
+    # modification time (see GenerationStore.recover).
+    copies: dict[str, dict[str, tuple[int, int]]] = field(default_factory=dict)
 
     def ids(self) -> set[str]:
         return set(self.generations) | self.unreadable | set(self.newer)
@@ -210,10 +232,49 @@ class View:
         """The generations no other takes over, sorted; one normally, more when PCs synced at once.
 
         A generation that cannot be read is a head unless one that can be read takes it over: what it
-        holds must not be dropped unseen.
+        holds must not be dropped unseen. One its own PC has since gone past (superseded) is not a head.
         """
-        covered = self.covered()
+        covered = self.covered() | self.superseded()
         return sorted(identity for identity in self.ids() if identity not in covered)
+
+    def superseded(self) -> set[str]:
+        """Generations made before LINEAGE_DAYS that no generation here names any more, but whose own PC has
+        since synced on a later generation (its device file says so): that PC took it over, and the lineage
+        that said so aged out. Left from before generations kept their visible ancestors in their lineage
+        (see lineage), or by a PC that was away; without this they would come back as heads.
+
+        Only the PC that made a generation can tell: it moves its base on only by publishing over every head
+        it sees (this one among them), or by taking in a generation made over it.
+        """
+        if self.now is None:
+            return set()
+        horizon = int((self.now - timedelta(days=LINEAGE_DAYS)).timestamp())
+        times = {identity: made for generation in self.generations.values() for identity, made in generation["lineage"]}
+        times.update({identity: _seconds(generation["created"]) for identity, generation in self.generations.items()})
+        covered = self.covered()
+        result = set()
+        for identity, generation in self.generations.items():
+            made = _seconds(generation["created"])
+            if identity in covered or made >= horizon:
+                continue
+            device = self.devices.get(generation["device_id"])
+            base = device.get("base") if device else None
+            if base and base != identity and times.get(base, made) > made:
+                result.add(identity)
+        return result
+
+    def kept(self, own_base: str | None = None) -> set[str]:
+        """The generations the folder keeps: the heads, this PC's base, and the base of every PC whose device
+        file was written within DEVICE_KEPT (a PC away longer compares whole libraries when it is back).
+        Only those here count; the time is this view's (every PC's base when it has none)."""
+        keep = set(self.heads())
+        if own_base:
+            keep.add(own_base)
+        for device in self.devices.values():
+            age = None if self.now is None else _age(device.get("updated"), self.now)
+            if device.get("base") and (self.now is None or (age is not None and age <= DEVICE_KEPT)):
+                keep.add(device["base"])
+        return keep & self.ids()
 
     def base_status(self, base: str | None) -> str | None:
         """How this PC's base stands: None (no base), "visible" (its file is here), "inherited" (not here,
@@ -293,7 +354,7 @@ class GenerationStore:
     # --- Reading ---
 
     def view(self) -> View:
-        result = View()
+        result = View(now=_now())
         seen = set()
         for entry in _scan(self.gens):
             name = entry.name
@@ -324,6 +385,9 @@ class GenerationStore:
             if _BLOB.fullmatch(entry.name):
                 stat = entry.stat()
                 result.blobs[entry.name] = (stat.st_size, stat.st_mtime_ns)
+            elif (match := _DUPLICATE.fullmatch(entry.name)) and _BLOB.fullmatch(name := match[1] + (match[3] or "")):
+                stat = entry.stat()
+                result.copies.setdefault(name, {})[entry.name] = (stat.st_size, stat.st_mtime_ns)
         for entry in _scan(self.devices):
             name = entry.name
             if name.endswith(".json") and _ID.fullmatch(name[:-5]):
@@ -331,6 +395,35 @@ class GenerationStore:
                 if device is not None:
                     result.devices[name[:-5]] = device
         return result
+
+    def recover(self, names: Iterable[str], cancel=None) -> set[str]:
+        """Put in place of each blob of `names` that is missing, or here but not whole (the rule of the
+        clean-up's copies), a copy Google Drive named "<name> (1)" whose content is that blob's: when a PC's
+        clean-up removed the file of the right name as a copy, only the renamed one may be left. The names
+        put back."""
+        view = self.view()
+        result = set()
+        for name in names:
+            copies = sorted(view.copies.get(name, {}))
+            if not copies or (name in view.blobs and _intact(self.blobs / name, name)):
+                continue
+            for copy in copies:
+                if cancel is not None:
+                    check_cancel(cancel)
+                if _intact(self.blobs / copy, name):
+                    try:
+                        move_file(self.blobs / copy, self.blobs / name)
+                    except FileNotFoundError:
+                        continue  # Removed meanwhile.
+                    result.add(name)
+                    break
+        return result
+
+    def unreadable_copies(self, view: View, names: Iterable[str]) -> set[str]:
+        """The copies Google Drive named "<name> (1)" of `names` that cannot be read now (not those found to hold
+        something else): worth reading again at the next sync, whatever they were."""
+        return {copy for name in names for copy in view.copies.get(name, {})
+                if _content_state(self.blobs / copy, name) == "unreadable"}
 
     def blob_path(self, name: str) -> Path:
         if not _BLOB.fullmatch(name):
@@ -405,8 +498,9 @@ def _read_device(path: Path, identity: str) -> dict | None:
 
 def lineage(view: View, parents: Iterable[str], now: datetime) -> list[list]:
     """The lineage of a generation made now over `parents`: each parent (however old), and every ancestor
-    the parents' lineages name that was made within LINEAGE_DAYS, newest first, at most LINEAGE_LIMIT
-    besides the parents. [ID, seconds since the epoch] each; a parent that cannot be read counts as made now."""
+    the parents' lineages name that was made within LINEAGE_DAYS or is still in the folder (kept as some
+    PC's base: it must not come back as a head once older), newest first, at most LINEAGE_LIMIT besides
+    the parents. [ID, seconds since the epoch] each; a parent that cannot be read counts as made now."""
     moment = int(now.timestamp())
     horizon = int((now - timedelta(days=LINEAGE_DAYS)).timestamp())
     parents = list(dict.fromkeys(parents))
@@ -415,8 +509,233 @@ def lineage(view: View, parents: Iterable[str], now: datetime) -> list[list]:
     for identity in parents:
         generation = view.generations.get(identity)
         for ancestor, made in generation["lineage"] if generation else []:
-            if ancestor not in own and made >= horizon:
+            if ancestor not in own and (made >= horizon or ancestor in view.ids()):
                 ancestors[ancestor] = max(int(made), ancestors.get(ancestor, 0))
-    newest = sorted(ancestors.items(), key=lambda item: (-item[1], item[0]))[:LINEAGE_LIMIT]
+    # Those still in the folder first: dropping one would bring it back as a head.
+    visible = view.ids()
+    chosen = sorted(ancestors.items(), key=lambda item: (item[0] not in visible, -item[1], item[0]))[:LINEAGE_LIMIT]
+    newest = sorted(chosen, key=lambda item: (-item[1], item[0]))
     ordered = sorted(own.items(), key=lambda item: (-item[1], item[0])) + newest
     return [[identity, made] for identity, made in ordered]
+
+
+# --- Removing what no generation kept uses (the clean-up) ---
+#
+# Google Drive for desktop moves what is removed from the folder to Drive's trash, where it still counts
+# against the storage for 30 days, so the clean-up removes what syncing leaves behind and little else: the
+# generations taken over (about 200 KB each) after each sync, and once a day the blobs nothing uses any
+# more (mostly database chunks an edit replaced), at most BLOB_REMOVE_LIMIT files or BLOB_REMOVE_BYTES a day.
+#
+# Two PCs may clean up at once, and Google Drive delivers what each removes late and in any order, so no
+# lock is taken; each rule instead holds whichever PC removes what, in whatever order:
+# - A generation is removed only when a generation that stays names it in its lineage (taken over), or its
+#   own PC has gone past it (View.superseded), and nothing it alone names would come back as a head.
+#   Removing it again, or late, changes nothing; the heads and every recent PC's base stay (View.kept).
+# - A blob is removed only when no generation here uses it, this PC first saw it (as it is: same size and
+#   time) BLOB_GRACE ago, and it was written BLOB_GRACE ago. A generation and its blobs arrive about
+#   together, so a blob of a generation still on its way is not taken for unused. A PC that uses a blob
+#   again writes it anew when no kept generation used it (its time starts over), and a PC whose own
+#   generation lacks a blob writes it again at its next sync (drive_sync_v2._repair); others wait meanwhile.
+# - No blob is removed while a generation file cannot be read (it may use any blob).
+BLOB_GRACE = timedelta(days=3)
+TEMPORARY_GRACE = timedelta(days=1)
+BLOB_REMOVE_LIMIT = 2000
+BLOB_REMOVE_BYTES = 2 * 1024**3
+# "<name> (1)", "<name> (2).gen": what Google Drive names a second file of one name in one folder.
+_DUPLICATE = re.compile(r"(.+) \((\d+)\)(\.[a-z]+)?")
+
+
+def _cover(view: View, identities: Iterable[str]) -> set[str]:
+    result: set[str] = set()
+    for identity in identities:
+        generation = view.generations.get(identity)
+        if generation is not None:
+            result.update(generation["parents"])
+            result.update(item for item, _time in generation["lineage"])
+    return result
+
+
+def removable_generations(view: View, own_base: str | None = None) -> set[str]:
+    """The generations the clean-up removes: taken over by one that stays (in its lineage), or superseded
+    (View.superseded), and none of those kept (View.kept). One that cannot be read is never removed.
+
+    One is kept after all when removing it would leave a generation it alone takes over as a head.
+    """
+    keep = view.kept(own_base)
+    heads = set(view.heads())
+    superseded = view.superseded()
+    covered = _cover(view, keep)
+    candidates = {identity for identity in view.generations
+                  if identity not in keep and (identity in covered or identity in superseded)}
+    while candidates:
+        remaining = View(generations={identity: generation for identity, generation in view.generations.items()
+                                      if identity not in candidates},
+                         unreadable=view.unreadable, newer=view.newer, blobs=view.blobs, devices=view.devices,
+                         now=view.now)
+        uncovered = set(remaining.heads()) - heads
+        rescued = {identity for identity in candidates if _cover(view, [identity]) & uncovered}
+        if not rescued:
+            break
+        candidates -= rescued
+    return candidates
+
+
+def remember_blobs(seen: dict, view: View, now: datetime) -> dict:
+    """When this PC first saw each blob of the view as it is ({name: [size, time, seconds]}): one written
+    anew (another size or time) is seen anew, and one gone is forgotten."""
+    moment = int(now.timestamp())
+    result = {}
+    for name, (size, modified) in view.blobs.items():
+        earlier = seen.get(name)
+        if isinstance(earlier, list) and len(earlier) == 3 and all(type(n) is int for n in earlier) \
+                and earlier[:2] == [size, modified]:
+            result[name] = earlier
+        else:
+            result[name] = [size, modified, moment]
+    return result
+
+
+def removable_blobs(view: View, seen: dict, now: datetime) -> list[str]:
+    """The blobs the clean-up removes (see above), written longest ago first, at most BLOB_REMOVE_LIMIT
+    and BLOB_REMOVE_BYTES."""
+    if view.unreadable or view.newer:
+        return []
+    used = set().union(*(blob_names(generation) for generation in view.generations.values()))
+    latest = int((now - BLOB_GRACE).timestamp())
+    candidates = []
+    for name, (size, modified) in view.blobs.items():
+        first = seen.get(name)
+        if (name in used or not isinstance(first, list) or len(first) != 3 or first[:2] != [size, modified]
+                or first[2] > latest or modified // 10**9 > latest):
+            continue
+        candidates.append((modified, name, size))
+    result, total = [], 0
+    for _modified, name, size in sorted(candidates):
+        if len(result) >= BLOB_REMOVE_LIMIT:
+            break
+        # One larger than the day's bytes goes on a day of its own, rather than hold up every other.
+        if result and total + size > BLOB_REMOVE_BYTES:
+            continue
+        result.append(name)
+        total += size
+    return result
+
+
+class Cleaner:
+    """Removes files from one store, a blob only while it is as the view saw it; "removed" lists them."""
+
+    def __init__(self, store: GenerationStore, view: View, cancel=None):
+        self.store, self.view, self.cancel = store, view, cancel
+        self.removed: list[str] = []
+
+    def _check(self) -> None:
+        if self.cancel is not None:
+            check_cancel(self.cancel)
+
+    def generations(self, identities: Iterable[str]) -> None:
+        for identity in sorted(identities):
+            self._check()
+            self._unlink(self.store.gens / f"{identity}.gen")
+
+    def blobs(self, names: Iterable[str]) -> None:
+        for name in names:
+            self._check()
+            path = self.store.blobs / name
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+            # Written again since it was looked at (another PC uses it again): it stays.
+            if (stat.st_size, stat.st_mtime_ns) != tuple(self.view.blobs.get(name, ())):
+                continue
+            self._unlink(path)
+
+    def leftovers(self, own_device: str | None, now: datetime) -> None:
+        """Temporary files a forced exit left (older than TEMPORARY_GRACE), and the copies Google Drive names
+        "<name> (1)": removed when the file of the right name holds the same, put in its place when that is
+        missing (or, for a blob, damaged) and the copy is right. Of device files, this PC's own only:
+        another PC's copies are that PC's to tidy."""
+        oldest = (now - TEMPORARY_GRACE).timestamp()
+        for folder in (self.store.root, self.store.gens, self.store.blobs, self.store.devices):
+            try:
+                paths = sorted(folder.iterdir())
+            except FileNotFoundError:
+                continue
+            for path in paths:
+                self._check()
+                try:
+                    if not path.is_file():
+                        continue
+                    if is_temporary(path):
+                        if path.stat().st_mtime < oldest:
+                            self._unlink(path)
+                        continue
+                except FileNotFoundError:
+                    continue
+                match = _DUPLICATE.fullmatch(path.name)
+                try:
+                    # Written a while ago only: two PCs tidying the same pair at once might otherwise each
+                    # remove the file the other keeps.
+                    settled = path.stat().st_mtime < oldest
+                except FileNotFoundError:
+                    continue
+                if match and folder != self.store.root and settled:
+                    try:
+                        self._duplicate(folder, path, match[1] + (match[3] or ""), own_device)
+                    except OSError:
+                        continue  # Held, or removed meanwhile: the next clean-up looks again.
+
+    def _duplicate(self, folder: Path, path: Path, name: str, own_device: str | None) -> None:
+        target = folder / name
+        if folder == self.store.blobs:
+            if not _BLOB.fullmatch(name):
+                return
+            if _intact(target, name):
+                self._unlink(path)
+            elif _intact(path, name):
+                move_file(path, target)
+        elif folder == self.store.gens:
+            if not (name.endswith(".gen") and _ID.fullmatch(name[:-4])):
+                return
+            if target.is_file() and target.read_bytes() == path.read_bytes():
+                self._unlink(path)
+            elif not target.exists() and _read_generation(path, name[:-4])[0] == "ok":
+                move_file(path, target)  # Checked against the ID its name says (_valid_generation).
+        elif own_device and name == f"{own_device}.json":
+            self._unlink(path)  # This PC writes its own again when it changes.
+
+    def _unlink(self, path: Path) -> None:
+        try:
+            path.unlink()
+        except OSError:
+            return  # Removed by another PC meanwhile, or held for a moment: the next clean-up tries again.
+        self.removed.append(path.relative_to(self.store.root).as_posix())
+
+
+def _intact(path: Path, name: str) -> bool:
+    """Whether the file at `path` holds the content the blob name `name` says."""
+    return _content_state(path, name) == "ok"
+
+
+def _content_state(path: Path, name: str) -> str:
+    """"ok" when the file at `path` holds the content the blob name `name` says, "wrong" when it holds
+    something else (or is damaged), "unreadable" when it cannot be read (perhaps for a moment)."""
+    try:
+        for _piece in local_history.stored_content(path, None, expected=name):
+            pass
+    except local_history.BlobDamaged:
+        return "wrong"
+    except local_history.SourceUnreadable:
+        return "unreadable"
+    return "ok"
+
+
+def forget_device(store: GenerationStore, device_id: str) -> bool:
+    """Take a PC off the list (its device file), so its base is no longer kept; whether there was one."""
+    if not _ID.fullmatch(device_id):
+        raise ValueError("端末のIDが不正です。")
+    try:
+        (store.devices / f"{device_id}.json").unlink()
+    except FileNotFoundError:
+        return False
+    return True
