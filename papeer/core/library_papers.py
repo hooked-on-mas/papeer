@@ -14,12 +14,13 @@ from papeer.core.collection_paths import in_collection, normalize_collection_nam
 from papeer.core.errors import NotFound
 from papeer.core.fileio import atomic_write_json, atomic_write_text
 from papeer.core.library_base import LibraryBase
+from papeer.core.ocr import load_readings, save_readings
 from papeer.core.paths import PaperFiles
 from papeer.core.shared_json import read_shared_json, remember
 from papeer.core.translation_review import cached_review_pages
 from papeer.core.translation_status import TranslationStatus
 from papeer.layout.math_layout import LAYOUT_VERSION
-from papeer.pdf.pdf_engine import extract_pdf
+from papeer.pdf.pdf_engine import OcrRun, extract_pdf
 
 
 def write_document(path: Path, document: dict) -> None:
@@ -35,7 +36,13 @@ def write_document(path: Path, document: dict) -> None:
 class PaperRecords(LibraryBase):
     """The papers of the library (papers, pages) and their files."""
 
-    def import_pdf(self, source: Path, collection_name: str = "") -> tuple[str, bool]:
+    def import_pdf(self, source: Path, collection_name: str = "", ocr: OcrRun | None = None) -> tuple[str, bool]:
+        """Add a PDF (or find the paper it already is); (paper ID, whether it is new).
+
+        ocr: how pages that need OCR are read (papeer.core.ocr: the "auto" setting); by default only as
+        extract_pdf does without one (PAPEER_OCR). A PDF with no text at all is still added when its
+        pages are scans, to be read by OCR afterwards.
+        """
         if source.stat().st_size > 300 * 1024 * 1024:
             raise ValueError("300MB以下のPDFを追加してください。")
         with source.open("rb") as stream:
@@ -44,14 +51,16 @@ class PaperRecords(LibraryBase):
             duplicate = db.execute("SELECT id FROM papers WHERE sha256=?", (digest,)).fetchone()
             if duplicate:
                 return duplicate["id"], False
-        info = extract_pdf(source)
-        if not info["blocks"]:
-            raise ValueError("文字を抽出できませんでした。スキャンPDFはOCR済みのコピーを追加してください。")
+        info = extract_pdf(source, run=ocr)
+        if not info["blocks"] and not any(entry.get("reason") != "partial" for entry in info["ocr_pages"]):
+            raise ValueError("文字を抽出できませんでした。文字も、OCR で読めるページの画像もないPDFです。")
         paper_id = uuid.uuid4().hex
         folder = self.folder(paper_id)
         folder.mkdir()
         try:
             shutil.copyfile(source, PaperFiles(folder).original_pdf)
+            if ocr is not None:
+                save_readings(folder, ocr.readings)
             write_document(PaperFiles(folder).document_json, info)
             with self.connection() as db:
                 db.execute("""INSERT INTO papers(id,sha256,title,original_name,pages,status,collection_name,first_author,
@@ -201,10 +210,13 @@ class PaperRecords(LibraryBase):
         # page needing OCR (garbled text or a scanned image), which is listed instead.
         review = cached_review_pages(self.folder(paper_id), paper[0])
         return {"page_count": paper[0], "empty_pages": empty, "translation_required_pages": review["required"],
-                "ocr_pages": review["ocr"]}
+                "ocr_pages": review["ocr"], "ocr_applied": review.get("applied", [])}
 
     def document(self, paper_id: str) -> dict:
         """The paper's extraction (document.json), extracted again when made by an older LAYOUT_VERSION.
+
+        Extracting again reads no page by OCR (it runs inside a request): pages read before are built
+        from the readings the paper keeps (papeer.core.ocr), the others stay 要OCR.
 
         Shared with every caller until the file changes (shared_json): read it, never modify it in
         place; code that adjusts blocks works on its own copies (materialize_flows and the like).
@@ -213,11 +225,31 @@ class PaperRecords(LibraryBase):
         path = PaperFiles(folder).document_json
         document = read_shared_json(path)
         if document.get("layout_version") != LAYOUT_VERSION:
-            refreshed = extract_pdf(PaperFiles(folder).original_pdf)
+            saved = load_readings(folder)
+            run = OcrRun(saved=saved)
+            refreshed = extract_pdf(PaperFiles(folder).original_pdf, run=run)
             refreshed["title"] = document["title"]
+            # Readings this extraction did not use (a page no longer found to need OCR by the new code)
+            # are kept: a later version may use them again, and nothing is read twice.
+            kept = {**saved, **run.readings}
+            if kept != saved:
+                save_readings(folder, kept)
             write_document(path, refreshed)
             document = refreshed
         return document
+
+    def replace_extraction(self, paper_id: str, document: dict, readings: dict[str, dict]) -> None:
+        """Keep a new extraction of a paper (read again by OCR): its readings, document.json and page texts.
+
+        The readings go first: a document.json whose OCR pages have no reading would lose them at the
+        next extraction, while a reading without its document is only unused.
+        """
+        folder = self.folder(paper_id)
+        save_readings(folder, readings)
+        write_document(PaperFiles(folder).document_json, document)
+        with self.connection() as db:
+            db.executemany("UPDATE pages SET text=? WHERE paper_id=? AND number=?",
+                           [(page["text"], paper_id, page["number"]) for page in document["pages"]])
 
     def delete_paper(self, paper_id: str) -> None:
         """Remove a paper, its records and its folder."""

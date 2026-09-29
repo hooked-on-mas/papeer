@@ -15,8 +15,9 @@ from papeer.core.paths import PaperFiles, review_cache_path
 
 
 def cached_review_pages(folder: Path, page_count: int) -> dict:
-    """Pages needing translation, and pages kept as the original because they need OCR
-    ([{"page", "reason", "garbled_ratio"?}], see papeer.layout.ocr_pages).
+    """Pages needing translation, pages kept as the original because they need OCR
+    ([{"page", "reason", "garbled_ratio"?}], see papeer.layout.ocr_pages), and pages read by OCR
+    ("applied": [{"page", "reason", "engine", "lang", "skew"}], see pdf_engine.extract_pdf).
 
     Kept on this PC (ReviewPagesCache) for the folder of a library's paper (<root>/papers/<id>).
     """
@@ -38,10 +39,11 @@ def _review_pages(folder: Path, page_count: int) -> tuple[dict, list[int] | None
             stat = os.fstat(stream.fileno())
             document = json.loads(stream.read())
         return ({"required": required_translation_pages(document),
-                 "ocr": [dict(entry) for entry in document.get("ocr_pages", [])]},
+                 "ocr": [dict(entry) for entry in document.get("ocr_pages", [])],
+                 "applied": [dict(entry) for entry in document.get("ocr_applied", [])]},
                 [stat.st_size, stat.st_mtime_ns, stat.st_ino])
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        return {"required": list(range(1, page_count + 1)), "ocr": []}, None
+        return {"required": list(range(1, page_count + 1)), "ocr": [], "applied": []}, None
 
 
 def required_translation_pages(document: dict) -> list[int]:
@@ -78,7 +80,7 @@ def required_translation_pages(document: dict) -> list[int]:
     return sorted({page for unit in translation_units(document) for page in unit_pages(unit)})
 
 
-REVIEW_CACHE_FORMAT = 1
+REVIEW_CACHE_FORMAT = 2  # 2: with the pages read by OCR ("applied").
 # A document.json written this shortly before it was read is not recorded: a second write within the same
 # clock tick could leave its key unchanged (as drive_sync.RACY_NS, "racily clean" in git).
 RACY_NS = 2 * 10**9
@@ -132,12 +134,13 @@ class ReviewPagesCache:
             result, key = _review_pages(folder, page_count)
             if key is None or key[2] == 0 or abs(key[1] - _now_ns()) <= RACY_NS:
                 return result
-            entry = {"document": key, "required": result["required"], "ocr": result["ocr"]}
+            entry = {"document": key, "required": result["required"], "ocr": result["ocr"], "applied": result["applied"]}
             with self._lock:
                 self._entries[folder.name] = entry
                 self._changed = True
         # Copies: the caller may change what it gets.
-        return {"required": list(entry["required"]), "ocr": [dict(item) for item in entry["ocr"]]}
+        return {"required": list(entry["required"]), "ocr": [dict(item) for item in entry["ocr"]],
+                "applied": [dict(item) for item in entry["applied"]]}
 
     def save(self, keep: set[str] | None = None) -> None:
         """Write the entries when any changed; `keep`: the papers the library still has (others are dropped)."""
@@ -161,7 +164,8 @@ def _valid_entry(entry: object) -> bool:
     return (isinstance(entry, dict) and isinstance(entry.get("document"), list) and len(entry["document"]) == 3
             and all(type(n) is int for n in entry["document"])
             and isinstance(entry.get("required"), list) and all(type(n) is int for n in entry["required"])
-            and isinstance(entry.get("ocr"), list) and all(isinstance(item, dict) for item in entry["ocr"]))
+            and all(isinstance(entry.get(name), list) and all(isinstance(item, dict) for item in entry[name])
+                    for name in ("ocr", "applied")))
 
 
 _CACHES: dict[str, ReviewPagesCache] = {}

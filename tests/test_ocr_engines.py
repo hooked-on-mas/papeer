@@ -23,18 +23,22 @@ FIXTURES = Path(__file__).parent / "fixtures" / "ocr"
 
 # ---------------------------------------------------------------- choice
 
-def test_japanese_goes_to_windows_first_on_windows_and_tesseract_elsewhere():
+def test_japanese_goes_to_the_systems_ocr_first_on_windows_and_macos_and_tesseract_elsewhere():
     assert engine_order("ja", platform="win32") == ["windows", "tesseract"]
     assert engine_order("en", platform="win32") == ["tesseract", "windows"]
-    # macOS and Linux: Tesseract only, until Vision is added.
-    assert engine_order("ja", platform="darwin") == ["tesseract"]
+    # macOS: Vision, with Tesseract as the fallback when it cannot run.
+    assert engine_order("ja", platform="darwin") == ["vision", "tesseract"]
+    assert engine_order("en", platform="darwin") == ["tesseract", "vision"]
     assert engine_order("en", platform="linux") == ["tesseract"]
 
 
 def test_a_chosen_engine_goes_first_and_the_other_stays_as_fallback():
     assert engine_order("en", "windows", platform="win32") == ["windows", "tesseract"]
     assert engine_order("ja", "tesseract", platform="win32") == ["tesseract", "windows"]
-    assert engine_order("ja", "windows", platform="darwin") == ["tesseract"]
+    assert engine_order("ja", "windows", platform="darwin") == ["vision", "tesseract"]
+    assert engine_order("en", "vision", platform="darwin") == ["vision", "tesseract"]
+    # The AI is asked for on one page: nothing else reads it instead.
+    assert engine_order("en", "ai", platform="win32") == ["ai"]
 
 
 class FakeEngine:

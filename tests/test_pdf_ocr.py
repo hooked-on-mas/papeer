@@ -292,9 +292,9 @@ def test_the_language_comes_from_pages_that_need_no_ocr(tessdata, tmp_path, monk
                                 fontname="japan", fontsize=4)
         document.saveIncr()
     seen = []
-    original = pdf_ocr.ocr_page
-    monkeypatch.setattr("papeer.pdf.pdf_engine.ocr_page", lambda page, engines, lang: seen.append(lang) or
-                        original(page, engines, lang))
+    original = pdf_ocr.ocr_image
+    monkeypatch.setattr("papeer.pdf.pdf_engine.ocr_image", lambda image, dpi, engines, lang, *rest: seen.append(lang) or
+                        original(image, dpi, engines, lang, *rest))
     document = extract_pdf(path, options(tessdata))
     assert seen == [None] and document["ocr_applied"][0]["lang"] == "en"
 

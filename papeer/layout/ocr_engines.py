@@ -11,19 +11,19 @@ words and none next to a Japanese character.
 - "windows": Windows.Media.Ocr through pywinrt. Uses the recognizers Windows has installed (Japanese
   on a Japanese Windows; English only when its language pack is added). Some 3-5 times faster than
   Tesseract on Japanese at the same accuracy.
-- macOS Vision is not implemented yet: an engine is a class with `name`, `languages()` and
-  `recognize()` added to _ENGINE_TYPES and to engine_order(). The same goes for re-reading a page
-  with an AI model: it can implement recognize() for a region image (one OcrLine spanning the image
-  is enough when the model gives no word boxes).
+- "vision": macOS Vision (VNRecognizeTextRequest) through pyobjc, macOS only. Not tried on a real Mac
+  yet: when pyobjc or the framework is missing or fails, the engine reads nothing and the next engine
+  (Tesseract) is used.
+- "ai": re-reading a page with the AI connection (papeer.core.ai_ocr.AiOcrEngine), only when the user
+  asks for it on one page; EngineSet takes it ready-made.
 
 engine_order() picks the engines for a language in the order they are tried; recognize() falls back
 to the next one when an engine fails.
 
 Failures are caught broadly (`except Exception`) here, in _fetch and _as_ocr_error, and in
-pdf_engine._read_by_ocr, so that no fault of OCR stops a paper from being added. When cancelling a job
-comes to OCR (the next stage, with the settings screen), its exception (sidecar's Cancelled or the like)
-must pass through: put `except Cancelled: raise` before each of those `except Exception`, or it is taken
-for a failed engine and the next one is tried.
+pdf_engine._read_by_ocr, so that no fault of OCR stops a paper from being added. A cancelled job
+(papeer.providers.Cancelled) passes through each of them: `except Cancelled: raise` comes first, or it
+would be taken for a failed engine and the next one tried.
 """
 from __future__ import annotations
 
@@ -43,6 +43,7 @@ from PIL import Image
 
 from papeer.core.fileio import replace_file
 from papeer.core.paths import app_env, device_directory
+from papeer.providers.common import Cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -102,14 +103,18 @@ class OcrEngine(Protocol):
 
 # ---------------------------------------------------------------- options
 
+# The engines the settings offer ("ai" is chosen per page, never as a setting).
+ENGINE_CHOICES = ("auto", "tesseract", "windows", "vision")
+
 @dataclass(frozen=True)
 class OcrOptions:
     """Whether and how extraction reads pages that need OCR (scans, garbled text layers).
 
-    Off by default. For now it is turned on only by the environment (PAPEER_OCR=1); the settings
-    screen comes later. PAPEER_OCR_ENGINE is auto, tesseract or windows; PAPEER_OCR_LANG auto, en or
-    ja (auto: the language of the document's text, else a first look at the page);
-    PAPEER_TESSDATA_DIR puts the language data elsewhere than tessdata_directory().
+    Off by default. The app takes them from this PC's settings (papeer.core.ocr_settings); the
+    environment still turns OCR on for development (PAPEER_OCR=1, from_env). PAPEER_OCR_ENGINE is
+    auto, tesseract, windows or vision; PAPEER_OCR_LANG auto, en or ja (auto: the language of the
+    document's text, else a first look at the page); PAPEER_TESSDATA_DIR puts the language data
+    elsewhere than tessdata_directory().
     """
     enabled: bool = False
     engine: str = "auto"
@@ -122,8 +127,8 @@ class OcrOptions:
         enabled = (app_env("OCR", "") or "").strip().lower() in {"1", "true", "on", "yes"}
         engine = (app_env("OCR_ENGINE", "") or "auto").strip().lower()
         lang = (app_env("OCR_LANG", "") or "auto").strip().lower()
-        if engine not in {"auto", "tesseract", "windows"}:
-            logger.warning("PAPEER_OCR_ENGINE=%s is not auto, tesseract or windows; using auto", engine)
+        if engine not in ENGINE_CHOICES:
+            logger.warning("PAPEER_OCR_ENGINE=%s is not auto, tesseract, windows or vision; using auto", engine)
             engine = "auto"
         if lang not in {"auto", *LANGUAGES}:
             logger.warning("PAPEER_OCR_LANG=%s is not auto, en or ja; using auto", lang)
@@ -181,7 +186,8 @@ def download_tessdata(lang: str, confirm: Callable[[str, int], bool], directory:
 
     confirm(url, size) asks the user (the file comes from GitHub); False raises OcrDeclined. The
     file is written to <name>.traineddata.part, checked against its SHA-256 and only then renamed,
-    so a broken or interrupted download never takes the name Tesseract reads.
+    so a broken or interrupted download never takes the name Tesseract reads. progress(received,
+    size) may raise Cancelled to stop it: the .part file is removed and Cancelled passes on.
     """
     if lang not in TESSDATA:
         raise OcrError(f"OCR の言語データがない言語です: {lang}")
@@ -217,10 +223,9 @@ def _fetch(url: str, target: Path, size: int, sha: str, opener, progress) -> Non
         if received != size or digest.hexdigest() != sha:
             raise OcrError("OCR の言語データの内容を確認できませんでした（SHA-256 が一致しません）。")
         replace_file(part, target)
-    except OcrError:
+    except (OcrError, Cancelled):
         part.unlink(missing_ok=True)
         raise
-    # A cancellation (next stage) must be re-raised before this: see the module docstring.
     except Exception as error:  # noqa: BLE001 - OSError, http.client.HTTPException, ... all mean "not downloaded"
         part.unlink(missing_ok=True)
         raise OcrError(f"OCR の言語データをダウンロードできませんでした: {error}") from error
@@ -234,9 +239,8 @@ def _as_ocr_error(engine: str, read: Callable[[], list[OcrLine]]) -> list[OcrLin
     FzError classes (not RuntimeError), WinRT OSError, a large image MemoryError."""
     try:
         return read()
-    except OcrError:
+    except (OcrError, Cancelled):
         raise
-    # A cancellation (next stage) must be re-raised before this: see the module docstring.
     except Exception as error:  # noqa: BLE001 - see the docstring
         raise OcrError(f"{engine} で読めませんでした: {type(error).__name__}: {error}") from error
 
@@ -408,42 +412,141 @@ class WindowsOcrEngine:
         return lines
 
 
+# ---------------------------------------------------------------- macOS Vision (pyobjc)
+
+_VISION_TAGS = {"en": ["en-US"], "ja": ["ja-JP", "en-US"]}
+
+
+class VisionEngine:
+    """macOS Vision's text recognizer (VNRecognizeTextRequest, accurate level) through pyobjc.
+
+    Written from Apple's documentation and not yet tried on a Mac: any failure (pyobjc missing, an
+    older macOS without Japanese, an error from the framework) makes it read nothing, and the next
+    engine (Tesseract) is tried. Vision gives each line with its box but no word boxes, so a line is
+    one OcrWord.
+    """
+    name = "vision"
+
+    @staticmethod
+    @functools.cache
+    def _vision():
+        if sys.platform != "darwin":
+            return None
+        try:
+            import Vision  # pyright: ignore[reportMissingImports]
+            from Foundation import NSData  # pyright: ignore[reportMissingImports]
+        except Exception:  # noqa: BLE001 - not installed, or the framework fails to load: no Vision
+            return None
+        return Vision, NSData
+
+    @functools.cached_property
+    def _languages(self) -> set[str]:
+        modules = self._vision()
+        if modules is None:
+            return set()
+        Vision, _ = modules  # pyright: ignore[reportGeneralTypeIssues] - checked for win32, where it is None
+        try:
+            request = Vision.VNRecognizeTextRequest.alloc().init()
+            request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+            supported, _error = request.supportedRecognitionLanguagesAndReturnError_(None)  # pyright: ignore
+            tags = {str(tag) for tag in (supported or [])}
+        except Exception:  # noqa: BLE001 - an older macOS without the call: English only
+            tags = {"en-US"}
+        return {lang for lang, wanted in _VISION_TAGS.items() if wanted[0] in tags}
+
+    def languages(self) -> set[str]:
+        return set(self._languages)
+
+    def recognize(self, image: Image.Image, lang: str) -> list[OcrLine]:
+        modules = self._vision()
+        if modules is None or lang not in self._languages:
+            raise OcrError(f"macOS の Vision で {lang} を読めません。")
+        return _as_ocr_error("macOS の Vision", lambda: self._recognize(image, lang, modules))
+
+    def _recognize(self, image: Image.Image, lang: str, modules) -> list[OcrLine]:
+        Vision, NSData = modules
+        buffer = io.BytesIO()
+        image.convert("L").save(buffer, format="PNG")
+        data = NSData.dataWithBytes_length_(buffer.getvalue(), len(buffer.getvalue()))
+        handler = Vision.VNImageRequestHandler.alloc().initWithData_options_(data, None)
+        request = Vision.VNRecognizeTextRequest.alloc().init()
+        request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+        request.setRecognitionLanguages_(_VISION_TAGS[lang])
+        request.setUsesLanguageCorrection_(True)
+        ok, error = handler.performRequests_error_([request], None)
+        if not ok:
+            raise OcrError(f"macOS の Vision で読めませんでした: {error}")
+        width, height = image.size
+        lines = []
+        for observation in request.results() or []:
+            candidates = observation.topCandidates_(1)
+            if not candidates:
+                continue
+            text = str(candidates[0].string()).strip()
+            if not text:
+                continue
+            # Normalized coordinates with the origin at the bottom left.
+            box = observation.boundingBox()
+            x0, y1 = box.origin.x * width, (1 - box.origin.y) * height
+            x1, y0 = x0 + box.size.width * width, y1 - box.size.height * height
+            lines.append(OcrLine((OcrWord((x0, y0, x1, y1), text),), spaced=True))
+        lines.sort(key=lambda line: (line.box[1], line.box[0]))
+        return lines
+
+
 # ---------------------------------------------------------------- choice and fallback
 
-_ENGINE_TYPES: dict[str, Callable[..., OcrEngine]] = {"tesseract": TesseractEngine, "windows": WindowsOcrEngine}
+_ENGINE_TYPES: dict[str, Callable[..., OcrEngine]] = {"tesseract": TesseractEngine, "windows": WindowsOcrEngine,
+                                                      "vision": VisionEngine}
 
 
 @dataclass
 class EngineSet:
-    """The engines a document is read with, made once (a Windows OCR engine per language is kept)."""
+    """The engines a document is read with, made once (a Windows OCR engine per language is kept).
+
+    engines may hold engines made beforehand (the AI one: OcrOptions.engine "ai"). cancel, when set,
+    stops the reading between regions (Cancelled).
+    """
     options: OcrOptions
     lock: threading.RLock | None = None
     engines: dict[str, OcrEngine] = field(default_factory=dict)
+    cancel: threading.Event | None = None
 
-    def get(self, name: str) -> OcrEngine:
+    def get(self, name: str) -> OcrEngine | None:
         if name not in self.engines:
             if name == "tesseract":
                 self.engines[name] = TesseractEngine(tessdata_directory(self.options), self.options.dpi, self.lock)
-            else:
+            elif name in _ENGINE_TYPES:
                 self.engines[name] = _ENGINE_TYPES[name]()
+            else:
+                return None
         return self.engines[name]
 
     def order(self, lang: str) -> list[OcrEngine]:
         return [engine for name in engine_order(lang, self.options.engine)
-                if lang in (engine := self.get(name)).languages()]
+                if (engine := self.get(name)) is not None and lang in engine.languages()]
+
+    def check(self) -> None:
+        """Raise Cancelled once the job reading the document has been cancelled."""
+        if self.cancel is not None and self.cancel.is_set():
+            raise Cancelled("OCR を中止しました。")
 
 
 def engine_order(lang: str, preference: str = "auto", platform: str | None = None) -> list[str]:
     """The engines tried for a language, first choice first.
 
-    auto: Windows' own OCR for Japanese on Windows (Tesseract when it has no Japanese recognizer),
-    Tesseract otherwise (Windows' English recognizer is less accurate on papers). A named engine
-    goes first and the other one stays as the fallback.
+    auto: the system's own OCR for Japanese on Windows and macOS (Tesseract when it has no Japanese
+    recognizer), Tesseract otherwise (Windows' English recognizer is less accurate on papers). A
+    named engine goes first and the others stay as the fallback. "ai" (a page re-read by the AI
+    connection) has no fallback: the user asked for that engine on that page.
     """
+    if preference == "ai":
+        return ["ai"]
     platform = platform or sys.platform
     names = ["tesseract"]
-    if platform == "win32":
-        names = ["windows", "tesseract"] if lang == "ja" else ["tesseract", "windows"]
+    system = {"win32": "windows", "darwin": "vision"}.get(platform)
+    if system:
+        names = [system, "tesseract"] if lang == "ja" else ["tesseract", system]
     if preference in names:
         names = [preference] + [n for n in names if n != preference]
     return names
@@ -455,7 +558,8 @@ def recognize(image: Image.Image, lang: str, engines: list[OcrEngine]) -> tuple[
     for engine in engines:
         try:
             return engine.recognize(image, lang), engine.name
-        # A cancellation (next stage) must be re-raised before this: see the module docstring.
+        except Cancelled:
+            raise
         except Exception as error:  # noqa: BLE001 - an engine added later may raise anything
             logger.warning("OCR engine %s failed (%s); trying the next one", engine.name, error)
             errors.append(f"{engine.name}: {error}")

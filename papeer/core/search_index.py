@@ -12,7 +12,8 @@ translations, are files rather than rows anyway. Kept apart, it is never backed 
 schema version, so PCs updating Papeer publish nothing new for it): each PC builds its own from what it
 has, and a PC that took in another's library brings its index up to date on the next search.
 
-What it covers: each page's extracted text (the library's pages table, written once when the PDF is added)
+What it covers: each page's extracted text (the library's pages table, written when the PDF is added and
+again when pages are read by OCR)
 and each section of translation.md (the last completed translation, which a translation, a published
 review or a sync replaces). Metadata and memos are few and short, and a memo changes with every autosave,
 so the search reads those from the papers table itself. Texts are stored casefolded, as the search compares
@@ -27,8 +28,9 @@ any term shorter than a trigram ("推定" has two characters), are found in the 
 at a time (instr), which reads only that paper's rows.
 
 How it stays current: before a search, each paper's sources are compared with the keys recorded when they
-were indexed: the PDF's digest and page count for its pages, translation.md's size, modification time and
-file ID for its translation. A new or changed paper is indexed again and a removed one dropped: one query
+were indexed: the PDF's digest and page count for its pages (and, for a paper with pages read by OCR, the
+size, time and ID of its ocr-text.json, which is written again whenever they are, also when a sync brings
+it from another PC), translation.md's size, modification time and file ID for its translation. A new or changed paper is indexed again and a removed one dropped: one query
 and one file status per paper. Indexing a whole library (the first search after updating Papeer, or after
 this PC's index was lost: some 60 papers a second) takes longer, so a search spends at most BUILD_SECONDS
 on it and looks through the papers still left over directly, as before; the following searches go on
@@ -114,6 +116,9 @@ class SearchIndex:
             folder = str(self.root / "papers")  # Strings: pathlib would take longer than the file status itself.
             for paper_id, pages_key in papers.items():
                 translation = os.path.join(folder, paper_id, "translation.md") if PAPER_ID.fullmatch(paper_id) else None
+                readings = _file_key(os.path.join(folder, paper_id, "ocr-text.json") if translation else None)
+                if readings != NO_FILE:  # Papers never read by OCR keep the key they were indexed with.
+                    pages_key += ":ocr:" + readings
                 pages_stale = recorded.get((paper_id, "original")) != pages_key
                 translation_stale = recorded.get((paper_id, "translated")) != _file_key(translation)
                 if pages_stale or translation_stale:
@@ -144,6 +149,21 @@ class SearchIndex:
             db = self._open()
         with closing(db):
             yield IndexReader(db)
+
+    def forget_pages(self, paper_id: str) -> None:
+        """Index a paper's pages again at the next search: their text has changed (read again by OCR).
+
+        The pages' key names ocr-text.json, which the reading writes before the page texts: a search in
+        between could record the new key with the old texts, so the record is dropped once both are written.
+        """
+        if not self.path.exists():
+            return
+        with _lock(self.path):
+            try:
+                with closing(sqlite3.connect(self.path, timeout=5)) as db, db:
+                    db.execute("DELETE FROM sources WHERE paper_id=? AND side='original'", (paper_id,))
+            except sqlite3.Error:
+                pass  # Missing tables or a damaged index: it is made again by the next search anyway.
 
     def discard(self) -> None:
         """Remove a damaged index (corrupt(): what a search found), to be built again by the next search.
