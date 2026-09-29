@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 from typing import Any
 import uuid
 
@@ -19,66 +20,132 @@ def app_env(name: str, default: str | None = None) -> str | None:
     return os.environ.get(f"PAPEER_{name}", os.environ.get(f"PAPERDESK_{name}", default))
 
 
+# Where Papeer keeps its files, by the platform's custom (frontend/src-tauri/src/lib.rs follows the same rules
+# for the library folder):
+#
+#   Windows: library %LOCALAPPDATA%\Papeer; this PC's files %LOCALAPPDATA%\PapeerSync (caches and logs in it too).
+#   macOS:   library ~/Library/Application Support/Papeer; this PC's files ~/Library/Application Support/PapeerSync;
+#            caches ~/Library/Caches/Papeer; logs ~/Library/Logs/Papeer.
+#   Linux:   library $XDG_DATA_HOME/papeer (~/.local/share/papeer); this PC's files $XDG_STATE_HOME/papeer
+#            (~/.local/state/papeer, logs in it too); caches $XDG_CACHE_HOME/papeer (~/.cache/papeer).
+#
+# This PC's folder holds more than state that can be rebuilt: the folder-sync state (without it the next sync
+# cannot tell a change from a conflict), this PC's history of the library (local_history: a safety net), the CLI
+# paths and the downloaded OCR data. So on macOS it stays in Application Support (kept by Time Machine, never
+# cleared as a cache), and only the converted fonts, which are rebuilt from the bundled ones, go to Caches. On
+# Linux the XDG state folder is meant for exactly such files (this machine's, persistent, not worth syncing).
+# The files keyed by the library's path (sync_state_path and the others below) stay in one folder, so they
+# can be told apart and moved together when the library moves.
+
+
+def _platform() -> str:
+    """"windows", "macos" or "linux" (any other POSIX system is treated as Linux: the XDG folders)."""
+    if sys.platform == "win32":
+        return "windows"
+    return "macos" if sys.platform == "darwin" else "linux"
+
+
+def _local_appdata() -> Path:
+    return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+
+
+def _xdg(variable: str, default: str) -> Path:
+    """An XDG base folder; a relative value is ignored, as the XDG Base Directory specification says."""
+    value = os.environ.get(variable, "")
+    return Path(value) if value and os.path.isabs(value) else Path.home() / default
+
+
+def _application_support() -> Path:
+    return Path.home() / "Library" / "Application Support"
+
+
+def default_data_directory() -> Path:
+    """The library's folder when PAPEER_DATA_DIR names none, by the platform's custom (see above)."""
+    platform = _platform()
+    if platform == "windows":
+        return _local_appdata() / "Papeer"
+    if platform == "macos":
+        return _application_support() / "Papeer"
+    return _xdg("XDG_DATA_HOME", ".local/share") / "papeer"
+
+
 def data_directory() -> Path:
+    # The folder earlier versions used while Papeer was called PaperDesk (%LOCALAPPDATA%\PaperDesk) is no longer
+    # read: a library there is expected to have been moved here.
     override = app_env("DATA_DIR")
     if override:
         return Path(override).expanduser().resolve()
-    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share"))
-    current, legacy = base / "Papeer", base / "PaperDesk"
-    # A stray, empty Papeer folder must not hide a PaperDesk library that holds papers.
-    if (not current.exists() and legacy.is_dir()) or (_has_papers(legacy) and not _has_papers(current)):
-        return legacy
-    return current
+    return default_data_directory()
 
 
 def device_directory() -> Path:
     """Files that belong to this PC rather than to the library: never backed up or synced.
 
-    Holds the folder-sync state and the connection options that name a program or server on
-    this PC (config.DEVICE_OPTION_KEYS). It stays under LOCALAPPDATA even when PAPEER_DATA_DIR
-    moves the library elsewhere.
+    Holds the folder-sync state, this PC's history and the connection options that name a program or
+    server on this PC (config.DEVICE_OPTION_KEYS). It stays in the platform's place (see above) even
+    when PAPEER_DATA_DIR moves the library elsewhere.
     """
-    return Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "PapeerSync"
+    platform = _platform()
+    if platform == "windows":
+        return _local_appdata() / "PapeerSync"
+    if platform == "macos":
+        return _application_support() / "PapeerSync"
+    return _xdg("XDG_STATE_HOME", ".local/state") / "papeer"
+
+
+def cache_directory() -> Path:
+    """This PC's files that are rebuilt when missing (the converted fonts): the platform's cache folder,
+    which a system or the user may clear; on Windows, the device folder as before."""
+    platform = _platform()
+    if platform == "windows":
+        return device_directory()
+    if platform == "macos":
+        return Path.home() / "Library" / "Caches" / "Papeer"
+    return _xdg("XDG_CACHE_HOME", ".cache") / "papeer"
 
 
 def log_directory() -> Path:
-    """The sidecar's log (sidecar/errors.log_to_file): this PC's, like the rest of device_directory()."""
+    """The sidecar's log (sidecar/errors.log_to_file): this PC's, like the rest of device_directory()
+    (~/Library/Logs/Papeer on macOS, where Console shows it)."""
+    if _platform() == "macos":
+        return Path.home() / "Library" / "Logs" / "Papeer"
     return device_directory() / "logs"
+
+
+def library_key(root: Path) -> str:
+    """The name this PC's files for the library at `root` go by in device_directory() (a digest of its path)."""
+    return hashlib.sha256(str(root.resolve()).encode()).hexdigest()
 
 
 def sync_state_path(root: Path) -> Path:
     """This PC's folder-sync state for the library at `root` (see drive_sync)."""
-    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".json")
+    return device_directory() / (library_key(root) + ".json")
 
 
 def fingerprint_cache_path(root: Path) -> Path:
     """The file digests this PC remembers for the library at `root` (see drive_sync.fingerprint)."""
-    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".fingerprint.json")
+    return device_directory() / (library_key(root) + ".fingerprint.json")
 
 
 def history_directory(root: Path) -> Path:
     """This PC's history of the library at `root`: the states folder sync settled on (see local_history)."""
-    return device_directory() / "history" / hashlib.sha256(str(root.resolve()).encode()).hexdigest()
+    return device_directory() / "history" / library_key(root)
 
 
 def review_cache_path(root: Path) -> Path:
     """The pages needing translation this PC has worked out for the library at `root` (see translation_review)."""
-    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".review-pages.json")
+    return device_directory() / (library_key(root) + ".review-pages.json")
 
 
 def opened_papers_path(root: Path) -> Path:
     """When each paper of the library at `root` was last opened on this PC (see opened_papers)."""
-    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".opened.json")
+    return device_directory() / (library_key(root) + ".opened.json")
 
 
 def search_index_path(root: Path) -> Path:
     """This PC's full-text index of the library at `root` (see search_index)."""
-    return device_directory() / (hashlib.sha256(str(root.resolve()).encode()).hexdigest() + ".search.sqlite3")
+    return device_directory() / (library_key(root) + ".search.sqlite3")
 
-
-def _has_papers(root: Path) -> bool:
-    papers = root / "papers"
-    return papers.is_dir() and any(papers.iterdir())
 
 
 # translation.md is a sequence of "## p.<page> / <block id>" sections holding the Japanese text.

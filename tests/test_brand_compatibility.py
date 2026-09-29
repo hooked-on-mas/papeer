@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import sys
 import zipfile
 
 from papeer.core.paths import app_env, data_directory
@@ -8,19 +9,13 @@ from papeer.core.reading_tools import create_backup, restore_backup
 from papeer.core.storage import Library
 
 
-def test_data_directory_preserves_existing_library(tmp_path, monkeypatch):
+def test_data_directory_no_longer_reads_the_paperdesk_folder(tmp_path, monkeypatch):
+    # PaperDesk kept its library in %LOCALAPPDATA%\PaperDesk; one still there is expected to have been moved.
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.delenv("PAPEER_DATA_DIR", raising=False)
     monkeypatch.delenv("PAPERDESK_DATA_DIR", raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    assert data_directory() == tmp_path / "Papeer"
-    (tmp_path / "PaperDesk").mkdir()
-    assert data_directory() == tmp_path / "PaperDesk"
-    (tmp_path / "Papeer").mkdir()
-    assert data_directory() == tmp_path / "Papeer"
     (tmp_path / "PaperDesk" / "papers" / "a").mkdir(parents=True)
-    (tmp_path / "Papeer" / "papers").mkdir()
-    assert data_directory() == tmp_path / "PaperDesk"
-    (tmp_path / "Papeer" / "papers" / "b").mkdir()
     assert data_directory() == tmp_path / "Papeer"
     monkeypatch.setenv("PAPERDESK_DATA_DIR", str(tmp_path / "old"))
     assert data_directory() == tmp_path / "old"

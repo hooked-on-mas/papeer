@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use tauri::ipc::CapabilityBuilder;
@@ -53,37 +54,54 @@ fn get_backend_config(state: tauri::State<BackendConfig>) -> (u16, String) {
     (state.port, state.token.clone())
 }
 
-/// Mirrors `papeer.core.config.data_directory` in the sidecar.
-fn data_directory(app: &tauri::App) -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("PAPEER_DATA_DIR")
-        .or_else(|| std::env::var_os("PAPERDESK_DATA_DIR"))
-        .filter(|v| !v.is_empty())
-    {
+/// The folders the sidecar's library may be in, by the rules of `papeer.core.paths.data_directory`:
+/// PAPEER_DATA_DIR when set, else the platform's place (Windows `%LOCALAPPDATA%\Papeer`, macOS
+/// `~/Library/Application Support/Papeer`, Linux `$XDG_DATA_HOME/papeer`). The old `%LOCALAPPDATA%\PaperDesk`
+/// is no longer read.
+/// `os` is `std::env::consts::OS`; `var` reads the environment; `home` is the home folder.
+fn library_directories(
+    os: &str,
+    var: impl Fn(&str) -> Option<OsString>,
+    home: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let set = |name: &str| var(name).filter(|v| !v.is_empty());
+    if let Some(dir) = set("PAPEER_DATA_DIR").or_else(|| set("PAPERDESK_DATA_DIR")) {
         let dir = PathBuf::from(dir);
         let dir = match dir.strip_prefix("~") {
-            Ok(rest) => app.path().home_dir().ok()?.join(rest),
+            Ok(rest) => match &home {
+                Some(home) => home.join(rest),
+                None => return vec![],
+            },
             Err(_) => dir,
         };
-        return std::path::absolute(dir).ok();
+        return std::path::absolute(dir).ok().into_iter().collect();
     }
-    let base = match std::env::var_os("LOCALAPPDATA") {
-        Some(dir) => PathBuf::from(dir),
-        None => app.path().home_dir().ok()?.join(".local/share"),
-    };
-    let current = base.join("Papeer");
-    let legacy = base.join("PaperDesk");
-    // A stray, empty Papeer folder must not hide a PaperDesk library that holds papers.
-    let has_papers = |root: &PathBuf| {
-        std::fs::read_dir(root.join("papers")).is_ok_and(|mut it| it.next().is_some())
-    };
-    Some(
-        if (!current.exists() && legacy.is_dir()) || (has_papers(&legacy) && !has_papers(&current))
-        {
-            legacy
-        } else {
-            current
-        },
-    )
+    match os {
+        "windows" => {
+            let Some(base) = set("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .or_else(|| home.map(|home| home.join("AppData").join("Local")))
+            else {
+                return vec![];
+            };
+            vec![base.join("Papeer")]
+        }
+        "macos" => home
+            .map(|home| {
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Papeer")
+            })
+            .into_iter()
+            .collect(),
+        _ => set("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|dir| dir.is_absolute())
+            .or_else(|| home.map(|home| home.join(".local").join("share")))
+            .map(|base| base.join("papeer"))
+            .into_iter()
+            .collect(),
+    }
 }
 
 /// tauri.conf.json names the sidecar as `http://127.0.0.1:*` (and `ws://`), since a release build learns
@@ -209,16 +227,22 @@ pub fn run() {
 
             // The frontend opens paper folders and PDFs in external apps. Limit that to the
             // sidecar's data directory so a script in the webview cannot launch arbitrary files.
-            if let Some(dir) = data_directory(app) {
+            let scopes: Vec<_> = library_directories(
+                std::env::consts::OS,
+                |name| std::env::var_os(name),
+                app.path().home_dir().ok(),
+            )
+            .iter()
+            .map(|dir| {
                 let scope = PathBuf::from(glob::Pattern::escape(&dir.to_string_lossy())).join("**");
+                serde_json::json!({ "path": scope })
+            })
+            .collect();
+            if !scopes.is_empty() {
                 app.add_capability(
                     CapabilityBuilder::new("open-data-directory")
                         .window("main")
-                        .permission_scoped(
-                            "opener:allow-open-path",
-                            vec![serde_json::json!({ "path": scope })],
-                            vec![],
-                        ),
+                        .permission_scoped("opener:allow-open-path", scopes, vec![]),
                 )?;
             }
 
@@ -245,6 +269,104 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| OsString::from(value))
+        }
+    }
+
+    /// An absolute folder on the platform the test runs on.
+    fn root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(name)
+    }
+
+    #[test]
+    fn library_directories_follow_each_platforms_custom() {
+        let home = root("home");
+        let local = root("local");
+        let local_text = local.to_string_lossy().into_owned();
+        assert_eq!(
+            library_directories(
+                "windows",
+                env(&[("LOCALAPPDATA", &local_text)]),
+                Some(home.clone())
+            ),
+            vec![local.join("Papeer")]
+        );
+        assert_eq!(
+            library_directories("windows", env(&[]), Some(home.clone())),
+            vec![home.join("AppData").join("Local").join("Papeer")]
+        );
+        // LOCALAPPDATA means nothing on macOS and Linux.
+        assert_eq!(
+            library_directories(
+                "macos",
+                env(&[("LOCALAPPDATA", &local_text)]),
+                Some(home.clone())
+            ),
+            vec![home
+                .join("Library")
+                .join("Application Support")
+                .join("Papeer")]
+        );
+        assert_eq!(
+            library_directories(
+                "linux",
+                env(&[("LOCALAPPDATA", &local_text)]),
+                Some(home.clone())
+            ),
+            vec![home.join(".local").join("share").join("papeer")]
+        );
+        let xdg = root("xdg-data");
+        let xdg_text = xdg.to_string_lossy().into_owned();
+        assert_eq!(
+            library_directories(
+                "linux",
+                env(&[("XDG_DATA_HOME", &xdg_text)]),
+                Some(home.clone())
+            ),
+            vec![xdg.join("papeer")]
+        );
+        // A relative XDG folder is ignored, as the XDG Base Directory specification says.
+        assert_eq!(
+            library_directories(
+                "linux",
+                env(&[("XDG_DATA_HOME", "relative")]),
+                Some(home.clone())
+            ),
+            vec![home.join(".local").join("share").join("papeer")]
+        );
+        assert!(library_directories("macos", env(&[]), None).is_empty());
+    }
+
+    #[test]
+    fn papeer_data_dir_names_the_only_library_directory() {
+        let home = root("home");
+        let data = root("elsewhere");
+        let data_text = data.to_string_lossy().into_owned();
+        for os in ["windows", "macos", "linux"] {
+            assert_eq!(
+                library_directories(
+                    os,
+                    env(&[("PAPEER_DATA_DIR", &data_text)]),
+                    Some(home.clone())
+                ),
+                vec![data.clone()]
+            );
+            assert_eq!(
+                library_directories(
+                    os,
+                    env(&[("PAPERDESK_DATA_DIR", "~/old")]),
+                    Some(home.clone())
+                ),
+                vec![home.join("old")]
+            );
+        }
+    }
 
     #[test]
     fn csp_names_only_the_sidecar_port() {

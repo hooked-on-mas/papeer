@@ -13,6 +13,8 @@ import threading
 from PIL import Image
 import pytest
 
+from _isolation import point_pc_folders
+from papeer.core.paths import device_directory
 from papeer.layout import ocr_engines
 from papeer.layout.ocr_engines import (EngineSet, OcrDeclined, OcrError, OcrLine, OcrOptions, OcrWord,
                                        WindowsOcrEngine, download_tessdata, engine_order, recognize,
@@ -90,8 +92,9 @@ def test_options_come_from_the_environment(monkeypatch, tmp_path):
 
 def test_language_data_lives_in_the_device_folder(monkeypatch, tmp_path):
     monkeypatch.delenv("PAPEER_TESSDATA_DIR", raising=False)
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    assert tessdata_directory() == tmp_path / "PapeerSync" / "tessdata" / "fast"
+    point_pc_folders(monkeypatch.setenv, tmp_path)
+    assert tessdata_directory() == device_directory() / "tessdata" / "fast"
+    assert device_directory().is_relative_to(tmp_path)
 
 
 # ---------------------------------------------------------------- download
