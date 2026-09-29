@@ -82,7 +82,7 @@ def test_papeer_data_dir_moves_only_the_library(home, tmp_path, monkeypatch, pla
 
 @pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
 def test_a_paperdesk_folder_is_never_used(home, tmp_path, monkeypatch, platform):
-    # Earlier versions used %LOCALAPPDATA%\\PaperDesk on Windows; its library is expected to have been moved.
+    # Earlier versions used %LOCALAPPDATA%\PaperDesk on Windows; its library is expected to have been moved.
     monkeypatch.setattr(sys, "platform", platform)
     (tmp_path / "local-appdata" / "PaperDesk" / "papers" / "a").mkdir(parents=True)
     (home / ".local/share/PaperDesk/papers/a").mkdir(parents=True)

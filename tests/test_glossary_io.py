@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -68,9 +69,11 @@ def test_api_stages_import_without_changing_global_dictionary(tmp_path, monkeypa
     path = tmp_path / "glossary.json"
     with TestClient(runtime.app) as client:
         assert client.post("/api/glossary/export", json={"path": str(path), "terms": incoming}).json() == {"count": 1}
-        # Never inside the library, where it could replace library files and would be synced.
+        # Never inside the library, where it could replace library files and would be synced. On Windows,
+        # not through the long-path prefix either (elsewhere it would be an odd relative folder name).
         long_form = "\\\\?\\" + str(lib.root.resolve())
-        for inside in (lib.root / "glossary.json", Path(long_form) / "glossary.json"):
+        windows_forms = [Path(long_form) / "glossary.json"] if sys.platform == "win32" else []
+        for inside in (lib.root / "glossary.json", *windows_forms):
             refused = client.post("/api/glossary/export", json={"path": str(inside), "terms": incoming})
             assert refused.status_code == 400 and refused.json()["detail"] == "辞書はライブラリの外に保存してください。"
         assert not (lib.root / "glossary.json").exists()

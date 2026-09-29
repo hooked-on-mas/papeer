@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import sys
 import threading
 
 from fastapi.testclient import TestClient
@@ -151,8 +152,10 @@ def test_export_all_pages_preserves_sources_and_blocks_library_overwrite(ink_env
     assert client.post(path, json={"side": "original", "destination": str(dest)}).status_code == 200
     assert dest.read_bytes().startswith(b"%PDF-")
     assert client.post(path, json={"side": "original", "destination": str(folder / "original.pdf")}).status_code == 400
+    # Windows: also the long-path prefix, and a trailing space that Windows drops from a folder name.
     long_form = "\\\\?\\" + str(lib.root.resolve())
-    for inside in (str(lib.root / "ink.pdf"), long_form + "\\ink.pdf", str(lib.root) + " \\ink.pdf"):
+    windows_forms = [long_form + "\\ink.pdf", str(lib.root) + " \\ink.pdf"] if sys.platform == "win32" else []
+    for inside in (str(lib.root / "ink.pdf"), *windows_forms):
         assert client.post(path, json={"side": "original", "destination": inside}).status_code == 400
     assert not (lib.root / "ink.pdf").exists()
     assert (folder / "original.pdf").read_bytes() == original

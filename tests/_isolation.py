@@ -16,16 +16,16 @@ ORIGINAL_HOME = Path.home()
 ORIGINAL_XDG = {name: os.environ.get(name, "") for name in ("XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")}
 REAL_LIBRARY = Path(ORIGINAL_LOCALAPPDATA) / "Papeer"
 
-# What each platform's folders are made from (papeer.core.paths): LOCALAPPDATA on Windows, the home folder
-# on macOS, the XDG base folders on Linux. HOME is left alone on Windows, where Python does not read it
-# (Path.home() is USERPROFILE) but git does.
-PLACE_VARIABLES = ("LOCALAPPDATA", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME") + (("HOME",) if os.name != "nt" else ())
-
 
 def point_pc_folders(setenv, base: Path) -> None:
     """Make every folder of this PC that papeer uses (paths.default_data_directory, device_directory,
     cache_directory, log_directory) a folder under `base`, on any platform. Also how a test plays
-    another PC: call it again with another folder."""
+    another PC: call it again with another folder.
+
+    Each platform's folders are made from (papeer.core.paths): LOCALAPPDATA on Windows, the home folder
+    on macOS, the XDG base folders on Linux. HOME is left alone on Windows, where Python does not read it
+    (Path.home() is USERPROFILE) but git does.
+    """
     base = Path(base)
     setenv("LOCALAPPDATA", str(base))
     setenv("XDG_DATA_HOME", str(base / "xdg-data"))
