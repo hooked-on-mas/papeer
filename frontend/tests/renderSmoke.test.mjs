@@ -60,6 +60,8 @@ before(async () => {
     StickyNotesTab: (await load("/src/features/reader/StickyNotesTab.tsx")).StickyNotesTab,
     glossaryEditor: await load("/src/features/reader/GlossaryEditor.tsx"),
     LibrarySidebar: (await load("/src/features/library/LibrarySidebar.tsx")).LibrarySidebar,
+    useDragOver: (await load("/src/features/library/LibrarySidebar.tsx")).useDragOver,
+    useMenuRow: (await load("/src/features/library/LibrarySidebar.tsx")).useMenuRow,
     useTreeFocus: (await load("/src/features/library/treeFocus.ts")).useTreeFocus,
     usePaperSelection: (await load("/src/features/library/selectionStore.ts")).usePaperSelection,
     useBulkProgress: (await load("/src/app/bulkState.ts")).useBulkProgress,
@@ -274,21 +276,27 @@ test("the library tree is a tree of treeitems for assistive technology, and one 
   } finally {
     initial.tabStop = saved;
   }
-  assert.match(html, /<div role="tree" aria-label="ライブラリ" aria-multiselectable="true">/);
+  assert.match(html, /<div role="tree" aria-label="ライブラリ" aria-multiselectable="true" class="py-1">/);
   const ml = openingTag(html, 'data-tree-key="folder:ML"');
   assert.match(ml, /role="treeitem"/);
   assert.match(ml, /aria-level="1"/);
   assert.match(ml, /aria-expanded="true"/);
   assert.match(ml, /aria-selected="false"/);
   assert.match(ml, /aria-label="ML（2件）"/);
-  assert.match(openingTag(html, 'data-tree-key="folder:ML / NLP"'), /aria-level="2"/);
-  // A folder's contents are its group, which the row owns since it is the row's sibling in the page.
-  const group = ml.match(/aria-owns="([^"]+)"/)?.[1];
-  assert.ok(group);
-  assert.ok(html.includes(`<div role="group" id="${group}">`));
+  // The rows are flat, not nested in groups (a long library renders only the rows in view): each says
+  // its level and its place among its siblings — Empty, ML and 未分類; NLP and p2 in ML.
+  assert.doesNotMatch(html, /role="group"|aria-owns/);
+  assert.match(ml, /aria-setsize="3"/);
+  assert.match(ml, /aria-posinset="2"/);
+  const nlp = openingTag(html, 'data-tree-key="folder:ML / NLP"');
+  assert.match(nlp, /aria-level="2"/);
+  assert.match(nlp, /aria-setsize="2"/);
+  assert.match(nlp, /aria-posinset="1"/);
+  assert.match(openingTag(html, 'id="paper-row-p2"'), /aria-posinset="2"/);
+  assert.match(openingTag(html, 'data-tree-key="folder:"'), /aria-posinset="3"/);
   // A folder with nothing in it is neither open nor closed.
   const empty = openingTag(html, 'data-tree-key="folder:Empty"');
-  assert.doesNotMatch(empty, /aria-expanded|aria-owns/);
+  assert.doesNotMatch(empty, /aria-expanded/);
   // Titles give a subfolder's full path, but not a top folder's name again.
   assert.doesNotMatch(ml, /title=/);
   assert.match(openingTag(html, 'data-tree-key="folder:ML / NLP"'), /title="ML \/ NLP"/);
@@ -297,6 +305,8 @@ test("the library tree is a tree of treeitems for assistive technology, and one 
   const open = openingTag(html, 'id="paper-row-p1"');
   assert.match(open, /role="treeitem"/);
   assert.match(open, /aria-level="3"/);
+  assert.match(open, /aria-setsize="1"/);
+  assert.match(open, /aria-posinset="1"/);
   assert.match(open, /aria-selected="true"/);
   assert.doesNotMatch(open, /aria-roledescription|aria-pressed/);
   // Roving tabindex: only the row that takes the Tab key is in the Tab order, and no button in a row is.
@@ -327,7 +337,7 @@ test("the library shows the papers selected together apart from the open one, an
   } finally {
     Object.assign(initial, saved);
   }
-  assert.match(html, /<div role="tree" aria-label="ライブラリ" aria-multiselectable="true">/);
+  assert.match(html, /<div role="tree" aria-label="ライブラリ" aria-multiselectable="true" class="py-1">/);
   for (const id of ["p2", "p3"]) {
     const row = openingTag(html, `id="paper-row-${id}"`);
     assert.match(row, /aria-selected="true"/);
@@ -369,4 +379,93 @@ test("while an action on several papers runs, the library shows its progress wit
   // React separates the text's parts with comments.
   assert.ok(html.replaceAll("<!-- -->", "").includes("「ML」へ移動中…（3/5）"));
   assert.match(html, /<button[^>]*title="送信中の 1 件が終わったところで止めます。残りは処理しません。"[^>]*>中止<\/button>/);
+});
+
+test("a long library renders only the rows in view, placed in a list as tall as all of them, and the row that takes the Tab key", () => {
+  const { React, LibrarySidebar, useTreeFocus } = modules;
+  const many = Array.from({ length: 400 }, (_, i) => ({ id: `m${i}`, title: `Paper ${i}`, collection_name: "Many", pages: 1, translated_count: 0 }));
+  const initial = useTreeFocus.getInitialState();
+  const saved = initial.tabStop;
+  // The last paper, far below the rows in view, takes the Tab key: it is rendered all the same.
+  initial.tabStop = "paper:m399";
+  let html;
+  try {
+    html = render(React.createElement(LibrarySidebar), libraryState, {}, [
+      [["papers", "list", "", 0], many], [["collections"], ["Many"]],
+    ]);
+  } finally {
+    initial.tabStop = saved;
+  }
+  const tree = openingTag(html, 'role="tree"');
+  assert.match(tree, /class="relative"/);
+  // 4 px of padding, Many (30), 400 papers (46 each), 未分類 (30), 4 px: rows not measured yet are estimated.
+  assert.match(tree, /style="height:18468px;overflow-anchor:none"/);
+  const rendered = [...html.matchAll(/data-tree-key="([^"]+)"/g)].map((m) => m[1]);
+  // The rows in the first 800 px (the height taken before the list is measured) and 10 more, then the pinned one.
+  assert.ok(rendered.length > 15 && rendered.length < 40, `${rendered.length} rows rendered`);
+  assert.deepEqual(rendered.slice(0, 3), ["folder:Many", "paper:m0", "paper:m1"]);
+  assert.equal(rendered.at(-1), "paper:m399");
+  assert.ok(!rendered.includes("paper:m200"));
+  assert.ok(!rendered.includes("folder:"));
+  // Each row still says where it is in the whole tree.
+  const last = openingTag(html, 'id="paper-row-m399"');
+  assert.match(last, /aria-setsize="400"/);
+  assert.match(last, /aria-posinset="400"/);
+  assert.match(last, /aria-level="2"/);
+  assert.match(last, /tabindex="0"/);
+  assert.match(openingTag(html, 'data-tree-key="folder:Many"'), /aria-setsize="2"/);
+  // Each row is placed at its offset: after the padding, Many and 399 papers.
+  assert.match(openingTag(html, 'data-index="400"'), /translateY\(18388px\)/);
+  assert.match(html, />400(<!-- -->)? 件の論文</);
+});
+
+/** A library of `count` papers in the folder Many, and 未分類: count + 2 rows. */
+const manyPapers = (count) => [
+  [["papers", "list", "", 0], Array.from({ length: count }, (_, i) => ({ id: `m${i}`, title: `Paper ${i}`, collection_name: "Many", pages: 1, translated_count: 0 }))],
+  [["collections"], ["Many"]],
+];
+
+/** Renders the library with the initial state of `stores` ([store, values] pairs) set, and puts them back. */
+function renderLibrary(queries, stores = []) {
+  const saved = stores.map(([store]) => [store, { ...store.getInitialState() }]);
+  for (const [store, values] of stores) Object.assign(store.getInitialState(), values);
+  try {
+    return render(modules.React.createElement(modules.LibrarySidebar), libraryState, {}, queries);
+  } finally {
+    for (const [store, values] of saved) Object.assign(store.getInitialState(), values);
+  }
+}
+
+const renderedRows = (html) => [...html.matchAll(/data-tree-key="([^"]+)"/g)].map((m) => m[1]);
+
+test("the library renders every row up to 199 rows, and from 200 only the rows in view", () => {
+  const below = renderLibrary(manyPapers(197));
+  assert.match(openingTag(below, 'role="tree"'), /class="py-1"/);
+  assert.equal(renderedRows(below).length, 199);
+  const at = renderLibrary(manyPapers(198));
+  assert.match(openingTag(at, 'role="tree"'), /class="relative"/);
+  assert.ok(renderedRows(at).length < 40);
+  // The same rows on top, placed at the same height as in the page's flow (after the 4 px of padding).
+  assert.deepEqual(renderedRows(at).slice(0, 3), renderedRows(below).slice(0, 3));
+  assert.match(openingTag(at, 'data-index="0"'), /translateY\(4px\)/);
+});
+
+test("a long library keeps rendering, out of view, the rows with the focus, asked to take it, with a menu open, and dragged", () => {
+  const { useTreeFocus, useMenuRow, useDragOver } = modules;
+  const plain = renderedRows(renderLibrary(manyPapers(400)));
+  for (const key of ["paper:m250", "paper:m300", "paper:m350", "paper:m380", "folder:"]) assert.ok(!plain.includes(key), key);
+  const html = renderLibrary(manyPapers(400), [
+    [useTreeFocus, { focused: "paper:m300", pending: { key: "paper:m350", until: Date.now() + 3000 } }],
+    [useMenuRow, { key: "paper:m250" }],
+    [useDragOver, { active: "m380" }],
+  ]);
+  const rows = renderedRows(html);
+  for (const key of ["paper:m250", "paper:m300", "paper:m350", "paper:m380"]) assert.ok(rows.includes(key), key);
+  // While a paper is dragged, every folder, which a drag with the keyboard moves between.
+  assert.ok(rows.includes("folder:"));
+  // In the order of the tree.
+  assert.deepEqual(rows.slice(-5), ["paper:m250", "paper:m300", "paper:m350", "paper:m380", "folder:"]);
+  // Put back for the next render.
+  assert.equal(useMenuRow.getInitialState().key, null);
+  assert.equal(useDragOver.getInitialState().active, null);
 });

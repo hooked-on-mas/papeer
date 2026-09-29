@@ -1,7 +1,10 @@
 import { useTagChoices } from "@/api/tagChoices";
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import {
+  memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject,
+} from "react";
 import { create } from "zustand";
 import { useQuery } from "@tanstack/react-query";
+import { measureElement, useVirtualizer, type Range, type Virtualizer } from "@tanstack/react-virtual";
 import { api, unwrap } from "@/api/client";
 import {
   DndContext, DragOverlay, KeyboardSensor, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors,
@@ -30,6 +33,11 @@ import { useDropTarget } from "@/app/fileDrop";
 import { useShownOrganization } from "@/app/useOrganizing";
 import { usePendingImports, type PendingImport } from "@/app/pendingImports";
 import { allFolderPaths, buildTree, filterPapers, type FolderNode } from "./libraryTree";
+import {
+  createLineSizes, isRequestedLine, linesToRender, OVERSCAN, pinnedLines, shouldVirtualize, treeLines, viewAnchors, type LineBox,
+  type TreeLine,
+} from "./treeLines";
+import { useUiScale } from "@/app/uiScale";
 import { folderAncestors, normalizeCollection } from "@/lib/collectionPath";
 import {
   dropRowAt, folderKey, nextDropRow, paperKey, rowAfterRemoval, treeKeyAction, typeaheadMatch, visibleRows, type DropRow,
@@ -62,9 +70,19 @@ const NO_COLLECTIONS: string[] = [];
 
 /**
  * Folder under a paper dragged in the tree, and the other papers dragged with it (selected together);
- * kept here so that only the rows it enters and leaves, and the papers dragged, render again.
+ * kept here so that only the rows it enters and leaves, and the papers dragged, render again. `active`
+ * is the paper dragged, whose row a long library keeps rendered while it is (see pinnedLines). Exported
+ * for tests/renderSmoke.test.mjs, as useMenuRow.
  */
-const useDragOver = create<{ path: string | null; paperIds: ReadonlySet<string> | null }>(() => ({ path: null, paperIds: null }));
+export const useDragOver = create<{ path: string | null; paperIds: ReadonlySet<string> | null; active: string | null }>(
+  () => ({ path: null, paperIds: null, active: null }));
+
+/** The row whose context menu is open, which a long library keeps rendered while it is (see pinnedLines). */
+export const useMenuRow = create<{ key: string | null }>(() => ({ key: null }));
+
+/** Keeps `useMenuRow` on the row whose menu is open; another row's menu may open before this one closes. */
+const menuOpenChange = (key: string) => (open: boolean) =>
+  useMenuRow.setState((s) => (open ? { key } : s.key === key ? { key: null } : s));
 
 /** The keyboard focus of the rows: a ring when focused from the keyboard, in the theme's ring color. */
 const FOCUS_RING = "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring focus-visible:rounded-sm";
@@ -210,6 +228,12 @@ export function LibrarySidebar() {
     const open = expandedCollections && new Set(expandedCollections);
     return visibleRows(tree, (path) => filtered || !open || open.has(path), paperDisplayName);
   }, [tree, expandedCollections, filtered, librarySearch]);
+  // The same rows as the tree lays them out, with the PDFs being added (see treeLines.ts).
+  const lines = useMemo(() => {
+    if (librarySearch.trim()) return [];
+    const open = expandedCollections && new Set(expandedCollections);
+    return treeLines(tree, (path) => filtered || !open || open.has(path));
+  }, [tree, expandedCollections, filtered, librarySearch]);
   // Before paint, so that the row that takes the Tab key is right as soon as the rows are, and papers
   // that left the screen leave the selection before anything can be done to them.
   useLayoutEffect(() => {
@@ -223,7 +247,9 @@ export function LibrarySidebar() {
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { keyboardCodes: KEYBOARD_CODES, coordinateGetter: keyboardCoordinates }),
+    // The list scrolls to the folder at once, not smoothly: a long library measures the rows scrolled
+    // past and moves the list to keep them in place, which would stop a smooth scroll short.
+    useSensor(KeyboardSensor, { keyboardCodes: KEYBOARD_CODES, coordinateGetter: keyboardCoordinates, scrollBehavior: "auto" }),
   );
   const paperLabel = (id: UniqueIdentifier) => {
     const paper = allPapers.find((p) => p.id === id);
@@ -243,7 +269,7 @@ export function LibrarySidebar() {
   const endDrag = () => {
     clearTimeout(hoverTimer.current);
     setDragging(null);
-    useDragOver.setState({ path: null, paperIds: null });
+    useDragOver.setState({ path: null, paperIds: null, active: null });
   };
   const onDragStart = (event: DragStartEvent) => {
     const id = String(event.active.id);
@@ -252,7 +278,7 @@ export function LibrarySidebar() {
     const ids = papersActedOn(usePaperSelection.getState(), useTreeFocus.getState().rows, id);
     draggedIds.current = ids;
     setDragging(paper ? { paper, ids } : null);
-    if (ids.length > 1) useDragOver.setState({ paperIds: new Set(ids) });
+    useDragOver.setState({ active: id, ...(ids.length > 1 ? { paperIds: new Set(ids) } : {}) });
   };
   const onDragOver = (event: DragOverEvent) => {
     const target = event.over ? String(event.over.id).replace(/^folder:/, "") : null;
@@ -278,11 +304,15 @@ export function LibrarySidebar() {
   // The tree's keys (see treeKeyAction), and typing a name's first letters to move to it. Only keys the
   // tree uses are stopped, so that Ctrl+Z and the app's shortcuts still work from a row.
   const treeRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const treeList = useRef<TreeListHandle>(null);
   const typed = useRef({ text: "", at: 0 });
   const focusRow = (key: string) => {
     const row = treeRef.current?.querySelector<HTMLElement>(`[data-tree-key="${CSS.escape(key)}"]`);
-    row?.focus({ preventScroll: true });
-    row?.scrollIntoView({ block: "nearest" });
+    // In a long library a row out of view is not rendered: it takes the focus once scrolled to (TreeList).
+    if (row) row.focus({ preventScroll: true });
+    else requestTreeFocus(key);
+    treeList.current?.scrollTo(key);
   };
   const applyTreeKey = (action: TreeKeyAction) => {
     if (action.type === "focus") focusRow(action.key);
@@ -377,7 +407,7 @@ export function LibrarySidebar() {
         if (next.size !== expandedCollections.length) setExpandedCollections([...next]);
       }
       if (focus) requestTreeFocus(paperKey(paperId));
-      else setTimeout(() => document.getElementById(`paper-row-${paperId}`)?.scrollIntoView({ block: "nearest" }), 50);
+      else setTimeout(() => treeList.current?.scrollTo(paperKey(paperId)), 50);
     };
     const offReveal = onAppEvent("reveal-paper", reveal);
     // Ctrl+L: the row the keys were on while it is on screen, else the open paper, else the row that
@@ -487,11 +517,12 @@ export function LibrarySidebar() {
       }}
         onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={endDrag}>
         <div
-          className="flex-1 overflow-auto py-1 outline-none"
+          ref={scrollRef}
+          className="flex-1 overflow-auto outline-none"
           tabIndex={-1}
           title="右クリックで名前変更・子フォルダー作成。論文をドラッグしてフォルダーへ移動。Ctrl・Shift+クリックで複数選択（F2：名前変更、Delete：削除）"
         >
-          {librarySearch.trim() && <div className="px-2 text-xs">
+          {librarySearch.trim() && <div className="px-2 pt-1 text-xs">
             {searching && <p className="p-2 text-muted-foreground">検索中…</p>}
             {searchError && <p className="p-2 text-destructive">検索できませんでした。</p>}
             {hits.map((hit, index) => <button key={index} className="w-full border-b text-left p-2 hover:bg-muted" onClick={() => {
@@ -506,13 +537,9 @@ export function LibrarySidebar() {
             {searchResults?.limited && <p className="p-2 text-muted-foreground">先頭200件を表示しています。検索語を追加して絞り込めます。</p>}
           </div>}
           {!librarySearch.trim() && (
-            <div ref={treeRef} role="tree" aria-label="ライブラリ" aria-multiselectable="true"
-              onKeyDownCapture={(e) => onTreeKeyDown(e, true)} onKeyDown={(e) => onTreeKeyDown(e, false)}>
-              {tree.map((node) => (
-                <FolderRow key={node.path || "(unfiled)"} node={node} depth={0} papers={paperList ?? null} collections={collections}
-                  filtered={filtered} setExpanded={setExpanded} onTagSelect={setTagFilter} />
-              ))}
-            </div>
+            <TreeList ref={treeList} lines={lines} scrollRef={scrollRef} treeRef={treeRef}
+              onKeyDownCapture={(e) => onTreeKeyDown(e, true)} onKeyDown={(e) => onTreeKeyDown(e, false)}
+              rowProps={{ papers: paperList ?? null, collections, filtered, setExpanded, onTagSelect: setTagFilter }} />
           )}
           {papers.length === 0 && pending.length === 0 && (
             <div className="px-4 py-6 text-center text-muted-foreground text-[0.75rem] leading-relaxed">
@@ -574,6 +601,212 @@ function SelectionStatus() {
   </>;
 }
 
+/** What the sidebar asks of the tree's list. */
+type TreeListHandle = {
+  /** Scrolls the row or line `key` into view, rendering it first when it is out of view in a long library. */
+  scrollTo: (key: string) => void;
+};
+
+/** The root font size in px, which the rows' rem sizes follow (設定「文字の大きさ」). */
+function rootFontPx(scale: number): number {
+  if (typeof document === "undefined") return 16 * scale;
+  return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16 * scale;
+}
+
+/** How tall the list is taken to be before it is measured: the first rows to render (also on the server). */
+const initialHeight = () => (typeof window !== "undefined" && window.innerHeight) || 800;
+
+/**
+ * Where the view is, from the rows on screen (see viewAnchors): read before a new set of lines is
+ * committed, so that the view can keep its place. None at the top of the list, which stays at the top.
+ */
+function readViewAnchors(tree: HTMLElement | null, scroller: HTMLElement | null, lines: TreeLine[]) {
+  if (!tree || !scroller || scroller.scrollTop <= 0) return [];
+  const boxes: LineBox[] = [];
+  for (const element of tree.children) {
+    const key = lines[Number((element as HTMLElement).dataset.index)]?.key;
+    if (key === undefined) continue;
+    const { top, bottom } = element.getBoundingClientRect();
+    boxes.push({ key, top, bottom });
+  }
+  return viewAnchors(boxes, scroller.getBoundingClientRect().top);
+}
+
+/**
+ * The tree's rows (see treeLines.ts). A long library (shouldVirtualize) renders only the rows in view,
+ * with a few beyond them (OVERSCAN) and the rows that must stay (pinnedLines), each placed at its
+ * offset in a list as tall as all of them; the rows are measured as they render, since a paper's row
+ * is taller with tags or a wrapped status line. A shorter one renders every row in the page's flow.
+ * Apart from the sidebar, so that scrolling renders this list only.
+ */
+function TreeList({ ref, lines, scrollRef, treeRef, onKeyDown, onKeyDownCapture, rowProps }: {
+  ref: RefObject<TreeListHandle | null>;
+  lines: TreeLine[];
+  scrollRef: RefObject<HTMLDivElement | null>;
+  treeRef: RefObject<HTMLDivElement | null>;
+  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
+  onKeyDownCapture: (e: KeyboardEvent<HTMLDivElement>) => void;
+  rowProps: RowProps;
+}) {
+  const virtualize = shouldVirtualize(lines.length);
+  const index = useMemo(() => new Map(lines.map((line, at) => [line.key, at])), [lines]);
+  const scale = useUiScale((s) => s.scale);
+  const remPx = useMemo(() => rootFontPx(scale), [scale]);
+  const tabStop = useTreeFocus((s) => s.tabStop);
+  const focused = useTreeFocus((s) => s.focused);
+  const requested = useTreeFocus((s) => s.pending?.key ?? null);
+  const requestedFolder = useTreeFocus((s) => s.pending?.folder);
+  const menuRow = useMenuRow((s) => s.key);
+  const dragged = useDragOver((s) => s.active);
+  // The row with the focus in it, also on one of its buttons (▸, +N, a failure's icon), which the
+  // keys' focus (`focused`) does not follow.
+  const [within, setWithin] = useState<string | null>(null);
+  const pinned = useMemo(
+    () => virtualize
+      ? pinnedLines(lines, index, [tabStop, focused, within, requested, menuRow, dragged && paperKey(dragged)], dragged !== null)
+      : [],
+    [virtualize, lines, index, tabStop, focused, within, requested, menuRow, dragged]);
+  const rangeExtractor = useCallback((range: Range) => linesToRender(range, pinned), [pinned]);
+  // The lines not measured yet are taken to be as tall as those of their kind measured so far.
+  const [sizes] = useState(createLineSizes);
+  const estimateSize = useCallback((at: number) => sizes.estimate(lines[at], remPx), [sizes, lines, remPx]);
+  const measureLine = useCallback(
+    (element: HTMLDivElement, entry: ResizeObserverEntry | undefined, instance: Virtualizer<HTMLDivElement, HTMLDivElement>) => {
+      const size = measureElement(element, entry, instance);
+      const line = lines[instance.indexFromElement(element)];
+      if (line) sizes.record(line, size);
+      return size;
+    }, [sizes, lines]);
+  const getItemKey = useCallback((at: number) => lines[at].key, [lines]);
+  const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    enabled: virtualize,
+    count: lines.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize,
+    measureElement: measureLine,
+    getItemKey,
+    rangeExtractor,
+    overscan: OVERSCAN,
+    // The space above and below the rows (py-1 when every row is rendered), kept when scrolling to a row.
+    paddingStart: remPx / 4,
+    paddingEnd: remPx / 4,
+    scrollPaddingStart: remPx / 4,
+    scrollPaddingEnd: remPx / 4,
+    initialRect: { width: 0, height: initialHeight() },
+    // Where the list is when it starts rendering only the rows in view (a row added past 200 lines).
+    initialOffset: () => scrollRef.current?.scrollTop ?? 0,
+  });
+
+  const scrollTo = useCallback((key: string) => {
+    const at = index.get(key);
+    if (at === undefined) return;
+    if (virtualize) virtualizer.scrollToIndex(at, { align: "auto" });
+    else treeRef.current?.querySelector(`[data-index="${at}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [index, virtualize, virtualizer, treeRef]);
+  useImperativeHandle(ref, () => ({ scrollTo }), [scrollTo]);
+
+  // The rows measured so far are in px: a new root font size (設定「文字の大きさ」) measures them again.
+  // Before the view's place is put back below, which uses the new sizes.
+  const measuredAt = useRef(remPx);
+  useLayoutEffect(() => {
+    if (measuredAt.current === remPx) return;
+    measuredAt.current = remPx;
+    sizes.reset();
+    virtualizer.measure();
+    virtualizer.elementsCache.forEach((element) => virtualizer.measureElement(element));
+  }, [virtualizer, sizes, remPx]);
+
+  // The view keeps its place when lines above it change (a paper added, moved or deleted, a folder
+  // opened): the rows on screen are read here, in the render of the new lines, before the commit moves
+  // them, and the first of them still there is put back where it was once committed. A list rendering
+  // every row in the page's flow has the browser's own scroll anchoring, but not one that starts or
+  // stops rendering only the rows in view, nor one that renders only them.
+  const committed = useRef<{ lines: TreeLine[]; virtualize: boolean } | null>(null);
+  const anchors = useRef<{ key: string; offset: number }[]>([]);
+  if (committed.current && committed.current.lines !== lines && (committed.current.virtualize || virtualize)) {
+    anchors.current = readViewAnchors(treeRef.current, scrollRef.current, committed.current.lines);
+    // Starting to render only the rows in view: the rows' heights are those laid out in the page, which
+    // the estimates would otherwise miss where status lines wrap (a narrow sidebar, 125% or 150%), and
+    // the list would jump when the rows are measured again after the view's place is put back.
+    if (!committed.current.virtualize && virtualize && treeRef.current) {
+      for (const element of treeRef.current.children) {
+        const line = committed.current.lines[Number((element as HTMLElement).dataset.index)];
+        if (line) sizes.record(line, element.getBoundingClientRect().height);
+      }
+    }
+  }
+  useLayoutEffect(() => {
+    const before = committed.current;
+    committed.current = { lines, virtualize };
+    const kept = anchors.current;
+    anchors.current = [];
+    const scroller = scrollRef.current;
+    if (!before || before.lines === lines || !scroller) return;
+    const anchor = kept.find((candidate) => index.has(candidate.key));
+    if (anchor) {
+      const at = index.get(anchor.key)!;
+      if (virtualize) {
+        const start = virtualizer.measurementsCache[at]?.start;
+        // A limit accepted: moving the list here stops a smooth scroll in progress (the wheel's, the
+        // keyboard's) when rows above the view change height or place while it runs.
+        if (start !== undefined && Math.abs(start - anchor.offset - scroller.scrollTop) > 0.5) virtualizer.scrollToOffset(start - anchor.offset);
+      } else {
+        const element = treeRef.current?.querySelector(`[data-index="${at}"]`);
+        if (element) scroller.scrollTop += element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchor.offset;
+      }
+    }
+    // Every row is in the page again: the one with the focus is kept in view.
+    if (before.virtualize && !virtualize) {
+      const active = document.activeElement;
+      if (active && treeRef.current?.contains(active)) active.closest("[role=treeitem]")?.scrollIntoView({ block: "nearest" });
+    }
+  }, [lines, index, virtualize, virtualizer, scrollRef, treeRef]);
+
+  // A row asked to take the focus (requestTreeFocus: a key that moves out of view, a paper revealed,
+  // the row after one deleted) is rendered as it is pinned; this brings it into view. A paper moved
+  // with the keyboard is scrolled to once the library shows it in its new folder.
+  useEffect(() => {
+    const at = requested === null ? undefined : index.get(requested);
+    if (requested !== null && at !== undefined && isRequestedLine(lines[at], requestedFolder)) scrollTo(requested);
+  }, [requested, requestedFolder, index, lines, scrollTo]);
+
+  // A PDF dropped or chosen shows at once as being added: scrolled into view as it appears.
+  const shownPending = useRef(new Set<string>());
+  useEffect(() => {
+    const pending = lines.filter((line) => line.kind === "pending").map((line) => line.key);
+    const added = pending.filter((key) => !shownPending.current.has(key));
+    shownPending.current = new Set(pending);
+    if (added.length) scrollTo(added[added.length - 1]);
+  }, [lines, scrollTo]);
+
+  const row = (line: TreeLine) => line.kind === "folder"
+    ? <FolderRow node={line.node} level={line.level} setSize={line.setSize} posInSet={line.posInSet} {...rowProps} />
+    : line.kind === "pending"
+      ? <PendingRow item={line.item} level={line.level} setSize={line.setSize} posInSet={line.posInSet} />
+      : <PaperRow paper={line.paper} level={line.level} setSize={line.setSize} posInSet={line.posInSet}
+        collections={rowProps.collections} onTagSelect={rowProps.onTagSelect} />;
+
+  return (
+    // The browser's scroll anchoring is off while only the rows in view render: the view's place is
+    // kept above, and would otherwise be moved twice.
+    <div ref={treeRef} role="tree" aria-label="ライブラリ" aria-multiselectable="true"
+      className={virtualize ? "relative" : "py-1"}
+      style={virtualize ? { height: virtualizer.getTotalSize(), overflowAnchor: "none" } : undefined}
+      onKeyDownCapture={onKeyDownCapture} onKeyDown={onKeyDown}
+      onFocus={(e) => setWithin(e.target.closest("[data-tree-key]")?.getAttribute("data-tree-key") ?? null)}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setWithin(null); }}>
+      {virtualize
+        ? virtualizer.getVirtualItems().map((item) => (
+          <div key={item.key} ref={virtualizer.measureElement} data-index={item.index} role="none"
+            className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${item.start}px)` }}>
+            {row(lines[item.index])}
+          </div>
+        ))
+        : lines.map((line, at) => <div key={line.key} data-index={at} role="none">{row(line)}</div>)}
+    </div>
+  );
+}
+
 /** Delete on the focused row itself, not on a nested button such as the tag toggle. */
 const isDeleteKey = (e: KeyboardEvent<HTMLElement>) => (e.key === "Delete" || e.key === "Backspace") && e.target === e.currentTarget;
 
@@ -591,8 +824,10 @@ type RowProps = {
   setExpanded: (path: string, expanded: boolean) => void;
 };
 
-function FolderRowView({ node, depth, ...rest }: { node: FolderNode; depth: number } & RowProps) {
-  const { papers, filtered, setExpanded } = rest;
+/** The row's place in the tree, for assistive technology (see treeLines). */
+type LinePlace = { level: number; setSize: number; posInSet: number };
+
+function FolderRowView({ node, level, setSize, posInSet, papers, filtered, setExpanded }: { node: FolderNode } & LinePlace & RowProps) {
   const { setNodeRef } = useDroppable({ id: `folder:${node.path}` });
   const key = folderKey(node.path);
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -600,8 +835,6 @@ function FolderRowView({ node, depth, ...rest }: { node: FolderNode; depth: numb
   // Whether this row takes the Tab key, or was asked to take the focus; see treeFocus.ts.
   const tabStop = useTreeFocus((s) => s.tabStop === key);
   useFocusRequest(rowRef, useTreeFocus((s) => s.pending?.key === key));
-  // Its contents are a sibling of the row in the page, so the row says that they are its own.
-  const groupId = useId();
   const hasContents = node.children.length + node.papers.length + node.pending.length > 0;
   // Booleans, so that selecting, opening or dragging over another row leaves this one as it is.
   const chosen = useStore((s) => s.selectedFolder === node.path);
@@ -615,102 +848,91 @@ function FolderRowView({ node, depth, ...rest }: { node: FolderNode; depth: numb
   const highlighted = draggedOver || osDraggedOver;
 
   return (
-    <div role="none">
-      <ContextMenu>
-        <ContextMenuTrigger role="none">
-          <div
-            ref={ref}
-            role="treeitem"
-            aria-level={depth + 1}
-            aria-expanded={hasContents ? expanded : undefined}
-            aria-owns={hasContents && expanded ? groupId : undefined}
-            aria-selected={selected}
-            aria-label={`${node.name}（${node.count}件）`}
-            data-tree-key={key}
-            data-drop-collection={node.path}
-            className={`flex items-center h-[1.875rem] cursor-pointer group border-l-2 ${FOCUS_RING} ${
-              selected ? "bg-accent" : "hover:bg-muted/60"} ${chosen ? "border-primary" : "border-transparent"
-            } ${highlighted ? "outline-2 outline-primary -outline-offset-2 rounded-sm" : ""}`}
-            style={{ paddingLeft: `${depth * 16 + 6}px`, paddingRight: "8px" }}
-            tabIndex={tabStop ? 0 : -1}
-            onFocus={(e) => { if (e.target === e.currentTarget) updateTreeFocus({ focused: key }); }}
-            onClick={(e) => {
-              // Shift selects the papers from the anchor down to here; Ctrl leaves the selection as it is.
-              if (e.shiftKey) changeSelection((selection, rows, open) => selectRange(selection, rows, key, open, { add: e.ctrlKey || e.metaKey }));
-              else if (!e.ctrlKey && !e.metaKey) selectFolder(node.path);
-            }}
-            onDoubleClick={() => setExpanded(node.path, !expanded)}
-            onKeyDown={(e) => { if (node.path && isDeleteKey(e)) { e.preventDefault(); deleteFolderRow(node.path, papers); } }}
-            // The full path of a subfolder; not the name again, which the label already says.
-            title={node.path === node.name ? undefined : node.path || "フォルダー未指定のPDF"}
+    <ContextMenu onOpenChange={menuOpenChange(key)}>
+      <ContextMenuTrigger role="none">
+        <div
+          ref={ref}
+          role="treeitem"
+          aria-level={level}
+          aria-setsize={setSize}
+          aria-posinset={posInSet}
+          aria-expanded={hasContents ? expanded : undefined}
+          aria-selected={selected}
+          aria-label={`${node.name}（${node.count}件）`}
+          data-tree-key={key}
+          data-drop-collection={node.path}
+          className={`flex items-center h-[1.875rem] cursor-pointer group border-l-2 ${FOCUS_RING} ${
+            selected ? "bg-accent" : "hover:bg-muted/60"} ${chosen ? "border-primary" : "border-transparent"
+          } ${highlighted ? "outline-2 outline-primary -outline-offset-2 rounded-sm" : ""}`}
+          style={{ paddingLeft: `${(level - 1) * 16 + 6}px`, paddingRight: "8px" }}
+          tabIndex={tabStop ? 0 : -1}
+          onFocus={(e) => { if (e.target === e.currentTarget) updateTreeFocus({ focused: key }); }}
+          onClick={(e) => {
+            // Shift selects the papers from the anchor down to here; Ctrl leaves the selection as it is.
+            if (e.shiftKey) changeSelection((selection, rows, open) => selectRange(selection, rows, key, open, { add: e.ctrlKey || e.metaKey }));
+            else if (!e.ctrlKey && !e.metaKey) selectFolder(node.path);
+          }}
+          onDoubleClick={() => setExpanded(node.path, !expanded)}
+          onKeyDown={(e) => { if (node.path && isDeleteKey(e)) { e.preventDefault(); deleteFolderRow(node.path, papers); } }}
+          // The full path of a subfolder; not the name again, which the label already says.
+          title={node.path === node.name ? undefined : node.path || "フォルダー未指定のPDF"}
+        >
+          {/* Out of the Tab order: ←→ open and close the folder from the row. */}
+          <button
+            tabIndex={-1}
+            className="w-4 h-4 flex items-center justify-center mr-1 text-muted-foreground shrink-0"
+            onClick={(e) => { e.stopPropagation(); setExpanded(node.path, !expanded); }}
+            aria-label={expanded ? "閉じる" : "開く"}
           >
-            {/* Out of the Tab order: ←→ open and close the folder from the row. */}
-            <button
-              tabIndex={-1}
-              className="w-4 h-4 flex items-center justify-center mr-1 text-muted-foreground shrink-0"
-              onClick={(e) => { e.stopPropagation(); setExpanded(node.path, !expanded); }}
-              aria-label={expanded ? "閉じる" : "開く"}
-            >
-              {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-            </button>
-            {expanded ? <FolderOpen className="mr-2 h-4 w-4 text-muted-foreground shrink-0" />
-              : <Folder className="mr-2 h-4 w-4 text-muted-foreground shrink-0" />}
-            <span className="flex-1 truncate">{node.name}</span>
-            <span className="text-[0.75rem] text-muted-foreground tabular-nums ml-2">{node.count}</span>
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onClick={() => createFolder(node.path)}>
-            <FolderPlus className="w-4 h-4 mr-2" /> {node.path ? "子フォルダーを作成…" : "フォルダーを作成…"}
-          </ContextMenuItem>
-          {node.path && (
-            <>
-              <ContextMenuItem onClick={() => renameFolderRow(node.path)}>
-                <Edit2 className="w-4 h-4 mr-2" /> 名前を変更…
-              </ContextMenuItem>
-              {/* The folder's papers and its subfolders', as its count shows them. */}
-              <ContextMenuItem disabled={!node.count} onClick={() => void exportFolderBibtex(node.path)}>
-                <Download className="w-4 h-4 mr-2" /> BibTeX を書き出す…
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-              <ContextMenuItem onClick={() => deleteFolderRow(node.path, papers)} className="text-destructive">
-                <Trash2 className="w-4 h-4 mr-2" /> フォルダーを削除
-              </ContextMenuItem>
-            </>
-          )}
-        </ContextMenuContent>
-      </ContextMenu>
-
-      {expanded && (
-        <div role="group" id={groupId}>
-          {node.children.map((child) => (
-            <FolderRow key={child.path} node={child} depth={depth + 1} {...rest} />
-          ))}
-          {node.pending.map((item) => <PendingRow key={item.path} item={item} depth={depth + 1} />)}
-          {node.papers.map((paper) => (
-            <PaperRow key={paper.id} paper={paper} depth={depth + 1} collections={rest.collections} onTagSelect={rest.onTagSelect} />
-          ))}
+            {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          </button>
+          {expanded ? <FolderOpen className="mr-2 h-4 w-4 text-muted-foreground shrink-0" />
+            : <Folder className="mr-2 h-4 w-4 text-muted-foreground shrink-0" />}
+          <span className="flex-1 truncate">{node.name}</span>
+          <span className="text-[0.75rem] text-muted-foreground tabular-nums ml-2">{node.count}</span>
         </div>
-      )}
-    </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={() => createFolder(node.path)}>
+          <FolderPlus className="w-4 h-4 mr-2" /> {node.path ? "子フォルダーを作成…" : "フォルダーを作成…"}
+        </ContextMenuItem>
+        {node.path && (
+          <>
+            <ContextMenuItem onClick={() => renameFolderRow(node.path)}>
+              <Edit2 className="w-4 h-4 mr-2" /> 名前を変更…
+            </ContextMenuItem>
+            {/* The folder's papers and its subfolders', as its count shows them. */}
+            <ContextMenuItem disabled={!node.count} onClick={() => void exportFolderBibtex(node.path)}>
+              <Download className="w-4 h-4 mr-2" /> BibTeX を書き出す…
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={() => deleteFolderRow(node.path, papers)} className="text-destructive">
+              <Trash2 className="w-4 h-4 mr-2" /> フォルダーを削除
+            </ContextMenuItem>
+          </>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
 /** Renders again only when its folder or the shared props change, or one of the values it selects. */
 const FolderRow = memo(FolderRowView);
 
-/** A PDF whose import job has not finished yet: its file name, then its page count once known. */
-function PendingRow({ item, depth }: { item: PendingImport; depth: number }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => ref.current?.scrollIntoView({ block: "nearest" }), []);
+/**
+ * A PDF whose import job has not finished yet: its file name, then its page count once known. The list
+ * scrolls it into view as it appears (TreeList).
+ */
+function PendingRow({ item, level, setSize, posInSet }: { item: PendingImport } & LinePlace) {
   return (
     <div
-      ref={ref}
       role="treeitem"
-      aria-level={depth + 1}
+      aria-level={level}
+      aria-setsize={setSize}
+      aria-posinset={posInSet}
       aria-disabled="true"
       className="flex items-start py-1 border-l-2 border-transparent cursor-default text-muted-foreground"
-      style={{ paddingLeft: `${depth * 16 + 8}px`, paddingRight: "8px" }}
+      style={{ paddingLeft: `${(level - 1) * 16 + 8}px`, paddingRight: "8px" }}
       title={`${item.name}
 追加中…`}
     >
@@ -729,7 +951,7 @@ function PendingRow({ item, depth }: { item: PendingImport; depth: number }) {
  * Memoized, with values selected for this paper only: opening a paper renders its row and the one
  * left, and a job's progress events render its paper's row only when what the row shows changes.
  */
-const PaperRow = memo(function PaperRow({ paper, depth, collections, onTagSelect }: { paper: PaperData; depth: number; collections: string[]; onTagSelect: (name: string) => void }) {
+const PaperRow = memo(function PaperRow({ paper, level, setSize, posInSet, collections, onTagSelect }: { paper: PaperData; collections: string[]; onTagSelect: (name: string) => void } & LinePlace) {
   const [allTags, setAllTags] = useState(false);
   // A treeitem, not dnd-kit's default button; the row itself starts a drag from the keyboard, not a button in it.
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({ id: paper.id, attributes: { role: "treeitem" } });
@@ -760,7 +982,7 @@ const PaperRow = memo(function PaperRow({ paper, depth, collections, onTagSelect
   const showProgress = ["partial", "translating", "paused"].includes(translation.status) && translation.pages > 0;
 
   return (
-    <ContextMenu>
+    <ContextMenu onOpenChange={menuOpenChange(key)}>
       <ContextMenuTrigger role="none">
         <div
           ref={ref}
@@ -768,7 +990,9 @@ const PaperRow = memo(function PaperRow({ paper, depth, collections, onTagSelect
           {...listeners}
           {...attributes}
           aria-roledescription={undefined}
-          aria-level={depth + 1}
+          aria-level={level}
+          aria-setsize={setSize}
+          aria-posinset={posInSet}
           aria-selected={selected}
           aria-current={isActive ? "true" : undefined}
           tabIndex={tabStop ? 0 : -1}
@@ -792,7 +1016,7 @@ const PaperRow = memo(function PaperRow({ paper, depth, collections, onTagSelect
           className={`flex items-start py-1 cursor-pointer border-l-2 ${FOCUS_RING} ${
             selected ? "bg-accent" : "hover:bg-muted/60"} ${isActive ? "border-primary" : "border-transparent"
           } ${isDragging || draggedAlong ? "opacity-40" : ""}`}
-          style={{ paddingLeft: `${depth * 16 + 8}px`, paddingRight: "8px" }}
+          style={{ paddingLeft: `${(level - 1) * 16 + 8}px`, paddingRight: "8px" }}
           title={`${paperDisplayName(paper)}\nファイル名：${paper.original_name ?? ""}`}
         >
           <FileText className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" />
