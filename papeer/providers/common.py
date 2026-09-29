@@ -359,7 +359,8 @@ def _signal_group(process: subprocess.Popen, signum: int) -> None:
 # when it has to end at once (sidecar/routes/system.py): each runs in a session of its own and would not be
 # ended with the sidecar's process group.
 _running_clis: set[subprocess.Popen] = set()
-_running_lock = threading.Lock()
+# Re-entrant: end_running_clis can be called from a signal handler that interrupts a holder of the lock.
+_running_lock = threading.RLock()
 # How long the CLIs get to end after SIGTERM before their groups are sent SIGKILL (end_running_clis).
 CLI_TERM_GRACE = 2.0
 
@@ -401,7 +402,8 @@ def end_running_clis(grace: float = CLI_TERM_GRACE) -> int:
     while any(_group_alive(process) for process in processes) and time.monotonic() < deadline:
         time.sleep(0.05)
     for process in processes:
-        if sys.platform != "win32":
+        # Only the groups still there: the pid of one that has ended may have been given to another process.
+        if sys.platform != "win32" and _group_alive(process):
             _signal_group(process, signal.SIGKILL)
     return len(processes)
 
@@ -588,8 +590,10 @@ def run_cli_process(
                 raise AnswerRejected(f"{tool_name}の回答が空でした。")
             return result, out_text
         finally:
-            kill_tree(process)
-            untrack_cli(process)
+            try:
+                kill_tree(process)
+            finally:
+                untrack_cli(process)
 
 
 _SCRIPT_SUFFIXES = {".cmd", ".bat", ".ps1"}

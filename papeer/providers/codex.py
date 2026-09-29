@@ -196,8 +196,10 @@ class CodexProvider(CliBackend, ProviderBackend):
                 reader.start()
                 reader.join(timeout)
             finally:
-                kill_tree(process)
-                untrack_cli(process)
+                try:
+                    kill_tree(process)
+                finally:
+                    untrack_cli(process)
         result = answer.get("result")
         if not isinstance(result, dict) or not isinstance(result.get("rateLimits"), dict):
             raise RuntimeError("Codexの利用状況を取得できませんでした。")

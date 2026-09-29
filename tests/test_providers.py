@@ -313,6 +313,35 @@ class ProvidersTests(unittest.TestCase):
                 common.untrack_cli(ended)
         self.assertEqual(signals, [(41, 15), (41, 9)])
 
+    def test_ending_the_running_clis_does_not_kill_a_group_that_has_ended(self):
+        running = Mock(poll=Mock(return_value=None), pid=41)
+        signals = []
+        posix_signals = Mock(SIGTERM=15, SIGKILL=9)
+        with patch("papeer.providers.common.sys.platform", "linux"),                 patch("papeer.providers.common.signal", posix_signals),                 patch("papeer.providers.common._signal_group",
+                      side_effect=lambda process, signum: signals.append((process.pid, signum))),                 patch("papeer.providers.common._group_alive", return_value=False):
+            common.track_cli(running)
+            try:
+                self.assertEqual(common.end_running_clis(grace=0.1), 1)
+            finally:
+                common.untrack_cli(running)
+        self.assertEqual(signals, [(41, 15)])  # No SIGKILL: its pid may belong to another process by now.
+
+    def test_a_cli_is_forgotten_even_when_ending_it_fails(self):
+        process = Mock(poll=Mock(return_value=0), returncode=0, pid=1)
+
+        def popen(command, cwd=None, stdin=None, stdout=None, stderr=None, **kwargs):
+            stdout.write(b"answer")
+            stdout.flush()
+            return process
+
+        with patch(POPEN, side_effect=popen),                 patch("papeer.providers.common.kill_tree", side_effect=RuntimeError("taskkill timed out")):
+            with self.assertRaises(RuntimeError):
+                run_cli_process(["cli"], b"", threading.Event(), 30, "CLI", Path(tempfile.gettempdir()))
+        self.assertNotIn(process, common._running_clis)
+
+    def test_the_running_lock_can_be_taken_again_by_a_signal_handler(self):
+        self.assertIsInstance(common._running_lock, type(threading.RLock()))
+
     @unittest.skipIf(os.name == "nt", "process groups: macOS and Linux")
     def test_ending_the_running_clis_reaches_what_they_started(self):
         import subprocess
