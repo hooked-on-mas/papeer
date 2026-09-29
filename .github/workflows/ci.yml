@@ -11,7 +11,8 @@
 # sidecar started in a throwaway folder, and the ignored tests of sidecar.rs that start it as the app
 # does). The repository is private, so runner minutes count against the plan's allowance: a Linux minute
 # counts once, a Windows minute twice and a macOS minute ten times; macOS and the sidecar builds are
-# therefore never run on a push.
+# therefore never run on a push. Estimated (not measured): a push costs some 60-80 minutes of the allowance,
+# mostly the Windows jobs counted twice; a manual run with macOS and the sidecar builds several hundred.
 #
 # A pull request from a branch of this repository uses the result of the push of that branch; only pull
 # requests from forks are checked as pull requests. A newer push to the same branch cancels the older run;

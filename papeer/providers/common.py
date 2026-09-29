@@ -355,6 +355,57 @@ def _signal_group(process: subprocess.Popen, signum: int) -> None:
         pass
 
 
+# The CLI processes running now (run_cli_process, the Codex app-server), so that the sidecar can end them
+# when it has to end at once (sidecar/routes/system.py): each runs in a session of its own and would not be
+# ended with the sidecar's process group.
+_running_clis: set[subprocess.Popen] = set()
+_running_lock = threading.Lock()
+# How long the CLIs get to end after SIGTERM before their groups are sent SIGKILL (end_running_clis).
+CLI_TERM_GRACE = 2.0
+
+
+def track_cli(process: subprocess.Popen) -> None:
+    with _running_lock:
+        _running_clis.add(process)
+
+
+def untrack_cli(process: subprocess.Popen) -> None:
+    with _running_lock:
+        _running_clis.discard(process)
+
+
+def _group_alive(process: subprocess.Popen) -> bool:
+    if sys.platform == "win32":
+        return process.poll() is None
+    try:
+        os.killpg(process.pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def end_running_clis(grace: float = CLI_TERM_GRACE) -> int:
+    """End every running CLI with the processes it started, without waiting for the jobs that run them:
+    SIGTERM to each one's group, then SIGKILL to those still there after `grace` seconds (Windows: taskkill
+    /T /F). Returns how many there were. The jobs see their CLI fail; cancel them first (JobManager.close)
+    so that they neither record the failure nor start the CLI again."""
+    with _running_lock:
+        processes = [process for process in _running_clis if process.poll() is None]
+    for process in processes:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=10,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            _signal_group(process, signal.SIGTERM)
+    deadline = time.monotonic() + grace
+    while any(_group_alive(process) for process in processes) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    for process in processes:
+        if sys.platform != "win32":
+            _signal_group(process, signal.SIGKILL)
+    return len(processes)
+
+
 def kill_tree(process: subprocess.Popen) -> None:
     if process.poll() is None:
         if os.name == "nt":
@@ -382,9 +433,9 @@ def _windows() -> bool:
     return os.name == "nt"
 
 
-def _version_key(folder: Path) -> tuple:
-    """Sorts version folders such as v20.11.1 or 22.3.0 by their numbers."""
-    return tuple(int(part) for part in re.findall(r"\d+", folder.name))
+def _version_key(name: str) -> tuple:
+    """Sorts version folder names such as v20.11.1 or 22.3.0 by their numbers (v8 before v10)."""
+    return tuple(int(part) for part in re.findall(r"\d+", name))
 
 
 def unix_bin_folders(home: Path) -> list[Path]:
@@ -395,7 +446,10 @@ def unix_bin_folders(home: Path) -> list[Path]:
     is a script that starts with `#!/usr/bin/env node`.
     """
     def newest_first(pattern: str) -> list[Path]:
-        return sorted((path for path in home.glob(pattern) if path.is_dir()), key=_version_key, reverse=True)
+        # By the version folder the "*" stands for (…/node/v22.1.0/bin), not by the last part ("bin").
+        star = Path(pattern).parts.index("*")
+        found = [path for path in home.glob(pattern) if path.is_dir()]
+        return sorted(found, key=lambda path: _version_key(path.relative_to(home).parts[star]), reverse=True)
 
     return [
         home / ".local/bin",  # the Claude Code installer, pipx, uv tools
@@ -426,12 +480,20 @@ def _cli_folders(command: list[str] | None) -> list[str]:
     return [os.path.dirname(command[0]), os.path.dirname(os.path.realpath(command[0]))]
 
 
+def _has_node(folder: str) -> bool:
+    node = os.path.join(folder, "node")
+    return os.path.isfile(node) and os.access(node, os.X_OK)
+
+
 def cli_search_path(command: list[str] | None, current: str, home: Path) -> str:
-    """macOS and Linux: PATH for a CLI. Its own folders first (the node next to an npm CLI is the one it
-    was installed with), then PATH, then the install folders that exist (unix_bin_folders)."""
-    folders = [*_cli_folders(command), *current.split(os.pathsep),
+    """macOS and Linux: PATH for a CLI. Its own folders first when they hold node (the node an npm CLI was
+    installed with, as nvm and Homebrew lay them out), then PATH, then its other folders, then the install
+    folders that exist (unix_bin_folders). A CLI in /usr/bin does not put /usr/bin before nvm or pyenv.
+    Only absolute folders: a relative one would be looked up from wherever the CLI runs."""
+    own = _cli_folders(command)
+    folders = [*(folder for folder in own if _has_node(folder)), *current.split(os.pathsep), *own,
                *(str(folder) for folder in unix_bin_folders(home) if folder.is_dir())]
-    return os.pathsep.join(dict.fromkeys(folder for folder in folders if folder))
+    return os.pathsep.join(dict.fromkeys(folder for folder in folders if folder and os.path.isabs(folder)))
 
 
 def child_env(command: list[str] | None = None) -> dict[str, str]:
@@ -497,6 +559,7 @@ def run_cli_process(
             stdin.seek(0)
         process = subprocess.Popen(command, cwd=root, stdin=stdin, stdout=stdout, stderr=stderr,
                                    **process_kwargs(command))
+        track_cli(process)
         deadline = time.monotonic() + timeout_seconds
         try:
             while process.poll() is None:
@@ -526,6 +589,7 @@ def run_cli_process(
             return result, out_text
         finally:
             kill_tree(process)
+            untrack_cli(process)
 
 
 _SCRIPT_SUFFIXES = {".cmd", ".bat", ".ps1"}
@@ -650,7 +714,7 @@ class CliBackend:
 
     def login(self) -> str:
         command = self.command() + list(self.login_args)
-        if os.name == "nt":
+        if sys.platform == "win32":
             # Outside the app's job for the sidecar (frontend/src-tauri/src/job.rs), which ends its
             # processes as the app exits: the sign-in console and the browser it opens may stay open.
             # A job that does not let processes leave refuses it; then the console starts inside.
@@ -660,8 +724,10 @@ class CliBackend:
             except PermissionError:
                 subprocess.Popen(command, env=child_env(), creationflags=subprocess.CREATE_NEW_CONSOLE)
         else:
-            # Not the sidecar's stdin: the app's pipe (hidden_window).
-            subprocess.Popen(command, env=child_env(command), stdin=subprocess.DEVNULL)
+            # Not the sidecar's stdin: the app's pipe (hidden_window). A session of its own, out of the
+            # sidecar's process group: the sign-in and the browser it opens may outlive the app, as the
+            # console does on Windows (CREATE_BREAKAWAY_FROM_JOB above).
+            subprocess.Popen(command, env=child_env(command), stdin=subprocess.DEVNULL, start_new_session=True)
         service = getattr(self.spec, "login_service", "") or self.tool_name
         return f"開いたブラウザーで{service}にログイン後、「接続を確認」を押してください。"
 

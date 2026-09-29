@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from types import FrameType
-from typing import Any, BinaryIO
+from typing import Any
 
 from fastapi import APIRouter, Depends
 
@@ -15,6 +15,7 @@ from papeer import __version__
 from papeer.core.code_version import application_version
 from papeer.core.errors import NotFound
 from papeer.core.paths import app_env
+from papeer.providers.common import end_running_clis
 from sidecar import deps
 from sidecar.job_types import JobInfo
 from sidecar.schemas.system import HealthResponse, UIStateModel
@@ -40,17 +41,25 @@ SHUTDOWN_REQUEST_TIMEOUT = 5.0
 
 
 def exit_process() -> None:
+    # A CLI still running (its job did not stop in time) ends now, not after the sidecar: each runs in a
+    # session of its own, which ending the sidecar's process group would not reach.
+    end_running_clis()
     # Exit code 0 tells Tauri and `just smoke-sidecar` the sidecar ended by itself.
     os._exit(0)
 
 
-def stop_work() -> tuple[int, bool]:
+def stop_work(end_clis: bool = False) -> tuple[int, bool]:
     """Refuse new jobs, cancel the running ones and wait for them and the library requests (bounded).
 
-    Returns how many jobs were cancelled, and whether everything had stopped in time.
+    With end_clis (the app is gone, or wants the sidecar gone now), the running CLIs are ended at once,
+    right after their jobs are cancelled (so that no job records the failure or starts its CLI again),
+    instead of when each job gets to it. Returns how many jobs were cancelled, and whether everything had
+    stopped in time.
     """
     manager = deps.job_manager
     cancelled = manager.close()
+    if end_clis:
+        end_running_clis()
     jobs_stopped = manager.wait_idle(SHUTDOWN_JOB_TIMEOUT)
     requests_finished = deps.wait_for_library_requests(SHUTDOWN_REQUEST_TIMEOUT)
     return cancelled, jobs_stopped and requests_finished
@@ -63,23 +72,32 @@ def stop_work() -> tuple[int, bool]:
 WATCH_STDIN_VARIABLE = "WATCH_STDIN"
 
 
-def watch_stdin(stream: BinaryIO) -> None:
-    """Read `stream` until it ends, then stop the work and exit (run on a thread of its own)."""
+def watch_stdin(fd: int) -> None:
+    """Read file descriptor `fd` until it ends, then stop the work and exit (run on a daemon thread).
+
+    os.read on the descriptor, not sys.stdin.buffer: a daemon thread blocked in a buffered read holds the
+    buffer's lock, and Python ending meanwhile (the port was taken, say) aborts with "Fatal Python error:
+    _enter_buffered_busy" instead of exiting with its code.
+    """
     try:
-        while stream.read(4096):
+        while os.read(fd, 4096):
             pass
-    except (OSError, ValueError):
+    except OSError:
         pass  # A broken or closed pipe: the app is gone all the same.
     print("標準入力が閉じたため（アプリが終了したため）、ジョブを止めて終了します。", file=sys.stderr, flush=True)
-    stop_work()
+    stop_work(end_clis=True)
     exit_process()
 
 
 def start_watching_stdin() -> bool:
     """Start watch_stdin on the process's standard input when the app asked for it (PAPEER_WATCH_STDIN=1)."""
-    if app_env(WATCH_STDIN_VARIABLE) != "1" or sys.stdin is None:
+    if app_env(WATCH_STDIN_VARIABLE) != "1":
         return False
-    threading.Thread(target=watch_stdin, args=(sys.stdin.buffer,), name="watch-stdin", daemon=True).start()
+    try:
+        fd = sys.stdin.fileno()
+    except (AttributeError, OSError, ValueError):  # No standard input at all.
+        return False
+    threading.Thread(target=watch_stdin, args=(fd,), name="watch-stdin", daemon=True).start()
     return True
 
 
@@ -96,7 +114,7 @@ def stop_on_terminate() -> None:
         return
 
     def terminate(_signum: int, _frame: FrameType | None) -> None:
-        stop_work()
+        stop_work(end_clis=True)
         exit_process()
 
     signal.signal(signal.SIGTERM, terminate)

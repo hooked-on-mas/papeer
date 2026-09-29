@@ -156,6 +156,9 @@ pub fn run() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.local_addr().unwrap().port()
     };
+    // macOS and Linux: the login shell's PATH for the sidecar, looked up while the app is built.
+    #[cfg(not(debug_assertions))]
+    let search_path = sidecar::SearchPath::look_up();
     let mut context = tauri::generate_context!();
     let security = &mut context.config_mut().app.security;
     security.csp = security.csp.take().map(|csp| pin_sidecar_port(csp, port));
@@ -273,7 +276,7 @@ pub fn run() {
             }
 
             #[cfg(not(debug_assertions))]
-            app.manage(sidecar::spawn(app, port, &token)?);
+            app.manage(sidecar::spawn(app, port, &token, search_path)?);
             Ok(())
         })
         .build(context)

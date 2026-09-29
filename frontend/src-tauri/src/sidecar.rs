@@ -19,11 +19,12 @@
 //! What differs between platforms (starting the launcher, holding and ending its processes, the PATH it
 //! gets) is in `platform` below.
 
+use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::Manager;
@@ -58,17 +59,47 @@ pub struct Sidecar {
     token: String,
 }
 
+/// The PATH to start the sidecar with (platform::search_path), looked up on a thread of its own from the
+/// start of run(), while Tauri builds the app, instead of on the main thread in the setup hook.
+pub struct SearchPath {
+    receiver: mpsc::Receiver<Option<OsString>>,
+    deadline: Instant,
+}
+
+impl SearchPath {
+    pub fn look_up() -> SearchPath {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(platform::search_path());
+        });
+        SearchPath {
+            receiver,
+            // search_path gives up by itself after its own timeout; this only bounds the wait for it.
+            deadline: Instant::now() + platform::SEARCH_PATH_TIMEOUT + Duration::from_secs(1),
+        }
+    }
+
+    /// The PATH, if it was found; waits for what is left of the lookup's time at most.
+    fn take(self) -> Option<OsString> {
+        self.receiver
+            .recv_timeout(self.deadline.saturating_duration_since(Instant::now()))
+            .ok()
+            .flatten()
+    }
+}
+
 pub fn spawn(
     app: &tauri::App,
     port: u16,
     token: &str,
+    search_path: SearchPath,
 ) -> Result<Sidecar, Box<dyn std::error::Error>> {
     let exe = launcher(&app.path().resource_dir()?);
     let mut command = Command::new(&exe);
     command
         .env("PAPEER_PORT", port.to_string())
         .env("PAPEER_TOKEN", token);
-    if let Some(path) = platform::search_path() {
+    if let Some(path) = search_path.take() {
         command.env("PATH", path);
     }
     // Called from the setup hook, on the main thread, which lives as long as the app: on Linux the
@@ -180,14 +211,15 @@ fn marked_path(output: &str) -> Option<&str> {
 #[cfg_attr(windows, allow(dead_code))]
 const PATH_MARKER: &str = "__PAPEER_PATH__";
 
-/// `first`'s folders, then those of `then` that `first` does not have (empty entries left out).
+/// `first`'s folders, then those of `then` that `first` does not have. Only absolute folders: an empty
+/// or relative entry would be looked up from whatever folder a program runs in.
 #[cfg_attr(windows, allow(dead_code))]
 fn joined_path(first: &str, then: &str) -> String {
     let mut seen = std::collections::HashSet::new();
     first
         .split(':')
         .chain(then.split(':'))
-        .filter(|folder| !folder.is_empty() && seen.insert(*folder))
+        .filter(|folder| folder.starts_with('/') && seen.insert(*folder))
         .collect::<Vec<_>>()
         .join(":")
 }
@@ -197,6 +229,7 @@ mod platform {
     use std::ffi::OsString;
     use std::os::windows::process::CommandExt;
     use std::process::{Child, Command};
+    use std::time::Duration;
 
     /// The launcher is a console program (sidecar.spec console=True): give it no console window.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -209,6 +242,8 @@ mod platform {
     pub fn search_path() -> Option<OsString> {
         None
     }
+
+    pub const SEARCH_PATH_TIMEOUT: Duration = Duration::ZERO;
 
     /// The sidecar's processes, held in a job object (job.rs); None if the job could not be made.
     pub struct Processes(Option<crate::job::Job>);
@@ -249,17 +284,21 @@ mod platform {
 /// they end with the sidecar's jobs, not with the group.
 #[cfg(unix)]
 mod platform {
-    use std::ffi::OsString;
+    use std::ffi::{CStr, OsStr, OsString};
     use std::io::Read;
+    use std::os::unix::ffi::OsStrExt;
     use std::os::unix::process::CommandExt;
     use std::process::{Child, Command, Stdio};
     use std::sync::mpsc;
     use std::time::Duration;
 
-    /// How long the sidecar may take to end after SIGTERM before its group is sent SIGKILL.
-    const TERM_GRACE: Duration = Duration::from_secs(5);
+    /// How long the sidecar may take to end after SIGTERM before its group is sent SIGKILL. It stops
+    /// serving (up to 3 s, SIGTERM_REQUEST_TIMEOUT in sidecar/app.py), ends the running CLIs (up to 2 s,
+    /// CLI_TERM_GRACE in papeer/providers/common.py), then waits for its jobs: the CLIs, each in a session
+    /// of its own out of the sidecar's group, are ended well before this runs out.
+    const TERM_GRACE: Duration = Duration::from_secs(15);
     /// How long a login shell may take to print its PATH.
-    const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
+    pub const SEARCH_PATH_TIMEOUT: Duration = Duration::from_secs(5);
 
     pub fn prepare(command: &mut Command) {
         command.process_group(0);
@@ -298,12 +337,39 @@ mod platform {
         Some(super::joined_path(&login, &current).into())
     }
 
+    /// $SHELL, else the user's shell in the user database (getpwuid_r), else /bin/sh.
+    fn user_shell() -> OsString {
+        if let Some(shell) = std::env::var_os("SHELL").filter(|shell| !shell.is_empty()) {
+            return shell;
+        }
+        let mut buffer = vec![0 as libc::c_char; 16 * 1024];
+        // SAFETY: an all-zero passwd is a valid value for getpwuid_r to fill in.
+        let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut found: *mut libc::passwd = std::ptr::null_mut();
+        // SAFETY: the buffers are ours and sized as passed; the strings of `entry` point into `buffer`,
+        // which outlives their use below.
+        let status = unsafe {
+            libc::getpwuid_r(
+                libc::getuid(),
+                &mut entry,
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut found,
+            )
+        };
+        if status == 0 && !found.is_null() && !entry.pw_shell.is_null() {
+            // SAFETY: a NUL-terminated string inside `buffer`.
+            let shell = unsafe { CStr::from_ptr(entry.pw_shell) }.to_bytes();
+            if !shell.is_empty() {
+                return OsStr::from_bytes(shell).to_os_string();
+            }
+        }
+        "/bin/sh".into()
+    }
+
     fn login_shell_path() -> Option<String> {
-        let shell = std::env::var_os("SHELL")
-            .filter(|shell| !shell.is_empty())
-            .unwrap_or_else(|| "/bin/sh".into());
         let marker = super::PATH_MARKER;
-        let mut child = Command::new(shell)
+        let mut child = Command::new(user_shell())
             .args(["-l", "-i", "-c"])
             .arg(format!("printf '%s%s%s' {marker} \"$PATH\" {marker}"))
             .stdin(Stdio::null())
@@ -320,10 +386,11 @@ mod platform {
             let _ = stdout.read_to_end(&mut output);
             let _ = sender.send(output);
         });
-        let output = receiver.recv_timeout(LOGIN_SHELL_TIMEOUT).ok();
+        let output = receiver.recv_timeout(SEARCH_PATH_TIMEOUT).ok();
         signal_group(child.id(), libc::SIGKILL);
         let _ = child.wait();
-        let output = String::from_utf8(output?).ok()?;
+        // A startup file may print anything, in any encoding: the markers and the PATH are ASCII.
+        let output = String::from_utf8_lossy(&output?).into_owned();
         super::marked_path(&output).map(str::to_string)
     }
 
@@ -397,7 +464,7 @@ mod tests {
         let login = marked_path(&output).expect("marked");
         assert_eq!(login, "/opt/homebrew/bin:/usr/bin");
         assert_eq!(
-            joined_path(login, "/usr/bin:/bin::/usr/sbin"),
+            joined_path(login, "/usr/bin:/bin::/usr/sbin:relative/bin:."),
             "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin"
         );
         assert_eq!(marked_path("no markers"), None);

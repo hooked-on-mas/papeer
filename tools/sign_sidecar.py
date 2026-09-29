@@ -23,10 +23,11 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FOLDER = ROOT / "dist" / "sidecar"
 LAUNCHER = "papeer-sidecar"
 
-# The first four bytes of a Mach-O file: 32/64-bit in either byte order, and a universal ("fat") binary.
-# 0xcafebabe is also a Java class file's; the sidecar holds none, and codesign would refuse it loudly.
+# The first four bytes of a Mach-O file: 32/64-bit in either byte order, and a universal ("fat") binary
+# with 32-bit or 64-bit offsets (FAT_MAGIC, FAT_MAGIC_64), in either byte order. 0xcafebabe is also a Java
+# class file's; the sidecar holds none, and codesign would refuse it loudly.
 MACHO_MAGICS = {bytes.fromhex(value) for value in
-                ("feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "bebafeca")}
+                ("feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "bebafeca", "cafebabf", "bfbafeca")}
 # Files per codesign call, well under the limit on the length of a command line.
 BATCH = 100
 

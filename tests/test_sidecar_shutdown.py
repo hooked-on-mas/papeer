@@ -1,10 +1,12 @@
 """Stopping a sync, backup or restore, and shutting the sidecar down without leaving work half done."""
 from __future__ import annotations
 
-import io
 import os
 from pathlib import Path
 import signal
+import socket
+import subprocess
+import sys
 import threading
 import time
 from unittest.mock import Mock
@@ -21,9 +23,12 @@ from sidecar.app import app
 from sidecar.jobs import ConcurrencyConflict, JobManager
 from sidecar.routes import system
 
+from _isolation import point_pc_folders
+
 TOKEN = "correct-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 FIXTURE_PDF = Path(__file__).parent / "fixtures/sample.pdf"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -209,34 +214,35 @@ def test_shutdown_gives_up_waiting_for_a_job_that_does_not_stop(client, exits, m
         release.set()
 
 
-class _Pipe(io.RawIOBase):
-    """The read end of the app's pipe: blocks until `closed_by_app` is set, then reads as ended."""
-
-    def __init__(self) -> None:
-        self.closed_by_app = threading.Event()
-
-    def readable(self) -> bool:
-        return True
-
-    def readinto(self, buffer) -> int:
-        self.closed_by_app.wait(5)
-        return 0
+@pytest.fixture
+def ended_clis(monkeypatch):
+    """Records when the running CLIs are ended (providers.common.end_running_clis), and whether the jobs had
+    been cancelled by then (so that none records its CLI's failure or starts it again)."""
+    calls: list[bool] = []
+    monkeypatch.setattr(system, "end_running_clis", lambda: calls.append(deps.job_manager._closed) or 0)
+    return calls
 
 
-def test_the_sidecar_stops_its_jobs_and_exits_when_the_apps_pipe_closes(exits):
+def test_the_sidecar_stops_its_jobs_and_exits_when_the_apps_pipe_closes(exits, ended_clis):
     # The app's process ended (a crash, a kill): its end of the stdin pipe closes (system.watch_stdin).
     started = threading.Event()
     job = deps.job_manager.submit_job("translate", cancellable_job(started), paper_id="p")
     assert started.wait(5)
-    pipe = _Pipe()
-    watcher = threading.Thread(target=system.watch_stdin, args=(pipe,), daemon=True)
+    read_end, write_end = os.pipe()
+    watcher = threading.Thread(target=system.watch_stdin, args=(read_end,), daemon=True)
     watcher.start()
-    time.sleep(0.1)
-    assert deps.job_manager.get_job(job.job_id).running and exits == []
-    pipe.closed_by_app.set()
+    try:
+        os.write(write_end, b"anything the app might write is read and ignored")
+        time.sleep(0.1)
+        assert deps.job_manager.get_job(job.job_id).running and exits == []
+    finally:
+        os.close(write_end)
     watcher.join(5)
+    os.close(read_end)
     assert deps.job_manager.get_job(job.job_id).status == "cancelled"
     assert exits == [True]
+    # The CLIs are ended at once, once the jobs are cancelled (not when each job gets to it).
+    assert ended_clis == [True]
     with pytest.raises(ConcurrencyConflict):
         deps.job_manager.submit_job("translate", cancellable_job(threading.Event()), paper_id="q")
 
@@ -245,15 +251,47 @@ def test_the_stdin_pipe_is_watched_only_when_the_app_asks(exits, monkeypatch):
     # `just dev-sidecar` and the tests start the sidecar without it (its stdin is a console or nothing).
     started = []
     monkeypatch.setattr(system.threading, "Thread", lambda **kwargs: Mock(start=lambda: started.append(kwargs)))
+    monkeypatch.setattr(system.sys, "stdin", Mock(fileno=lambda: 7))
     monkeypatch.delenv("PAPEER_WATCH_STDIN", raising=False)
     assert system.start_watching_stdin() is False
     monkeypatch.setenv("PAPEER_WATCH_STDIN", "1")
     assert system.start_watching_stdin() is True
-    assert [kwargs["target"] for kwargs in started] == [system.watch_stdin]
+    assert [(kwargs["target"], kwargs["args"]) for kwargs in started] == [(system.watch_stdin, (7,))]
+    monkeypatch.setattr(system.sys, "stdin", None)  # pythonw, or a closed stdin: nothing to watch.
+    assert system.start_watching_stdin() is False
+
+
+def test_a_sidecar_that_cannot_start_exits_with_its_code_while_watching_its_stdin(tmp_path):
+    # The port is taken: uvicorn gives up and the sidecar exits with its code, while the watcher thread is still
+    # blocked reading the app's pipe. A blocked buffered read (sys.stdin.buffer) aborted Python instead
+    # ("Fatal Python error: _enter_buffered_busy").
+    env = {name: value for name, value in os.environ.items()
+           if not name.upper().startswith(("PAPEER_", "PAPERDESK_", "VIRTUAL_ENV"))}
+    point_pc_folders(env.__setitem__, tmp_path / "pc")
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        env.update(PAPEER_DATA_DIR=str(tmp_path / "data"), PAPEER_TOKEN="t", PAPEER_WATCH_STDIN="1",
+                   PAPEER_PORT=str(taken.getsockname()[1]), PYTHONUTF8="1")
+        process = subprocess.Popen([sys.executable, "-m", "sidecar"], cwd=ROOT, env=env, stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            # The pipe stays open, as while the app runs (communicate() would close it).
+            process.wait(60)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            assert process.stdin is not None and process.stdout is not None
+            process.stdin.close()
+            output = process.stdout.read()
+    # uvicorn exits with 3 (its STARTUP_FAILURE) when it cannot bind the port.
+    assert process.returncode == 3, output.decode("utf-8", "replace")
+    assert b"Fatal Python error" not in output
 
 
 @pytest.mark.skipif(os.name == "nt", reason="SIGTERM: macOS and Linux (Windows ends the sidecar through its job object)")
-def test_sigterm_stops_the_jobs_before_the_exit(exits, monkeypatch):
+def test_sigterm_stops_the_jobs_before_the_exit(exits, ended_clis, monkeypatch):
     handlers = {}
     monkeypatch.setattr(system.signal, "signal", lambda signum, handler: handlers.__setitem__(signum, handler))
     system.stop_on_terminate()
@@ -262,7 +300,16 @@ def test_sigterm_stops_the_jobs_before_the_exit(exits, monkeypatch):
     assert started.wait(5)
     handlers[signal.SIGTERM](signal.SIGTERM, None)
     assert deps.job_manager.get_job(job.job_id).status == "cancelled"
-    assert exits == [True]
+    assert exits == [True] and ended_clis == [True]
+
+
+def test_exit_ends_the_clis_that_are_still_running(monkeypatch):
+    # A job that did not stop in time: its CLI, in a session of its own, must not outlive the sidecar.
+    calls = []
+    monkeypatch.setattr(system, "end_running_clis", lambda: calls.append("clis"))
+    monkeypatch.setattr(system.os, "_exit", lambda code: calls.append(code))
+    system.exit_process()
+    assert calls == ["clis", 0]
 
 
 def test_a_job_closed_right_after_it_was_submitted_is_waited_for():

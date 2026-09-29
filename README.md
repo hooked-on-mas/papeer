@@ -56,7 +56,7 @@ docs/             仕様ドキュメント
 
 ## 開発環境のセットアップ
 
-Windows 11 x64 を対象にしています。macOS（13 以降、Apple Silicon・Intel）と Linux（Ubuntu 22.04 以降、x86_64 の `.deb`）向けのビルドと検査も CI で行っていますが、実機では確かめていません（「リリース」）。次のツールを用意してください。
+Windows 11 x64 を対象にしています。macOS（13.3 以上、Apple Silicon・Intel）と Linux（Ubuntu 22.04 以降、x86_64 の `.deb`）向けのビルドと検査も CI で行っていますが、実機では確かめていません（「リリース」）。次のツールを用意してください。
 
 - [uv](https://docs.astral.sh/uv/)（Python 3.12 は uv が自動で導入します）
 - [Node.js](https://nodejs.org/) 22.18 以上と [pnpm](https://pnpm.io/)（フロントエンドのテストは Node が `.ts` を直接実行します）
@@ -158,8 +158,10 @@ just build
 
 - どの OS でも、sidecar の標準入力はアプリが何も書き込まないパイプで、アプリのプロセスが終わると閉じます。アプリは `PAPEER_WATCH_STDIN=1` を付けて起動し、sidecar はパイプが閉じたら `/shutdown` と同じようにジョブ（と CLI）を止めて終わります（`sidecar/routes/system.py` の `watch_stdin`）。
 - Windows では、上のジョブオブジェクトがアプリの終了と一緒に sidecar と CLI を止めます。
-- macOS・Linux では、sidecar を専用のプロセスグループで起動し、`/shutdown` で終わらなければグループに SIGTERM を、5 秒たっても残っていれば SIGKILL を送ります。sidecar は SIGTERM を受けるとジョブと CLI を止めてから終わります。Linux では、アプリのプロセスが終わると sidecar に SIGTERM が届くようにもしています（`PR_SET_PDEATHSIG`）。
-- macOS・Linux では、Finder や Dock から開いたアプリの PATH は最小限（`/usr/bin:/bin:/usr/sbin:/sbin`）なので、sidecar を起動する前にログインシェルから PATH を読み、先頭に足します（5 秒で答えなければ使わない。端末から起動したときは読まない）。NSIS のインストーラーは、ファイルを置く前にインストール先の古い `sidecar\` と 0.2.0 以前の `sidecar.exe` を消します（`frontend/src-tauri/windows/hooks.nsh`）。ただし Papeer か sidecar が動いている間は `sidecar\` を消しません（このフックはアプリを閉じるよう求める確認より前に動くため、そこで取り消されても起動できなくならないように）。MSI は置き換える版のファイルを自分で消します。
+- macOS・Linux では、sidecar を専用のプロセスグループで起動し、`/shutdown` で終わらなければグループに SIGTERM を、15 秒たっても残っていれば SIGKILL を送ります。AI の CLI は、sidecar がそれぞれを止められるように別のセッションで動かしているため、このグループには入っていません。sidecar は動いている CLI を覚えておき、SIGTERM を受けたとき・標準入力のパイプが閉じたときは、ジョブを取り消してすぐ、それぞれのグループに SIGTERM を、2 秒後に SIGKILL を送ってから終わります（終了する直前にも、残っている CLI を止めます）。Linux では、アプリのプロセスが終わると sidecar に SIGTERM が届くようにもしています（`PR_SET_PDEATHSIG`）。
+- macOS・Linux では、Finder や Dock から開いたアプリの PATH は最小限（`/usr/bin:/bin:/usr/sbin:/sbin`）なので、ログインシェル（`$SHELL`、なければユーザーの設定のシェル）から PATH を読み、先頭に足して sidecar を起動します。読むのはアプリの起動の初めから別のスレッドで行い、5 秒で答えなければ使いません。端末から起動したときは読みません。絶対パスの項目だけを使います。
+
+NSIS のインストーラーは、ファイルを置く前にインストール先の古い `sidecar\` と 0.2.0 以前の `sidecar.exe` を消します（`frontend/src-tauri/windows/hooks.nsh`）。ただし Papeer か sidecar が動いている間は `sidecar\` を消しません（このフックはアプリを閉じるよう求める確認より前に動くため、そこで取り消されても起動できなくならないように）。MSI は置き換える版のファイルを自分で消します。
 
 `target/release/papeer.exe` をインストールせずにそのまま起動するときは、`target/release/sidecar/` を使います。tauri-build はビルドのたびにこのフォルダーへ上書きでコピーするだけなので、前のビルドにしかないファイルが残ることがあります。おかしいときは `target/release/sidecar/` を消してからビルドし直してください（インストーラーには `frontend/src-tauri/sidecar/` の中身だけが入ります）。
 
@@ -205,11 +207,18 @@ MSI は Tauri が WiX Toolset v3 で作り、WiX v3 は Windows の VBScript（�
 
 このワークフローは自動で発行される `GITHUB_TOKEN` だけを使い、追加のシークレットは不要です。インストーラーはコード署名をしていないため、初回の実行時に Windows SmartScreen の警告が出ます（署名する場合は証明書をシークレットに登録し、`tauri.conf.json` の `bundle.windows` に署名の設定を加えます）。自動更新は未対応です。
 
-Actions の画面から手動で実行（Run workflow）すると、選んだブランチのインストーラーを同じ手順で作り、Release は作らずに実行結果の成果物（Artifacts）として残します。タグを付ける前の試しに使えます（Mac の 2 つのビルドは、非公開のリポジトリでは 1 分が 10 分として数えられます）。
+Actions の画面から手動で実行（Run workflow）すると、選んだブランチのインストーラーを同じ手順で作り、Release は作らずに実行結果の成果物（Artifacts）として残します。タグを付ける前の試しに使えます。
+
+非公開のリポジトリでは、Actions の実行時間が無料枠から引かれます（Linux の 1 分は 1 分、Windows は 2 分、macOS は 10 分として数える）。見積もりは次のとおりです（実測ではありません）。
+
+- CI の push 1 回：Windows の 2 倍を中心に、約 60〜80 分相当
+- リリース（タグ 1 回、または手動の試し 1 回）：Mac 2 つのビルドの 10 倍が大半で、約 750〜1100 分相当
+
+Intel の Mac の `macos-15-intel` は、GitHub が用意する最後の Intel のイメージです。提供が終わったら、Intel 版の行を外すか、Apple Silicon のランナーで Rosetta を使って作る方法に切り替えます。
 
 ### macOS・Linux 版
 
-Apple の開発者登録をしていないため、Mac 版は Developer ID で署名しておらず、公証（notarization）もしていません。アプリ全体（`tauri.macos.conf.json` の `signingIdentity: "-"`）と、同梱の sidecar の中のプログラムとライブラリ一つひとつ（`tools/sign_sidecar.py`）に ad-hoc 署名だけをしています（Apple Silicon は署名のないプログラムを実行しないため）。リリースのワークフローは `codesign --verify` でこれを確かめます。最低の版は macOS 13 です。初めて開くときは次の手順が必要です。
+Apple の開発者登録をしていないため、Mac 版は Developer ID で署名しておらず、公証（notarization）もしていません。アプリ全体（`tauri.macos.conf.json` の `signingIdentity: "-"`）と、同梱の sidecar の中のプログラムとライブラリ一つひとつ（`tools/sign_sidecar.py`）に ad-hoc 署名だけをしています（Apple Silicon は署名のないプログラムを実行しないため）。リリースのワークフローは `codesign --verify` でこれを確かめます。動作の条件は macOS 13.3 以上（Safari を 16.4 以上に更新した 13.x を含む。PDF の表示に使う pdf.js の legacy 版が Safari 16.4 の WebKit を必要とするため）です（`tauri.macos.conf.json` の `minimumSystemVersion` は 13.0）。初めて開くときは次の手順が必要です。
 
 1. ディスクイメージから「アプリケーション」フォルダーにコピーする（ダウンロードフォルダーのまま開くと、読み取り専用の仮の場所から動いてしまう）
 2. 開くと「“Papeer”は開いていません」と出るので「完了」を押し、「システム設定」→「プライバシーとセキュリティ」の下にある「このまま開く」を押す

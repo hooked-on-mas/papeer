@@ -12,6 +12,9 @@
 # Run by hand (Actions → Release → Run workflow), it builds the installers of a branch the same way and keeps
 # them as the run's artifacts, without a release: a trial before tagging. The repository is private, so the
 # runner minutes count against the plan's allowance (a Windows minute twice, a macOS minute ten times).
+# Estimated (not measured): one tag, or one run by hand, costs some 750-1100 minutes of it, nearly all for the
+# two Mac builds. macos-15-intel is the last Intel image GitHub offers: when it goes, drop the macos-x64 row
+# or build it on Apple Silicon under Rosetta.
 #
 # The build jobs only read the repository; only the release job, which runs no project code and no setup
 # actions, may write (create the release). Third-party actions are pinned to commit SHAs (the version is in
