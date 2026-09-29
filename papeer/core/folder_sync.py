@@ -115,6 +115,20 @@ def migrate(root: Path, cancel: threading.Event, progress: Progress) -> dict:
     return drive_sync.recording_failure(root, action)
 
 
+def abandon_migration(root: Path) -> None:
+    """The user stopped the migration (the job's 中止): the next sync no longer goes on with it unasked; the
+    user may start it again. What it wrote is left for the clean-up. A stop as the app closes, or a failure,
+    leaves it to go on instead. Once its generation is written the folder is in the new format, and what is
+    left (_finish_migration) is done all the same."""
+    state = read_state(root)
+    if not _pending(state):
+        return
+    if state.get("folder") and folder_format(Path(state["folder"]), state) == 2:
+        return
+    state.pop("migration")
+    save_state(root, state)
+
+
 def _now() -> datetime:
     return sync_store._now()
 
@@ -192,13 +206,16 @@ def _seconds(value: object) -> int | None:
 
 def first_format_lineage(revisions: list[dict], parents: list[str]) -> list[list]:
     """The lineage of the migration's generation: its parents, then every other revision of the first format,
-    newest first, at most sync_store.LINEAGE_LIMIT ([ID, seconds] as sync_store.lineage)."""
+    newest first, at most sync_store.LINEAGE_LIMIT ([ID, seconds] as sync_store.lineage).
+
+    Each is given the time of the migration, not its own: the generations made next keep what their parents
+    name for LINEAGE_DAYS from then, so a PC still on a revision made long before (the folder unused for two
+    months) finds it taken over after the migration, rather than being asked to choose after one more sync."""
     now = int(_now().timestamp())
-    times = {item["id"]: _seconds(item["created"]) for item in revisions}
-    own = [[identity, times.get(identity) or now] for identity in parents]
-    rest = sorted(((identity, made) for identity, made in times.items() if identity not in parents and made is not None),
-                  key=lambda item: (-item[1], item[0]))[:sync_store.LINEAGE_LIMIT]
-    return own + [[identity, made] for identity, made in rest]
+    times = {item["id"]: _seconds(item["created"]) or 0 for item in revisions}
+    rest = sorted((identity for identity in times if identity not in parents),
+                  key=lambda identity: (-times[identity], identity))[:sync_store.LINEAGE_LIMIT]
+    return [[identity, now] for identity in [*parents, *rest]]
 
 
 def _finish_migration(root: Path, store: GenerationStore, state: dict, cancel, *,
@@ -225,7 +242,7 @@ def _finish_migration(root: Path, store: GenerationStore, state: dict, cancel, *
             taken = [item["id"] for item in revision_heads(revisions) if not is_marker(item) and item["id"] in covered]
             # 5. Put even over no revision (the folder of the first format was empty): it keeps an earlier
             # Papeer from publishing there. A revision no generation took over stays a head beside it.
-            drive_sync.FolderDrive(store.folder).write_marker(taken, successor["id"], successor.get("counts") or {}, cancel)
+            drive_sync.FolderDrive(store.folder).write_marker(taken, successor["id"], cancel)
     if own is not None:
         # 6. The generation holds the library this PC last synced (and still holds, unless changed since:
         # then that change is published over it, as any change is).
@@ -272,9 +289,11 @@ def format_status(root: Path) -> dict:
     "format": 1 or 2 (folder_format), None when not connected; "migration_pending": a migration this PC
     began goes on at the next sync; "revisions": the first format's revisions but the markers (count, size);
     "removable": those remove_old_data removes (their IDs, count and size), none until the folder is in the
-    new format; "later": revisions an earlier Papeer published that no generation took over ({id, device,
-    created}: offered as choices, never removed); "unmigrated": the PCs (their names) that published in the
-    first format within sync_store.DEVICE_KEPT and have not synced in the new one; "ready": the folder is in
+    new format; "later": revisions published in the first format that no generation took over ({id, device,
+    created, old_papeer}: offered as choices, never removed; old_papeer false for one this Papeer published
+    while the folder was being moved); "unmigrated": the PCs (their names) that published in the first
+    format within sync_store.DEVICE_KEPT and have not synced in the new one (a PC that only took revisions
+    in published none, and is not told); "ready": the folder is in
     the new format and every PC synced in it, so the removal may be suggested (it may be done at any time).
     """
     state = read_state(root)
@@ -306,7 +325,8 @@ def format_status(root: Path) -> dict:
     unmigrated = sorted(name for name in recent if name not in names)
     ids = sorted(item["id"] for item in removable)
     result.update(removable={"count": len(ids), "size": _size(_files_of(folder, ids)), "ids": ids},
-                  later=[{key: later[identity][key] for key in ("id", "device", "created")} for identity in sorted(later)],
+                  later=[{**{key: later[identity][key] for key in ("id", "device", "created")},
+                          "old_papeer": not drive_sync_v2._moving(later[identity])} for identity in sorted(later)],
                   unmigrated=unmigrated, ready=bool(ids) and not later and not unmigrated)
     return result
 
@@ -351,7 +371,7 @@ def remove_old_data(root: Path, ids: Iterable[str], cancel: threading.Event | No
             and any(parent not in present for item in markers for parent in item["parents"])):
         successor = view.generations[drive_sync_v2._newest(view, heads)]
         try:
-            drive_sync.FolderDrive(folder).write_marker([], successor["id"], successor.get("counts") or {}, cancel)
+            drive_sync.FolderDrive(folder).write_marker([], successor["id"], cancel)
         except OSError:
             return {"removed": removed, "size": size, "failed": failed}  # The markers stay as they are.
         for path in _files_of(folder, (item["id"] for item in markers)):

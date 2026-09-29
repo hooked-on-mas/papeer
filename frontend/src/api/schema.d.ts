@@ -1313,7 +1313,8 @@ export interface paths {
         /**
          * Migrate
          * @description Move the sync folder to the new format, once the user agreed (folder_sync.migrate): a sync job whose
-         *     result also says whether the folder moved ("migrated"); what stops it goes on at the next sync.
+         *     result also says whether the folder moved ("migrated"). What stops it (a conflict, a failure, the app
+         *     closing) goes on at the next sync, but the user's 中止 gives it up (abandoned_when_stopped).
          */
         post: operations["migrate_api_drive_migrate_post"];
         delete?: never;

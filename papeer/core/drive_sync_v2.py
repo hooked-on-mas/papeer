@@ -31,6 +31,7 @@ in once validated as a restore is (backup.restore_folder). A sync that settles t
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import functools
 import hashlib
 import json
 import os
@@ -38,6 +39,8 @@ from pathlib import Path, PurePosixPath
 import platform
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import uuid
@@ -90,18 +93,57 @@ def _expired(state: dict) -> bool:
     return age is None or age > BASE_EXPIRY
 
 
+@functools.cache
+def machine_key() -> str | None:
+    """A digest of the ID the OS gives this machine (Windows: MachineGuid; macOS: IOPlatformUUID; Linux:
+    machine-id), which a copied device folder does not carry along; None when it cannot be read."""
+    value = None
+    try:
+        if sys.platform == "win32":
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography", 0,
+                                winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+                value = str(winreg.QueryValueEx(key, "MachineGuid")[0])
+        elif sys.platform == "darwin":
+            output = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True,
+                                    text=True, timeout=10, check=False).stdout
+            match = re.search(r'"IOPlatformUUID"\s*=\s*"([^"]+)"', output)
+            value = match[1] if match else None
+        else:
+            for path in (Path("/etc/machine-id"), Path("/var/lib/dbus/machine-id")):
+                if path.is_file():
+                    value = path.read_text("utf-8").strip()
+                    break
+    except (OSError, subprocess.SubprocessError, ValueError):
+        value = None
+    if not value:
+        return None
+    return hashlib.sha256(b"papeer-machine:" + value.encode("utf-8")).hexdigest()
+
+
 def _device_id(state: dict) -> str:
     """This PC's ID in the sync folder, made at its first sync in the new format (PC names can collide).
 
-    It belongs to this PC's name: a state that names another was brought from another PC (its device folder
-    copied) or the PC was renamed, and a new ID is made, so two PCs never write one device file nor take
-    each other's generations for their own (_own)."""
+    It stays when the PC is renamed (macOS names itself after the network it is on), so the PC goes on
+    repairing the generations it made (_own). A state brought from another PC (its device folder copied)
+    gets a new ID, so two PCs never write one device file nor take each other's generations for their own:
+    it is told by the machine's own ID (machine_key, recorded in the state as a digest), or, when that cannot
+    be read, by the PC's name. A state from before the machine's ID was recorded keeps its ID and records it."""
     value = state.get("device_id")
-    name = platform.node()
-    if not (isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value)) or state.get("device_name", name) != name:
+    name, machine = platform.node(), machine_key()
+    recorded = state.get("device_machine")
+    if machine is not None and isinstance(recorded, str):
+        brought = recorded != machine
+    elif machine is None:
+        brought = state.get("device_name", name) != name
+    else:
+        brought = False
+    if not (isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value)) or brought:
         value = state["device_id"] = uuid.uuid4().hex
         state["device_created"] = _now().isoformat()
     state["device_name"] = name
+    if machine is not None:
+        state["device_machine"] = machine
     return value
 
 
@@ -576,6 +618,12 @@ def _legacy_heads(revisions: list[dict], view: View) -> dict[str, dict]:
             if not drive_sync.is_marker(revision) and revision["id"] not in covered}
 
 
+def _moving(revision: dict) -> bool:
+    """Whether a revision of the first format was published by a Papeer that reads the new format as well
+    (drive_sync.sync says so): made while the folder was being moved, before the new format reached it."""
+    return type(revision.get("newest_format")) is int and revision["newest_format"] >= sync_store.FORMAT
+
+
 def _mark_taken_over(store: GenerationStore, view: View, revisions: list[dict], cancel) -> str | None:
     """Put a marker over the heads of the first format that a generation took over (in its lineage) but no
     marker stands over yet (a migration stopped before its marker, a revision of an earlier Papeer just
@@ -588,8 +636,7 @@ def _mark_taken_over(store: GenerationStore, view: View, revisions: list[dict], 
         return None
     successor = view.generations[_newest(view, ids)]
     try:
-        return drive_sync.FolderDrive(store.folder).write_marker(parents, successor["id"],
-                                                                 successor.get("counts") or {}, cancel)
+        return drive_sync.FolderDrive(store.folder).write_marker(parents, successor["id"], cancel)
     except OSError:
         return None  # Written at the next sync; an earlier Papeer's revision meanwhile is offered as a choice.
 
@@ -776,12 +823,18 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
         single is not None and known_base != single and (dirty or known_base is None))
     if conflict and choice is None:
         differences = conflict_differences(root, store, view, current, local_files, cancel)
+        earlier = sorted(identity for identity in legacy if not _moving(legacy[identity]))
         if legacy:
             differences.update(drive_sync.conflict_differences(
                 root, drive_sync.FolderDrive(store.folder), [legacy[identity] for identity in sorted(legacy)], cancel))
-            device = legacy[sorted(legacy)[0]]["device"]
+        if earlier:
+            device = legacy[earlier[0]]["device"]
             message = (f"{device} の古いバージョンのPapeerで保存された同期データがあります。そのPCのPapeerを更新してください。"
                        "このデータを使うこともできます。保存先・同期で使用するデータを選択してください。")
+        elif legacy:
+            device = legacy[sorted(legacy)[0]]["device"]
+            message = (f"同期の形式を新しくしている途中に、{device} で保存された変更があります。"
+                       "保存先・同期で使用するデータを選択してください。")
         elif expired and state.get("format") != sync_store.FORMAT:
             message = "同期の形式が新しくなったため、どちらのデータを使うか確認が必要です。保存先・同期で使用するデータを選択してください。"
         elif expired:
@@ -791,9 +844,11 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
         conflicts = []
         for identity in ids:
             item = heads.get(identity) or legacy.get(identity) or {}
-            # "legacy": published by an earlier Papeer in the first format (the choice says to update it).
+            # "legacy": published in the first format beside the new one; "old_papeer": by an earlier Papeer
+            # (the choice says to update it), not by one that published before the new format reached it.
             conflicts.append({"id": identity, "device": item.get("device"), "created": item.get("created"),
-                              "diff": differences.get(identity), "legacy": identity in legacy})
+                              "diff": differences.get(identity), "legacy": identity in legacy,
+                              "old_papeer": identity in earlier})
         state.update(conflicts=conflicts, error=message, review=None, waiting=None)
         drive_sync.save_state(root, state)
         return {"status": "conflict", "conflicts": state["conflicts"]}

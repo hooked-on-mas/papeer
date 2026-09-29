@@ -524,9 +524,13 @@ class FolderDrive:
             raise ValueError("同期データのIDが不正です。")
         return self.folder / (revision + ".papeer-sync")
 
-    def write_marker(self, parents: list[str], successor: str, counts: dict, cancel: threading.Event) -> str:
+    def write_marker(self, parents: list[str], successor: str, cancel: threading.Event) -> str:
         """Publish a marker (see MARKER_SCHEMA) over `parents` for the generation `successor` of the new
-        format; its ID. An ordinary revision of this format, whose archive is an empty ZIP."""
+        format; its ID. An ordinary revision of this format, whose archive is an empty ZIP.
+
+        Its counts say it holds no paper, as it holds none: an earlier Papeer whose choice leaves it out then
+        keeps no side backup of it (_set_aside skips a head without papers), which would be empty and push
+        out a real one."""
         with tempfile.TemporaryDirectory() as directory:
             empty = Path(directory) / "library.zip"
             with zipfile.ZipFile(empty, "w"):
@@ -538,7 +542,7 @@ class FolderDrive:
             return self.upload(empty, {"parents": sorted(set(parents)), "hash": marker_hash,
                                        "archive_hash": archive_hash, "device": platform.node(),
                                        "schema_version": MARKER_SCHEMA, "app_version": __version__,
-                                       "counts": counts, "successor": {"format": 2, "gen": successor}},
+                                       "counts": {"papers": 0}, "successor": {"format": 2, "gen": successor}},
                                cancel, lambda _: None)
 
     def upload(self, path: Path, metadata: dict, cancel, progress) -> str:
@@ -1038,9 +1042,12 @@ def sync(lib: Library, remote, cancel, progress, *, choice: str | None = None,
                     archive_hash = hashlib.file_digest(stream, "sha256").hexdigest()
                 # app_version is the Papeer that published this revision; a taken revision published again
                 # keeps its own schema_version, since the archive holds its database unmigrated.
+                # "newest_format": this Papeer reads the new format too, so a revision it publishes while the
+                # folder is being moved is no earlier Papeer's (drive_sync_v2 tells the two apart).
                 base = remote.upload(archive, {"parents": ids, "hash": content_hash, "archive_hash": archive_hash,
                                               "device": platform.node(), "schema_version": content_schema,
-                                              "app_version": __version__, "counts": content_counts}, cancel, progress)
+                                              "app_version": __version__, "counts": content_counts,
+                                              "newest_format": sync_store.FORMAT}, cancel, progress)
                 uploaded = True
             if pull:
                 progress("このPCの履歴に記録しています…")

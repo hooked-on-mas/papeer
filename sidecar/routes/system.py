@@ -83,7 +83,8 @@ def get_jobs() -> list[JobInfo]:
 @router.post("/api/jobs/cancel-all")
 def cancel_all_jobs() -> dict[str, int]:
     manager = deps.job_manager
-    return {"cancelled": sum(manager.cancel_job(job.job_id) for job in manager.get_jobs() if job.running)}
+    # Only as the app closes (AppShell): not the user's 中止 of each job (JobManager.stopped_by_user).
+    return {"cancelled": sum(manager.cancel_job(job.job_id, by_user=False) for job in manager.get_jobs() if job.running)}
 
 
 @router.get("/api/jobs/{job_id}", response_model=JobInfo)

@@ -1,5 +1,5 @@
 """Device-local folder selection and exclusive library synchronization jobs."""
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from fastapi import APIRouter, Depends
 
 from papeer.core import drive_sync, folder_sync, history_restore, local_history
@@ -92,14 +92,29 @@ def sync(body: SyncRequest) -> JobStarted:
             return run(cancel, progress)
 
     def run(cancel, progress):
-        try:
-            deps.wait_for_library_requests(side_reads=not body.background, cancel=cancel)
-        except Cancelled:
-            # Stopping is not a failure: no error is recorded, so automatic sync resumes next time.
-            raise Cancelled(drive_sync.SYNC_CANCELLED) from None
-        return folder_sync.sync_connected(root, cancel, progress, choice=body.choice, expected_heads=body.expected_heads,
-                                          confirm=body.confirm, background=body.background)
+        with abandoned_when_stopped(root, cancel):
+            try:
+                deps.wait_for_library_requests(side_reads=not body.background, cancel=cancel)
+            except Cancelled:
+                # Stopping is not a failure: no error is recorded, so automatic sync resumes next time.
+                raise Cancelled(drive_sync.SYNC_CANCELLED) from None
+            return folder_sync.sync_connected(root, cancel, progress, choice=body.choice,
+                                              expected_heads=body.expected_heads, confirm=body.confirm,
+                                              background=body.background)
     return deps.submit_job(JobKind.DRIVE_SYNC, action)
+
+
+@contextmanager
+def abandoned_when_stopped(root, cancel):
+    """A migration going on in this job (a sync goes on with one left to go on) that the user stops is given up
+    (folder_sync.abandon_migration): not taken up again by the next automatic sync. Stopped as the app closes,
+    it goes on at the next sync."""
+    try:
+        yield
+    except Cancelled:
+        if deps.job_manager.stopped_by_user(cancel):
+            folder_sync.abandon_migration(root)
+        raise
 
 
 @router.get("/api/drive/format")
@@ -111,15 +126,17 @@ def drive_format():
 @router.post("/api/drive/migrate")
 def migrate() -> JobStarted:
     """Move the sync folder to the new format, once the user agreed (folder_sync.migrate): a sync job whose
-    result also says whether the folder moved ("migrated"); what stops it goes on at the next sync."""
+    result also says whether the folder moved ("migrated"). What stops it (a conflict, a failure, the app
+    closing) goes on at the next sync, but the user's 中止 gives it up (abandoned_when_stopped)."""
     root = deps.get_data_dir()
 
     def action(cancel, progress, _):
-        try:
-            deps.wait_for_library_requests(cancel=cancel)
-        except Cancelled:
-            raise Cancelled(drive_sync.SYNC_CANCELLED) from None
-        return folder_sync.migrate(root, cancel, progress)
+        with abandoned_when_stopped(root, cancel):
+            try:
+                deps.wait_for_library_requests(cancel=cancel)
+            except Cancelled:
+                raise Cancelled(drive_sync.SYNC_CANCELLED) from None
+            return folder_sync.migrate(root, cancel, progress)
     return deps.submit_job(JobKind.DRIVE_SYNC, action)
 
 

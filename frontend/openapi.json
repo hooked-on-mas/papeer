@@ -6674,7 +6674,7 @@
     "/api/drive/migrate": {
       "post": {
         "summary": "Migrate",
-        "description": "Move the sync folder to the new format, once the user agreed (folder_sync.migrate): a sync job whose\nresult also says whether the folder moved (\"migrated\"); what stops it goes on at the next sync.",
+        "description": "Move the sync folder to the new format, once the user agreed (folder_sync.migrate): a sync job whose\nresult also says whether the folder moved (\"migrated\"). What stops it (a conflict, a failure, the app\nclosing) goes on at the next sync, but the user's \u4e2d\u6b62 gives it up (abandoned_when_stopped).",
         "operationId": "migrate_api_drive_migrate_post",
         "parameters": [
           {

@@ -3,15 +3,18 @@
 Each PC has its own device folder and name, and its own copy of the sync folder; a stand-in for Google Drive
 copies what one PC wrote to the other's copy when asked (the whole folder: the first format's revisions and
 the new format's files alike). An earlier Papeer is played by drive_sync.sync itself, which is what one that
-reads the database version of a revision (T09 and later) runs.
+reads the database version of a revision (T09 and later) runs, but for what its revisions say of the new
+format; the last test runs b0b0280 itself.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 import os
 from pathlib import Path
 import platform
 import random
 import shutil
+import sys
 import threading
 import time
 import uuid
@@ -20,7 +23,7 @@ import pytest
 
 from _isolation import point_pc_folders
 from papeer import __version__
-from papeer.core import drive_sync, drive_sync_v2, folder_sync, local_history
+from papeer.core import drive_sync, drive_sync_v2, folder_sync, local_history, sync_store
 from papeer.core.fileio import is_temporary
 from papeer.core.storage import Library, NewerSchemaError
 from papeer.core.sync_store import GenerationStore
@@ -37,11 +40,14 @@ class PC:
         self.place = tmp_path / f"{name}-pc"
         self.drive = tmp_path / f"{name}-drive"
         self.root = tmp_path / name / "library"
+        # What the OS says of the machine (drive_sync_v2.machine_key): unlike its name, renaming leaves it.
+        self.machine = f"machine-{name}"
         self.drive.mkdir()
 
     def __enter__(self) -> Library:
         point_pc_folders(self.monkeypatch.setenv, self.place)
         self.monkeypatch.setattr(platform, "node", lambda: f"PC-{self.name.upper()}")
+        self.monkeypatch.setattr(drive_sync_v2, "machine_key", lambda: self.machine)
         return Library(self.root)
 
     def __exit__(self, *_exc):
@@ -61,8 +67,13 @@ class PC:
             return folder_sync.migrate(self.root, cancel or threading.Event(), progress)
 
     def old_sync(self, **kwargs) -> dict:
-        """A sync of an earlier Papeer, in the first format only."""
-        with self as lib:
+        """A sync of an earlier Papeer, in the first format only: its revisions do not say it reads the new one."""
+        upload = drive_sync.FolderDrive.upload
+
+        def earlier(remote, path, metadata, cancel, progress):
+            return upload(remote, path, {k: v for k, v in metadata.items() if k != "newest_format"}, cancel, progress)
+        with self as lib, self.monkeypatch.context() as patch:
+            patch.setattr(drive_sync.FolderDrive, "upload", earlier)
             return drive_sync.sync(lib, drive_sync.FolderDrive(self.drive), threading.Event(), lambda _: None, **kwargs)
 
     def check(self) -> str:
@@ -464,6 +475,124 @@ def test_a_first_format_base_no_generation_names_is_compared_whole(synced):
     assert "同期の形式が新しくなったため" in b.state()["error"]
 
 
+def test_a_first_format_revision_older_than_lineages_reach_is_taken_over_for_a_while(synced, monkeypatch):
+    """The folder had not been used for over LINEAGE_DAYS when a moved it; a publishes once more. b, still on
+    the old revision and without changes, takes a's library in rather than being asked to choose: the
+    migration names the revisions it took over as of its own time."""
+    a, b, identity = synced
+    later = sync_store._now() + timedelta(days=70)
+    monkeypatch.setattr(sync_store, "_now", lambda: later)
+    assert a.migrate()["migrated"] is True
+    a.edit(identity, "after moving")
+    assert a.sync()["status"] == "synced"
+    mirror(a, b)
+    result = b.sync()
+    assert result["status"] == "synced" and result["reloaded"] is True
+    assert b.note(identity) == "after moving"
+
+
+def test_the_migrating_pc_not_coming_back_before_its_marker_leaves_it_to_another(synced, monkeypatch):
+    """a stopped after its generation, before the marker, and does not sync again: b puts the marker."""
+    a, b, identity = synced
+
+    def failing(self, *args, **kwargs):
+        raise OSError("the sync folder went offline")
+    with monkeypatch.context() as patch:
+        patch.setattr(drive_sync.FolderDrive, "write_marker", failing)
+        with pytest.raises(ValueError):
+            a.migrate()
+    transfer(a, b)
+    assert not b.markers()
+    assert b.sync()["status"] == "synced" and b.state()["format"] == 2
+    [marker] = b.markers()
+    assert marker["parents"] == [a.state()["base"]]
+    assert all(drive_sync.is_marker(item) for item in first_format_heads(b))
+
+
+def test_a_revision_published_just_after_settling_stops_the_migration(synced, monkeypatch):
+    """Another PC's revision arrives between the sync that settles this PC and the migration: the migration
+    waits for the next sync, which takes it in first, rather than moving the folder over it."""
+    a, b, identity = synced
+    b.edit(identity, "b's, just published")
+    assert b.sync()["status"] == "synced"
+    settle = drive_sync.sync
+
+    def arriving(*args, **kwargs):
+        result = settle(*args, **kwargs)
+        transfer(b, a)
+        return result
+    with monkeypatch.context() as patch:
+        patch.setattr(drive_sync, "sync", arriving)
+        result = a.migrate()
+    assert result["status"] == "synced" and result["migrated"] is False
+    assert not a.view().ids() and a.status()["migration_pending"]
+    result = a.sync()
+    assert result["migrated"] is True and a.note(identity) == "b's, just published"
+    [head] = a.view().heads()
+    assert a.view().generations[head]["hash"] == a.fingerprint()
+
+
+def test_a_generation_arriving_just_after_settling_is_followed(synced, monkeypatch):
+    """b moved the folder, and its generation reaches a after a's sync settled but before a writes its own:
+    a publishes none, and follows b's."""
+    a, b, identity = synced
+    assert b.migrate()["migrated"] is True
+    [theirs] = b.view().heads()
+    settle = drive_sync.sync
+
+    def arriving(*args, **kwargs):
+        result = settle(*args, **kwargs)
+        for rel in pending(b, a):
+            if rel.startswith("v2/"):
+                deliver(b, a, rel)
+        return result
+    with monkeypatch.context() as patch:
+        patch.setattr(drive_sync, "sync", arriving)
+        result = a.migrate()
+    assert result["migrated"] is False and a.view().heads() == [theirs]
+    assert a.sync()["status"] == "synced"
+    assert a.view().heads() == [theirs] and a.state()["base"] == theirs and a.state()["format"] == 2
+
+
+def test_a_change_this_papeer_published_in_the_first_format_while_moving_is_not_called_old(synced):
+    """b (this Papeer) has only format.json of the migration when it publishes its change, in the first format."""
+    a, b, identity = synced
+    b.edit(identity, "b, while moving")
+    assert a.migrate()["migrated"] is True
+    deliver(a, b, "v2/format.json")
+    assert b.sync()["status"] == "synced" and b.state().get("format") != 2
+    transfer(b, a)
+    result = a.sync()
+    assert result["status"] == "conflict"
+    [offered] = [item for item in result["conflicts"] if item["legacy"]]
+    assert offered["old_papeer"] is False and offered["device"] == "PC-B"
+    error = a.state()["error"]
+    assert "古いバージョン" not in error and "同期の形式を新しくしている途中に、PC-B で保存された変更があります" in error
+    assert a.formats()["later"][0]["old_papeer"] is False
+    ids = [item["id"] for item in result["conflicts"]]
+    assert a.sync(choice=offered["id"], expected_heads=ids)["reloaded"] is True
+    assert a.note(identity) == "b, while moving"
+
+
+def test_a_renamed_pc_goes_on_repairing_what_it_published(synced):
+    a, b, identity = synced
+    a.migrate()
+    a.edit(identity, "to repair")
+    a.sync()
+    identity_before = a.state()["device_id"]
+    [head] = a.view().heads()
+    victim = sorted(sync_store.blob_names(a.view().generations[head]))[0]
+    (a.drive / "v2" / "blobs" / victim).unlink()
+    a.name = "a2"  # macOS names itself after the network it is on.
+    assert a.sync()["status"] == "synced"
+    assert (a.drive / "v2" / "blobs" / victim).exists()
+    assert a.state()["device_id"] == identity_before and a.state()["device_name"] == "PC-A2"
+    # A copy of a's device folder on another machine is another PC.
+    c_state = dict(a.state())
+    c_state["device_machine"] = "someone else's"
+    assert drive_sync_v2._device_id(c_state) != identity_before
+
+
 def test_old_data_is_listed_and_removed_once_every_pc_moved(synced, tmp_path, monkeypatch):
     a, b, identity = synced
     count = len(a.revisions())
@@ -560,15 +689,64 @@ def test_the_api_moves_the_folder_and_removes_the_old_data(synced, monkeypatch):
         assert client.get("/api/drive/format").json()["revisions"]["count"] == 0
 
 
+@pytest.mark.parametrize("closing", [False, True])
+def test_stopping_a_migration_gives_it_up_unless_the_app_is_closing(synced, monkeypatch, closing):
+    """The user's 中止 gives the migration up (the next sync does not take it up unasked); the app closing
+    (cancel-all, as AppShell does) leaves it to go on."""
+    from fastapi.testclient import TestClient
+    from sidecar import deps
+    from sidecar.app import app
+    from sidecar.jobs import JobManager
+
+    a, b, identity = synced
+    monkeypatch.setattr(deps, "get_data_dir", lambda: a.root)
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
+    monkeypatch.setattr(deps, "job_manager", JobManager())
+    started = threading.Event()
+
+    def publish(*args, cancel, **kwargs):
+        started.set()
+        cancel.wait(10)
+        raise Cancelled("stopped")
+    with a, TestClient(app) as client, monkeypatch.context() as patch:
+        patch.setattr(drive_sync_v2, "_publish", publish)
+        job = client.post("/api/drive/migrate").json()["job_id"]
+        assert started.wait(30)
+        client.post("/api/jobs/cancel-all" if closing else f"/api/jobs/{job}/cancel")
+        deadline = time.monotonic() + 30
+        while deps.job_manager.get_job(job).running and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert client.get(f"/api/jobs/{job}").json()["status"] == "cancelled"
+        assert client.get("/api/drive").json()["migration_pending"] is closing
+    assert a.state()["error"] is None and not a.view().ids()
+    result = a.sync()
+    if closing:
+        assert result["migrated"] is True and a.state()["format"] == 2
+    else:
+        # A sync of the first format, as before the user asked; asked again, the migration runs.
+        assert "migrated" not in result and not a.view().ids() and a.status()["format"] == 1
+        assert a.migrate()["migrated"] is True
+
+
 def test_a_device_folder_brought_from_another_pc_gets_its_own_id(monkeypatch):
     monkeypatch.setattr(platform, "node", lambda: "PC-B")
-    state = {"device_id": "a" * 32, "device_name": "PC-A"}
+    monkeypatch.setattr(drive_sync_v2, "machine_key", lambda: "machine-b")
+    # Brought from another machine: a new ID, whatever the name says.
+    state = {"device_id": "a" * 32, "device_name": "PC-B", "device_machine": "machine-a"}
     assert drive_sync_v2._device_id(state) != "a" * 32
-    assert state["device_name"] == "PC-B" and state["device_created"]
+    assert state["device_machine"] == "machine-b" and state["device_created"]
     identity = state["device_id"]
     assert drive_sync_v2._device_id(state) == identity
-    # A state from before the name was kept is taken as this PC's.
-    assert drive_sync_v2._device_id({"device_id": "b" * 32}) == "b" * 32
+    # Renamed on the same machine: the same ID.
+    state["device_name"] = "PC-B-OLD"
+    assert drive_sync_v2._device_id(state) == identity and state["device_name"] == "PC-B"
+    # A state from before the machine was recorded keeps its ID, and records the machine.
+    older = {"device_id": "b" * 32, "device_name": "PC-A"}
+    assert drive_sync_v2._device_id(older) == "b" * 32 and older["device_machine"] == "machine-b"
+    # When the machine cannot be told, the name tells instead.
+    monkeypatch.setattr(drive_sync_v2, "machine_key", lambda: None)
+    assert drive_sync_v2._device_id({"device_id": "c" * 32, "device_name": "PC-A"}) != "c" * 32
+    assert drive_sync_v2._device_id({"device_id": "c" * 32, "device_name": "PC-B"}) == "c" * 32
 
 
 def test_starting_a_new_library_forgets_the_new_format_s_state(tmp_path, monkeypatch):
@@ -618,3 +796,99 @@ def test_a_migration_arriving_in_any_order(synced, seed):
         assert result["status"] == "synced"
         assert b.note(identity) == "a's, moved" and b.fingerprint() == a.fingerprint()
         assert b.state()["base"] == a.state()["base"]
+
+
+# --- An earlier Papeer itself (b0b0280, before the history and the new format), run in its own process ---
+
+OLD_COMMIT = "b0b0280"
+OLD_SCRIPT = r'''
+import json, os, platform, sys, threading
+from pathlib import Path
+
+old, phase, root, drive, place, name = sys.argv[1:7]
+sys.path.insert(0, old)
+for variable in ("LOCALAPPDATA", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+    os.environ[variable] = place
+platform.node = lambda: name
+
+from papeer.core import drive_sync
+from papeer.core.storage import Library
+
+assert Path(drive_sync.__file__).is_relative_to(old), drive_sync.__file__
+root, drive = Path(root), Path(drive)
+cancel = threading.Event()
+
+
+def sync(**options):
+    return drive_sync.sync(Library(root), drive_sync.FolderDrive(drive), cancel, lambda _: None, **options)
+
+
+if phase == "join":
+    drive_sync.connect(root, str(drive))
+    heads = [item["id"] for item in sync()["conflicts"]]
+    result = sync(choice=heads[0], expected_heads=heads)
+elif phase == "keep_mine":
+    identity = sys.argv[7]
+    Library(root).update(identity, note="written on the earlier Papeer")
+    heads = [item["id"] for item in sync()["conflicts"]]
+    result = sync(choice="local", expected_heads=heads)
+folder = drive_sync.side_backup_folder(root)
+print(json.dumps({"status": result["status"], "base": drive_sync.read_state(root)["base"],
+                  "side_backups": sorted(path.name for path in folder.glob("*.zip")) if folder.is_dir() else []}))
+'''
+
+
+@pytest.fixture(scope="module")
+def earlier_papeer(tmp_path_factory) -> Path:
+    """The papeer package of OLD_COMMIT, taken out of this repository (skipped where the clone lacks it)."""
+    import io
+    import subprocess
+    import tarfile
+    target = tmp_path_factory.mktemp("earlier-papeer")
+    try:
+        archive = subprocess.run(["git", "-C", str(Path(__file__).resolve().parents[1]), "archive", OLD_COMMIT,
+                                  "papeer"], capture_output=True, check=True, timeout=120).stdout
+    except (OSError, subprocess.SubprocessError):
+        pytest.skip(f"{OLD_COMMIT} is not in this clone")
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        tar.extractall(target, filter="data")
+    (target / "run_old.py").write_text(OLD_SCRIPT, "utf-8")
+    return target
+
+
+def run_earlier(old: Path, pc: PC, phase: str, *extra: str) -> dict:
+    import json
+    import subprocess
+    completed = subprocess.run([sys.executable, str(old / "run_old.py"), str(old), phase, str(pc.root),
+                                str(pc.drive), str(pc.place / "earlier"), f"PC-{pc.name.upper()}", *extra],
+                               capture_output=True, text=True, encoding="utf-8", cwd=old, timeout=300,
+                               env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"})
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.slow
+def test_the_earlier_papeer_itself_keeps_no_side_backup_of_the_marker(earlier_papeer, tmp_path, monkeypatch):
+    """b0b0280, choosing its own library over the marker, keeps no side backup of it (the marker holds no
+    paper): an empty one would push out one of the side backups it keeps (at most 3). Its revision is then
+    offered by this Papeer as one an earlier Papeer published."""
+    monkeypatch.setattr(drive_sync, "_now_ns", lambda: time.time_ns() + 10 * drive_sync.RACY_NS)
+    a, b = PC("a", tmp_path, monkeypatch), PC("b", tmp_path, monkeypatch)
+    a.connect()
+    with a as lib:
+        identity, _ = lib.import_pdf(SAMPLE)
+    assert a.sync()["status"] == "synced"
+    transfer(a, b)
+    joined = run_earlier(earlier_papeer, b, "join")
+    assert joined["status"] == "synced" and joined["side_backups"] == []
+    transfer(b, a)
+    assert a.sync()["status"] == "synced"
+    assert a.migrate()["migrated"] is True
+    transfer(a, b)
+    kept = run_earlier(earlier_papeer, b, "keep_mine", identity)
+    assert kept["status"] == "synced" and kept["side_backups"] == []
+    transfer(b, a)
+    result = a.sync()
+    assert result["status"] == "conflict"
+    [offered] = [item for item in result["conflicts"] if item["legacy"]]
+    assert offered["id"] == kept["base"] and offered["old_papeer"] is True and offered["diff"]["notes"] == 1
