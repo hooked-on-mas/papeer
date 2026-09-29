@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "auditDate": "2026-09-29",
+  "auditDate": "2026-09-30",
   "target": "Windows 11 x64; Python 3.12; Rust x86_64-pc-windows-msvc",
   "projectLicense": "AGPL-3.0-or-later (README.md and LICENSE)",
   "method": [
@@ -24,7 +24,7 @@
     },
     {
       "path": "frontend/src-tauri/Cargo.lock",
-      "sha256": "1c1e097d1fafd8fd33a43e5c87d6658debf1303115ed3f5af366bcf45df5dd3b"
+      "sha256": "71a72d55d12836b361c76ad9877329c2595dd23669853e5b8b36c25f9e3c60bf"
     }
   ],
   "summary": {

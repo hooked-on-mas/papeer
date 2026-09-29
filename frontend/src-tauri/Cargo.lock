@@ -2443,6 +2443,7 @@ version = "0.2.0"
 dependencies = [
  "getrandom 0.3.4",
  "glob",
+ "libc",
  "serde",
  "serde_json",
  "tauri",

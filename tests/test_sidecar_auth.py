@@ -151,17 +151,30 @@ def test_sidecar_refuses_to_start_without_a_token(monkeypatch):
     assert ran == []
 
 
+def _ends_with_the_app(monkeypatch) -> list[str]:
+    """What main() sets up to end with the app, recorded instead of done (the test run is not the app)."""
+    calls: list[str] = []
+    monkeypatch.setattr(system, "start_watching_stdin", lambda: calls.append("stdin"))
+    monkeypatch.setattr(system, "stop_on_terminate", lambda: calls.append("sigterm"))
+    return calls
+
+
 def test_sidecar_starts_with_a_token_and_keeps_it_out_of_the_access_log(monkeypatch):
     ran = []
     monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: ran.append(kwargs))
+    ends = _ends_with_the_app(monkeypatch)
     monkeypatch.setenv("PAPEER_TOKEN", TOKEN)
     monkeypatch.setenv("PAPEER_PORT", "8123")
     app_module.main()
-    assert ran == [{"host": "127.0.0.1", "port": 8123, "log_level": "info", "access_log": False}]
+    # After SIGTERM, requests still running get a few seconds before the jobs are stopped.
+    assert ran == [{"host": "127.0.0.1", "port": 8123, "log_level": "info", "access_log": False,
+                    "timeout_graceful_shutdown": app_module.SIGTERM_REQUEST_TIMEOUT}]
+    assert ends == ["stdin", "sigterm"]
 
 
 def test_sidecar_starts_without_auth_only_when_asked(monkeypatch, capsys):
     monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: None)
+    _ends_with_the_app(monkeypatch)
     monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     app_module.main()
     assert "認証なし" in capsys.readouterr().err

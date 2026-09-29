@@ -141,8 +141,9 @@ class CodexProvider(CliBackend, ProviderBackend):
     def list_models(self) -> list[tuple[str, str]]:
         models: list[tuple[str, str]] = []
         try:
-            res = subprocess.run(self.command() + ["debug", "models"], capture_output=True, text=True,
-                                 encoding="utf-8", errors="replace", timeout=15, **hidden_window())
+            command = self.command()
+            res = subprocess.run(command + ["debug", "models"], capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", timeout=15, **hidden_window(command))
             if res.returncode == 0 and res.stdout:
                 for item in json.loads(res.stdout).get("models", []):
                     slug = item.get("slug")
@@ -169,9 +170,10 @@ class CodexProvider(CliBackend, ProviderBackend):
             {"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read"},
         ]
         with tempfile.TemporaryDirectory(prefix="papeer-codex-") as directory:
-            process = subprocess.Popen(self.command() + ["app-server"], cwd=directory,
+            command = self.command()
+            process = subprocess.Popen(command + ["app-server"], cwd=directory,
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                       **process_kwargs())
+                                       **process_kwargs(command))
             answer: dict = {}
 
             def read() -> None:

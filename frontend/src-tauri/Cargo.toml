@@ -35,6 +35,11 @@ tauri-plugin-process = "2.3.1"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
+# Already in the tree through tauri; macOS and Linux: the sidecar's process group and its signals
+# (sidecar.rs), and on Linux whether the tray icon's library can be loaded (lib.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

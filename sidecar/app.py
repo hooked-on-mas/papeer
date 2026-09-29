@@ -208,6 +208,9 @@ def startup_error() -> str | None:
             "（認証なしで起動する場合は PAPEER_DEV_NO_AUTH=1 を指定）。")
 
 
+SIGTERM_REQUEST_TIMEOUT = 3
+
+
 def main() -> None:
     import uvicorn
 
@@ -219,8 +222,13 @@ def main() -> None:
     # Tracebacks of bugs, kept on this PC: Tauri does not read the packaged sidecar's stderr.
     log_to_file()
     port = int(app_env("PORT") or "8000")
-    # Media URLs carry the token in the query string, so the access log would write it out.
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info", access_log=False)
+    # Ending with the app however it ends (see system.watch_stdin and system.stop_on_terminate).
+    system.start_watching_stdin()
+    system.stop_on_terminate()
+    # Media URLs carry the token in the query string, so the access log would write it out. After SIGTERM,
+    # requests still running get a few seconds before the jobs are stopped (system.stop_on_terminate).
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info", access_log=False,
+                timeout_graceful_shutdown=SIGTERM_REQUEST_TIMEOUT)
 
 
 if __name__ == "__main__":

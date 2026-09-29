@@ -55,6 +55,7 @@ class AntigravityProvider(CliBackend, ProviderBackend):
         "USERPROFILE/.gemini/bin/agy.exe",
         "LOCALAPPDATA/Programs/Antigravity/agy.exe",
     )
+    posix_candidates = (".gemini/bin/agy",)
     missing_message = "Antigravity CLI (agy) が見つかりません。Antigravity CLI をインストールしてください。"
     tool_name = "Antigravity (agy)"
     login_args = ()  # Starting agy without a prompt opens its sign-in.
@@ -114,8 +115,9 @@ class AntigravityProvider(CliBackend, ProviderBackend):
     def list_models(self) -> list[tuple[str, str]]:
         models: list[tuple[str, str]] = []
         try:
-            res = subprocess.run(self.command() + ["models"], capture_output=True, text=True,
-                                 encoding="utf-8", errors="replace", timeout=15, **hidden_window())
+            command = self.command()
+            res = subprocess.run(command + ["models"], capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", timeout=15, **hidden_window(command))
             if res.returncode == 0 and res.stdout:
                 for line in res.stdout.splitlines():
                     line = line.strip()

@@ -89,6 +89,8 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
         "LOCALAPPDATA/Programs/Claude/claude.exe",
         "APPDATA/npm/claude.cmd",
     )
+    # The older install to the home folder (`claude migrate-installer` moved it to ~/.local/bin).
+    posix_candidates = (".claude/local/claude",)
     npm_entry = "@anthropic-ai/claude-code/bin/claude.js"
     missing_message = "Claude Code CLIが見つかりません。READMEの接続準備を行ってください。"
     tool_name = "Claude Code"

@@ -1,9 +1,13 @@
 """Stopping a sync, backup or restore, and shutting the sidecar down without leaving work half done."""
 from __future__ import annotations
 
+import io
+import os
 from pathlib import Path
+import signal
 import threading
 import time
+from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
 import pytest
@@ -203,6 +207,62 @@ def test_shutdown_gives_up_waiting_for_a_job_that_does_not_stop(client, exits, m
         wait_until(lambda: exits == [True])
     finally:
         release.set()
+
+
+class _Pipe(io.RawIOBase):
+    """The read end of the app's pipe: blocks until `closed_by_app` is set, then reads as ended."""
+
+    def __init__(self) -> None:
+        self.closed_by_app = threading.Event()
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer) -> int:
+        self.closed_by_app.wait(5)
+        return 0
+
+
+def test_the_sidecar_stops_its_jobs_and_exits_when_the_apps_pipe_closes(exits):
+    # The app's process ended (a crash, a kill): its end of the stdin pipe closes (system.watch_stdin).
+    started = threading.Event()
+    job = deps.job_manager.submit_job("translate", cancellable_job(started), paper_id="p")
+    assert started.wait(5)
+    pipe = _Pipe()
+    watcher = threading.Thread(target=system.watch_stdin, args=(pipe,), daemon=True)
+    watcher.start()
+    time.sleep(0.1)
+    assert deps.job_manager.get_job(job.job_id).running and exits == []
+    pipe.closed_by_app.set()
+    watcher.join(5)
+    assert deps.job_manager.get_job(job.job_id).status == "cancelled"
+    assert exits == [True]
+    with pytest.raises(ConcurrencyConflict):
+        deps.job_manager.submit_job("translate", cancellable_job(threading.Event()), paper_id="q")
+
+
+def test_the_stdin_pipe_is_watched_only_when_the_app_asks(exits, monkeypatch):
+    # `just dev-sidecar` and the tests start the sidecar without it (its stdin is a console or nothing).
+    started = []
+    monkeypatch.setattr(system.threading, "Thread", lambda **kwargs: Mock(start=lambda: started.append(kwargs)))
+    monkeypatch.delenv("PAPEER_WATCH_STDIN", raising=False)
+    assert system.start_watching_stdin() is False
+    monkeypatch.setenv("PAPEER_WATCH_STDIN", "1")
+    assert system.start_watching_stdin() is True
+    assert [kwargs["target"] for kwargs in started] == [system.watch_stdin]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="SIGTERM: macOS and Linux (Windows ends the sidecar through its job object)")
+def test_sigterm_stops_the_jobs_before_the_exit(exits, monkeypatch):
+    handlers = {}
+    monkeypatch.setattr(system.signal, "signal", lambda signum, handler: handlers.__setitem__(signum, handler))
+    system.stop_on_terminate()
+    started = threading.Event()
+    job = deps.job_manager.submit_job("translate", cancellable_job(started), paper_id="p")
+    assert started.wait(5)
+    handlers[signal.SIGTERM](signal.SIGTERM, None)
+    assert deps.job_manager.get_job(job.job_id).status == "cancelled"
+    assert exits == [True]
 
 
 def test_a_job_closed_right_after_it_was_submitted_is_waited_for():

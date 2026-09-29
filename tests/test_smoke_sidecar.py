@@ -4,6 +4,7 @@ The packaged exe itself is not needed: the end-to-end test runs the script again
 """
 import io
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -16,8 +17,9 @@ from papeer.layout.math_layout import MATH_TOKEN
 from papeer.providers.openai_compat import OpenAICompatProvider
 from papeer.translation.translation import TRANSLATION_SCHEMA, _assemble_parts, _source_parts, validate_translations
 from tools import smoke_sidecar
-from tools.smoke_sidecar import (STUB_TEXT, SmokeFailure, StubAI, check_health, check_translated_pdf, expected_prompts,
-                                 is_semver, job_outcome, main, mei_folders, run_smoke, sidecar_environment, stub_answer)
+from tools.smoke_sidecar import (STUB_TEXT, SmokeFailure, StubAI, check_health, check_translated_pdf,
+                                 device_directory_in, expected_prompts, is_semver, job_outcome, main, mei_folders,
+                                 run_smoke, sidecar_environment, stub_answer)
 
 CODE = "code-sha256-" + "0" * 64
 UNITS = [{"id": "p1-b1", "page": 1, "text": "We study an adaptive controller [[PD_MATH_1]] where the error is bounded."},
@@ -36,17 +38,35 @@ def test_version_must_be_major_minor_patch(value, ok):
 
 def test_environment_isolates_the_sidecar(tmp_path):
     base = {"PATH": "C:\\bin", "PAPEER_TOKEN": "old", "PAPERDESK_DATA_DIR": "C:\\real", "papeer_dev_no_auth": "1",
-            "OPENAI_API_KEY": "sk-real", "LOCALAPPDATA": "C:\\Users\\me\\AppData\\Local", "TEMP": "C:\\Temp"}
-    env = sidecar_environment(base, data_dir=tmp_path / "data", local_appdata=tmp_path / "local",
+            "OPENAI_API_KEY": "sk-real", "LOCALAPPDATA": "C:\\Users\\me\\AppData\\Local", "TEMP": "C:\\Temp",
+            "HOME": "/home/me", "XDG_STATE_HOME": "/home/me/.local/state", "TMPDIR": "/var/folders/x"}
+    env = sidecar_environment(base, data_dir=tmp_path / "data", pc_dir=tmp_path / "pc",
                               temp_dir=tmp_path / "temp", token="t0ken", port=5123)
     assert env["PATH"] == "C:\\bin"
     assert env["PAPEER_TOKEN"] == "t0ken" and env["PAPEER_PORT"] == "5123"
     assert env["PAPEER_DATA_DIR"] == str(tmp_path / "data")
-    assert env["LOCALAPPDATA"] == str(tmp_path / "local")
-    assert env["TEMP"] == env["TMP"] == str(tmp_path / "temp")
+    for name in ("LOCALAPPDATA", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"):
+        assert Path(env[name]).parent == tmp_path / "pc"
+    # Python reads HOME only on macOS and Linux (Path.home() is USERPROFILE on Windows).
+    assert (env["HOME"] == str(tmp_path / "pc" / "home")) if os.name != "nt" else env["HOME"] == "/home/me"
+    assert env["TEMP"] == env["TMP"] == env["TMPDIR"] == str(tmp_path / "temp")
     assert "127.0.0.1" in env["NO_PROXY"]
     for name in ("PAPERDESK_DATA_DIR", "papeer_dev_no_auth", "OPENAI_API_KEY"):
         assert name not in env
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_this_pcs_settings_are_looked_for_where_the_platform_keeps_them(tmp_path, monkeypatch, platform):
+    # Every folder papeer.core.paths makes this PC's folder from is in the smoke folder, on every platform.
+    monkeypatch.setattr(sys, "platform", platform)
+    env = sidecar_environment({}, data_dir=tmp_path / "data", pc_dir=tmp_path / "pc", temp_dir=tmp_path / "temp",
+                              token="t", port=1)
+    if os.name == "nt":
+        # A Windows host playing macOS or Linux: its Path.home() reads USERPROFILE, not HOME.
+        env["USERPROFILE"] = str(tmp_path / "pc" / "home")
+    device = device_directory_in(env)
+    assert device.is_relative_to(tmp_path / "pc")
+    assert device.name in {"PapeerSync", "papeer"}
 
 
 def test_mei_folders_lists_only_extraction_folders(tmp_path):
@@ -207,6 +227,7 @@ def test_every_check_passes_against_the_source_sidecar(smoke_root):
     # The same run as `just smoke-sidecar`, with `python -m sidecar` in place of the exe (a few seconds).
     out = io.StringIO()
     assert main(["--source"], out=out) == 0, out.getvalue()
-    assert out.getvalue().count("OK  ") == 7
+    # SIGTERM is tried on macOS and Linux only.
+    assert out.getvalue().count("OK  ") == (8 if os.name == "nt" else 9)
     assert not smoke_root.exists()
     assert Path(smoke_sidecar.SAMPLE_PDF).is_file()
