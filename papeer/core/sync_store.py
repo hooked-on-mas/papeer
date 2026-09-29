@@ -419,6 +419,12 @@ class GenerationStore:
                     break
         return result
 
+    def unreadable_copies(self, view: View, names: Iterable[str]) -> set[str]:
+        """The copies Google Drive named "<name> (1)" of `names` that cannot be read now (not those found to hold
+        something else): worth reading again at the next sync, whatever they were."""
+        return {copy for name in names for copy in view.copies.get(name, {})
+                if _content_state(self.blobs / copy, name) == "unreadable"}
+
     def blob_path(self, name: str) -> Path:
         if not _BLOB.fullmatch(name):
             raise ValueError("同期データの名前が不正です。")
@@ -708,12 +714,20 @@ class Cleaner:
 
 def _intact(path: Path, name: str) -> bool:
     """Whether the file at `path` holds the content the blob name `name` says."""
+    return _content_state(path, name) == "ok"
+
+
+def _content_state(path: Path, name: str) -> str:
+    """"ok" when the file at `path` holds the content the blob name `name` says, "wrong" when it holds
+    something else (or is damaged), "unreadable" when it cannot be read (perhaps for a moment)."""
     try:
         for _piece in local_history.stored_content(path, None, expected=name):
             pass
+    except local_history.BlobDamaged:
+        return "wrong"
     except local_history.SourceUnreadable:
-        return False
-    return True
+        return "unreadable"
+    return "ok"
 
 
 def forget_device(store: GenerationStore, device_id: str) -> bool:

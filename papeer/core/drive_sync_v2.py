@@ -157,8 +157,12 @@ def _wait(root: Path, store: GenerationStore, view: View, state: dict, *, reason
                           "blobs": {name: list(view.blobs[name]) for name in sorted(bad) if name in view.blobs}},
                  conflicts=[], error=None, review=None)
     # The copies Google Drive named "<blob> (1)" of what is waited for, as they were (check: only a change
-    # to them is worth another try; one found not to hold the blob is not read again at each check).
-    state["waiting"]["copies"] = _copies_of(view, _lacking(view, ids) | set(bad))
+    # to them is worth another try; one found not to hold the blob is not read again at each check). One that
+    # could not be read is left out: it is looked at again as soon as it can be.
+    names = _lacking(view, ids) | set(bad)
+    unreadable = store.unreadable_copies(view, names)
+    state["waiting"]["copies"] = {copy: stat for copy, stat in _copies_of(view, names).items()
+                                  if copy not in unreadable}
     if bad:
         state["bad_blobs"] = sorted(set(state.get("bad_blobs") or []) | set(bad))
     drive_sync.save_state(root, state)
@@ -741,7 +745,7 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
                 try:
                     _assemble(root, store, view, pull, staging, local_files, cancel)
                 except _NotReady as exc:
-                    _recover_names(store, exc.missing, cancel)  # The next sync (or check) takes it in then.
+                    _recover_names(store, exc.missing | exc.bad, cancel)  # The next sync (or check) takes it in then.
                     return _wait(root, store, view, state, reason="damaged" if exc.bad else "arrival", ids=ids,
                                  device=pull["device"], missing=len(exc.missing | exc.bad), bad=exc.bad)
                 # Hash the database as the publishing PC did, before this version migrates it.

@@ -1073,6 +1073,41 @@ def test_a_blob_left_only_under_a_copy_name_is_put_back(pcs):
     assert not any("(" in item for item in b.files("blobs"))
 
 
+def test_a_right_copy_that_could_not_be_read_at_the_sync_is_tried_again_by_the_check(pcs, monkeypatch):
+    a, b, identity = pcs
+    a.edit(identity, note="second", article="summary two")
+    a.sync()
+    name = local_history.blob_name(hashlib.sha256(b"summary two").hexdigest(), True)
+    transfer(a, b, only=lambda rel: rel != "blobs/" + name)
+    assert b.sync()["status"] == "waiting" and b.check() == "none"
+    shutil.copy2(a.drive / "v2" / "blobs" / name, b.drive / "v2" / "blobs" / (name.removesuffix(".z") + " (1).z"))
+    state = sync_store._content_state
+    held = [True]
+    monkeypatch.setattr(sync_store, "_content_state",
+                        lambda path, n: "unreadable" if held[0] and " (1)" in path.name else state(path, n))
+    # Held for a moment: the sync waits on, and does not take the copy as seen.
+    assert b.check() == "quiet" and b.sync()["status"] == "waiting"
+    held[0] = False
+    assert b.check() == "quiet"
+    result = b.sync()
+    assert result["status"] == "synced" and b.note(identity) == "second" and name in b.files("blobs")
+
+
+def test_a_right_copy_beside_a_blob_that_is_damaged_is_put_back(pcs):
+    a, b, identity = pcs
+    a.edit(identity, note="second", article="summary two")
+    a.sync()
+    name = local_history.blob_name(hashlib.sha256(b"summary two").hexdigest(), True)
+    transfer(a, b)
+    blobs = b.drive / "v2" / "blobs"
+    shutil.copy2(blobs / name, blobs / (name.removesuffix(".z") + " (1).z"))
+    (blobs / name).write_bytes(zlib.compress(b"garbage!"))
+    result = b.sync()
+    if result["status"] == "waiting":  # The copy is taken in by the next sync.
+        result = b.sync()
+    assert result["status"] == "synced" and b.note(identity) == "second"
+
+
 # --- The first format is left as it is ---
 
 def test_the_first_format_ignores_the_new_folder(pcs):
