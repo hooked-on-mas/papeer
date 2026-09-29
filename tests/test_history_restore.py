@@ -251,8 +251,9 @@ def test_a_before_restore_state_held_by_another_state_takes_no_place():
              entry(4, "before_restore", "b"), entry(5, "before_restore", "c"), entry(6, "before_restore", "a")]
     from datetime import date
     kept = history.retained(found, 5, 0, date(2026, 9, 10))
-    # "a" is held by the published state: its before_restore copies take none of the 3 places, so "x" stays.
-    assert kept == {entry(n, "", "")["id"] for n in (1, 2, 4, 5)}
+    # "a" is held by the published state: its before_restore copies (3, 6) stay but take none of the
+    # 3 places, so "x" stays too.
+    assert kept == {entry(n, "", "")["id"] for n in (1, 2, 3, 4, 5, 6)}
 
 
 def test_whatever_fails_after_the_swap_the_restore_succeeds_and_the_folder_stays(lib, monkeypatch):
@@ -311,3 +312,65 @@ def test_a_history_that_cannot_be_read_back_at_all_still_lets_the_restore_throug
     assert Library(lib.root).paper(lib.identity)["note"] == "first"
     assert result["before_restore"] and result["previous_path"]
     assert Library(Path(result["previous_path"])).paper(lib.identity)["note"] == "second"
+
+
+def test_trying_past_states_with_the_settings_changed_since_keeps_the_one_started_from(lib):
+    """Settings are not taken back by default, so each library gone back to is a past state with today's
+    settings, which no state in the history holds: each try records a "before_restore", marked as such."""
+    states = []
+    for note in ("s1", "s2", "s3"):
+        Library(lib.root).update(lib.identity, note=note)
+        states.append(record(lib))
+    (lib.root / "settings.json").write_text(json.dumps({"model": "changed-since"}))
+    Library(lib.root).update(lib.identity, note="X unsynced")
+    first, _ = run_restore(lib, states[0])
+    tried = []
+    for entry_id in (states[1], states[2], states[0], states[1]):
+        tried.append(run_restore(lib, entry_id)[0]["before_restore"])
+    history.prune(lib.root)
+    kept = notes_in_history(lib)
+    assert kept[first["before_restore"]] == "X unsynced"
+    listed = {entry["id"]: entry for entry in history.entries(lib.root)}
+    assert "restored_from" not in listed[first["before_restore"]]
+    # Each try is marked with the state the library had been restored from (the last try reuses the first:
+    # the same past state with the same settings), and they take none of the three places.
+    assert tried[3] == tried[0] and len(set(tried)) == 3
+    assert [listed[entry_id]["restored_from"] for entry_id in tried[:3]] == [states[0], states[1], states[2]]
+
+
+def test_before_restore_copies_and_tries_take_no_place_but_copies_stay():
+    from datetime import date
+
+    def entry(seq, kind, library_hash, **values):
+        return {"id": f"{seq:032x}", "seq": seq, "kind": kind, "day": "2026-09-10", "hash": library_hash, **values}
+    found = [entry(1, "before_restore", "x"), entry(2, "publish", "a"), entry(3, "before_restore", "a"),
+             *[entry(n, "before_restore", f"t{n}", restored_from="0" * 32) for n in range(4, 9)],
+             entry(9, "before_restore", "b"), entry(10, "before_restore", "c")]
+    kept = history.retained(found, 5, 0, date(2026, 9, 10))
+    ids = {n: entry(n, "", "")["id"] for n in range(1, 11)}
+    # 1, 9, 10: the three that count; 3: a copy of the published state (kept, no place); 6-8: the newest tries.
+    assert kept == {ids[n] for n in (1, 2, 3, 6, 7, 8, 9, 10)}
+
+
+def test_a_library_with_a_damaged_database_can_still_be_restored(lib, tmp_path):
+    backup = tmp_path / "backup.zip"
+    create_backup(lib, backup)
+    for name in ("library.sqlite3-wal", "library.sqlite3-shm"):
+        (lib.root / name).unlink(missing_ok=True)
+    database = lib.root / "library.sqlite3"
+    data = bytearray(database.read_bytes())
+    data[100:4096] = b"\x00" * (4096 - 100)
+    data[4096:8192] = b"garbage!" * 512
+    database.write_bytes(bytes(data))
+    result = history_restore.restore_zip(lib, backup, threading.Event(), lambda _: None, import_settings=False)
+    assert Library(lib.root).paper(lib.identity)["note"] == "first"
+    # It could not be recorded, so the damaged library stays beside it.
+    assert result["before_restore"] is None and result["previous_path"] and Path(result["previous_path"]).is_dir()
+
+
+def test_a_folder_that_could_not_be_removed_is_told(lib, monkeypatch):
+    first = record(lib)
+    lib.update(lib.identity, note="second")
+    monkeypatch.setattr(history_restore.shutil, "rmtree", lambda *_args, **_kwargs: None)
+    result, _ = run_restore(lib, first)
+    assert result["previous_path"] and Path(result["previous_path"]).is_dir()

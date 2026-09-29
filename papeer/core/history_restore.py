@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 import shutil
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -57,12 +58,16 @@ def _record_before(lib: Library, cancel: threading.Event | None, progress: Progr
             existing = None
         if existing is not None:
             return _Before(existing, library_hash, verified=True)
+        # Left as the last restore made it: a past state (with the settings the user kept), not one to keep
+        # among the newest "before_restore" states (local_history.retained).
+        source = local_history.restored_from(lib.root, library_hash)
         entry = local_history.record_folder(lib.root, lib.root, kind="before_restore", library_hash=library_hash,
                                             counts=drive_sync.library_counts(lib.root), files=files, cancel=cancel,
-                                            progress=progress)
+                                            progress=progress, restored_from=source)
     except Cancelled:
         raise
-    except (OSError, ValueError):
+    except (OSError, ValueError, sqlite3.DatabaseError):
+        # Also a damaged database, which a restore is there to mend: the old library stays beside it.
         _prune(lib)
         return _Before()
     return _Before(entry, library_hash, new=entry is not None)
@@ -90,13 +95,14 @@ def _finish(lib: Library, moved: Path, before: _Before, progress: Progress) -> s
             if local_history.verified_state(lib.root, before.library_hash) is None:
                 return str(moved)
         shutil.rmtree(moved, ignore_errors=True)
-        return None
+        # What could not be removed (a file held open for a moment) stays, and is told.
+        return str(moved) if moved.exists() else None
     except Exception:  # noqa: BLE001 - the restore has succeeded; the folder simply stays
         return str(moved)
 
 
 def _restore(lib: Library, cancel: threading.Event | None, progress: Progress,
-             replace: Callable[[], Path]) -> dict:
+             replace: Callable[[], Path], source_entry: str | None = None) -> dict:
     with local_history.holding(lib.root):
         before = _record_before(lib, cancel, progress)
         try:
@@ -110,8 +116,19 @@ def _restore(lib: Library, cancel: threading.Event | None, progress: Progress,
                     print(f"警告: 使われない履歴の記録を削除できませんでした: {exc!r}", file=sys.stderr)
             raise
         previous = _finish(lib, moved, before, progress)
+        _remember(lib, source_entry)
         _prune(lib, [before.entry] if before.entry else [])
     return {"previous_path": previous, "before_restore": before.entry}
+
+
+def _remember(lib: Library, source_entry: str | None) -> None:
+    """Note the state the library was restored from, with the library's hash as it is now opened here."""
+    if source_entry is None:
+        return
+    try:
+        local_history.remember_restored(lib.root, source_entry, drive_sync.fingerprint(Library(lib.root)))
+    except Exception as exc:  # noqa: BLE001 - only the next restore keeps one more "before_restore" state
+        print(f"警告: 復元した時点を記録できませんでした: {exc!r}", file=sys.stderr)
 
 
 def restore_zip(lib: Library, source: Path, cancel: threading.Event | None, progress: Progress, *,
@@ -147,7 +164,7 @@ def restore_entry(lib: Library, entry_id: str, cancel: threading.Event | None, p
     def replace() -> Path:
         return restore_folder(lib, fill, cancel, import_settings=import_settings,
                               schema_version=listed.get("schema_version") or 0, app_version=listed.get("app_version"))
-    return _restore(lib, cancel, progress, replace)
+    return _restore(lib, cancel, progress, replace, entry_id)
 
 
 def difference(lib: Library, entry_id: str, cancel: threading.Event | None = None) -> dict:

@@ -38,8 +38,8 @@ export function BackupSection() {
   /** Replace the library, after the user confirmed; the page reloads once it is done. */
   const restore = async (source: RestoreSource) => {
     const message = source.kind === "zip"
-      ? `選んだバックアップの状態に戻します。${settingsNote()}今のデータはこのPCの履歴に「戻す前」として残します（戻す前の記録は最新3件まで残ります）。復元後は画面を読み込み直します。`
-      : `${source.title} の状態に戻します。${settingsNote()}今のデータはこのPCの履歴に「戻す前」として残します（戻す前の記録は最新3件まで残ります）。復元後は画面を読み込み直します。`;
+      ? `選んだバックアップの状態に戻します。${settingsNote()}今のデータはこのPCの履歴に「戻す前」として残します（戻す前の記録は最新3件まで残ります。過去の時点を試しただけの記録と、履歴にある状態と同じものは数えません）。復元後は画面を読み込み直します。`
+      : `${source.title} の状態に戻します。${settingsNote()}今のデータはこのPCの履歴に「戻す前」として残します（戻す前の記録は最新3件まで残ります。過去の時点を試しただけの記録と、履歴にある状態と同じものは数えません）。復元後は画面を読み込み直します。`;
     if (!await askConfirm(source.kind === "zip" ? "ライブラリを復元" : "この時点に戻す", message, "戻す", true)) { setPending(false); return; }
     await flushUiState();
     suspendUiStateSync(true);

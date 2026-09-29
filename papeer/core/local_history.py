@@ -406,6 +406,25 @@ def entries(root: Path) -> list[dict]:
     return result
 
 
+def remember_restored(root: Path, entry_id: str, library_hash: str) -> None:
+    """Note that the library at `root` was just restored from `entry_id` and hashes to `library_hash` now,
+    so a restore from a library still so marks its "before_restore" state (restored_from)."""
+    folder = history_directory(root)
+    with _locked(folder):
+        atomic_write_json(folder / "restored.json", {"entry": entry_id, "hash": library_hash}, indent=None)
+
+
+def restored_from(root: Path, library_hash: str) -> str | None:
+    """The state the library was last restored from, when it has not changed since (its hash is the same)."""
+    try:
+        value = json.loads((history_directory(root) / "restored.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict) or value.get("hash") != library_hash or not isinstance(value.get("entry"), str):
+        return None
+    return value["entry"]
+
+
 @contextmanager
 def holding(root: Path):
     """Hold the history of the library at `root` for a restore: no recording or clean-up meanwhile."""
@@ -769,8 +788,13 @@ def retained(found: list[dict], recent: int, days: int, today: date) -> set[str]
 
     The newest `recent` states published or taken in; the last of each of the `days` most recent days
     before `today` with such a state, the days counted in the order they were used (a clock set back
-    makes a later day look earlier, but not a later use); the newest SPECIAL_LIMIT of each other kind,
-    leaving out "before_restore" states that another state kept holds already.
+    makes a later day look earlier, but not a later use); the newest SPECIAL_LIMIT of each other kind.
+
+    Of "before_restore" states, the SPECIAL_LIMIT newest count only those the user may want back: going
+    back and forth between past states must not push out the one the user started from. So these are kept
+    without taking a place: one holding the same library as another state kept (read from a library on this
+    PC); and, as a group of their own (the newest SPECIAL_LIMIT), those recorded from a library left as a
+    restore made it ("restored_from": a past state with the settings the user kept, nothing else changed).
     """
     regular = [entry for entry in found if entry["kind"] in REGULAR]
     keep = {entry["id"] for entry in regular[max(0, len(regular) - recent):]} if recent > 0 else set()
@@ -785,11 +809,12 @@ def retained(found: list[dict], recent: int, days: int, today: date) -> set[str]
             continue
         candidates = [item for item in found if item["kind"] == kind]
         if kind == "before_restore":
-            # One holding the same library as another state kept (and read from a library on this PC) adds
-            # nothing to go back to, so it takes none of the SPECIAL_LIMIT places: going back and forth between
-            # past states must not push out the state the user started from.
             held = {item["hash"] for item in found if item["id"] in keep and item.get("verified", True) and item.get("hash")}
-            candidates = [item for item in candidates if not (item.get("hash") and item["hash"] in held)]
+            copies = [item for item in candidates if item.get("hash") and item["hash"] in held]
+            keep |= {item["id"] for item in copies}  # Kept, taking no place (only an entry file each).
+            unchanged = [item for item in candidates if item not in copies and item.get("restored_from")]
+            keep |= {item["id"] for item in unchanged[-SPECIAL_LIMIT:]}
+            candidates = [item for item in candidates if item not in copies and not item.get("restored_from")]
         keep |= {entry["id"] for entry in candidates[-SPECIAL_LIMIT:]}
     return keep
 
