@@ -10,6 +10,7 @@ import { requestCancel, startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { showPassage } from "@/features/reader/navigation";
 import { CitationEvidence } from "./CitationEvidence";
+import { isImeKey } from "@/lib/imeKeys";
 
 const EXAMPLE_QUESTIONS = [
   "従来手法と比べた改善点は？",
@@ -187,7 +188,7 @@ export function ChatPane() {
   }, [chatDraft, activePaperId]);
 
   const handleKeyDown =(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (e.key === "Enter" && !e.shiftKey && !isImeKey(e.nativeEvent)) {
       e.preventDefault();
       send(input);
     }

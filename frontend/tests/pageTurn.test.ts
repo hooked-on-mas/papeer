@@ -136,6 +136,15 @@ test("Home, End and Alt+arrows", () => {
   assert.equal(press("Home", { altKey: true }), null);
 });
 
+test("⌘[ and ⌘] go back and forward as on the Mac, not with other modifiers nor in text fields", () => {
+  assert.deepEqual(press("[", { metaKey: true }), { type: "history", direction: "back" });
+  assert.deepEqual(press("]", { metaKey: true }), { type: "history", direction: "forward" });
+  assert.equal(press("[", { ctrlKey: true }), null);
+  assert.equal(press("[", { metaKey: true, shiftKey: true }), null);
+  assert.equal(press("[", { metaKey: true, target: "editable" }), null);
+  assert.equal(press("["), null);
+});
+
 test("keys are never taken from text fields, and Space is left to buttons", () => {
   for (const key of ["PageDown", "PageUp", " ", "Home", "End"]) assert.equal(press(key, { target: "editable" }), null);
   assert.equal(press("ArrowLeft", { altKey: true, target: "editable" }), null);

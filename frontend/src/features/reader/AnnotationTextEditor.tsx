@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { isImeKey } from "@/lib/imeKeys";
 
 /** Shared compact editor, either floating on a PDF or embedded in a dialog. */
 export function AnnotationTextEditor({ value, onChange, onSave, onCancel, label, controls, busy = false, allowEmpty = false, maxLength = 2000, error, embedded = false }: {
@@ -9,7 +10,7 @@ export function AnnotationTextEditor({ value, onChange, onSave, onCancel, label,
     role={embedded ? undefined : "dialog"} aria-label={embedded ? undefined : label} onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}
     onKeyDown={e => {
       e.stopPropagation();
-      if (busy || e.nativeEvent.isComposing) return;
+      if (busy || isImeKey(e.nativeEvent)) return;
       if (e.key === "Escape") { e.preventDefault(); onCancel(); }
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && (allowEmpty || value.trim())) { e.preventDefault(); onSave(); }
     }}>

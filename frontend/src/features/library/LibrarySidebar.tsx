@@ -61,6 +61,8 @@ import { showJobFailure, useJobFailures } from "@/features/jobs/jobFailures";
 import { onAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 import { SORT_LABELS } from "@/lib/librarySort";
+import { withShortcutLabels } from "@/lib/platform";
+import { isImeKey } from "@/lib/imeKeys";
 
 type LibraryHit = { paper_id: string; title: string; side: "metadata" | "note" | "original" | "translated"; page: number | null; snippet: string };
 
@@ -324,7 +326,7 @@ export function LibrarySidebar() {
   };
   const onTreeKeyDown = (e: KeyboardEvent<HTMLDivElement>, capture: boolean) => {
     // While a paper is dragged with the keyboard, the keys are the drag's.
-    if (dragging || e.defaultPrevented || e.nativeEvent.isComposing || e.altKey) return;
+    if (dragging || e.defaultPrevented || isImeKey(e.nativeEvent) || e.altKey) return;
     const target = e.target as HTMLElement;
     const item = target.closest<HTMLElement>("[role=treeitem][data-tree-key]");
     if (!item?.dataset.treeKey) return;
@@ -441,7 +443,7 @@ export function LibrarySidebar() {
       <div className="p-2 space-y-2 shrink-0">
         <button
           onClick={importPdfs}
-          title={`追加するPDFを「${currentCollection || "未分類"}」へ入れます。（Ctrl+O）`}
+          title={withShortcutLabels(`追加するPDFを「${currentCollection || "未分類"}」へ入れます。（Ctrl+O）`)}
           className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground h-8 rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
         >
           <FilePlus2 className="w-4 h-4" />
@@ -450,7 +452,7 @@ export function LibrarySidebar() {
         <div className="text-[0.75rem] text-muted-foreground truncate px-0.5" title={currentCollection || "未分類"}>
           追加先：{currentCollection || "未分類"}
         </div>
-        <button onClick={undoMove} disabled={!lastUndo} title={`${undoText}（ライブラリ内で Ctrl+Z）`}
+        <button onClick={undoMove} disabled={!lastUndo} title={withShortcutLabels(`${undoText}（ライブラリ内で Ctrl+Z）`)}
           className="w-full flex items-center justify-center gap-2 h-7 border rounded-md hover:bg-muted disabled:opacity-40 disabled:cursor-default">
           <Undo2 className="w-3.5 h-3.5" /> 元に戻す
         </button>
@@ -461,7 +463,7 @@ export function LibrarySidebar() {
               id="library-search"
               type="text"
               placeholder="タイトル・本文・メモを検索"
-              title="タイトル・ファイル名・本文・メモ・フォルダー名を検索（Ctrl+F）"
+              title={withShortcutLabels("タイトル・ファイル名・本文・メモ・フォルダー名を検索（Ctrl+F）")}
               className="w-full h-8 pl-8 pr-7 rounded-md bg-background border text-[0.8125rem] focus:outline-none focus:ring-2 focus:ring-ring"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
@@ -520,7 +522,7 @@ export function LibrarySidebar() {
           ref={scrollRef}
           className="flex-1 overflow-auto outline-none"
           tabIndex={-1}
-          title="右クリックで名前変更・子フォルダー作成。論文をドラッグしてフォルダーへ移動。Ctrl・Shift+クリックで複数選択（F2：名前変更、Delete：削除）"
+          title={withShortcutLabels("右クリックで名前変更・子フォルダー作成。論文をドラッグしてフォルダーへ移動。Ctrl・Shift+クリックで複数選択（F2：名前変更、Delete：削除）")}
         >
           {librarySearch.trim() && <div className="px-2 pt-1 text-xs">
             {searching && <p className="p-2 text-muted-foreground">検索中…</p>}

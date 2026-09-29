@@ -152,12 +152,16 @@ export type ReaderKeyAction =
 /**
  * The reader's paging keys. PageDown and Space scroll by a screen and, at the end of the page, go on
  * to the next; PageUp and Shift+Space go back likewise, to the end of the previous page. Home and End
- * open the first and last pages, and Alt+←/→ go back and forward through link, contents and search jumps.
+ * open the first and last pages, and Alt+←/→ go back and forward through link, contents and search jumps
+ * (also ⌘[ / ⌘], the Mac's keys for it in Safari and the Finder).
  */
 export function readerKeyAction({ key, shiftKey, ctrlKey, altKey, metaKey, target, atStart, atEnd }: {
   key: string; shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean; target: KeyTarget;
 } & PaneEdges): ReaderKeyAction | null {
-  if (target === "editable" || ctrlKey || metaKey) return null;
+  if (target === "editable") return null;
+  if (metaKey && !ctrlKey && !altKey && !shiftKey && (key === "[" || key === "]"))
+    return { type: "history", direction: key === "[" ? "back" : "forward" };
+  if (ctrlKey || metaKey) return null;
   if (altKey) {
     if (shiftKey) return null;
     if (key === "ArrowLeft") return { type: "history", direction: "back" };

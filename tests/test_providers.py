@@ -61,10 +61,11 @@ def agy_stream(response: str, status: str = "SUCCESS") -> bytes:
 def capture_popen(launched: list, stdout_bytes: bytes = b"answer"):
     """A Popen stand-in that records (command, stdin text, keyword arguments) and succeeds."""
     def mock_popen(command, cwd=None, stdin=None, stdout=None, stderr=None, **kwargs):
-        launched.append((command, stdin.read().decode("utf-8") if stdin else "", kwargs))
+        # A file for a CLI run; subprocess.DEVNULL (an int) for the sign-in on macOS and Linux.
+        launched.append((command, stdin.read().decode("utf-8") if hasattr(stdin, "read") else "", kwargs))
         if "--output-last-message" in command:
             Path(command[command.index("--output-last-message") + 1]).write_text("回答", "utf-8")
-        if stdout:  # The login console has no captured output.
+        if hasattr(stdout, "write"):  # The sign-in has no captured output.
             stdout.write(stdout_bytes)
             stdout.flush()
         return Mock(poll=Mock(return_value=0), returncode=0)
@@ -370,11 +371,94 @@ class ProvidersTests(unittest.TestCase):
 
     def test_sign_in_on_macos_and_linux_runs_out_of_the_sidecars_process_group(self):
         # Ending the sidecar's group (the app exits) must not end the sign-in, as on Windows.
-        with cli(CodexProvider), patch("papeer.providers.common.sys.platform", "linux"), patch(POPEN) as popen:
-            CodexProvider(Settings()).login()
-        kwargs = popen.call_args.kwargs
+        with cli(CodexProvider), patch("papeer.providers.common.sys.platform", "linux"), \
+                patch("papeer.providers.common.terminal_command", side_effect=lambda script: ["term", "sh", script]), \
+                patch(POPEN) as popen:
+            message = CodexProvider(Settings()).login()
+        command, kwargs = popen.call_args.args[0], popen.call_args.kwargs
+        script = Path(command[-1])
+        try:
+            self.assertEqual(command[:2], ["term", "sh"])
+            self.assertIn("\ncli login\n", script.read_text("utf-8"))
+            self.assertIn("開いた端末", message)
+        finally:
+            script.unlink(missing_ok=True)
         self.assertIs(kwargs["start_new_session"], True)
         self.assertEqual(kwargs["stdin"], __import__("subprocess").DEVNULL)
+
+    def test_sign_in_without_a_terminal_shows_the_command_to_run(self):
+        with cli(ClaudeCodeProvider), patch("papeer.providers.common.sys.platform", "linux"), \
+                patch("papeer.providers.common.terminal_command", return_value=None), patch(POPEN) as popen:
+            message = ClaudeCodeProvider(Settings()).login()
+        popen.assert_not_called()
+        self.assertIn("端末を開けませんでした", message)
+        self.assertTrue(message.endswith("\ncli auth login"), message)
+
+    def test_the_sign_in_script_runs_the_cli_with_its_path_and_waits_before_closing(self):
+        script = common.login_script(["/opt/my tools/claude", "auth", "login"], "/opt/my tools:/usr/bin")
+        lines = script.splitlines()
+        self.assertEqual(lines[:4], ["#!/bin/sh", 'rm -f -- "$0"', "export PATH='/opt/my tools:/usr/bin'",
+                                     "'/opt/my tools/claude' auth login"])
+        self.assertEqual(lines[-1], "read -r _")
+
+    def test_the_sign_in_opens_terminal_on_macos_and_the_first_terminal_found_on_linux(self):
+        self.assertEqual(common.terminal_command("/tmp/s.command", "darwin", lambda name: None),
+                         ["open", "-a", "Terminal", "/tmp/s.command"])
+        installed = {"xterm": "/usr/bin/xterm", "gnome-terminal": "/usr/bin/gnome-terminal"}
+        self.assertEqual(common.terminal_command("/tmp/s.command", "linux", installed.get),
+                         ["/usr/bin/gnome-terminal", "--", "sh", "/tmp/s.command"])
+        self.assertEqual(common.terminal_command("/tmp/s.command", "linux", {"xterm": "/usr/bin/xterm"}.get),
+                         ["/usr/bin/xterm", "-e", "sh", "/tmp/s.command"])
+        self.assertIsNone(common.terminal_command("/tmp/s.command", "linux", lambda name: None))
+
+    def test_an_npm_cli_on_macos_and_linux_runs_with_the_node_beside_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            bin_ = home / ".nvm/versions/node/v22.1.0/bin"
+            bin_.mkdir(parents=True)
+            script = bin_ / "codex"
+            script.write_text("#!/usr/bin/env node\nconsole.log(1)\n", "utf-8")
+            node = bin_ / "node"
+            node.write_text("#!/bin/sh\n", "utf-8")
+            for path in (script, node):
+                path.chmod(0o755)
+            with patch.dict(os.environ, {"PATH": ""}):
+                self.assertEqual(common.node_script_command(script, "Codex", home), [str(node), str(script)])
+                # Options on the first line go to node.
+                script.write_text("#!/usr/bin/env -S node --no-warnings\n", "utf-8")
+                self.assertEqual(common.node_script_command(script, "Codex", home),
+                                 [str(node), "--no-warnings", str(script)])
+                # Not a script for node: run as it is.
+                script.write_text("#!/bin/sh\n", "utf-8")
+                self.assertEqual(common.node_script_command(script, "Codex", home), [str(script)])
+                script.write_text("#!/usr/bin/env nodejs\n", "utf-8")
+                self.assertEqual(common.node_script_command(script, "Codex", home), [str(script)])
+                # No node anywhere: said before anything is started.
+                script.write_text("#!/usr/bin/env node\n", "utf-8")
+                node.unlink()
+                with patch("papeer.providers.common.unix_bin_folders", return_value=[]):
+                    with self.assertRaisesRegex(RuntimeError, "Codex は Node.js で動くため node が必要ですが、見つかりません"):
+                        common.node_script_command(script, "Codex", home)
+                    # Else the first node on the CLI's PATH.
+                    other = home / "other"
+                    other.mkdir()
+                    (other / "node").write_text("#!/bin/sh\n", "utf-8")
+                    (other / "node").chmod(0o755)
+                    with patch.dict(os.environ, {"PATH": str(other)}):
+                        self.assertEqual(common.node_script_command(script, "Codex", home),
+                                         [str(other / "node"), str(script)])
+
+    def test_find_cli_on_macos_and_linux_starts_an_npm_script_with_node(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            script = folder / "claude"
+            script.write_text("#!/usr/bin/env node\n", "utf-8")
+            (folder / "node").write_text("#!/bin/sh\n", "utf-8")
+            for path in (script, folder / "node"):
+                path.chmod(0o755)
+            provider = ClaudeCodeProvider(Settings(provider="claude", provider_options={"claude": {"cli_path": str(script)}}))
+            with patch("papeer.providers.common._windows", return_value=False):
+                self.assertEqual(provider.command(), [str(folder / "node"), str(script)])
 
     @unittest.skipIf(os.name == "nt", "process groups: macOS and Linux")
     def test_stopping_a_cli_ends_the_processes_it_started(self):
@@ -666,7 +750,9 @@ class CliSafetyTests(unittest.TestCase):
         secrets = {"PAPEER_TOKEN": "sidecar-token", "PAPERDESK_TOKEN": "old-token", "PAPEER_API_KEY": "api-key",
                    "KEEP_THIS": "1"}
         launched = []
+        # On macOS and Linux the sign-in starts a terminal; the one it would find is played here.
         with patch.dict(os.environ, secrets), cli(ClaudeCodeProvider), \
+                patch("papeer.providers.common.terminal_command", side_effect=lambda script: ["term", script]), \
                 patch(POPEN, side_effect=capture_popen(launched)), \
                 patch(RUN, return_value=Mock(returncode=0, stdout="", stderr="")) as run:
             provider = create_provider(Settings(provider="claude"), threading.Event())

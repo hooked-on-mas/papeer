@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -435,6 +436,11 @@ def _windows() -> bool:
     return os.name == "nt"
 
 
+def cli_path_hint(windows: str, posix: str) -> str:
+    """The hint of a CLI's path setting, with what is found on this OS (an npm .cmd shim is Windows only)."""
+    return f"空欄なら自動検出（{windows if _windows() else posix} など）"
+
+
 def _version_key(name: str) -> tuple:
     """Sorts version folder names such as v20.11.1 or 22.3.0 by their numbers (v8 before v10)."""
     return tuple(int(part) for part in re.findall(r"\d+", name))
@@ -624,12 +630,50 @@ def shim_target(shim: Path) -> Path | None:
     return target if target.is_relative_to(folder) and target.is_file() else None
 
 
+# The first line of a script run by Node.js: "#!/usr/bin/env node", "#!/usr/bin/env -S node --flag",
+# "#!/usr/local/bin/node --flag". Group 1 is the node named by its path, 2 the options for node.
+_NODE_SHEBANG = re.compile(r"^#!\s*(?:/\S*/env\s+(?:-S\s+)?node|(/\S*/node))(?:\s+(.*?))?\s*$")
+
+
+def _executable(path: str) -> bool:
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def node_script_command(program: Path, tool_name: str, home: Path | None = None) -> list[str]:
+    """macOS and Linux: the command that starts `program`.
+
+    npm installs a CLI as a link to a JavaScript file that starts with `#!/usr/bin/env node`. Run as it is,
+    it needs node on PATH, which an app opened from the Finder lacks, and fails with a bare
+    "env: node: No such file or directory". Such a script is started as [node, options…, script] instead,
+    with the node its first line names, else the node beside it (nvm, Homebrew, Volta and npm's own prefix put
+    the CLI next to the node it was installed with), else the first on the CLI's PATH (cli_search_path).
+    Without one, the error says Node.js is missing before anything is started. Anything else runs as it is.
+    """
+    try:
+        with open(program, "rb") as stream:
+            first = stream.readline(512).decode("utf-8", "replace")
+    except OSError:
+        return [str(program)]
+    match = _NODE_SHEBANG.match(first)
+    if not match:
+        return [str(program)]
+    folders = [os.path.dirname(match.group(1))] if match.group(1) else []
+    folders += [os.path.dirname(str(program)), os.path.dirname(os.path.realpath(program))]
+    folders += cli_search_path([str(program)], os.environ.get("PATH", ""), home or Path.home()).split(os.pathsep)
+    node = next((path for folder in folders if folder and _executable(path := os.path.join(folder, "node"))), None)
+    if node is None:
+        raise RuntimeError(f"{tool_name} は Node.js で動くため node が必要ですが、見つかりません（{program}）。"
+                           "Node.js をインストールするか、設定の接続先で Node.js を使わない版のパスを指定してください。")
+    return [node, *shlex.split(match.group(2) or ""), str(program)]
+
+
 def find_cli(configured: str, executable: str, windows_candidates: tuple[str, ...], npm_entry: str,
              missing_message: str, tool_name: str = "", posix_candidates: tuple[str, ...] = ()) -> list[str]:
     """The command that starts a CLI: the configured path, PATH, then known install locations.
 
     On macOS and Linux the known locations are posix_candidates (relative to the home folder when not
     absolute), then the usual install folders (unix_bin_folders); a program there must be executable.
+    A script for Node.js (an npm CLI) is started with node found by node_script_command.
 
     A configured path may be quoted and hold %VARIABLES%; it is found as Windows finds a program
     (shutil.which: a bare name on PATH, a missing extension from PATHEXT, so npm's extensionless sh
@@ -663,6 +707,8 @@ def find_cli(configured: str, executable: str, windows_candidates: tuple[str, ..
     if not found:
         raise RuntimeError(missing_message)
     path = Path(found)
+    if not _windows():
+        return node_script_command(path, tool_name or executable)
     if path.suffix.lower() not in _SCRIPT_SUFFIXES:
         return [str(path)]
     known = path.parent / "node_modules" / npm_entry if npm_entry else None
@@ -677,6 +723,44 @@ def find_cli(configured: str, executable: str, windows_candidates: tuple[str, ..
     needed = "実行ファイル(.exe)、またはnpm版とNode.js" if npm_entry else "実行ファイル(.exe)"
     raise RuntimeError(f"{path.name} は cmd.exe を経由するため使いません。{executable}の{needed}が必要です。"
                        "設定画面で .exe のパスを指定してください（pnpm・yarn で入れた場合は .exe か npm 版を指定）。")
+
+
+def login_script(command: list[str], search_path: str) -> str:
+    """macOS and Linux: the shell script a terminal runs for a CLI's sign-in. It removes itself, runs the
+    command with the CLI's PATH (a terminal the system opens starts from the user's own), and waits for Enter
+    before the window closes, so that what the CLI printed can still be read."""
+    return "\n".join([
+        "#!/bin/sh",
+        'rm -f -- "$0"',
+        f"export PATH={shlex.quote(search_path)}",
+        shlex.join(command),
+        "printf '\\n終わったら Papeer に戻って「接続を確認」を押してください。Enter キーでこの画面を閉じます。'",
+        "read -r _",
+        "",
+    ])
+
+
+# Linux terminals, in the order they are tried, with the option that runs a command. x-terminal-emulator is
+# Debian's and Ubuntu's choice of the user's default terminal, which must take -e.
+_LINUX_TERMINALS = (("x-terminal-emulator", "-e"), ("gnome-terminal", "--"), ("konsole", "-e"),
+                    ("xfce4-terminal", "-x"), ("mate-terminal", "-x"), ("kitty", ""), ("alacritty", "-e"),
+                    ("xterm", "-e"))
+
+
+def terminal_command(script: str, platform: str | None = None,
+                     which: Callable[[str], str | None] | None = None) -> list[str] | None:
+    """The command that opens a terminal window running the shell script at `script`; None when there is
+    no terminal to open (Linux without any of _LINUX_TERMINALS). `platform` is sys.platform, `which`
+    shutil.which, unless given."""
+    which = which or shutil.which
+    if (platform or sys.platform) == "darwin":
+        # Terminal runs a .command file it is given in a new window, as a double click in the Finder does.
+        return ["open", "-a", "Terminal", script]
+    for name, option in _LINUX_TERMINALS:
+        program = which(name)
+        if program:
+            return [program, *([option] if option else []), "sh", script]
+    return None
 
 
 class CliBackend:
@@ -728,12 +812,34 @@ class CliBackend:
             except PermissionError:
                 subprocess.Popen(command, env=child_env(), creationflags=subprocess.CREATE_NEW_CONSOLE)
         else:
-            # Not the sidecar's stdin: the app's pipe (hidden_window). A session of its own, out of the
-            # sidecar's process group: the sign-in and the browser it opens may outlive the app, as the
-            # console does on Windows (CREATE_BREAKAWAY_FROM_JOB above).
-            subprocess.Popen(command, env=child_env(command), stdin=subprocess.DEVNULL, start_new_session=True)
+            return self._login_in_terminal(command)
         service = getattr(self.spec, "login_service", "") or self.tool_name
         return f"開いたブラウザーで{service}にログイン後、「接続を確認」を押してください。"
+
+    def _login_in_terminal(self, command: list[str]) -> str:
+        """macOS and Linux: the sign-in in a terminal window, as in the console on Windows. `claude auth login`
+        asks which way to sign in and agy shows its sign-in screen: neither goes on without a terminal.
+        Without a terminal to open, the command is shown for the user to run."""
+        service = getattr(self.spec, "login_service", "") or self.tool_name
+        env = child_env(command)
+        descriptor, script = tempfile.mkstemp(prefix="papeer-login-", suffix=".command")
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(login_script(command, env["PATH"]))
+        os.chmod(script, 0o700)
+        terminal = terminal_command(script)
+        if terminal is not None:
+            try:
+                # Not the sidecar's stdin: the app's pipe (hidden_window). A session of its own, out of the
+                # sidecar's process group: the sign-in and the browser it opens may outlive the app, as the
+                # console does on Windows (CREATE_BREAKAWAY_FROM_JOB above).
+                subprocess.Popen(terminal, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+                return f"開いた端末の案内に従って{service}にログインし、「接続を確認」を押してください。"
+            except OSError:
+                pass
+        Path(script).unlink(missing_ok=True)
+        return (f"端末を開けませんでした。端末で次のコマンドを実行して{service}にログインし、"
+                f"「接続を確認」を押してください。\n{shlex.join(command)}")
 
     def check(self) -> str:
         result = self.run_status(timeout=30)

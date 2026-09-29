@@ -48,6 +48,7 @@ from papeer.core.paths import sync_blobs_path
 from papeer.core.local_history import BlobDamaged, SourceUnreadable
 from papeer.core.storage import SCHEMA_VERSION, Library, NewerSchemaError, database_version, library_missing, newer_papeer
 from papeer.core.sync_store import GenerationStore, NewerFormatError, View, blob_names
+from papeer.core.sync_client import SYNC_CLIENT
 from papeer.providers import Cancelled, check_cancel
 
 # How long a wait goes before the user is told to look at the other PC's Google Drive.
@@ -106,13 +107,13 @@ def waiting_status(state: dict) -> dict | None:
     missing = waiting.get("missing") if type(waiting.get("missing")) is int else 0
     reason = waiting.get("reason")
     if reason == "base":
-        message = ("前回の同期データが24時間以上届いていません。PC版Google Driveの同期が止まっていないか確認してください。"
+        message = (f"前回の同期データが24時間以上届いていません。{SYNC_CLIENT}の同期が止まっていないか確認してください。"
                    if overdue else "前回の同期データが届くのを待っています。")
     elif reason == "damaged":
         message = (f"{name} のデータの一部が壊れていたため、送り直されるのを待っています。"
                    + (f"{name} でPapeerを起動して同期してください。" if overdue else ""))
     else:
-        message = (f"{name} のデータが24時間以上届いていません。{name} のPC版Google Driveの同期が止まっていないか確認してください。"
+        message = (f"{name} のデータが24時間以上届いていません。{name} の{SYNC_CLIENT}の同期が止まっていないか確認してください。"
                    if overdue else f"{name} のデータが届くのを待っています（残り {missing} ファイル）。")
     if overdue:
         message += "待たずに進めるときは「このPCのデータで続ける」を選んでください。"
@@ -382,7 +383,7 @@ def _publish(root: Path, store: GenerationStore, view: View, manifest: dict, *, 
                 raise ValueError("このPCの履歴の一部が見つからないか破損していたため、同期フォルダーに書き込めませんでした。"
                                  "もう一度同期してください。")
     if store.view().missing(manifest):
-        raise ValueError("同期フォルダーに書き込んだデータが見つかりません。保存先とPC版Google Driveを確認して再試行してください。")
+        raise ValueError(f"同期フォルダーに書き込んだデータが見つかりません。保存先と{SYNC_CLIENT}を確認して再試行してください。")
     check_cancel(cancel)
     now = _now()
     generation = {"format": sync_store.FORMAT, "id": uuid.uuid4().hex, "created": now.isoformat(),
@@ -690,7 +691,7 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
         if choice not in ids:
             raise ValueError("選んだ同期データが見つかりません。")
         if choice in incomplete:
-            raise ValueError("選んだ同期データはまだ届いていません。PC版Google Driveの同期完了後に再試行してください。")
+            raise ValueError(f"選んだ同期データはまだ届いていません。{SYNC_CLIENT}の同期完了後に再試行してください。")
     single = _single(view, ids, base)
     # With no base known (never synced, or one older than any lineage), a differing head is always a choice.
     conflict = single is None and bool(ids) or (single is not None and known_base != single

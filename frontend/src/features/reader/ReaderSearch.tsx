@@ -7,6 +7,7 @@ import { QK } from "@/lib/queryKeys";
 import { navigateTo } from "./navigation";
 import { stepSearchResult } from "./searchSteps";
 import { keyTarget } from "./pageTurn";
+import { isImeKey } from "@/lib/imeKeys";
 
 export type SearchResult = { page: number; snippet: string; anchor_y: number };
 
@@ -116,8 +117,8 @@ export function ReaderSearch({ paperId, search, setSearch, ownsKey, open, setOpe
         onChange={e => setInput(e.target.value)}
         onKeyDown={e => {
           // Enter also confirms Japanese input; leave that to the IME.
-          if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
-          if (e.key === "Escape" && !e.nativeEvent.isComposing) { e.preventDefault(); setOpen(false); }
+          if (e.key === "Enter" && !isImeKey(e.nativeEvent)) { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
+          if (e.key === "Escape" && !isImeKey(e.nativeEvent)) { e.preventDefault(); setOpen(false); }
         }}
         placeholder="原文・訳文の語句を検索（Enter で次へ、Shift+Enter で前へ）" />
       <select className="rounded border bg-background px-1" value={search.side} onChange={e => setSearch({ query: input, side: e.target.value as "original" | "translated" })}><option value="original">原文</option><option value="translated">訳文</option></select>

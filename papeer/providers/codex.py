@@ -12,7 +12,7 @@ import tomllib
 
 from papeer.providers.base import OptionField, ProviderBackend, ProviderSpec
 from papeer.providers.common import (
-    CliBackend, hidden_window, json_lines, kill_tree, process_kwargs, remember_limits, run_cli_process, to_int,
+    CliBackend, cli_path_hint, hidden_window, json_lines, kill_tree, process_kwargs, remember_limits, run_cli_process, to_int,
     track_cli, untrack_cli, window_label, wrap_document_prompt,
 )
 
@@ -88,7 +88,7 @@ class CodexProvider(CliBackend, ProviderBackend):
         kind="cli",
         needs_login=True,
         login_service="ChatGPT",
-        fields=(OptionField("cli_path", "Codex のパス", "空欄なら自動検出（codex.cmd など）"),),
+        fields=(OptionField("cli_path", "Codex のパス", cli_path_hint("codex.cmd", "/opt/homebrew/bin/codex")),),
     )
     executable = "codex"
     windows_candidates = ("APPDATA/npm/codex.cmd",)

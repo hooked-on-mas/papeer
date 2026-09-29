@@ -6,6 +6,7 @@ import { showError } from "@/components/errorDialog";
 import { noteDraft, stickyColors, stickyQuote, type StickyNote } from "./stickyNotes";
 import { deleteStickyNote, openStickyNote, useStickyNotes } from "./stickyNotesStore";
 import { useStore } from "@/store";
+import { withShortcutLabels } from "@/lib/platform";
 
 type Position = { anchor_x: number; anchor_y: number };
 export function StickyNoteMarker({ item, movable }: { item: StickyNote; movable: boolean }) {
@@ -50,7 +51,7 @@ export function StickyNoteMarker({ item, movable }: { item: StickyNote; movable:
   // In rem like its text, so that the marker grows with the UI size (lib/uiScale.ts) instead of cutting it off.
   const markerHeight = excerpt ? "4.5rem" : "2rem";
   return <button data-sticky-note aria-label={`付箋：${item.label} ${item.note || stickyQuote(item.quote)}`} aria-pressed={selected}
-    aria-busy={saving} title={`${item.label}${excerpt ? `：${excerpt}` : ""}\nドラッグで移動・ダブルクリックで編集・Deleteで削除`}
+    aria-busy={saving} title={`${item.label}${excerpt ? `：${excerpt}` : ""}\nドラッグで移動・ダブルクリックで編集・${withShortcutLabels("Delete")}で削除`}
     className={`absolute z-20 overflow-hidden rounded border px-2 py-1.5 text-left shadow-sm select-none ${stickyColors[item.label] ?? stickyColors["重要"]} ${selected ? "ring-2 ring-primary ring-offset-1" : ""}`}
     style={{ width: "min(10rem, 100%)", height: markerHeight,
       top: `max(0px, min(calc(100% - ${markerHeight}), ${current.anchor_y * 100}%))`, left: `max(0px, min(calc(100% - 10rem), ${(current.anchor_x ?? 0) * 100}%))`,

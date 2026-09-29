@@ -12,6 +12,7 @@ import { reloadUnlessClosing } from "@/app/appClosing";
 import { setLibraryBusyWaiter } from "@/lib/libraryBusy";
 import { openSettings } from "./settingsNavigation";
 import { clearsOnReconnect, nextSyncWarning, SYNC_WARNINGS, type SyncWarning } from "./syncWarnings";
+import { syncClientNames } from "@/lib/platform";
 
 /** background: the automatic sync that runs without the waiting screen (it never replaces the library). */
 export const useSyncState = create<{ busy: boolean; jobId: string | null; cancelling: boolean; background: boolean }>(
@@ -152,9 +153,9 @@ export async function runDriveSync(choice?: string, heads?: string[], confirm = 
           showToast({ title: "選んだデータで同期しました", description: "選ばなかったデータはこのPCの履歴に退避しています（設定 → バックアップ → このPCの履歴から戻す）。", tone: "success" });
         } else if (background) {
           // The automatic sync every minute: the status bar only, which clears itself.
-          useStore.getState().setStatus("同期フォルダーに保存しました。PC間の転送状況はGoogle Driveで確認してください。");
+          useStore.getState().setStatus(`同期フォルダーに保存しました。PC間の転送状況は${syncClientNames().service}で確認してください。`);
         } else {
-          showToast({ id: "drive-synced", title: "同期フォルダーに保存しました", description: "PC間の転送状況はGoogle Driveで確認してください。", tone: "success" });
+          showToast({ id: "drive-synced", title: "同期フォルダーに保存しました", description: `PC間の転送状況は${syncClientNames().service}で確認してください。`, tone: "success" });
         }
         resolve();
       }).then(jobId => {

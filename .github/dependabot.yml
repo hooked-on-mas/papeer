@@ -3,9 +3,11 @@
 # update comes on its own (README「依存ライブラリ」).
 #
 # A pull request that changes uv.lock, pnpm-lock.yaml or Cargo.lock also needs a regenerated license
-# inventory; tests/test_license_inventory.py fails until docs/dependency-license-inventory.json matches
-# the lock files again. Dependabot cannot regenerate it (it reads the installed packages), so check out
-# the branch, run `just setup` and `just licenses`, and commit the inventory (README「依存ライブラリ」).
+# inventory; tests/test_license_inventory.py fails until docs/dependency-license-inventory.json (Windows)
+# matches the lock files again. Dependabot cannot regenerate it (it reads the installed packages), so
+# check out the branch, run `just setup` and `just licenses`, and commit the inventory. The macOS and
+# Linux inventories (docs/dependency-license-inventory.<os>.json) can be made only on their own OS, by
+# running CI by hand; a stale one only warns, so it need not block a merge (README「依存ライブラリ」).
 #
 # The tauri crates and the @tauri-apps/* npm packages must stay on the same minor version: merge the
 # "tauri" pull requests of both ecosystems together.

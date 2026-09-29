@@ -5,6 +5,7 @@ import { copyBibtex } from "@/app/actions";
 import { Input } from "@/components/ui/input";
 import { flushDraft, hideDraft, revertField, showDraft, typeField, useMetadataDraft } from "./metadataAutosave";
 import { metaValues, unsavedFields, type MetaField } from "./paperMetadata";
+import { isImeKey } from "@/lib/imeKeys";
 
 const FIELDS: { field: MetaField; label: string; placeholder: string; maxLength?: number; spellCheck?: boolean }[] = [
   { field: "title", label: "タイトル", placeholder: "" },
@@ -56,7 +57,7 @@ export function PaperMetadataForm({ paper, collections }: { paper: PaperData; co
         onFocus={() => setFocused(field)}
         onBlur={() => { setFocused(null); void flushDraft(paperId); }}
         onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
-          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+          if (e.key === "Enter" && !isImeKey(e.nativeEvent)) {
             e.preventDefault();
             void flushDraft(paperId);
           }

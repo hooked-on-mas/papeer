@@ -19,6 +19,7 @@ import { TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
 import { cancelJob } from "@/features/jobs/jobEvents";
 import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
 import { useRebuilding } from "@/features/reader/rebuildJobs";
+import { withShortcutLabels } from "@/lib/platform";
 
 export function Header() {
   const activePaperId = useStore((s) => s.activePaperId);
@@ -36,7 +37,7 @@ export function Header() {
     <button
       onClick={() => useStore.getState().setSidebarCollapsed(!sidebarCollapsed)}
       className={`p-1.5 mr-2 rounded-md hover:bg-muted shrink-0 ${sidebarCollapsed ? "text-muted-foreground" : "text-foreground"}`}
-      title="左パネルの表示を切り替え（Ctrl+B）"
+      title={withShortcutLabels("左パネルの表示を切り替え（Ctrl+B）")}
       aria-label="ライブラリ"
     >
       <PanelLeft className="w-4 h-4" />
@@ -99,7 +100,7 @@ export function Header() {
           <button
             onClick={() => emitAppEvent("open-translate-dialog")}
             disabled={translateBlocked}
-            title="翻訳するページとモデルを選んで開始します（Ctrl+T）。保存済みの訳文は再利用します。"
+            title={withShortcutLabels("翻訳するページとモデルを選んで開始します（Ctrl+T）。保存済みの訳文は再利用します。")}
             className="flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[0.8125rem] font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
           >
             <Languages className="w-4 h-4" />

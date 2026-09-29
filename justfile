@@ -75,7 +75,8 @@ bump version:
 
 # Regenerate the license inventory of every locked dependency (tools/license_inventory.py, README「依存ライブラリ」)
 # 依存を変えたら実行して台帳もコミットする。ロックファイルとインストール済みの情報だけを読み、ネットワークは使わない
-# ライセンス台帳を作り直す。`just licenses check` は記録したロックファイル等のハッシュが今と一致するかだけを確かめる
+# この OS のライセンス台帳を作り直す（macOS・Linux のものは CI の licenses ジョブで作る）。
+# `just licenses check` は、作ってある各 OS の台帳に記録したロックファイル等のハッシュが今と一致するかだけを確かめる
 licenses mode="":
     uv run python tools/license_inventory.py {{ if mode == "check" { "--check" } else if mode == "" { "" } else { error("just licenses か just licenses check を指定してください") } }}
 

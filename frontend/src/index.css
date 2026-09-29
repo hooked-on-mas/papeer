@@ -14,8 +14,9 @@
 }
 
 @theme {
-  --font-sans: "Geist Variable", "Yu Gothic UI", "Hiragino Sans", "Noto Sans CJK JP", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  /* Japanese: Windows, macOS, then what Linux distributions install (fonts-noto-cjk, Source Han, IPA). */
+  --font-sans: "Geist Variable", "Yu Gothic UI", "Hiragino Sans", "Noto Sans CJK JP", "Noto Sans JP", "Source Han Sans JP", "IPAexGothic", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
 }
 
 @theme inline {

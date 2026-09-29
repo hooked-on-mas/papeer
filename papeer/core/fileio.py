@@ -34,6 +34,13 @@ def replace_file(source: Path, target: Path) -> None:
 
     Windows refuses the move while another process briefly holds the target open
     (virus scan, indexing, a PDF viewer), so a PermissionError is retried for a few seconds.
+    macOS and Linux replace an open file without complaint; a PermissionError there is a real one,
+    raised after the same few seconds.
+
+    On macOS os.fsync hands the data to the drive but does not make it flush its own cache
+    (fcntl F_FULLFSYNC would, at some tens of milliseconds per file). As SQLite does by default for the
+    library's database, it is not used: a power cut at the wrong moment may lose the newest writes, the
+    same risk the database takes. A crash of the app or the system (the drive keeps power) loses nothing.
     """
     with open(source, "rb+") as stream:  # Windows can only flush a handle opened for writing.
         os.fsync(stream.fileno())

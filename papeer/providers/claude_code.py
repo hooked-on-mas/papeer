@@ -9,7 +9,7 @@ import tempfile
 from papeer.core.config import REASONING_EFFORTS
 from papeer.providers.base import OptionField, ProviderBackend, ProviderSpec
 from papeer.providers.common import (
-    AnswerRejected, CliBackend, cli_exit_failure, cli_failure, json_lines, lasting_cli_failure, remember_limits,
+    AnswerRejected, CliBackend, cli_exit_failure, cli_failure, cli_path_hint, json_lines, lasting_cli_failure, remember_limits,
     run_cli_process, to_int, wrap_document_prompt,
 )
 
@@ -82,7 +82,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
         kind="cli",
         needs_login=True,
         login_service="Claude",
-        fields=(OptionField("cli_path", "Claude Code のパス", "空欄なら自動検出（claude.cmd など）"),),
+        fields=(OptionField("cli_path", "Claude Code のパス", cli_path_hint("claude.cmd", "~/.local/bin/claude")),),
     )
     executable = "claude"
     windows_candidates = (

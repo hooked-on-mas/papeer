@@ -20,6 +20,10 @@ import { describeDifference, type Counts } from "./conflictSummary";
 import { fetchDriveStatus, fetchSyncCheck, type SyncReview } from "./driveApi";
 import { isAutoSyncFailure } from "./syncWarnings";
 import { VersionNoticeSetting } from "./VersionNoticeHost";
+import { PLATFORM, syncClientNames } from "@/lib/platform";
+
+const client = syncClientNames();
+
 const COUNT_LABELS: [keyof Counts, string][] = [["papers", "論文"], ["notes", "メモ"], ["stickies", "付箋"], ["ink", "書き込み（ページ）"]];
 // Told once per launch; the settings keep showing it.
 let missingLibraryShown = false;
@@ -186,11 +190,13 @@ export function DriveSection() {
     </div>}
     <p className="font-medium">保存先：{data.connected ? "同期フォルダー ＋ このPC" : "このPC（ローカル）"}</p>
     <p>PDF、書き込み、付箋、サマリー、翻訳、メモ、チャット、タグ、辞書、テンプレート、設定をまとめて同期します。オフライン中もこのPCに保存します。</p>
-    <p>PC版Google Driveの同期フォルダーを指定してください。アプリ内でのGoogleログインや認証設定は不要です。</p>
+    <p>{PLATFORM === "linux"
+      ? "PC間で同期されるこのPCのフォルダー（Syncthing・Dropbox などの同期ソフトが同期するもの。ネットワーク上のドライブとして開いたものは使えません）を指定してください。アプリ内でのログインや認証設定は不要です。"
+      : "PC版Google Driveの同期フォルダーを指定してください。アプリ内でのGoogleログインや認証設定は不要です。"}</p>
     <div className="space-y-2">
       <label htmlFor="sync-folder">同期データの保存先</label>
       <div className="flex gap-2"><Input id="sync-folder" value={folder ?? data.folder} disabled={busy}
-        placeholder="G:\マイドライブ\Papeer-sync" onChange={e => setFolder(e.target.value)} />
+        placeholder={client.folderExample} onChange={e => setFolder(e.target.value)} />
         <Button variant="outline" disabled={busy} onClick={() => void chooseFolder()}>フォルダーを選択</Button></div>
       <p className="text-xs text-muted-foreground">フォルダー選択では、選んだ場所の中に Papeer-sync を作成します。パスを直接入力することもできます。</p>
       <Button disabled={busy || !(folder ?? data.folder).trim()} onClick={() => void connectFolder()}>保存先を設定して同期</Button>
@@ -227,7 +233,7 @@ export function DriveSection() {
       {data.previous_path && <p className="break-all text-xs">取り込み前のデータ（このPCの履歴で確かめられなかったため、フォルダーに残しています）：{data.previous_path}</p>}
     </>}
     <VersionNoticeSetting />
-    <p className="text-xs text-muted-foreground">PC間の転送はPC版Google Driveが行います。「今すぐ同期」の後、Google Drive側の同期完了も確認してから別PCに移ってください。別PCでは同じ同期フォルダーを指定します。変更時はライブラリ全体を保存し、履歴の分だけ容量を使います。</p>
+    <p className="text-xs text-muted-foreground">PC間の転送は{client.app}が行います。「今すぐ同期」の後、{client.service}側の同期完了も確認してから別PCに移ってください。別PCでは同じ同期フォルダーを指定します。変更時はライブラリ全体を保存し、履歴の分だけ容量を使います。</p>
     <Button variant="outline" onClick={() => openSettings("backup")}>バックアップ・復元を開く</Button>
   </div>;
 }

@@ -14,6 +14,7 @@ import { inkToolbarOpen } from "./readerBars";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import type { InkTool } from "./inkGeometry";
 import { InkPageList } from "./InkPageList";
+import { withShortcutLabels } from "@/lib/platform";
 
 type Props = {
   editor: InkEditor; disabled: boolean; onStickyNote: (selection: boolean) => void;
@@ -121,8 +122,8 @@ export function InkToolbar({ editor, disabled, onStickyNote, side, errorsOnly = 
       <span className="mx-1 h-4 border-l" />
       <button aria-label="範囲キャプチャ" aria-pressed={tool === "capture"} disabled={disabled} title="囲んだ範囲をキャプチャする"
         className={`${button} ${tool === "capture" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : ""}`} onClick={() => setTool("capture")}><Scan className="size-3.5" /><span className={toolLabel}>範囲キャプチャ</span></button>
-      <button aria-label="書き込みを元に戻す" title="元に戻す（Ctrl+Z）" className={button} disabled={!editable || !ink.canUndo || exporting} onClick={ink.entry?.undo}><Undo2 className="size-3.5" /></button>
-      <button aria-label="書き込みをやり直す" title="やり直し（Ctrl+Y）" className={button} disabled={!editable || !ink.canRedo || exporting} onClick={ink.entry?.redo}><Redo2 className="size-3.5" /></button>
+      <button aria-label="書き込みを元に戻す" title={withShortcutLabels("元に戻す（Ctrl+Z）")} className={button} disabled={!editable || !ink.canUndo || exporting} onClick={ink.entry?.undo}><Undo2 className="size-3.5" /></button>
+      <button aria-label="書き込みをやり直す" title={withShortcutLabels("やり直し（Ctrl+Y）")} className={button} disabled={!editable || !ink.canRedo || exporting} onClick={ink.entry?.redo}><Redo2 className="size-3.5" /></button>
       <DropdownMenu>
         <DropdownMenuTrigger aria-label="書き込みのその他" title="表示・一覧・PDF保存" className={`${button} ml-auto`}>
           <MoreHorizontal className="size-4" />
@@ -170,11 +171,11 @@ export function InkToolbar({ editor, disabled, onStickyNote, side, errorsOnly = 
       <select aria-label="書き込みの選び方" className="h-7 border rounded bg-background" value={tool} onChange={e => setTool(e.target.value as InkTool)}><option value="region">四角で選択</option><option value="lasso">投げ縄</option></select>
       <span className="rounded-full bg-muted px-2 py-0.5 text-[0.75rem] text-muted-foreground whitespace-nowrap select-none">{selected.length ? `${selected.length}件選択` : "書き込みを囲んで選択"}</span>
       {selected.length > 0 && <>
-        <button className={selectionButton} onClick={editor.copy} title="書き込みをコピー（Ctrl+C）"><Copy aria-hidden="true" className="size-3.5" />コピー</button>
-        <button className={selectionButton} onClick={editor.cut} title="書き込みを切り取り（Ctrl+X）"><Scissors aria-hidden="true" className="size-3.5" />切り取り</button>
-        <button className={`${selectionButton} text-destructive border-destructive/30 hover:bg-destructive/10`} onClick={editor.remove} title="選択した書き込みを削除（Delete）"><Trash2 aria-hidden="true" className="size-3.5" />削除</button>
+        <button className={selectionButton} onClick={editor.copy} title={withShortcutLabels("書き込みをコピー（Ctrl+C）")}><Copy aria-hidden="true" className="size-3.5" />コピー</button>
+        <button className={selectionButton} onClick={editor.cut} title={withShortcutLabels("書き込みを切り取り（Ctrl+X）")}><Scissors aria-hidden="true" className="size-3.5" />切り取り</button>
+        <button className={`${selectionButton} text-destructive border-destructive/30 hover:bg-destructive/10`} onClick={editor.remove} title={withShortcutLabels("選択した書き込みを削除（Delete）")}><Trash2 aria-hidden="true" className="size-3.5" />削除</button>
       </>}
-      {editor.hasClipboard && <button className={selectionButton} onClick={editor.paste} title="書き込みを貼り付け（Ctrl+V）"><ClipboardPaste aria-hidden="true" className="size-3.5" />貼り付け</button>}
+      {editor.hasClipboard && <button className={selectionButton} onClick={editor.paste} title={withShortcutLabels("書き込みを貼り付け（Ctrl+V）")}><ClipboardPaste aria-hidden="true" className="size-3.5" />貼り付け</button>}
       <DropdownMenu><DropdownMenuTrigger aria-label="書き込み選択のその他" title="その他の操作" className={`${selectionButton} ml-auto`}><MoreHorizontal className="size-4" /></DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onClick={() => editor.setSelectedIds(editor.strokes.map(s => s.id))}>書き込みを全選択</DropdownMenuItem>

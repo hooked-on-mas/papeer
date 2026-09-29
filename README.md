@@ -98,7 +98,7 @@ pytest は `tests/conftest.py` で `LOCALAPPDATA`・`XDG_DATA_HOME`・`XDG_STATE
 
 CI（`.github/workflows/ci.yml`）は push ごとに Windows と Linux（ubuntu-22.04）で、`just lint`・`just test` と同じ検査に加えて `frontend/openapi.json` とライセンス台帳が最新か（`--check`）、Rust の `cargo fmt --check`・`cargo clippy --release --all-targets -- -D warnings`・`cargo test --release`（`lib.rs`・`sidecar.rs` の単体テスト）を実行します。フロントエンドの検査（tsc・ESLint・node:test・`pnpm build`）は OS に依存しないため Windows だけで行います。同じリポジトリのブランチからの pull request は push したときの結果を使い、pull request として検査するのは fork からのものだけです。実際の AI は呼びません。
 
-GitHub の Actions の画面から手動で実行（Run workflow）すると、macOS（Apple Silicon）での同じ検査と、各 OS で sidecar を `just build-sidecar` で作ってスモークテストし、`sidecar.rs` の `#[ignore]` のテスト（作った sidecar をアプリと同じように起動し、`/shutdown` と、標準入力のパイプが閉じたときに自分で終わること）を通すジョブも選べます。非公開のリポジトリでは Actions の実行時間が無料枠から引かれ、Linux の 1 分は 1 分、Windows は 2 分、macOS は 10 分として数えられるため、macOS と sidecar のビルドは push では動かしません。
+GitHub の Actions の画面から手動で実行（Run workflow）すると、macOS（Apple Silicon）での同じ検査と、各 OS で sidecar を `just build-sidecar` で作ってスモークテストし、`sidecar.rs` の `#[ignore]` のテスト（作った sidecar をアプリと同じように起動し、`/shutdown` と、標準入力のパイプが閉じたときに自分で終わること）を通すジョブ、Linux と macOS のライセンス台帳を作るジョブ（`licenses`。「依存ライブラリ」）も選べます。非公開のリポジトリでは Actions の実行時間が無料枠から引かれ、Linux の 1 分は 1 分、Windows は 2 分、macOS は 10 分として数えられるため、macOS と sidecar のビルドは push では動かしません。
 
 ### E2E テスト
 
@@ -229,7 +229,11 @@ Apple の開発者登録をしていないため、Mac 版は Developer ID で�
 
 ad-hoc 署名は版ごとに変わるため、更新するたびに書類フォルダーなどへのアクセスの許可を聞き直されることがあります。
 
-Linux 版は `.deb` だけで、WebKitGTK 4.1 と GTK 3 に依存します。タスクトレイのアイコンは `libayatana-appindicator3-1` があるときだけ表示し（推奨パッケージ。ないときはトレイなしで動きます）、日本語の表示には `fonts-noto-cjk` を推奨します。
+Mac 版で保存・確認・同期を通して終わるのは、⌘Q とメニュー、ウィンドウを閉じる操作です。Dock の「終了」とログアウト、Apple Event による終了は、その処理を通らずにすぐ終わります。ライブラリへの書き込みは sidecar の終了処理で守られます。
+
+Mac 版はメニューバーにアプリのメニュー（「Papeer」「編集」「ウインドウ」）と、白黒のアイコンを出します。アイコンは左クリックでウィンドウの表示・非表示、右クリックでメニューです（キーの違いは「キーボードショートカット」）。
+
+Linux 版は `.deb` だけで、WebKitGTK 4.1 と GTK 3 に依存します。タスクトレイのアイコンは `libayatana-appindicator3-1` があるときだけ表示し（推奨パッケージ。ないときはトレイなしで動きます）、日本語の表示には `fonts-noto-cjk` を推奨します。NVIDIA のドライバー（`/proc/driver/nvidia/version` があるとき）では、WebKitGTK の画面が真っ白になる既知の問題を避けるため、`WEBKIT_DISABLE_DMABUF_RENDERER=1` を付けて起動します（自分で設定した値があればそれを使います）。
 
 どちらも、CI でのビルドとテスト（sidecar のスモークテストを含む）までしか確かめていません。
 
@@ -237,9 +241,10 @@ Linux 版は `.deb` だけで、WebKitGTK 4.1 と GTK 3 に依存します。タ
 
 ### ライセンス台帳
 
-[docs/dependency-license-inventory.json](docs/dependency-license-inventory.json) に、ロックファイル（`uv.lock`・`frontend/pnpm-lock.yaml`・`frontend/src-tauri/Cargo.lock`）にあるすべての依存の版・宣言されたライセンス・本番/開発の区別と、同梱のフォント・PDFium などを記録しています。依存を追加・更新したら `just licenses`（`tools/license_inventory.py`）で作り直し、台帳もコミットしてください。
+[docs/dependency-license-inventory.json](docs/dependency-license-inventory.json)（Windows。ほかの OS は下記）に、ロックファイル（`uv.lock`・`frontend/pnpm-lock.yaml`・`frontend/src-tauri/Cargo.lock`）にあるすべての依存の版・宣言されたライセンス・本番/開発の区別と、同梱のフォント・PDFium などを記録しています。依存を追加・更新したら `just licenses`（`tools/license_inventory.py`）で作り直し、台帳もコミットしてください。
 
-- ネットワークは使いません。依存関係はロックファイルから、ライセンスは手元にインストール済みの情報（`.venv` の METADATA、`frontend/node_modules` の `package.json`、`cargo metadata --offline` で読む Cargo のキャッシュ）から読みます。先に `just setup` を実行し、Rust の crate は一度ビルドするか `frontend/src-tauri` で `cargo fetch` を実行して取得しておいてください。対象が Windows x64 なので Windows で実行します。
+- ネットワークは使いません。依存関係はロックファイルから、ライセンスは手元にインストール済みの情報（`.venv` の METADATA、`frontend/node_modules` の `package.json`、`cargo metadata --offline` で読む Cargo のキャッシュ）から読みます。先に `just setup` を実行し、Rust の crate は一度ビルドするか `frontend/src-tauri` で `cargo fetch` を実行して取得しておいてください。
+- 台帳は配布する OS ごとに作ります。Windows x64 のものが `docs/dependency-license-inventory.json`、macOS（Apple Silicon・Intel）と Linux x64 のものが `docs/dependency-license-inventory.macos-arm64.json`・`.macos-x64.json`・`.linux-x64.json` です。OS ごとに使う依存（Python の環境マーカー、npm の `os`・`cpu`・`libc`、Rust の target）と、インストールされたライセンスの情報が違うため、それぞれの OS の上で作ります。Windows のものは Windows で `just licenses`、macOS と Linux のものは CI を手動で実行して `licenses` を選ぶ（Mac は `macos` も選ぶ）と作られるので、成果物をダウンロードして `docs/` にコミットしてください。まだ作っていない OS の台帳は `--check` で確かめません。作った macOS・Linux の台帳がロックファイルより古くなったときは、`--check` は標準エラーに警告を出すだけで失敗にしません（Windows の台帳が古いときだけ失敗です）。これらの台帳は各 OS でしか作れず、Mac の実行時間は 10 倍で数えられるため、依存を更新するたびに CI を落とさないようにしています。作り直すには CI を手動で実行して `licenses` を選び、成果物を `docs/` にコミットします。
 - 台帳には元にしたロックファイルの sha256（`sourceFiles`）を記録します。直接依存もロックファイルに記録されるので、依存を変えればロックファイルが変わり、台帳を作り直すまで `tests/test_license_inventory.py` が失敗します（ツールの設定や scripts だけの変更では失敗しません）。`just licenses check` はこの一致だけを確かめます。
 - 並列のブランチで台帳がマージ時に衝突したら、どちらか片方を採ってから `just licenses` で作り直してください。
 - `just bump` は自パッケージの版しか変えないため、台帳が最新なら同時にハッシュを書き換えます（最新でなければ `just licenses` を促します）。
@@ -288,7 +293,9 @@ mermaid が使う chevrotain は脆弱性のある `lodash-es` 4.17.23 に固定
 | Gemini | Antigravity CLI の `agy` コマンド |
 | OpenAI 互換 API | ベース URL と API キー |
 
-CLI は PATH と既定のインストール先から自動検出します（macOS・Linux では `~/.local/bin`、Homebrew（`/opt/homebrew/bin`・`/usr/local/bin`）、nvm・fnm・Volta・`~/.npm-global` など npm の置き場所も探し、CLI を起動するときの PATH にもそのフォルダーを足します。npm 版の CLI は Node.js で動くため）。見つからない場合は設定画面でパスを指定してください。npm・pnpm 版の `.cmd` は cmd.exe を経由するためそのまま実行せず、`.cmd` と同じフォルダー配下にある本体（npm の既定の配置、なければ `.cmd` が起動するもの）を直接起動します（JavaScript なら Node.js で、`.exe` ならそのまま）。本体が見つからない `.cmd`・`.bat`・`.ps1` は使えないので、yarn などで入れた場合は `.exe` か npm 版のパスを指定してください。API キーはファイルに保存せず、起動中のセッションだけで保持します。
+CLI は PATH と既定のインストール先から自動検出します（macOS・Linux では `~/.local/bin`、Homebrew（`/opt/homebrew/bin`・`/usr/local/bin`）、nvm・fnm・Volta・`~/.npm-global` など npm の置き場所も探し、CLI を起動するときの PATH にもそのフォルダーを足します。npm 版の CLI は Node.js で動くため）。見つからない場合は設定画面でパスを指定してください。npm・pnpm 版の `.cmd` は cmd.exe を経由するためそのまま実行せず、`.cmd` と同じフォルダー配下にある本体（npm の既定の配置、なければ `.cmd` が起動するもの）を直接起動します（JavaScript なら Node.js で、`.exe` ならそのまま）。本体が見つからない `.cmd`・`.bat`・`.ps1` は使えないので、yarn などで入れた場合は `.exe` か npm 版のパスを指定してください。macOS・Linux の npm 版（`#!/usr/bin/env node` で始まるスクリプト）は、1 行目が指す node、なければスクリプトと同じフォルダーの node（nvm・Homebrew・Volta は CLI をそれを入れた Node.js と同じフォルダーに置く）、なければ CLI の PATH の最初の node で起動します。node が見つからないときは、何も起動せずにそう伝えます。API キーはファイルに保存せず、起動中のセッションだけで保持します。
+
+アプリ内の「ログイン」は、Windows では新しいコンソール、macOS ではターミナル、Linux では端末（`x-terminal-emulator`、なければ GNOME 端末・Konsole・xterm など）を開いて CLI のログインを実行します（`claude auth login` と agy は端末がないと先へ進めないため）。端末は、CLI を探したときと同じ PATH で CLI を起動し、終わったら Enter キーで閉じます。端末を開けないときは、実行するコマンドを表示します。
 
 PDF の本文は信頼できない入力として扱い、CLI にはツールを使わせない指定で渡します。Claude Code はツール・MCP サーバー・プロジェクト設定・スキルを無効にし、Codex は読み取り専用サンドボックスでシェル・Web 検索・プラグイン・アプリと `config.toml` の MCP サーバーを無効にします。Antigravity は `--sandbox` で起動し、本文はコマンドラインではなく標準入力で渡します（Windows のコマンドライン長の上限を超える長いチャットも送れます）。CLI には Papeer 自身の環境変数（`PAPEER_*`、sidecar の認証トークンなど）を引き継ぎません。
 
@@ -404,6 +411,17 @@ PapeerSync/                   このPCだけの設定（同期・バックアッ
 | `Ctrl+Shift+N` | フォルダーを作成 |
 | `F11` | 集中表示 |
 | `Ctrl+1`〜`Ctrl+5` | PDFを読む・サマリー・チャット・メモ・付箋のタブを開く（集中表示では Ctrl+2〜4 が PDF の右に開閉、Ctrl+1 が閉じる） |
+| `Ctrl+,` | 接続・設定を開く |
+
+macOS では `Ctrl` の代わりに `⌘` を使います（表示も `⌘` になります）。ほかに次のキーが Mac の慣習に合わせて違います。
+
+- 集中表示は `⌃⌘F`（`F11` は macOS がデスクトップの表示に使うため）
+- 移動する前の場所に戻る・進むは `⌘[` / `⌘]`（`⌥←` / `⌥→` も使えます）
+- 削除は `delete`（`⌫`）キー
+- タッチパッドのピンチで拡大・縮小
+- メニューバーの「Papeer を終了」（`⌘Q`）と「閉じる」（`⌘W`）は、ウィンドウを閉じるときと同じく、保存していない入力の保存・実行中の処理の確認・終了時の同期をしてから終わります。「設定…」（`⌘,`）で接続・設定を開き、Dock のアイコンで隠したウィンドウを出します。Dock のメニューの「終了」やログアウトでは、この確認をせずに終わります（ライブラリへの書き込みは終えてから終わります）
+
+日本語入力の変換を確定する `Enter` では、チャットの送信やページ番号・論文情報の確定をしません（macOS の WebKit は確定の `Enter` を入力中として印を付けないため、`keyCode` 229 でも見分けます）。
 
 ## ライセンス
 

@@ -4,6 +4,7 @@ import { externalHttpUrl } from "@/lib/externalLinks";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { getCurrentWindow, ProgressBarStatus } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { PLATFORM } from "@/lib/platform";
 
 export type FileDropEvent =
   | { type: "over"; x: number; y: number }
@@ -93,7 +94,9 @@ export const tauriShell: ShellAdapter = {
     let disposed = false;
     getCurrentWebview().onDragDropEvent((event) => {
       const payload = event.payload;
-      const ratio = window.devicePixelRatio || 1;
+      // Tauri calls the position physical, but only WebView2 (Windows) gives device pixels: WKWebView
+      // (macOS) and WebKitGTK (Linux) give the view's points, which are CSS pixels already.
+      const ratio = PLATFORM === "windows" ? window.devicePixelRatio || 1 : 1;
       if (payload.type === "leave") {
         callback({ type: "leave" });
       } else if (payload.type === "drop") {

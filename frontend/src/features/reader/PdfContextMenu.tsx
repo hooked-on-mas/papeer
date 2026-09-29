@@ -15,6 +15,7 @@ import { attachPassage, capturePassage, explainPassage, highlightPassage, quoteP
 import { highlightColor } from "./highlights";
 import { useStickyNotes } from "./stickyNotesStore";
 import { emitAppEvent } from "@/lib/appEvents";
+import { shortcutLabel } from "@/lib/platform";
 
 /**
  * Replaces the webview's browser menu (戻る, 印刷, 検査…) over a PDF page:
@@ -55,7 +56,7 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
         {selected ? (
           <>
             <ContextMenuItem onClick={copy}>
-              <Copy /> コピー <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
+              <Copy /> コピー <ContextMenuShortcut>{shortcutLabel("Ctrl+C")}</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={async () => {
               const current = passage.current;
@@ -109,20 +110,20 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={() => changeZoom(1)}>
-              <ZoomIn /> 拡大 <ContextMenuShortcut>Ctrl++</ContextMenuShortcut>
+              <ZoomIn /> 拡大 <ContextMenuShortcut>{shortcutLabel("Ctrl++")}</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={() => changeZoom(-1)}>
-              <ZoomOut /> 縮小 <ContextMenuShortcut>Ctrl+-</ContextMenuShortcut>
+              <ZoomOut /> 縮小 <ContextMenuShortcut>{shortcutLabel("Ctrl+-")}</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={() => useStore.getState().setZoom(1)}>
-              <MoveHorizontal /> 幅に合わせる <ContextMenuShortcut>Ctrl+0</ContextMenuShortcut>
+              <MoveHorizontal /> 幅に合わせる <ContextMenuShortcut>{shortcutLabel("Ctrl+0")}</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={() => useStore.getState().setZoom(ZOOM_FIT_PAGE)}>
               <Scan /> ページ全体を表示
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={() => emitAppEvent("open-translate-dialog")}>
-              <Languages /> 翻訳する… <ContextMenuShortcut>Ctrl+T</ContextMenuShortcut>
+              <Languages /> 翻訳する… <ContextMenuShortcut>{shortcutLabel("Ctrl+T")}</ContextMenuShortcut>
             </ContextMenuItem>
           </>
         )}

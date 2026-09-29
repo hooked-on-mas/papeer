@@ -273,3 +273,16 @@ def test_bump_leaves_a_stale_license_inventory_alone(repo):
     bump("9.0.0", root=repo, out=out)
     assert inventory.read_bytes() == original
     assert "just licenses" in out.getvalue()
+
+
+def test_bump_refreshes_every_platforms_inventory(repo):
+    from tools.license_inventory import TARGETS, stale_sources
+
+    inventory = _with_inventory(repo)
+    linux = repo / TARGETS["linux-x64"].inventory
+    shutil.copy2(inventory, linux)
+    out = io.StringIO()
+    bump("9.0.0", root=repo, out=out)
+    for path in (inventory, linux):
+        assert stale_sources(json.loads(path.read_bytes()), repo) == []
+    assert out.getvalue().count("ハッシュを更新しました") == 2

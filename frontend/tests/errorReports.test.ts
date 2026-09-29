@@ -75,6 +75,7 @@ test("the API connection's messages", () => {
   assert.equal(errorCause("未ログインです。「ログイン」を実行してください。"), "login");
   assert.equal(errorCause("AIの応答から指定した形式のJSONを取り出せませんでした。"), "answer");
   assert.equal(errorCause("codex.cmd は cmd.exe を経由するため使いません。Codexの実行ファイル(.exe)、またはnpm版とNode.jsが必要です。"), "settings");
+  assert.equal(errorCause("Codex は Node.js で動くため node が必要ですが、見つかりません（/usr/local/bin/codex）。"), "settings");
   assert.equal(errorCause("Antigravity (agy)の応答を読み取れませんでした。agy を更新してください。\n{}"), "settings");
   // A configured CLI path that names no file (papeer/providers/common.py, find_cli), from any job or the check.
   const missing = "Codex の実行ファイルが見つかりません（C:\\nope\\codex.cmd）。設定の接続先で、パスを確かめてください。";

@@ -1,4 +1,5 @@
 import { SHORTCUT_GROUPS } from "../../app/hotkeys";
+import { shortcutKeys, withShortcutLabels } from "@/lib/platform";
 
 export function ShortcutsSection() {
   return (
@@ -9,9 +10,9 @@ export function ShortcutsSection() {
           <ul className="divide-y rounded-lg border">
             {group.items.map((item) => (
               <li key={item.label} className="flex items-center justify-between gap-4 px-3 py-2">
-                <span>{item.label}</span>
+                <span>{withShortcutLabels(item.label)}</span>
                 <span className="flex shrink-0 items-center gap-1">
-                  {item.keys.map((key) => (
+                  {shortcutKeys(item.keys).map((key) => (
                     <kbd key={key} className="min-w-6 rounded border bg-muted px-1.5 py-0.5 text-center font-sans text-[0.75rem] text-muted-foreground">
                       {key}
                     </kbd>

@@ -24,6 +24,7 @@ import type { JumpTarget } from "./PdfPane";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 import { useRebuilding } from "./rebuildJobs";
+import { isImeKey } from "@/lib/imeKeys";
 
 // Stable while the notes are loading or failed: a new array would redraw the text layer on every render.
 const NO_NOTES: StickyNote[] = [];
@@ -177,6 +178,9 @@ export function Reader() {
     // Scale the pinch is heading for; the zoom snaps to the nearest preset on the way.
     let pinchTarget = 1;
     let lastPinch = 0;
+    // Safari's engine (WKWebView, macOS) reports a touchpad pinch as gesture events whose scale is from
+    // the pinch's start, not as Ctrl+wheel; the zoom the pinch started from while one is under way.
+    let gestureStart: number | null = null;
     const pager = createWheelPager();
     const onWheel = (e: WheelEvent) => {
       const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? 400 : 1;
@@ -188,6 +192,7 @@ export function Reader() {
       if (e.ctrlKey || e.metaKey) {
         // Ctrl+wheel, and touchpad pinch, which arrives as Ctrl+wheel, zoom both panes together.
         e.preventDefault();
+        if (gestureStart !== null) return; // The pinch's gesture events zoom already.
         if (mouseWheel) {
           changeZoom(dy < 0 ? 1 : -1);
           return;
@@ -226,8 +231,32 @@ export function Reader() {
       e.preventDefault();
       pane.scrollBy(e.shiftKey && dx === 0 ? dy : dx, e.shiftKey && dx === 0 ? 0 : dy);
     };
+    const onGestureStart = (e: Event) => {
+      e.preventDefault();
+      gestureStart = pinchStart(useStore.getState().zoom);
+    };
+    const onGestureChange = (e: Event) => {
+      e.preventDefault();
+      const scale = (e as Event & { scale?: number }).scale;
+      if (gestureStart === null || typeof scale !== "number" || !(scale > 0)) return;
+      const { zoom, setZoom } = useStore.getState();
+      const pinch = pinchLevel(gestureStart * scale);
+      if (pinch.level !== zoom) setZoom(pinch.level);
+    };
+    const onGestureEnd = (e: Event) => {
+      e.preventDefault();
+      gestureStart = null;
+    };
     element.addEventListener("wheel", onWheel, { passive: false });
-    return () => element.removeEventListener("wheel", onWheel);
+    element.addEventListener("gesturestart", onGestureStart);
+    element.addEventListener("gesturechange", onGestureChange);
+    element.addEventListener("gestureend", onGestureEnd);
+    return () => {
+      element.removeEventListener("wheel", onWheel);
+      element.removeEventListener("gesturestart", onGestureStart);
+      element.removeEventListener("gesturechange", onGestureChange);
+      element.removeEventListener("gestureend", onGestureEnd);
+    };
   }, [activePaperId]);
 
   // Whether the last click was in the reader, and in which pane, for the keys below.
@@ -255,7 +284,7 @@ export function Reader() {
   // The paging keys (see readerKeyAction), never taken from a text field.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.isComposing || !ownsKey(e)) return;
+      if (e.defaultPrevented || isImeKey(e) || !ownsKey(e)) return;
       const target = e.target instanceof Element ? e.target : null;
       const pane = readingPane(activePane.current);
       const action = readerKeyAction({

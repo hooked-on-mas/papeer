@@ -1,4 +1,4 @@
-"""The dependency license inventory (docs/dependency-license-inventory.json) and tools/license_inventory.py."""
+"""The dependency license inventories (docs/dependency-license-inventory*.json) and tools/license_inventory.py."""
 import hashlib
 import io
 import json
@@ -8,8 +8,9 @@ import tomllib
 
 import pytest
 
-from tools.license_inventory import INVENTORY, SCHEMA_VERSION, SOURCE_FILES, check, dumps, refresh_source_hashes, \
-    source_hashes, stale_sources, write
+from tools.license_inventory import INVENTORY, SCHEMA_VERSION, SOURCE_FILES, TARGETS, WINDOWS, check, dumps, \
+    host_target, inventory_files, platform_matches, python_inventory, refresh_source_hashes, source_hashes, \
+    stale_sources, write
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,12 +43,51 @@ def test_summary_counts_the_rows(inventory):
         assert summary["directRows"] == sum(row["dependencyType"] == "direct" for row in rows)
 
 
-def test_no_unknown_license_among_what_windows_uses(inventory):
+@pytest.mark.parametrize("path", inventory_files(ROOT))
+def test_no_unknown_license_among_what_each_platform_uses(path):
+    inventory = json.loads((ROOT / path).read_bytes())
+    assert [row["path"] for row in inventory["sourceFiles"]] == list(SOURCE_FILES)
     packages = inventory["packages"]
     assert [row["name"] for row in packages["python"]
             if row["license"] == "unknown" and row["scopes"] != ["other-platform-in-lock"]] == []
     assert [row["name"] for row in packages["javascript"] if row["license"] == "unknown" and row["targetRelevant"]] == []
     assert [row["name"] for row in packages["rust"] if row["license"] == "unknown"] == []
+
+
+def test_each_platform_has_its_own_inventory_and_the_windows_one_is_there():
+    assert INVENTORY == "docs/dependency-license-inventory.json" == WINDOWS.inventory
+    assert {target.inventory for target in TARGETS.values()} == {
+        INVENTORY, "docs/dependency-license-inventory.macos-arm64.json",
+        "docs/dependency-license-inventory.macos-x64.json", "docs/dependency-license-inventory.linux-x64.json"}
+    assert inventory_files(ROOT)[0] == INVENTORY
+
+
+@pytest.mark.parametrize(("system", "machine", "target"), [
+    ("win32", "AMD64", "windows-x64"), ("darwin", "arm64", "macos-arm64"), ("darwin", "x86_64", "macos-x64"),
+    ("linux", "x86_64", "linux-x64"), ("linux", "aarch64", None), ("win32", "ARM64", None)])
+def test_the_inventory_made_here_is_this_machines_platforms(system, machine, target):
+    found = host_target(system, machine)
+    assert (found.name if found else None) == target
+
+
+def test_optional_binaries_count_for_the_platforms_they_are_built_for():
+    assert platform_matches(None, "win32")
+    assert platform_matches(["darwin"], "darwin") and not platform_matches(["darwin"], "linux")
+    assert not platform_matches(["!win32"], "win32") and platform_matches(["!win32"], "linux")
+    # libc is Linux's only: a glibc build is not a musl one, and elsewhere no libc is asked for.
+    assert platform_matches(["glibc"], "glibc") and not platform_matches(["musl"], "glibc")
+    assert platform_matches(["musl"], None)
+
+
+@pytest.mark.skipif(not (ROOT / ".venv").is_dir(), reason="needs the virtual environment (uv sync)")
+def test_python_markers_choose_each_platforms_packages():
+    def scopes(target: str) -> dict[str, list[str]]:
+        return {row["name"]: row["scopes"] for row in python_inventory(ROOT, TARGETS[target])}
+
+    windows, mac, linux = scopes("windows-x64"), scopes("macos-arm64"), scopes("linux-x64")
+    assert "runtime" in windows["winrt-runtime"] and windows["pyobjc-core"] == ["other-platform-in-lock"]
+    assert "runtime" in mac["pyobjc-core"] and mac["winrt-runtime"] == ["other-platform-in-lock"]
+    assert linux["pyobjc-core"] == linux["winrt-runtime"] == ["other-platform-in-lock"]
 
 
 def test_bundled_assets_match_the_files(inventory):
@@ -97,8 +137,29 @@ def test_check_passes_for_the_current_files(repo):
     out = io.StringIO()
     assert check(repo, out=out)
     assert "一致" in out.getvalue()
+    # Another platform's inventory is checked once it has been made (see the test below for when it is stale).
+    assert "まだ作られていません" in out.getvalue()
+    linux = repo / TARGETS["linux-x64"].inventory
+    inventory = json.loads((repo / INVENTORY).read_bytes())
+    linux.write_bytes(dumps(inventory).encode("utf-8"))
+    assert check(repo, out=io.StringIO())
+    linux.unlink()
     (repo / INVENTORY).unlink()
     assert not check(repo, out=io.StringIO())
+
+
+def test_a_stale_inventory_for_another_platform_only_warns(repo):
+    inventory = json.loads((repo / INVENTORY).read_bytes())
+    linux = repo / TARGETS["linux-x64"].inventory
+    linux.write_bytes(dumps({**inventory, "sourceFiles": []}).encode("utf-8"))
+    out, err = io.StringIO(), io.StringIO()
+    assert check(repo, out=out, err=err)
+    assert "警告" in err.getvalue() and "licenses ジョブ" in err.getvalue() and "uv.lock" in err.getvalue()
+    assert "警告" not in out.getvalue()
+    # The Windows one being stale still fails.
+    lock = repo / "frontend/pnpm-lock.yaml"
+    lock.write_bytes(lock.read_bytes() + b"\n")
+    assert not check(repo, out=io.StringIO(), err=io.StringIO())
 
 
 def test_refresh_replaces_only_the_given_hashes(repo):
