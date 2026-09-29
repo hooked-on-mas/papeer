@@ -63,6 +63,8 @@ before(async () => {
     useTreeFocus: (await load("/src/features/library/treeFocus.ts")).useTreeFocus,
     usePaperSelection: (await load("/src/features/library/selectionStore.ts")).usePaperSelection,
     useBulkProgress: (await load("/src/app/bulkState.ts")).useBulkProgress,
+    OcrSettingsView: (await load("/src/features/settings/OcrSection.tsx")).OcrSettingsView,
+    OcrPanel: (await load("/src/features/reader/OcrPanel.tsx")).OcrPanel,
   };
 });
 
@@ -369,4 +371,53 @@ test("while an action on several papers runs, the library shows its progress wit
   // React separates the text's parts with comments.
   assert.ok(html.replaceAll("<!-- -->", "").includes("「ML」へ移動中…（3/5）"));
   assert.match(html, /<button[^>]*title="送信中の 1 件が終わったところで止めます。残りは処理しません。"[^>]*>中止<\/button>/);
+});
+
+const ocrStatus = (ai) => ({
+  settings: { mode: "ask", engine: "auto", lang: "auto" }, directory: "C:\\tessdata",
+  language_data: [
+    { lang: "en", label: "英語", file: "eng.traineddata", size: 4113088, url: "https://example/eng", installed: false },
+    { lang: "ja", label: "日本語", file: "jpn.traineddata", size: 2471260, url: "https://example/jpn", installed: true },
+  ],
+  system: { name: "windows", label: "Windows の OCR", languages: ["ja"] },
+  readable: { en: [], ja: ["windows", "tesseract"] }, order: { en: ["tesseract", "windows"], ja: ["windows", "tesseract"] },
+  missing: ["en"], ai,
+});
+
+test("the OCR settings render the modes as radio buttons, labelled selects, the language data and the engines", () => {
+  const { React, OcrSettingsView } = modules;
+  const html = render(React.createElement(OcrSettingsView, { status: ocrStatus({ available: true, reason: null, provider: "claude", label: "Claude Code CLI" }) }));
+  assert.match(html, /<legend[^>]*>論文を追加したとき<\/legend>/);
+  assert.equal((html.match(/type="radio"/g) ?? []).length, 3);
+  assert.match(html, /<label for="[^"]+"[^>]*>エンジン<\/label>/);
+  assert.match(html, /aria-label="英語の言語データをダウンロード"/);
+  assert.match(html, /jpn\.traineddata<!-- -->、<!-- -->2\.5 MB<!-- -->）<\/span><span[^>]*>入っています/);
+  assert.match(html, /読めるエンジンがありません/);
+  assert.match(html, /Claude Code CLI で使えます/);
+});
+
+test("the OCR part of the translation review lists the pages, and disables reading with the AI with the reason", () => {
+  const { React, OcrPanel } = modules;
+  const reason = "Antigravity CLI（agy）には画像を渡す方法がないため、AI で読み直せません。";
+  const html = render(React.createElement(OcrPanel, {
+    paperId: "p1", busy: false, onJump: () => undefined,
+    reading: { completed_pages: [1], ocr_pages: [{ page: 2, reason: "image" }],
+               ocr_applied: [{ page: 3, reason: "garbled", engine: "tesseract", lang: "en", skew: 0.4 }] },
+  }), {}, {}, [[["ocr"], ocrStatus({ available: false, reason, provider: "antigravity", label: "agy" })]]);
+  assert.match(html, /要OCRのページを OCR で読む…/);
+  assert.match(html, /p\.2：要OCR（まだ読んでいません）/);
+  assert.match(html, /p\.3：Tesseract・英語で読みました（傾き 0\.4°を補正）/);
+  const buttons = html.match(/<button[^>]*aria-label="p\.3 を AI で読み直す"[^>]*>/)?.[0] ?? "";
+  assert.match(buttons, /disabled=""/);
+  const described = buttons.match(/aria-describedby="([^"]+)"/)?.[1];
+  assert.ok(described && html.includes(`id="${described}"`));
+  assert.match(html, /AI で読み直せません：Antigravity CLI/);
+});
+
+test("the OCR part of the translation review is left out when no page needs OCR or was read by it", () => {
+  const { React, OcrPanel } = modules;
+  const html = render(React.createElement(OcrPanel, {
+    paperId: "p1", busy: false, onJump: () => undefined, reading: { completed_pages: [], ocr_pages: [], ocr_applied: [] },
+  }));
+  assert.equal(html, "");
 });

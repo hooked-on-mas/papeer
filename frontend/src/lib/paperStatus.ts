@@ -46,7 +46,7 @@ export function paperTranslationStatus(paper: PaperData | null | undefined, tran
   const text = { untranslated: "未翻訳", translating: rebuilding ? "PDF作り直し中" : "翻訳中", partial: "一部翻訳", paused: "中断・再開可", translated: "翻訳完了", review: "訳文に未翻訳あり", failed: "翻訳未完了", ocr: "要OCR" }[status];
   const scope = pages !== totalPages ? "翻訳対象" : "全";
   const count = status === "ocr" ? `${ocrPages}/${totalPages}ページ` : pages > 0 ? `${completed}/${pages}ページ` : "ページ数不明";
-  const ocrNote = status === "ocr" ? "文字化け・画像だけのページしかないため翻訳できません。OCR済みのPDFを追加してください"
+  const ocrNote = status === "ocr" ? "文字化け・画像だけのページしかないため、このままでは翻訳できません。「翻訳の確認・修正」の OCR の欄から読めます"
     : ocrPages > 0 ? `${ocrPages}ページは要OCRのため原文のまま` : "";
   const description = `${text} · ${status === "ocr" ? `全${totalPages}ページ中${ocrPages}ページが要OCR` : pages > 0 ? `${scope}${pages}ページ中${completed}ページの訳文を保存済み` : count}${status === "review" ? "。未翻訳の段落は「翻訳の確認・修正」で確認できます" : ""}${ocrNote ? `。${ocrNote}` : ""}`;
   return { status, text, pages, completed, count, description, progress: pages > 0 ? completed / pages * 100 : 0 };

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { BookOpen, FileText, Keyboard, LayoutTemplate, Palette, PlugZap, StickyNote, Tags, type LucideIcon } from "lucide-react";
+import { BookOpen, FileText, Keyboard, LayoutTemplate, Palette, PlugZap, ScanText, StickyNote, Tags, type LucideIcon } from "lucide-react";
 import { cn } from "cn";
 import { useSaveSettings } from "../../api/mutations";
 import { usePaper, useSettings } from "../../api/hooks";
@@ -16,6 +16,7 @@ import { ShortcutsSection } from "./ShortcutsSection";
 import { TagManager } from "./TagsSection";
 import { BackupSection } from "./BackupSection";
 import { DriveSection } from "./DriveSection";
+import { OcrSection } from "./OcrSection";
 import { NoteTemplates, type TemplateLeaveGuard } from "../notes/NoteTemplates";
 import { useSettingsNavigation, type SettingsSection } from "./settingsNavigation";
 
@@ -32,6 +33,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon; descript
   { id: "sticky-labels", label: "付箋の分類", icon: StickyNote, description: "付箋の分類を追加・削除（自動保存）" },
   { id: "note-templates", label: "メモテンプレート", icon: LayoutTemplate, description: "すべての論文で使うテンプレートの作成・編集・複製・削除" },
   { id: "prompts", label: "プロンプト", icon: FileText, description: "AI へ渡す指示文のカスタマイズ" },
+  { id: "ocr", label: "OCR", icon: ScanText, description: "スキャンした PDF の文字を読み取る方法（このPCの設定・自動保存）" },
   { id: "shortcuts", label: "ショートカット", icon: Keyboard, description: "キーボード操作の一覧" },
   { id: "backup", label: "バックアップ", icon: FileText, description: "ライブラリ全体の保存と復元" },
   { id: "drive", label: "保存先・同期", icon: FileText, description: "Google DriveでほかのPCと同期" },
@@ -139,6 +141,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   {open && section === "note-templates" && <NoteTemplates embedded leaveRef={templateGuard} note={templateNote ?? paper?.note ?? ""} onInsert={() => undefined} />}
                   {section === "backup" && <BackupSection />}
                   {section === "drive" && <DriveSection />}
+                  {section === "ocr" && <OcrSection />}
                 </>
               )}
             </div>

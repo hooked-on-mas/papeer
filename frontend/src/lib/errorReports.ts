@@ -151,7 +151,7 @@ const ACTIONS: Record<ErrorCause, ErrorAction[]> = {
 const NO_RESUME_FIRST: readonly ErrorCause[] = ["quota", "busy"];
 
 /** Jobs whose failures are fixed in their own settings page rather than the AI connection. */
-const SECTION_OF_KIND: Record<string, SettingsSection> = { "drive-sync": "drive", backup: "backup", restore: "backup" };
+const SECTION_OF_KIND: Record<string, SettingsSection> = { "drive-sync": "drive", backup: "backup", restore: "backup", "ocr-data": "ocr" };
 
 /** The first non-empty line, cut to `limit` characters. */
 export function firstLine(message: string, limit = 140): string {
