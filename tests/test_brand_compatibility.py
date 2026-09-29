@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import sys
 import zipfile
 
 from papeer.core.paths import app_env, data_directory
@@ -9,6 +10,7 @@ from papeer.core.storage import Library
 
 
 def test_data_directory_preserves_existing_library(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")  # PaperDesk kept its library under LOCALAPPDATA, on Windows only.
     monkeypatch.delenv("PAPEER_DATA_DIR", raising=False)
     monkeypatch.delenv("PAPERDESK_DATA_DIR", raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))

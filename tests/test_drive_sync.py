@@ -10,6 +10,7 @@ import threading
 import pytest
 
 from _legacy_library import legacy_backup, legacy_library
+from _isolation import point_pc_folders
 from papeer import __version__
 from papeer.core import drive_sync as sync
 from papeer.core import local_history
@@ -43,7 +44,7 @@ class MemoryDrive:
 
 @pytest.fixture
 def pair(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "device-state"))
+    point_pc_folders(monkeypatch.setenv, tmp_path / "device-state")
     a, b = Library(tmp_path / "a"), Library(tmp_path / "b")
     for lib in (a, b):
         sync.save_state(lib.root, {"connected": True})
@@ -649,7 +650,7 @@ def test_pcs_updated_to_status_codes_do_not_conflict(tmp_path, monkeypatch):
     """The real conversion of stored labels (storage._status_codes): both PCs convert the synced library
     the same way, so the second one to sync after updating finds it already published."""
     from papeer.core import reading_tools, storage
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "device-state"))
+    point_pc_folders(monkeypatch.setenv, tmp_path / "device-state")
     migrations = storage.MIGRATIONS
 
     def schema(steps):

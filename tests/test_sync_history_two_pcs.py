@@ -14,6 +14,7 @@ import zlib
 
 import pytest
 
+from _isolation import point_pc_folders
 from papeer.core import drive_sync as sync
 from papeer.core import local_history
 from papeer.core.paths import history_directory
@@ -34,7 +35,7 @@ class PC:
 
     def __enter__(self) -> Library:
         """Act as this PC: its device folder is the one papeer reads."""
-        self.monkeypatch.setenv("LOCALAPPDATA", str(self.device))
+        point_pc_folders(self.monkeypatch.setenv, self.device)
         return Library(self.root)
 
     def __exit__(self, *_exc):

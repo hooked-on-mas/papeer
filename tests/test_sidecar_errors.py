@@ -283,7 +283,7 @@ def test_the_log_is_written_to_this_pcs_folder(isolated_app_data):
     handler = errors.log_to_file()
     assert handler is not None
     try:
-        assert log_directory() == isolated_app_data / "PapeerSync" / "logs"
+        assert log_directory().is_relative_to(isolated_app_data)
         try:
             raise KeyError("abc")
         except KeyError as exc:

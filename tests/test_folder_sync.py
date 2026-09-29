@@ -6,6 +6,7 @@ import zipfile
 
 import pytest
 
+from _isolation import point_pc_folders
 from papeer.core import drive_sync as sync
 from papeer.core.storage import Library
 
@@ -16,7 +17,7 @@ def run(lib):
 
 
 def test_folder_roundtrip_between_two_mirrors(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    point_pc_folders(monkeypatch.setenv, tmp_path / "settings")
     a, b = Library(tmp_path / "a"), Library(tmp_path / "b")
     folder_a, folder_b = tmp_path / "drive-a", tmp_path / "drive-b"
     sync.connect(a.root, str(folder_a))
@@ -39,7 +40,7 @@ def test_folder_roundtrip_between_two_mirrors(tmp_path, monkeypatch):
 
 
 def test_partial_and_out_of_order_arrival(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    point_pc_folders(monkeypatch.setenv, tmp_path / "settings")
     lib = Library(tmp_path / "data")
     folder = tmp_path / "drive"
     sync.connect(lib.root, str(folder))
@@ -56,7 +57,7 @@ def test_partial_and_out_of_order_arrival(tmp_path, monkeypatch):
 
 
 def test_path_validation_and_reconnect(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    point_pc_folders(monkeypatch.setenv, tmp_path / "settings")
     lib = Library(tmp_path / "data")
     for value in ("", "relative", str(lib.root), str(lib.root / "nested"), str(tmp_path)):
         with pytest.raises(ValueError):
@@ -74,7 +75,7 @@ def test_path_validation_and_reconnect(tmp_path, monkeypatch):
 
 
 def test_missing_folder_is_not_recreated(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    point_pc_folders(monkeypatch.setenv, tmp_path / "settings")
     lib = Library(tmp_path / "data")
     folder = tmp_path / "drive"
     sync.connect(lib.root, str(folder))
@@ -85,7 +86,7 @@ def test_missing_folder_is_not_recreated(tmp_path, monkeypatch):
 
 
 def test_missing_known_revision_does_not_publish_over_it(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    point_pc_folders(monkeypatch.setenv, tmp_path / "settings")
     lib = Library(tmp_path / "data")
     folder = tmp_path / "drive"
     sync.connect(lib.root, str(folder))
@@ -102,7 +103,7 @@ def test_leftover_temporary_files_do_not_spread(tmp_path, monkeypatch):
     import zipfile
     from papeer.core.reading_tools import create_backup
 
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    point_pc_folders(monkeypatch.setenv, tmp_path / "settings")
     lib = Library(tmp_path / "data")
     folder = tmp_path / "drive"
     sync.connect(lib.root, str(folder))
@@ -148,7 +149,7 @@ def test_malformed_version_fields_are_rejected(tmp_path, field, value):
 def test_conflict_reads_what_differs_in_place_and_keeps_the_side_left_out(tmp_path, monkeypatch):
     from papeer.core import local_history
 
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    point_pc_folders(monkeypatch.setenv, tmp_path / "settings")
     a, b = Library(tmp_path / "a"), Library(tmp_path / "b")
     folder = tmp_path / "drive"
     sync.connect(a.root, str(folder))
@@ -195,7 +196,7 @@ def test_open_library_refuses_a_malformed_revision(tmp_path):
 def test_broken_or_unwritable_sync_folder_is_refused_for_the_user(tmp_path, monkeypatch):
     from papeer.core.errors import Invalid
 
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    point_pc_folders(monkeypatch.setenv, tmp_path / "settings")
     lib = Library(tmp_path / "data")
     broken = tmp_path / "broken"
     broken.mkdir()
@@ -209,7 +210,7 @@ def test_broken_or_unwritable_sync_folder_is_refused_for_the_user(tmp_path, monk
 
 
 def test_auto_sync_option_and_check_of_the_chosen_folder(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    point_pc_folders(monkeypatch.setenv, tmp_path / "settings")
     lib = Library(tmp_path / "data")
     assert sync.check_connected(lib.root) == {"action": "none", "local_version": None}
     sync.connect(lib.root, str(tmp_path / "drive"))
@@ -243,7 +244,7 @@ def test_auto_sync_option_and_check_of_the_chosen_folder(tmp_path, monkeypatch):
 def test_sync_of_the_chosen_folder_records_its_failure(tmp_path, monkeypatch):
     from papeer.providers import Cancelled
 
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "settings"))
+    point_pc_folders(monkeypatch.setenv, tmp_path / "settings")
     lib = Library(tmp_path / "data")
     never = threading.Event()
     with pytest.raises(ValueError, match="同期フォルダーを指定してください"):

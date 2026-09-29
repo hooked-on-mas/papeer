@@ -8,11 +8,31 @@ import os
 from pathlib import Path
 import threading
 
-APP_FOLDERS = ("Papeer", "PaperDesk", "PapeerSync")
+APP_FOLDERS = ("Papeer", "PaperDesk", "PapeerSync", "papeer")
 
 # The environment as the test run started, before conftest points it at a temporary folder.
-ORIGINAL_LOCALAPPDATA = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local/share")
+ORIGINAL_LOCALAPPDATA = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+ORIGINAL_HOME = Path.home()
+ORIGINAL_XDG = {name: os.environ.get(name, "") for name in ("XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")}
 REAL_LIBRARY = Path(ORIGINAL_LOCALAPPDATA) / "Papeer"
+
+# What each platform's folders are made from (papeer.core.paths): LOCALAPPDATA on Windows, the home folder
+# on macOS, the XDG base folders on Linux. HOME is left alone on Windows, where Python does not read it
+# (Path.home() is USERPROFILE) but git does.
+PLACE_VARIABLES = ("LOCALAPPDATA", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME") + (("HOME",) if os.name != "nt" else ())
+
+
+def point_pc_folders(setenv, base: Path) -> None:
+    """Make every folder of this PC that papeer uses (paths.default_data_directory, device_directory,
+    cache_directory, log_directory) a folder under `base`, on any platform. Also how a test plays
+    another PC: call it again with another folder."""
+    base = Path(base)
+    setenv("LOCALAPPDATA", str(base))
+    setenv("XDG_DATA_HOME", str(base / "xdg-data"))
+    setenv("XDG_STATE_HOME", str(base / "xdg-state"))
+    setenv("XDG_CACHE_HOME", str(base / "xdg-cache"))
+    if os.name != "nt":
+        setenv("HOME", str(base / "home"))
 
 
 class RealDataAccessError(RuntimeError):
@@ -31,7 +51,12 @@ def path_forms(value) -> set[str]:
 
 
 def _real_roots() -> tuple[str, ...]:
-    bases = {Path.home() / ".local/share", Path(ORIGINAL_LOCALAPPDATA)}
+    home = ORIGINAL_HOME
+    # Every platform's places (not only this one's): a test may play another platform (sys.platform).
+    bases = {Path(ORIGINAL_LOCALAPPDATA), home / "AppData" / "Local", home / ".local/share", home / ".local/state",
+             home / ".cache", home / "Library" / "Application Support", home / "Library" / "Caches",
+             home / "Library" / "Logs"}
+    bases |= {Path(value) for value in ORIGINAL_XDG.values() if value and os.path.isabs(value)}
     roots = [base / name for base in bases for name in APP_FOLDERS]
     # A developer may point the app at a library elsewhere; that one is real data too.
     roots += [Path(value).expanduser() for key in ("PAPEER_DATA_DIR", "PAPERDESK_DATA_DIR")

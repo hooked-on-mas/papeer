@@ -91,7 +91,7 @@ just lint   # ruff, pyright, ESLint, tsc
 - pyright: `papeer` と `sidecar` を検査します（`[tool.pyright]`）。PyMuPDF・fontTools の型情報が実際と合わない行が多い 4 ファイル（`math_layout.py` 16 件、`table_layout.py` 13 件、`pdf_engine.py` 13 件、`pdf_fonts.py` 10 件。2026-09 時点）だけは対象外で、一覧と件数は `pyproject.toml` にあります。
 - ESLint: React のフックの規則（`react-hooks/rules-of-hooks` と `react-hooks/exhaustive-deps`）だけを検査します（`frontend/eslint.config.js`、`pnpm lint`）。型は tsc が見ます。依存配列を足すと effect の走り方が変わる箇所は、理由を添えた `// eslint-disable-next-line react-hooks/exhaustive-deps -- 理由` にしています。
 
-pytest は `tests/conftest.py` で `LOCALAPPDATA` と `PAPEER_DATA_DIR` をテストごとの一時フォルダーに向けます。実際のデータフォルダー（`%LOCALAPPDATA%\Papeer`、`PaperDesk`、`PapeerSync`）でファイルを開いたり書き込んだりすると、そのテストは失敗します。同梱フォントの変換結果（約30秒かけて作る）だけは `PAPEER_FONT_CACHE_DIR` で `.pytest_cache` 内に置き、次回以降の実行でも使い回します。
+pytest は `tests/conftest.py` で `LOCALAPPDATA`・`XDG_DATA_HOME`・`XDG_STATE_HOME`・`XDG_CACHE_HOME`（Windows 以外では `HOME` も）と `PAPEER_DATA_DIR` をテストごとの一時フォルダーに向けます（`tests/_isolation.py` の `point_pc_folders`）。実際のデータフォルダー（`%LOCALAPPDATA%\Papeer`、`PaperDesk`、`PapeerSync`、macOS・Linux で同じ役目のフォルダー）でファイルを開いたり書き込んだりすると、そのテストは失敗します。同梱フォントの変換結果（約30秒かけて作る）だけは `PAPEER_FONT_CACHE_DIR` で `.pytest_cache` 内に置き、次回以降の実行でも使い回します。
 
 CI（`.github/workflows/ci.yml`）は push ごとに Windows で、`just lint`・`just test` と同じ検査に加えて `frontend/openapi.json` とライセンス台帳が最新か（`--check`）、`pnpm build`、Rust の `cargo fmt --check`・`cargo clippy --release --all-targets -- -D warnings`・`cargo test --release`（`lib.rs` の単体テスト）を実行します。同じリポジトリのブランチからの pull request は push したときの結果を使い、pull request として検査するのは fork からのものだけです。実際の AI は呼びません。
 
@@ -261,7 +261,17 @@ PDF の本文は信頼できない入力として扱い、CLI にはツールを
 
 「設定 → 保存先・同期」でPC版Google Driveのローカルフォルダーを指定すると、PDF・書き込み・サマリーを含むライブラリ全体を別PCと同期できます。Papeer内でのGoogleログインやOAuth設定は不要です。導入手順、競合時の操作、容量・転送の制限は [Google Drive同期](docs/google-drive-sync.md) を参照してください。
 
-新規環境では `%LOCALAPPDATA%\Papeer` に保存します。新しい保存先がなく、旧 `%LOCALAPPDATA%\PaperDesk` が存在する場合は、その保存先を引き続き使います。「設定 → バックアップ」からライブラリ全体を保存・復元できます。新しいバージョンのPapeerで作成したバックアップは復元できません（更新を促すメッセージを表示します）。手動でコピーする場合は、アプリを閉じてからフォルダー全体をコピーしてください。
+保存先は OS ごとの一般的な場所です（`papeer/core/paths.py`。Tauri 側の `frontend/src-tauri/src/lib.rs` も同じ規則でライブラリの場所を決めます）。
+
+| | ライブラリ | このPCだけのファイル（下の `PapeerSync/`） | 作り直せるキャッシュ | ログ |
+| --- | --- | --- | --- | --- |
+| Windows | `%LOCALAPPDATA%\Papeer` | `%LOCALAPPDATA%\PapeerSync` | `PapeerSync\font-cache` | `PapeerSync\logs` |
+| macOS | `~/Library/Application Support/Papeer` | `~/Library/Application Support/PapeerSync` | `~/Library/Caches/Papeer` | `~/Library/Logs/Papeer` |
+| Linux | `$XDG_DATA_HOME/papeer`（既定 `~/.local/share/papeer`） | `$XDG_STATE_HOME/papeer`（既定 `~/.local/state/papeer`） | `$XDG_CACHE_HOME/papeer`（既定 `~/.cache/papeer`） | このPCだけのファイルの `logs` |
+
+このPCだけのファイルには同期の状態と履歴（消すと次の同期で変更と競合を区別できず、戻す先もなくなる）も入るので、macOS ではキャッシュ（`Caches`）ではなく `Application Support` に、Linux では XDG の state に置きます。キャッシュの場所に置くのは、同梱フォントから作り直せる変換結果だけです。
+
+新しい保存先がなく、旧 `%LOCALAPPDATA%\PaperDesk`（Windows のみ）が存在する場合は、その保存先を引き続き使います。「設定 → バックアップ」からライブラリ全体を保存・復元できます。新しいバージョンのPapeerで作成したバックアップは復元できません（更新を促すメッセージを表示します）。手動でコピーする場合は、アプリを閉じてからフォルダー全体をコピーしてください。
 
 ```text
 Papeer/
@@ -286,7 +296,7 @@ Papeer-sync-backups/          以前のバージョンが残した、フォル�
                               設定のバックアップの「以前のデータ」から削除できる）
 Papeer-before-restore-*/      以前のバージョンが残した、復元・取り込み前のライブラリ（同上）
 
-PapeerSync/                   このPCだけの設定（同期・バックアップの対象外）
+PapeerSync/                   このPCだけの設定（同期・バックアップの対象外。macOS・Linux の場所は上の表）
   device-settings.json        CLI のパスと API URL
   history-settings.json       このPCの履歴に残す記録の数（直近 N 件・日ごと D 日分）
   history/<ハッシュ>/          このPCの履歴（同期した時点・選ばなかった側・復元の直前）。entries/ に各時点の一覧、blobs/ に
@@ -308,7 +318,7 @@ PapeerSync/                   このPCだけの設定（同期・バックアッ
 | `PAPEER_DATA_DIR` | データの保存先を変更する |
 | `PAPEER_PORT` | sidecar の待ち受けポート（既定 8000） |
 | `PAPEER_TOKEN` | sidecar の認証トークン。必須で、未設定なら sidecar は起動しない（本番は Tauri が起動ごとに生成、開発は `just dev-sidecar` が `dev_token` を設定） |
-| `PAPEER_FONT_CACHE_DIR` | 同梱フォントの変換結果の置き場所（既定 `%LOCALAPPDATA%\PapeerSync\font-cache`。pytest は `.pytest_cache` 内を使う） |
+| `PAPEER_FONT_CACHE_DIR` | 同梱フォントの変換結果の置き場所（既定は Windows `%LOCALAPPDATA%\PapeerSync\font-cache`、macOS `~/Library/Caches/Papeer/font-cache`、Linux `~/.cache/papeer/font-cache`。pytest は `.pytest_cache` 内を使う） |
 | `PAPEER_DEV_NO_AUTH` | `1` のとき、`PAPEER_TOKEN` なしで認証なしの sidecar を起動する（開発専用。PyInstaller で作った sidecar では無視） |
 | `PAPEER_API_KEY` | API 接続で使う API キーの初期値（未設定なら `OPENAI_API_KEY`、次に `GEMINI_API_KEY`） |
 | `PAPEER_E2E_DIR` | E2E テスト専用（デバッグ版のアプリだけが読む）。メインウィンドウの WebView2 のプロファイルをこのフォルダーに作り、ウィンドウの位置を保存・復元しない（README「E2E テスト」） |

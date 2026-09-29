@@ -22,7 +22,7 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 
 from papeer.core.fileio import atomic_write_bytes, is_temporary
-from papeer.core.paths import app_env, device_directory
+from papeer.core.paths import app_env, cache_directory
 
 # Raise when truetype_font changes its output, so that every PC converts the faces again.
 CONVERSION_REVISION = 1
@@ -103,7 +103,7 @@ def subset_truetype(data: bytes, characters: str) -> bytes:
 def font_cache_directory() -> Path:
     """This PC's converted faces: rebuilt from the bundled fonts, so never backed up or synced."""
     override = app_env("FONT_CACHE_DIR")
-    return Path(override).expanduser() if override else device_directory() / "font-cache"
+    return Path(override).expanduser() if override else cache_directory() / "font-cache"
 
 
 def cached_truetype(source: Path, family: str, style: str) -> bytes:

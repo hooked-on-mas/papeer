@@ -1,8 +1,10 @@
 """Keep every test away from the user's real library and device settings.
 
 papeer reads %LOCALAPPDATA%\\Papeer (prompts, settings, papers) and %LOCALAPPDATA%\\PapeerSync
-(folder-sync state, this PC's CLI paths and API URL: paths.device_directory()),
-so the environment is pointed at a temporary folder before any papeer module is imported,
+(folder-sync state, this PC's CLI paths and API URL: paths.device_directory()), and on macOS and Linux
+the matching folders under the home folder and the XDG base folders (paths.py). So the environment
+(LOCALAPPDATA, XDG_*, and HOME except on Windows: _isolation.point_pc_folders) is pointed at a temporary
+folder before any papeer module is imported,
 and again for each test. An audit hook (tests/_isolation.py) refuses file access under the
 real folders and fails the test even when the code under test swallows the error.
 
@@ -11,7 +13,7 @@ checks are not caught; C extensions that open files themselves (PyMuPDF, pypdfiu
 native parts) bypass the hook; subprocesses are protected only by the environment they inherit.
 
 The bundled fonts converted to TrueType (pdf_fonts.cached_truetype, some 30 seconds to make) would be
-made again under every test's fresh LOCALAPPDATA, so PAPEER_FONT_CACHE_DIR points at pytest's own cache
+made again under every test's fresh folders, so PAPEER_FONT_CACHE_DIR points at pytest's own cache
 folder instead: converted once, then reused by later runs, and never the real one.
 
 The Tesseract language data the OCR tests read (tessdata_fast eng and jpn, some 6.5 MB, not in the
@@ -31,7 +33,7 @@ import tempfile
 import pytest
 
 # Must come before the environment changes below: it records the real folders.
-from _isolation import audit_hook, take_violations
+from _isolation import audit_hook, point_pc_folders, take_violations
 from _frozen_documents import frozen_view
 from _tessdata import prepare_tessdata
 
@@ -39,7 +41,7 @@ pytest_plugins = ["pytester"]
 
 
 def _point_environment_at(base: Path, setenv) -> None:
-    setenv("LOCALAPPDATA", str(base))
+    point_pc_folders(setenv, base)
     setenv("PAPEER_DATA_DIR", str(base / "Papeer"))
 
 
@@ -71,7 +73,8 @@ def tessdata():
 
 @pytest.fixture(autouse=True)
 def isolated_app_data(tmp_path_factory, monkeypatch):
-    """A fresh, empty LOCALAPPDATA and data folder for every test; fail on any real-data access."""
+    """A fresh, empty LOCALAPPDATA (and XDG and home folders) and data folder for every test; fail on any
+    real-data access."""
     # Accesses swallowed outside a test (at import or collection) fail the next test instead of vanishing.
     earlier = take_violations()
     if earlier:

@@ -16,6 +16,7 @@ import pypdfium2 as pdfium
 import pytest
 
 from papeer.core.fileio import is_temporary
+from papeer.core.paths import cache_directory
 from papeer.pdf import pdf_engine, pdf_fonts
 from papeer.pdf.pdf_engine import PDF_LOCK, build_translated_pdf, extract_pdf
 from papeer.pdf.pdf_fonts import cached_truetype, font_cache_directory, subset_truetype, truetype_intact
@@ -73,7 +74,8 @@ def test_cache_lives_in_this_pcs_folder_not_in_the_library(monkeypatch, isolated
     monkeypatch.delenv("PAPERDESK_FONT_CACHE_DIR", raising=False)
     # Beside the folder-sync state (paths.device_directory): never backed up or synced, even
     # when PAPEER_DATA_DIR puts the library elsewhere.
-    assert font_cache_directory() == isolated_app_data / "PapeerSync" / "font-cache"
+    assert font_cache_directory() == cache_directory() / "font-cache"
+    assert font_cache_directory().is_relative_to(isolated_app_data)
     assert (isolated_app_data / "Papeer") not in font_cache_directory().parents
 
 

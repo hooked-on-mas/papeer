@@ -15,6 +15,7 @@ import time
 from fastapi.testclient import TestClient
 import pytest
 
+from _isolation import point_pc_folders
 from papeer.core import drive_sync as sync
 from papeer.core.config import DEFAULT_BASE_URL, Settings, device_settings_path
 from papeer.core.paths import device_directory
@@ -29,7 +30,7 @@ def read(path: Path) -> dict:
 
 
 def test_device_folder_is_isolated_per_test(isolated_app_data):
-    assert device_directory() == isolated_app_data / "PapeerSync"
+    assert device_directory().is_relative_to(isolated_app_data)
     assert device_settings_path().is_relative_to(isolated_app_data)
 
 
@@ -99,12 +100,12 @@ def test_synced_settings_from_another_pc_cannot_set_paths(tmp_path, monkeypatch)
     a, b = Library(tmp_path / "a"), Library(tmp_path / "b")
     folder_a, folder_b = tmp_path / "drive-a", tmp_path / "drive-b"
 
-    monkeypatch.setenv("LOCALAPPDATA", str(pc_b))
+    point_pc_folders(monkeypatch.setenv, pc_b)
     Settings(provider="codex", model="b-model", provider_options={"codex": {"cli_path": "C:/b/codex.exe"}}).save(b.root)
     sync.connect(b.root, str(folder_b))
 
     # PC A runs an older Papeer that still writes its paths into the library.
-    monkeypatch.setenv("LOCALAPPDATA", str(pc_a))
+    point_pc_folders(monkeypatch.setenv, pc_a)
     (a.root / "settings.json").write_text(json.dumps({
         "provider": "api", "model": "a-model", "timeout_seconds": 600,
         "provider_options": {"codex": {"cli_path": "C:/evil/codex.exe"}, "api": {"base_url": "http://evil.example/v1"}},
@@ -113,7 +114,7 @@ def test_synced_settings_from_another_pc_cannot_set_paths(tmp_path, monkeypatch)
     assert run(a)["status"] == "synced"
     shutil.copytree(folder_a, folder_b, dirs_exist_ok=True)  # Simulate Drive for desktop.
 
-    monkeypatch.setenv("LOCALAPPDATA", str(pc_b))
+    point_pc_folders(monkeypatch.setenv, pc_b)
     assert run(b)["status"] == "conflict"
     head = sync.FolderDrive(folder_b).revisions()[0]["id"]
     assert run(b, choice=head, expected_heads=[head])["status"] == "synced"
