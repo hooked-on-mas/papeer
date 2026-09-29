@@ -38,6 +38,7 @@ Papeer の主な変更を記録します。形式は [Keep a Changelog](https://
 
 ### Changed
 
+- 以前の版（PaperDesk）が使っていた `%LOCALAPPDATA%\PaperDesk` を読まなくなりました（ライブラリは `%LOCALAPPDATA%\Papeer` へ移行済みであることが前提です）。`Papeer` がなく `PaperDesk` があるとき、または `Papeer` に論文がなく `PaperDesk` にあるときに旧フォルダーを使い続ける仕組みはなくなりました。環境変数 `PAPERDESK_*`、`paperdesk://` の引用リンク、旧形式のバックアップと辞書は、引き続き読み込めます。
 - macOS と Linux でのデータの保存先を、それぞれの一般的な場所にしました（macOS は `~/Library/Application Support/Papeer` と `PapeerSync`、フォントの変換結果は `~/Library/Caches/Papeer`、ログは `~/Library/Logs/Papeer`。Linux は `~/.local/share/papeer`・`~/.local/state/papeer`・`~/.cache/papeer`（XDG の変数に従う））。Windows の保存先は変わりません。
 - Google Drive 同期で選ばなかった側のライブラリは、ZIP（`*-sync-backups`）ではなくこのPCの履歴に残すようにしました。取り込みやバックアップからの復元で、元のライブラリを `*-before-restore-*` のフォルダーとして残すのもやめ、このPCの履歴に残すようにしました（記録を読み直して確かめられないときだけ、従来どおりフォルダーに残します）。「戻す前」の記録は最新 3 件まで残しますが、履歴にある状態と同じもの（数えずに残します）と、過去の時点に戻してから何も変えずに別の時点へ戻したときの記録（別に最新 3 件）は数えないため、いくつかの時点を試しても、最初に戻す前の状態は残ります。復元の前のライブラリを記録できないとき（データベースの破損、空き容量不足など）は、記録せずに復元を続け、元のライブラリをフォルダーに残します。
 

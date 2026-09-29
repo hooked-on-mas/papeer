@@ -56,9 +56,8 @@ fn get_backend_config(state: tauri::State<BackendConfig>) -> (u16, String) {
 
 /// The folders the sidecar's library may be in, by the rules of `papeer.core.paths.data_directory`:
 /// PAPEER_DATA_DIR when set, else the platform's place (Windows `%LOCALAPPDATA%\Papeer`, macOS
-/// `~/Library/Application Support/Papeer`, Linux `$XDG_DATA_HOME/papeer`). On Windows also the old
-/// `%LOCALAPPDATA%\PaperDesk`, which the sidecar uses where it is when it holds the library
-/// (`papeer.core.paths.uses_legacy_library`).
+/// `~/Library/Application Support/Papeer`, Linux `$XDG_DATA_HOME/papeer`). The old `%LOCALAPPDATA%\PaperDesk`
+/// is no longer read.
 /// `os` is `std::env::consts::OS`; `var` reads the environment; `home` is the home folder.
 fn library_directories(
     os: &str,
@@ -85,7 +84,7 @@ fn library_directories(
             else {
                 return vec![];
             };
-            vec![base.join("Papeer"), base.join("PaperDesk")]
+            vec![base.join("Papeer")]
         }
         "macos" => home
             .map(|home| {
@@ -296,14 +295,11 @@ mod tests {
                 env(&[("LOCALAPPDATA", &local_text)]),
                 Some(home.clone())
             ),
-            vec![local.join("Papeer"), local.join("PaperDesk")]
+            vec![local.join("Papeer")]
         );
         assert_eq!(
             library_directories("windows", env(&[]), Some(home.clone())),
-            vec![
-                home.join("AppData").join("Local").join("Papeer"),
-                home.join("AppData").join("Local").join("PaperDesk")
-            ]
+            vec![home.join("AppData").join("Local").join("Papeer")]
         );
         // LOCALAPPDATA means nothing on macOS and Linux.
         assert_eq!(

@@ -69,28 +69,13 @@ def default_data_directory() -> Path:
     return _xdg("XDG_DATA_HOME", ".local/share") / "papeer"
 
 
-def legacy_data_directory() -> Path | None:
-    """Where Papeer kept the library while it was still called PaperDesk (Windows only; see data_directory)."""
-    return _local_appdata() / "PaperDesk" if _platform() == "windows" else None
-
-
-def uses_legacy_library(current: Path, legacy: Path) -> bool:
-    """Whether the PaperDesk folder, rather than the Papeer one, holds this PC's library.
-
-    A stray, empty Papeer folder must not hide a PaperDesk library that holds papers.
-    """
-    return (not current.exists() and legacy.is_dir()) or (has_papers(legacy) and not has_papers(current))
-
-
 def data_directory() -> Path:
+    # The folder earlier versions used while Papeer was called PaperDesk (%LOCALAPPDATA%\PaperDesk) is no longer
+    # read: a library there is expected to have been moved here.
     override = app_env("DATA_DIR")
     if override:
         return Path(override).expanduser().resolve()
-    current, legacy = default_data_directory(), legacy_data_directory()
-    # A PaperDesk library is used where it is (Windows only).
-    if legacy is not None and uses_legacy_library(current, legacy):
-        return legacy
-    return current
+    return default_data_directory()
 
 
 def device_directory() -> Path:
@@ -161,14 +146,6 @@ def search_index_path(root: Path) -> Path:
     """This PC's full-text index of the library at `root` (see search_index)."""
     return device_directory() / (library_key(root) + ".search.sqlite3")
 
-
-def has_papers(root: Path) -> bool:
-    """Whether the library folder `root` holds at least one paper's folder (an unreadable one counts as none)."""
-    papers = root / "papers"
-    try:
-        return papers.is_dir() and any(papers.iterdir())
-    except OSError:
-        return False
 
 
 # translation.md is a sequence of "## p.<page> / <block id>" sections holding the Japanese text.

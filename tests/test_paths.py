@@ -31,7 +31,6 @@ def test_windows_keeps_its_folders_under_local_appdata(home, tmp_path, monkeypat
     monkeypatch.setattr(sys, "platform", "win32")
     local = tmp_path / "local-appdata"
     assert places() == (local / "Papeer", local / "PapeerSync", local / "PapeerSync", local / "PapeerSync" / "logs")
-    assert paths.legacy_data_directory() == local / "PaperDesk"
 
 
 def test_windows_without_local_appdata_uses_the_usual_one(home, monkeypatch):
@@ -45,8 +44,6 @@ def test_macos_uses_application_support_caches_and_logs(home, monkeypatch):
     library = home / "Library"
     assert places() == (library / "Application Support" / "Papeer", library / "Application Support" / "PapeerSync",
                         library / "Caches" / "Papeer", library / "Logs" / "Papeer")
-    # LOCALAPPDATA means nothing there, and there never was a PaperDesk library to fall back on.
-    assert paths.legacy_data_directory() is None
 
 
 def test_linux_follows_the_xdg_base_folders(home, tmp_path, monkeypatch):
@@ -57,7 +54,6 @@ def test_linux_follows_the_xdg_base_folders(home, tmp_path, monkeypatch):
         monkeypatch.setenv(name, str(tmp_path / name))
     assert places() == (tmp_path / "XDG_DATA_HOME" / "papeer", tmp_path / "XDG_STATE_HOME" / "papeer",
                         tmp_path / "XDG_CACHE_HOME" / "papeer", tmp_path / "XDG_STATE_HOME" / "papeer" / "logs")
-    assert paths.legacy_data_directory() is None
 
 
 @pytest.mark.parametrize("value", ["relative/data", ""])
@@ -84,8 +80,9 @@ def test_papeer_data_dir_moves_only_the_library(home, tmp_path, monkeypatch, pla
     assert paths.device_directory() == device
 
 
-@pytest.mark.parametrize("platform", ["darwin", "linux"])
-def test_a_paperdesk_folder_is_never_used_outside_windows(home, tmp_path, monkeypatch, platform):
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_a_paperdesk_folder_is_never_used(home, tmp_path, monkeypatch, platform):
+    # Earlier versions used %LOCALAPPDATA%\\PaperDesk on Windows; its library is expected to have been moved.
     monkeypatch.setattr(sys, "platform", platform)
     (tmp_path / "local-appdata" / "PaperDesk" / "papers" / "a").mkdir(parents=True)
     (home / ".local/share/PaperDesk/papers/a").mkdir(parents=True)
