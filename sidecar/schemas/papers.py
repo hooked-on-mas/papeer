@@ -204,6 +204,16 @@ class OcrPage(TypedDict):
     garbled_paragraphs: NotRequired[int]
 
 
+class OcrApplied(TypedDict):
+    """A page whose text was read by OCR (pdf_engine.extract_pdf): which engines ("tesseract", "windows",
+    "vision", "ai"; several joined by "+"), in which language, and how far the scan was turned (degrees)."""
+    page: int
+    reason: Literal["garbled", "image"]
+    engine: str
+    lang: str
+    skew: float
+
+
 class TranslatedPageRef(BaseModel):
     """Where the right pane finds a page: the file (relative to the paper's folder), the page in it, its time."""
     file: str
@@ -224,6 +234,7 @@ class ReadingState(BaseModel):
     empty_pages: list[int]
     translation_required_pages: list[int]
     ocr_pages: Stored[list[OcrPage]]  # Listed in the translation review; not translated unless "partial".
+    ocr_applied: Stored[list[OcrApplied]]  # Read by OCR: translated like any other page.
     completed_pages: list[int]
     preview: Stored[TranslationPreview | None]
     in_progress: bool

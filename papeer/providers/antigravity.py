@@ -60,6 +60,11 @@ class AntigravityProvider(CliBackend, ProviderBackend):
     login_args = ()  # Starting agy without a prompt opens its sign-in.
     status_args = ("models",)
 
+    def image_support(self) -> str | None:
+        # agy --help names no way to attach an image (checked with agy 2026-09), unlike codex exec --image.
+        return ("Antigravity CLI（agy）には画像を渡す方法がないため、AI で読み直せません。"
+                "設定の AI 接続で Claude Code・Codex・API のどれかに切り替えてください。")
+
     def _generate(self, instruction: str, data: str, schema: dict | None) -> str:
         with tempfile.TemporaryDirectory(prefix="papeer-agy-") as directory:
             root = Path(directory)

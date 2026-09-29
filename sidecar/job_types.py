@@ -29,6 +29,8 @@ class JobKind(StrEnum):
     BACKUP = "backup"
     RESTORE = "restore"
     DRIVE_SYNC = "drive-sync"
+    OCR = "ocr"  # A paper's pages read by OCR (or one page by the AI) and its extraction written again.
+    OCR_DATA = "ocr-data"  # Tesseract's language data downloaded to this PC.
 
 
 # The jobs that copy or replace the whole library: nothing else runs beside them (JobManager), and the
@@ -102,6 +104,22 @@ class AskResult(BaseModel):
 class ImportResult(BaseModel):
     paper_ids: list[str]  # In the order the paths were sent; a PDF already in the library gives its paper.
     added: int  # How many were new.
+    # The new papers with pages still needing OCR (scans not read when added): the frontend offers to read them.
+    needs_ocr: list[str] = Field(default_factory=list)
+
+
+class OcrResult(BaseModel):
+    """ocr: what papeer.core.ocr.read_again read and changed (pages are page numbers)."""
+    read_pages: list[int]
+    failed_pages: dict[str, str]  # By page: why it could not be read.
+    ocr_pages: list[int]  # Pages still needing OCR afterwards.
+    changed_pages: list[int]  # Pages whose text for translation changed.
+    retranslate_pages: list[int]  # Among them, those that had a saved translation.
+    usage: Usage | None = None
+
+
+class OcrDataResult(BaseModel):
+    installed: list[str]  # The languages whose data is now on this PC.
 
 
 class ExportResult(BaseModel):
@@ -153,13 +171,16 @@ RESULT_TYPES: dict[JobKind, Any] = {
     JobKind.BACKUP: BackupResult,
     JobKind.RESTORE: RestoreResult,
     JobKind.DRIVE_SYNC: DriveSyncResult,
+    JobKind.OCR: OcrResult,
+    JobKind.OCR_DATA: OcrDataResult,
 }
 
 # Which one belongs to which kind is RESULT_TYPES (and the frontend's JobResults); the union is only
 # the schema's answer to "what can a result be".
 JobResult = Union[
     TranslateResult, RevisionDraftResult, GlossaryDraftResult, ArticleResult, AskResult, ImportResult,
-    ExportResult, InterleavedResult, BackupResult, RestoreResult, DriveSyncResult, CheckResult,
+    ExportResult, InterleavedResult, BackupResult, RestoreResult, DriveSyncResult, OcrResult, OcrDataResult,
+    CheckResult,
 ]
 
 _RESULT_ADAPTERS = {kind: TypeAdapter(result_type) for kind, result_type in RESULT_TYPES.items()}

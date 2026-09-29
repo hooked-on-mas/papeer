@@ -7227,6 +7227,296 @@
         }
       }
     },
+    "/api/ocr": {
+      "get": {
+        "summary": "Ocr Status",
+        "operationId": "ocr_status_api_ocr_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OcrStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ocr/settings": {
+      "put": {
+        "summary": "Save Ocr Settings",
+        "description": "This PC's settings (not synced); they apply to the next paper added or read.",
+        "operationId": "save_ocr_settings_api_ocr_settings_put",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OcrSettings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OcrSettings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ocr/language-data": {
+      "post": {
+        "summary": "Download Language Data",
+        "description": "Download Tesseract's language data (the user has agreed on the screen, which named the source and size).",
+        "operationId": "download_language_data_api_ocr_language_data_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanguageDataRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/papers/{paper_id}/ocr": {
+      "post": {
+        "summary": "Read Paper",
+        "description": "Read a paper's pages by OCR and write its extraction again (papeer.core.ocr.read_again).\n\nengine \"ai\" reads one page with the AI connection: its images go to that service and use its plan.",
+        "operationId": "read_paper_api_papers__paper_id__ocr_post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OcrReadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health",
@@ -7248,6 +7538,41 @@
   },
   "components": {
     "schemas": {
+      "AiReading": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "available",
+          "provider",
+          "label"
+        ],
+        "title": "AiReading",
+        "description": "Whether the AI connection now chosen can read a page from its image, and if not, why."
+      },
       "Article": {
         "properties": {
           "content": {
@@ -8200,6 +8525,13 @@
           "added": {
             "type": "integer",
             "title": "Added"
+          },
+          "needs_ocr": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Needs Ocr"
           }
         },
         "type": "object",
@@ -8511,6 +8843,12 @@
                 "$ref": "#/components/schemas/DriveSyncResult"
               },
               {
+                "$ref": "#/components/schemas/OcrResult"
+              },
+              {
+                "$ref": "#/components/schemas/OcrDataResult"
+              },
+              {
                 "type": "string"
               },
               {
@@ -8563,7 +8901,9 @@
           "interleaved",
           "backup",
           "restore",
-          "drive-sync"
+          "drive-sync",
+          "ocr",
+          "ocr-data"
         ],
         "title": "JobKind",
         "description": "The kinds of background jobs; the names are what the frontend receives (jobKinds.ts)."
@@ -8581,6 +8921,70 @@
         ],
         "title": "JobStarted",
         "description": "The answer of a route that starts a job: follow it with GET /api/jobs/{job_id} or the events."
+      },
+      "LanguageData": {
+        "properties": {
+          "lang": {
+            "type": "string",
+            "enum": [
+              "en",
+              "ja"
+            ],
+            "title": "Lang"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "file": {
+            "type": "string",
+            "title": "File"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "installed": {
+            "type": "boolean",
+            "title": "Installed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lang",
+          "label",
+          "file",
+          "size",
+          "url",
+          "installed"
+        ],
+        "title": "LanguageData",
+        "description": "One language's data for Tesseract (tessdata_fast), and whether this PC has it."
+      },
+      "LanguageDataRequest": {
+        "properties": {
+          "langs": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "en",
+                "ja"
+              ]
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Langs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "langs"
+        ],
+        "title": "LanguageDataRequest"
       },
       "LegacyRemoveRequest": {
         "properties": {
@@ -8736,6 +9140,60 @@
         "title": "LimitWindow",
         "description": "One window of the plan's usage, as the service reports it (resets_at: seconds since the epoch)."
       },
+      "OcrApplied": {
+        "properties": {
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "garbled",
+              "image"
+            ],
+            "title": "Reason"
+          },
+          "engine": {
+            "type": "string",
+            "title": "Engine"
+          },
+          "lang": {
+            "type": "string",
+            "title": "Lang"
+          },
+          "skew": {
+            "type": "number",
+            "title": "Skew"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page",
+          "reason",
+          "engine",
+          "lang",
+          "skew"
+        ],
+        "title": "OcrApplied",
+        "description": "A page whose text was read by OCR (pdf_engine.extract_pdf): which engines (\"tesseract\", \"windows\",\n\"vision\", \"ai\"; several joined by \"+\"), in which language, and how far the scan was turned (degrees)."
+      },
+      "OcrDataResult": {
+        "properties": {
+          "installed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Installed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "installed"
+        ],
+        "title": "OcrDataResult"
+      },
       "OcrPage": {
         "properties": {
           "page": {
@@ -8767,6 +9225,210 @@
         ],
         "title": "OcrPage",
         "description": "A page needing OCR (papeer.layout.ocr_pages): kept as the original when its text layer is garbled or it\nis a scanned image, or translated except for its garbled paragraphs (\"partial\")."
+      },
+      "OcrReadRequest": {
+        "properties": {
+          "engine": {
+            "type": "string",
+            "enum": [
+              "local",
+              "ai"
+            ],
+            "title": "Engine",
+            "default": "local"
+          },
+          "pages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "title": "OcrReadRequest",
+        "description": "POST /api/papers/{paper_id}/ocr. engine \"local\": this PC's engines, \"ai\": the AI connection (one page).\npages: the pages to read (again, when they were read before); None reads the pages that need OCR and\nhave not been read yet."
+      },
+      "OcrResult": {
+        "properties": {
+          "read_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Read Pages"
+          },
+          "failed_pages": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Failed Pages"
+          },
+          "ocr_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Ocr Pages"
+          },
+          "changed_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Changed Pages"
+          },
+          "retranslate_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Retranslate Pages"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "read_pages",
+          "failed_pages",
+          "ocr_pages",
+          "changed_pages",
+          "retranslate_pages"
+        ],
+        "title": "OcrResult",
+        "description": "ocr: what papeer.core.ocr.read_again read and changed (pages are page numbers)."
+      },
+      "OcrSettings": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "ask",
+              "auto",
+              "off"
+            ],
+            "title": "Mode"
+          },
+          "engine": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "tesseract",
+              "windows",
+              "vision"
+            ],
+            "title": "Engine"
+          },
+          "lang": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "en",
+              "ja"
+            ],
+            "title": "Lang"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "engine",
+          "lang"
+        ],
+        "title": "OcrSettings",
+        "description": "This PC's OCR settings (papeer.core.ocr: not synced). mode: read papers by OCR when they are added\n(\"auto\"), ask when one has pages that need it (\"ask\"), or never (\"off\")."
+      },
+      "OcrStatus": {
+        "properties": {
+          "settings": {
+            "$ref": "#/components/schemas/OcrSettings"
+          },
+          "directory": {
+            "type": "string",
+            "title": "Directory"
+          },
+          "language_data": {
+            "items": {
+              "$ref": "#/components/schemas/LanguageData"
+            },
+            "type": "array",
+            "title": "Language Data"
+          },
+          "system": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SystemEngine"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "readable": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Readable"
+          },
+          "order": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Order"
+          },
+          "missing": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "en",
+                "ja"
+              ]
+            },
+            "type": "array",
+            "title": "Missing"
+          },
+          "ai": {
+            "$ref": "#/components/schemas/AiReading"
+          }
+        },
+        "type": "object",
+        "required": [
+          "settings",
+          "directory",
+          "language_data",
+          "system",
+          "readable",
+          "order",
+          "missing",
+          "ai"
+        ],
+        "title": "OcrStatus",
+        "description": "GET /api/ocr: the settings, the language data, what each language is read with and what cannot be read yet."
       },
       "OptionsRequest": {
         "properties": {
@@ -9410,6 +10072,13 @@
             "type": "array",
             "title": "Ocr Pages"
           },
+          "ocr_applied": {
+            "items": {
+              "$ref": "#/components/schemas/OcrApplied"
+            },
+            "type": "array",
+            "title": "Ocr Applied"
+          },
           "completed_pages": {
             "items": {
               "type": "integer"
@@ -9492,6 +10161,7 @@
           "empty_pages",
           "translation_required_pages",
           "ocr_pages",
+          "ocr_applied",
           "completed_pages",
           "preview",
           "in_progress",
@@ -9899,6 +10569,41 @@
         },
         "type": "object",
         "title": "SyncRequest"
+      },
+      "SystemEngine": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "windows",
+              "vision"
+            ],
+            "title": "Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "languages": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "en",
+                "ja"
+              ]
+            },
+            "type": "array",
+            "title": "Languages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "label",
+          "languages"
+        ],
+        "title": "SystemEngine",
+        "description": "The system's own OCR (Windows, or macOS Vision) and the languages it reads on this PC."
       },
       "TagRequest": {
         "properties": {
@@ -10717,6 +11422,12 @@
               },
               {
                 "$ref": "#/components/schemas/DriveSyncResult"
+              },
+              {
+                "$ref": "#/components/schemas/OcrResult"
+              },
+              {
+                "$ref": "#/components/schemas/OcrDataResult"
               },
               {
                 "type": "string"

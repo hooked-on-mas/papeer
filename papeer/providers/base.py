@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import threading
 import time
-from typing import ClassVar, Literal
+from typing import Callable, ClassVar, Literal
 
 from papeer.core.config import Settings
 from papeer.providers.common import TransientError, UsageMeter, check_cancel, latest_limits
@@ -75,6 +75,27 @@ class ProviderBackend(ABC):
         A wait the service asked for holds back the other requests of this provider (one per job)
         too (generate() on other threads, and later calls), without counting toward their own limits.
         """
+        return self._send(lambda: self._generate(instruction, data, schema))
+
+    def read_images(self, instruction: str, images: list[bytes], schema: dict | None = None) -> str:
+        """The answer to one request that shows the model PNG images (OCR by the AI, papeer.core.ai_ocr),
+        sent again after a TransientError as generate() does. RuntimeError when the connection cannot
+        take images (image_support)."""
+        reason = self.image_support()
+        if reason:
+            raise RuntimeError(reason)
+        return self._send(lambda: self._generate_images(instruction, images, schema))
+
+    def image_support(self) -> str | None:
+        """None when read_images() can show this connection images; else why not, for the screen."""
+        return f"{self.spec.label} には画像を渡せないため、AI で読み直せません。"
+
+    def _generate_images(self, instruction: str, images: list[bytes], schema: dict | None) -> str:
+        """As _generate, with the images after the instruction; only for connections that take images."""
+        raise RuntimeError(self.image_support() or "この接続先には画像を渡せません。")
+
+    def _send(self, request: Callable[[], str]) -> str:
+        """request() (one call to the service), with generate()'s sends again and waits."""
         retries, waited, timeouts, delay = 0, 0.0, 0, 0.0
         while True:
             check_cancel(self.cancel)
@@ -84,7 +105,7 @@ class ProviderBackend(ABC):
                 self.cancel.wait(pause)
                 check_cancel(self.cancel)
             try:
-                answer = self._generate(instruction, data, schema)
+                answer = request()
                 break
             except TransientError as error:
                 timeouts += error.timed_out

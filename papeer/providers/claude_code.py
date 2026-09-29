@@ -1,6 +1,7 @@
 """Claude through the Claude Code CLI, signed in with the user's Claude account."""
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 import tempfile
@@ -96,6 +97,21 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
     status_args = ("auth", "status")
 
     def _generate(self, instruction: str, data: str, schema: dict | None) -> str:
+        return self._run(wrap_document_prompt(instruction, data).encode("utf-8"), schema)
+
+    def image_support(self) -> str | None:
+        return None
+
+    def _generate_images(self, instruction: str, images: list[bytes], schema: dict | None) -> str:
+        """The images go in one user message of stream-json input (base64 image blocks, as Claude Code's
+        SDK sends them), so no tool that reads files is needed: tools stay off."""
+        content = [{"type": "text", "text": wrap_document_prompt(instruction, "The document data is the images below.")}]
+        content += [{"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                                 "data": base64.b64encode(image).decode("ascii")}} for image in images]
+        message = {"type": "user", "message": {"role": "user", "content": content}}
+        return self._run((json.dumps(message) + "\n").encode("utf-8"), schema, stream_input=True)
+
+    def _run(self, prompt: bytes, schema: dict | None, stream_input: bool = False) -> str:
         with tempfile.TemporaryDirectory(prefix="papeer-claude-") as directory:
             root = Path(directory)
             command = self.command() + [
@@ -110,6 +126,8 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                 # stream-json (which needs --verbose) is the only format that also reports plan usage.
                 "--output-format", "stream-json", "--verbose",
             ]
+            if stream_input:
+                command += ["--input-format", "stream-json"]
             if self.settings.model.strip():
                 command += ["--model", self.settings.model.strip()]
             if self.settings.reasoning_effort:
@@ -118,7 +136,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                 command += ["--json-schema", json.dumps(schema)]
             output, _ = run_cli_process(
                 command=command,
-                prompt_bytes=wrap_document_prompt(instruction, data).encode("utf-8"),
+                prompt_bytes=prompt,
                 cancel=self.cancel,
                 timeout_seconds=self.settings.timeout_seconds,
                 tool_name=self.tool_name,

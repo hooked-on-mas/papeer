@@ -119,7 +119,7 @@ def test_finished_jobs_are_kept_for_a_while_and_told_by_their_id(manager, monkey
         # Only the running ones in the list; a finished one by its id, with its result.
         assert [job["job_id"] for job in client.get("/api/jobs").json()] == [running.job_id]
         told = client.get(f"/api/jobs/{finished[-1].job_id}").json()
-        assert told["status"] == "succeeded" and not told["running"] and told["result"] == {"paper_ids": ["3"], "added": 1}
+        assert told["status"] == "succeeded" and not told["running"] and told["result"] == {"paper_ids": ["3"], "added": 1, "needs_ocr": []}
         assert told["kind"] == "import" and told["error"] is None
         assert client.get(f"/api/jobs/{running.job_id}").json()["running"] is True
         # Beyond FINISHED_JOBS_KEPT the oldest is forgotten.
