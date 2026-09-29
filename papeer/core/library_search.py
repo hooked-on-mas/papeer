@@ -4,6 +4,7 @@ from __future__ import annotations
 import sqlite3
 
 from papeer.core import search_index
+from papeer.core.library_papers import nfc
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library
 
@@ -24,7 +25,7 @@ def library_search(lib: Library, query: str, limit: int = 200) -> dict:
     Within a paper: metadata, memo, pages, sections. The index (search_index) says where to look; each place
     is checked against the text itself, and papers it does not cover yet are looked through whole.
     """
-    term = query.strip().casefold()
+    term = nfc(query.strip()).casefold()  # As the names are kept (library_papers.nfc).
     if not term:
         return {"results": [], "limited": False}
     if len(term) > 200:

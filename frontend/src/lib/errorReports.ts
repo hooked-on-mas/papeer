@@ -80,6 +80,7 @@ const QUOTA = new RegExp([
 
 const SETTINGS = new RegExp([
   "モデル名を設定", "api url", "不明な接続先", "実行ファイル\\(\\.exe\\)", "の実行ファイルが見つかりません",
+  "node が必要ですが、見つかりません",
   "agy を更新してください",
   "provided but not defined", "unknown (?:option|flag|argument|command|model)", "unrecognized",
   "unexpected argument", "invalid (?:model|value|argument|option)",
@@ -106,7 +107,7 @@ const CLI_FAILURE = /接続に失敗しました。ログイン状態・利用�
 const AI_MESSAGE = new RegExp([
   "^APIエラー HTTP \\d", "APIに接続できません", "APIの応答がタイムアウト", "APIとの接続が途中で切れ", "APIとの安全な接続",
   "の応答がタイムアウトしました", "未ログインです", "API接続ではモデル名を設定", "^API URL", "不明な接続先です",
-  "の実行ファイル\\(\\.exe\\)", "の実行ファイルが見つかりません", "の回答が空でした", "出力上限で途切れ", "から回答ファイルが返り", "テキストの回答が返り",
+  "の実行ファイル\\(\\.exe\\)", "の実行ファイルが見つかりません", "node が必要ですが、見つかりません", "の回答が空でした", "出力上限で途切れ", "から回答ファイルが返り", "テキストの回答が返り",
   "の回答を使えませんでした", "応答形式が不正", "JSONオブジェクトではありません", "再翻訳の上限", "翻訳の一部が欠落",
   "指定した形式のJSONを取り出せません", "agy を更新してください",
 ].join("|"), "m");

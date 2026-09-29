@@ -290,7 +290,9 @@ mermaid が使う chevrotain は脆弱性のある `lodash-es` 4.17.23 に固定
 | Gemini | Antigravity CLI の `agy` コマンド |
 | OpenAI 互換 API | ベース URL と API キー |
 
-CLI は PATH と既定のインストール先から自動検出します（macOS・Linux では `~/.local/bin`、Homebrew（`/opt/homebrew/bin`・`/usr/local/bin`）、nvm・fnm・Volta・`~/.npm-global` など npm の置き場所も探し、CLI を起動するときの PATH にもそのフォルダーを足します。npm 版の CLI は Node.js で動くため）。見つからない場合は設定画面でパスを指定してください。npm・pnpm 版の `.cmd` は cmd.exe を経由するためそのまま実行せず、`.cmd` と同じフォルダー配下にある本体（npm の既定の配置、なければ `.cmd` が起動するもの）を直接起動します（JavaScript なら Node.js で、`.exe` ならそのまま）。本体が見つからない `.cmd`・`.bat`・`.ps1` は使えないので、yarn などで入れた場合は `.exe` か npm 版のパスを指定してください。API キーはファイルに保存せず、起動中のセッションだけで保持します。
+CLI は PATH と既定のインストール先から自動検出します（macOS・Linux では `~/.local/bin`、Homebrew（`/opt/homebrew/bin`・`/usr/local/bin`）、nvm・fnm・Volta・`~/.npm-global` など npm の置き場所も探し、CLI を起動するときの PATH にもそのフォルダーを足します。npm 版の CLI は Node.js で動くため）。見つからない場合は設定画面でパスを指定してください。npm・pnpm 版の `.cmd` は cmd.exe を経由するためそのまま実行せず、`.cmd` と同じフォルダー配下にある本体（npm の既定の配置、なければ `.cmd` が起動するもの）を直接起動します（JavaScript なら Node.js で、`.exe` ならそのまま）。本体が見つからない `.cmd`・`.bat`・`.ps1` は使えないので、yarn などで入れた場合は `.exe` か npm 版のパスを指定してください。macOS・Linux の npm 版（`#!/usr/bin/env node` で始まるスクリプト）は、1 行目が指す node、なければスクリプトと同じフォルダーの node（nvm・Homebrew・Volta は CLI をそれを入れた Node.js と同じフォルダーに置く）、なければ CLI の PATH の最初の node で起動します。node が見つからないときは、何も起動せずにそう伝えます。API キーはファイルに保存せず、起動中のセッションだけで保持します。
+
+アプリ内の「ログイン」は、Windows では新しいコンソール、macOS ではターミナル、Linux では端末（`x-terminal-emulator`、なければ GNOME 端末・Konsole・xterm など）を開いて CLI のログインを実行します（`claude auth login` と agy は端末がないと先へ進めないため）。端末は、CLI を探したときと同じ PATH で CLI を起動し、終わったら Enter キーで閉じます。端末を開けないときは、実行するコマンドを表示します。
 
 PDF の本文は信頼できない入力として扱い、CLI にはツールを使わせない指定で渡します。Claude Code はツール・MCP サーバー・プロジェクト設定・スキルを無効にし、Codex は読み取り専用サンドボックスでシェル・Web 検索・プラグイン・アプリと `config.toml` の MCP サーバーを無効にします。Antigravity は `--sandbox` で起動し、本文はコマンドラインではなく標準入力で渡します（Windows のコマンドライン長の上限を超える長いチャットも送れます）。CLI には Papeer 自身の環境変数（`PAPEER_*`、sidecar の認証トークンなど）を引き継ぎません。
 
