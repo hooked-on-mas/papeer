@@ -110,7 +110,13 @@ class SourceUnreadable(Exception):
     """Another PC's revision could not be read, or holds a path that must not be written.
 
     Not a ValueError (nor an OSError): a failure to write this PC's history must never pass for it.
+    Raised as it is when the source could not be opened or read (perhaps for a moment: a sync folder
+    offline, a file held); BlobDamaged when what was read is not the content its name says.
     """
+
+
+class BlobDamaged(SourceUnreadable):
+    """A blob read to the end (or too far) is not the content its name says: damaged, not merely unreadable."""
 
 
 class HistoryDataMissing(ValueError):
@@ -704,6 +710,208 @@ def record_archive(root: Path, stream, *, kind: str, library_hash: str, counts: 
                     manifest[name] = list(blobs.write(_member_chunks(archive, info, _READ_SIZE), compressed(name), cancel))
         assert db is not None
         entry = _new_entry(found, kind, library_hash, counts, schema_version, db, manifest, meta, verified=False)
+        _check(cancel)
+        _write_entry(folder, entry)
+        return entry["id"]
+
+
+# --- Blobs shared with the sync folder (sync_store) ---
+#
+# The sync folder's new format (sync_store) names and compresses its blobs as this history does, so a
+# blob is copied between the two as it is stored, and a state is recorded from another PC's generation
+# by copying the blobs this history lacks.
+
+def referenced(manifest: dict) -> set[str]:
+    """The blob names a manifest ({"files", "db"}: an entry, or a generation of the sync folder) uses."""
+    return _referenced(manifest)
+
+
+def blob_limits(manifest: dict) -> dict[str, int]:
+    """The most content each blob of a manifest may hold: a file's size, a database chunk's chunk size."""
+    chunk = manifest["db"].get("chunk") if type(manifest["db"].get("chunk")) is int else CHUNK
+    result = {blob_name(digest, True): chunk for digest in manifest["db"]["chunks"]}
+    for rel, (digest, size) in manifest["files"].items():
+        name = blob_name(digest, compressed(rel))
+        result[name] = max(size, result.get(name, 0))
+    return result
+
+
+class _Content:
+    """Checks the content of a blob as it is read: unpacked piece by piece (none larger than _READ_SIZE, so a
+    small blob cannot unpack at once into gigabytes), at most `limit` bytes, and matched against its name."""
+
+    def __init__(self, name: str, limit: int | None):
+        self.name, self.limit = name, limit
+        self.decompressor = zlib.decompressobj() if name.endswith(".z") else None
+        self.digest, self.size = hashlib.sha256(), 0
+
+    def feed(self, raw: bytes) -> Iterator[bytes]:
+        """The content the stored bytes `raw` hold (b"" at the end of the file); BlobDamaged when too long."""
+        for piece in (raw,) if self.decompressor is None else self._inflate(raw):
+            if not piece:
+                continue
+            self.size += len(piece)
+            if self.limit is not None and self.size > self.limit:
+                raise BlobDamaged()
+            self.digest.update(piece)
+            yield piece
+
+    def _inflate(self, raw: bytes) -> Iterator[bytes]:
+        decompressor = self.decompressor
+        assert decompressor is not None
+        try:
+            if not raw:
+                yield decompressor.flush()
+                return
+            data = raw
+            while True:
+                piece = decompressor.decompress(data, _READ_SIZE)
+                yield piece
+                data = decompressor.unconsumed_tail
+                if not data and len(piece) < _READ_SIZE:
+                    return
+        except zlib.error as exc:
+            raise BlobDamaged() from exc
+
+    def finish(self) -> None:
+        if self.digest.hexdigest() != self.name.removesuffix(".z"):
+            raise BlobDamaged()
+
+
+def stored_content(path: Path, cancel=None, limit: int | None = None) -> Iterator[bytes]:
+    """The content of the blob file at `path` (named as blob_name), checked against its name once read to
+    the end, and against `limit` (the most it may hold) all along. A file that cannot be opened or read
+    raises SourceUnreadable (perhaps for a moment); content that is not the one named, or longer than
+    `limit`, BlobDamaged. What the caller does with each piece (writing it) raises as it is."""
+    content = _Content(path.name, limit)
+    try:
+        stream = path.open("rb")
+    except OSError as exc:
+        raise SourceUnreadable() from exc
+    with stream:
+        while True:
+            _check(cancel)
+            try:
+                raw = stream.read(_READ_SIZE)
+            except OSError as exc:
+                raise SourceUnreadable() from exc
+            yield from content.feed(raw)
+            if not raw:
+                break
+    content.finish()
+
+
+def copy_blob(source: Path, folder: Path, cancel=None, limit: int | None = None) -> int:
+    """Copy the blob file `source` as it is stored into `folder` (same name), checked against its name while
+    it is copied; the content's size. Written to a temporary file renamed into place only when it matches,
+    over a blob of that name already there (a damaged one is so mended). A source that cannot be read
+    raises SourceUnreadable, one that does not match (or holds more than `limit`) BlobDamaged, and nothing
+    is written either way."""
+    name = source.name
+    if not re.fullmatch(r"[0-9a-f]{64}(\.z)?", name):
+        raise BlobDamaged()
+    content = _Content(name, limit)
+    descriptor, temporary_name = tempfile.mkstemp(dir=folder, prefix=".blob.", suffix=".tmp")
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            try:
+                stream = source.open("rb")
+            except OSError as exc:
+                raise SourceUnreadable() from exc
+            with stream:
+                while True:
+                    _check(cancel)
+                    try:
+                        raw = stream.read(_READ_SIZE)
+                    except OSError as exc:
+                        raise SourceUnreadable() from exc
+                    for _piece in content.feed(raw):
+                        pass
+                    if not raw:
+                        break
+                    output.write(raw)
+            output.flush()
+            os.fsync(output.fileno())
+        content.finish()
+        size = content.size
+        move_file(temporary, folder / name)
+        return size
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def blob_file(root: Path, name: str) -> Path | None:
+    """The file of a blob in the history of the library at `root`, when the history holds it (unchecked)."""
+    path = history_directory(root) / "blobs" / name
+    return path if re.fullmatch(r"[0-9a-f]{64}(\.z)?", name) and path.is_file() else None
+
+
+def quarantine(root: Path, names: Iterable[str]) -> None:
+    """Move blobs of the history found damaged out of the way (see verify_entry)."""
+    folder = history_directory(root)
+    with _locked(folder):
+        _quarantine(folder, names)
+
+
+def current_state(root: Path, library_hash: str) -> str | None:
+    """The newest state published or taken in, when it holds a library with this hash and every blob it
+    names is there: the state record_folder leaves as it is rather than recording the library again."""
+    folder = history_directory(root)
+    if not folder.is_dir():
+        return None
+    with _locked(folder):
+        found, _ = _read_entries(folder)
+        latest = _latest_regular(found)
+        if latest is not None and latest["hash"] == library_hash and not missing_blobs(folder, latest):
+            return latest["id"]
+        return None
+
+
+def manifest(root: Path, entry_id: str) -> dict | None:
+    """{"files", "db", "hash", "schema_version"} of a recorded state; None when there is no such state."""
+    folder = history_directory(root)
+    with _locked(folder):
+        found, _ = _read_entries(folder)
+    entry = next((item for item in found if item["id"] == entry_id), None)
+    if entry is None:
+        return None
+    return {"files": entry["files"], "db": entry["db"], "hash": entry["hash"],
+            "schema_version": entry.get("schema_version") or 0}
+
+
+def record_manifest(root: Path, files: dict, db: dict, source, *, kind: str, library_hash: str,
+                    counts: dict | None, schema_version: int, cancel=None, **meta) -> str:
+    """Record a state given as a manifest whose blobs lie, as stored, where `source(name)` says (another PC's
+    generation in the sync folder); the new entry's ID.
+
+    Only the blobs this history lacks are copied, each checked against its name (copy_blob). A blob that is
+    missing there, damaged, or a path that must not be written raises SourceUnreadable; writing this PC's
+    history raises as it is. As with record_archive, the hash is what the other PC says: unverified.
+    """
+    if kind not in KINDS:
+        raise ValueError(f"unknown kind {kind!r}")
+    if any(unsafe_path(rel) or rel in DATABASE_FILES for rel in files):
+        raise SourceUnreadable()
+    folder = history_directory(root)
+    with _locked(folder):
+        _remember_library(folder, root)
+        found, _ = _read_entries(folder)
+        blobs = _Blobs(folder / "blobs", create=True)
+        wanted = {"files": files, "db": db}
+        needed = sorted(missing_blobs(folder, wanted, blobs.names))
+        paths = {name: Path(source(name)) for name in needed}
+        try:
+            size = sum(path.stat().st_size for path in paths.values())
+        except OSError as exc:
+            raise SourceUnreadable() from exc
+        ensure_free_space({blobs.folder: size})
+        limits = blob_limits(wanted)
+        for name in needed:
+            _check(cancel)
+            copy_blob(paths[name], blobs.folder, cancel, limits.get(name))
+            blobs.names.add(name)
+        entry = _new_entry(found, kind, library_hash, counts, schema_version, db, files, meta, verified=False)
         _check(cancel)
         _write_entry(folder, entry)
         return entry["id"]
