@@ -1036,6 +1036,27 @@ def test_a_file_that_cannot_be_removed_is_passed_over(pcs, eager, monkeypatch):
     assert unused_blobs(a) == set()
 
 
+def test_a_copy_that_does_not_hold_the_blob_starts_one_sync_not_one_each_check(pcs, monkeypatch):
+    a, b, identity = pcs
+    a.edit(identity, note="second", article="summary two")
+    a.sync()
+    name = local_history.blob_name(hashlib.sha256(b"summary two").hexdigest(), True)
+    transfer(a, b, only=lambda rel: rel != "blobs/" + name)
+    assert b.sync()["status"] == "waiting" and b.check() == "none"
+    (b.drive / "v2" / "blobs" / (name.removesuffix(".z") + " (1).z")).write_bytes(zlib.compress(b"not it"))
+    reads = []
+    recover = sync_store.GenerationStore.recover
+    monkeypatch.setattr(sync_store.GenerationStore, "recover",
+                        lambda self, names, cancel=None: reads.append(1) or recover(self, names, cancel))
+    # The new copy is worth one look; found not to hold the blob, it is not looked at again.
+    assert b.check() == "quiet"
+    assert b.sync()["status"] == "waiting" and len(reads) == 1
+    assert [b.check() for _ in range(3)] == ["none"] * 3
+    # The blob itself arrives: taken in.
+    transfer(a, b)
+    assert b.check() == "pull" and b.sync()["reloaded"] is True
+
+
 def test_a_blob_left_only_under_a_copy_name_is_put_back(pcs):
     """Another PC's clean-up removed "X (1)" as a copy, and that removal took this folder's X: only the
     copy Google Drive named "X (1)" is left here. The sync puts it back rather than wait for ever."""

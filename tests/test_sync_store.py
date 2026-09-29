@@ -473,6 +473,9 @@ def test_leftovers_and_copies_google_drive_named_again_are_tidied(store):
     mine, theirs = "a" * 32, "b" * 32
     for identity in (mine, theirs):
         (store.devices / f"{identity} (1).json").write_text("{}", "utf-8")
+    for folder in (store.blobs, store.gens, store.devices):
+        for path in folder.glob("* (1)*"):
+            os.utime(path, (old, old))  # Copies written a while ago.
     cleaner = sync_store.Cleaner(store, store.view())
     cleaner.leftovers(mine, NOW)
     assert not stale.exists() and fresh.exists()
@@ -511,3 +514,30 @@ def test_a_blob_left_only_under_a_copy_name_is_put_back_when_its_content_is_righ
     assert store.recover({name, "0" * 64}) == {name}
     assert name in store.view().blobs
     assert store.recover({name}) == set()  # Already there.
+
+
+def test_a_copy_written_just_now_is_left_for_later(store):
+    """Two PCs tidying the same pair at once could each remove the file the other keeps: a copy is
+    tidied only once it was written TEMPORARY_GRACE ago."""
+    name = put(store, b"text", True)
+    copy = store.blobs / (digest(b"text") + " (1).z")
+    copy.write_bytes((store.blobs / name).read_bytes())
+    now = datetime.now(timezone.utc)
+    sync_store.Cleaner(store, store.view()).leftovers(None, now)
+    assert copy.exists()
+    old = seconds(now - timedelta(days=2))
+    os.utime(copy, (old, old))
+    sync_store.Cleaner(store, store.view()).leftovers(None, now)
+    assert not copy.exists() and (store.blobs / name).exists()
+
+
+def test_a_blob_here_but_cut_short_is_replaced_by_a_right_copy(store):
+    name = put(store, b"content of the blob", False)
+    right = (store.blobs / name).read_bytes()
+    (store.blobs / (name + " (1)")).write_bytes(right)
+    (store.blobs / name).write_bytes(right[:5])  # Cut short (the other size: "missing" to a generation).
+    assert store.recover({name}) == {name}
+    assert (store.blobs / name).read_bytes() == right
+    # A whole one is left as it is.
+    (store.blobs / (name + " (1)")).write_bytes(right)
+    assert store.recover({name}) == set()

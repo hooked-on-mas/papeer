@@ -156,11 +156,23 @@ def _wait(root: Path, store: GenerationStore, view: View, state: dict, *, reason
                           # The damaged blobs as they were: a change to one is worth another try (check).
                           "blobs": {name: list(view.blobs[name]) for name in sorted(bad) if name in view.blobs}},
                  conflicts=[], error=None, review=None)
+    # The copies Google Drive named "<blob> (1)" of what is waited for, as they were (check: only a change
+    # to them is worth another try; one found not to hold the blob is not read again at each check).
+    state["waiting"]["copies"] = _copies_of(view, _lacking(view, ids) | set(bad))
     if bad:
         state["bad_blobs"] = sorted(set(state.get("bad_blobs") or []) | set(bad))
     drive_sync.save_state(root, state)
     _write_device(store, view, state)
     return {"status": "waiting", "waiting": waiting_status(state), "heads": ids}
+
+
+def _lacking(view: View, ids: list[str]) -> set[str]:
+    """The blobs the heads among `ids` lack (View.missing)."""
+    return set().union(*(view.missing(view.generations[i]) for i in ids if i in view.generations))
+
+
+def _copies_of(view: View, names: set[str]) -> dict[str, list[int]]:
+    return {copy: list(stat) for name in sorted(names) for copy, stat in sorted(view.copies.get(name, {}).items())}
 
 
 # --- Where the content of a blob comes from ---
@@ -846,8 +858,10 @@ def check(root: Path, store: GenerationStore) -> dict:
     waiting = state.get("waiting") if isinstance(state.get("waiting"), dict) else None
     blobs = waiting.get("blobs") if waiting and isinstance(waiting.get("blobs"), dict) else {}
     rewritten = any(list(view.blobs.get(name, ())) != value for name, value in blobs.items())
-    lacking = set().union(*(view.missing(heads[identity]) for identity in ids if identity in heads))
-    rewritten = rewritten or bool(lacking & set(view.copies))  # Only renamed: the sync puts it back.
+    # A copy Google Drive renamed ("<blob> (1)") of what is waited for, new or changed since the wait
+    # began: the sync puts it back when it holds the blob.
+    copies = waiting.get("copies") if waiting and isinstance(waiting.get("copies"), dict) else {}
+    rewritten = rewritten or _copies_of(view, _lacking(view, ids) | set(blobs)) != copies
     still = any(not view.complete(identity) for identity in ids) or (where == "unknown" and not _expired(state)) \
         or (waiting is not None and waiting.get("reason") == "damaged")
     if still:

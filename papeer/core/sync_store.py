@@ -213,8 +213,9 @@ class View:
     devices: dict[str, dict] = field(default_factory=dict)
     # When it was looked at (None: never compared with the time, as in a view made by hand).
     now: datetime | None = None
-    # The copies Google Drive named "<blob> (1)" by the blob name they stand for (see GenerationStore.recover).
-    copies: dict[str, list[str]] = field(default_factory=dict)
+    # The copies Google Drive named "<blob> (1)", by the blob name they stand for, each with its size and
+    # modification time (see GenerationStore.recover).
+    copies: dict[str, dict[str, tuple[int, int]]] = field(default_factory=dict)
 
     def ids(self) -> set[str]:
         return set(self.generations) | self.unreadable | set(self.newer)
@@ -385,7 +386,8 @@ class GenerationStore:
                 stat = entry.stat()
                 result.blobs[entry.name] = (stat.st_size, stat.st_mtime_ns)
             elif (match := _DUPLICATE.fullmatch(entry.name)) and _BLOB.fullmatch(name := match[1] + (match[3] or "")):
-                result.copies.setdefault(name, []).append(entry.name)
+                stat = entry.stat()
+                result.copies.setdefault(name, {})[entry.name] = (stat.st_size, stat.st_mtime_ns)
         for entry in _scan(self.devices):
             name = entry.name
             if name.endswith(".json") and _ID.fullmatch(name[:-5]):
@@ -395,15 +397,17 @@ class GenerationStore:
         return result
 
     def recover(self, names: Iterable[str], cancel=None) -> set[str]:
-        """Put in place of each blob of `names` that is missing a copy Google Drive named "<name> (1)" whose
-        content is that blob's: when a PC's clean-up removed the file of the right name as a copy, only
-        the renamed one may be left. The names put back."""
+        """Put in place of each blob of `names` that is missing, or here but not whole (the rule of the
+        clean-up's copies), a copy Google Drive named "<name> (1)" whose content is that blob's: when a PC's
+        clean-up removed the file of the right name as a copy, only the renamed one may be left. The names
+        put back."""
         view = self.view()
         result = set()
         for name in names:
-            if name in view.blobs:
+            copies = sorted(view.copies.get(name, {}))
+            if not copies or (name in view.blobs and _intact(self.blobs / name, name)):
                 continue
-            for copy in sorted(view.copies.get(name, [])):
+            for copy in copies:
                 if cancel is not None:
                     check_cancel(cancel)
                 if _intact(self.blobs / copy, name):
@@ -663,7 +667,13 @@ class Cleaner:
                 except FileNotFoundError:
                     continue
                 match = _DUPLICATE.fullmatch(path.name)
-                if match and folder != self.store.root:
+                try:
+                    # Written a while ago only: two PCs tidying the same pair at once might otherwise each
+                    # remove the file the other keeps.
+                    settled = path.stat().st_mtime < oldest
+                except FileNotFoundError:
+                    continue
+                if match and folder != self.store.root and settled:
                     try:
                         self._duplicate(folder, path, match[1] + (match[3] or ""), own_device)
                     except OSError:
