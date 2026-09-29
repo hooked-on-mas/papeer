@@ -118,6 +118,18 @@ fn tray_available() -> bool {
         })
 }
 
+/// Whether a left click on the tray icon opens its menu (Windows, Linux) instead of showing or hiding the
+/// window (macOS, where the menu comes on a right click only).
+fn left_click_shows_menu() -> bool {
+    !cfg!(target_os = "macos")
+}
+
+/// Whether `event` shows or hides the window: a left click released, where the left click does not open the
+/// menu (a click that opens the menu must not also hide the window).
+fn toggles_window(event: &TrayIconEvent, left_click_shows_menu: bool) -> bool {
+    !left_click_shows_menu && is_left_click_release(event)
+}
+
 /// The tray icon reports a click twice, when the button goes down and when it comes up: only the release
 /// of a left click shows or hides the window (once for each click).
 fn is_left_click_release(event: &TrayIconEvent) -> bool {
@@ -335,7 +347,7 @@ pub fn run() {
             // appindicator library on Linux, no tray in the desktop), the app runs on without one.
             // macOS: a black-and-white template image, which the menu bar draws in its own colours (the app
             // icon would be a coloured square there), and the menu on a right click only: a left click
-            // shows or hides the window, as on Windows.
+            // shows or hides the window. Elsewhere a left click opens the menu, and only that.
             #[cfg(target_os = "macos")]
             let icon = Some(tauri::include_image!("icons/tray-template.png"));
             #[cfg(not(target_os = "macos"))]
@@ -344,7 +356,7 @@ pub fn run() {
                 let tray = TrayIconBuilder::with_id(TRAY_ID)
                     .icon(icon)
                     .icon_as_template(cfg!(target_os = "macos"))
-                    .show_menu_on_left_click(!cfg!(target_os = "macos"))
+                    .show_menu_on_left_click(left_click_shows_menu())
                     .menu(&menu)
                     .on_menu_event(|app, event| {
                         if event.id.as_ref() == "quit" {
@@ -354,7 +366,7 @@ pub fn run() {
                         }
                     })
                     .on_tray_icon_event(|tray, event| {
-                        if is_left_click_release(&event) {
+                        if toggles_window(&event, left_click_shows_menu()) {
                             let app = tray.app_handle();
                             if let Some(window) = app.get_webview_window("main") {
                                 let is_visible = window.is_visible().unwrap_or(false);
@@ -439,16 +451,34 @@ pub fn run() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn only_the_release_of_a_left_click_toggles_the_window() {
+    fn click(button: MouseButton, button_state: MouseButtonState) -> TrayIconEvent {
         use tauri::tray::TrayIconId;
-        let click = |button, button_state| TrayIconEvent::Click {
+        TrayIconEvent::Click {
             id: TrayIconId::new("t"),
             position: Default::default(),
             rect: Default::default(),
             button,
             button_state,
-        };
+        }
+    }
+
+    #[test]
+    fn the_window_is_toggled_only_where_a_left_click_does_not_open_the_menu() {
+        let up = click(MouseButton::Left, MouseButtonState::Up);
+        assert!(toggles_window(&up, false));
+        assert!(!toggles_window(&up, true));
+        assert!(!toggles_window(
+            &click(MouseButton::Left, MouseButtonState::Down),
+            false
+        ));
+        assert!(!toggles_window(
+            &click(MouseButton::Right, MouseButtonState::Up),
+            false
+        ));
+    }
+
+    #[test]
+    fn only_the_release_of_a_left_click_toggles_the_window() {
         assert!(is_left_click_release(&click(
             MouseButton::Left,
             MouseButtonState::Up

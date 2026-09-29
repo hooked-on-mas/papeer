@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import unicodedata
 
+import pytest
+
 import pymupdf
 
 from papeer.core.storage import Library
@@ -46,3 +48,39 @@ def test_data_kept_decomposed_is_found_by_a_composed_or_a_decomposed_search(tmp_
         results = library_search(lib, query)["results"]
         assert {r["side"] for r in results} >= {"metadata", "original"}
         assert {r["paper_id"] for r in results} == {paper_id}
+
+
+def _library_with_decomposed_papers(tmp_path, count):
+    lib = Library(tmp_path / "library")
+    ids = []
+    for number in range(count):
+        source = tmp_path / f"{number}.pdf"
+        with pymupdf.open() as pdf:
+            pdf.new_page().insert_text((72, 72), f"plain {number}")
+            pdf.save(source)
+        ids.append(lib.import_pdf(source)[0])
+    return lib, ids
+
+
+def test_a_search_term_is_limited_by_its_composed_length_only(tmp_path):
+    from papeer.core.library_search import library_search
+    lib, _ = _library_with_decomposed_papers(tmp_path, 1)
+    library_search(lib, "が" * 110)  # 220 characters decomposed, 110 composed: allowed.
+    with pytest.raises(ValueError):
+        library_search(lib, "が" * 201)
+
+
+def test_a_place_holding_both_forms_is_one_result_and_a_limit_keeps_the_order(tmp_path):
+    from papeer.core.library_search import library_search
+    lib, (older, newer) = _library_with_decomposed_papers(tmp_path, 2)
+    composed, decomposed = "ガイド", unicodedata.normalize("NFD", "ガイド")
+    with lib.connection() as db:
+        db.execute("UPDATE papers SET created_at='2026-01-01T00:00:00' WHERE id=?", (older,))
+        db.execute("UPDATE papers SET created_at='2026-02-01T00:00:00' WHERE id=?", (newer,))
+        db.execute("UPDATE pages SET text=? WHERE paper_id=?", (f"{composed} と {decomposed}", older))
+        db.execute("UPDATE pages SET text=? WHERE paper_id=?", (decomposed, newer))
+    results = library_search(lib, composed)["results"]
+    assert [(r["paper_id"], r["side"]) for r in results] == [(newer, "original"), (older, "original")]
+    # The newer paper (kept decomposed) is not pushed out by the older one's composed match.
+    limited = library_search(lib, composed, limit=1)
+    assert [r["paper_id"] for r in limited["results"]] == [newer] and limited["limited"]
