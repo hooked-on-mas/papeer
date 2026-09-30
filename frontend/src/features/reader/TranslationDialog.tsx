@@ -26,10 +26,12 @@ import { setGlossaryDialogPaper, startGlossaryDraft, takeGlossaryDraft, useGloss
 import { markRebuildJob } from "./rebuildJobs";
 import {
   draftResultMessage, effectiveTerms, glossaryKey, glossaryReviewSkip, isResuming, mergeDraftTerms, normalizeTerms, primaryDomain,
-  readReviewedGlossary, recordReviewedGlossary, retranslationWarning, reviewSkipMessage, startButtonLabel, translationTargetText,
+  readReviewedGlossary, recordReviewedGlossary, retranslatedInkPages, retranslationWarning, reviewSkipMessage, startButtonLabel, translationTargetText,
   type TranslationPlan,
 } from "./translationStart";
 import { isImeKey } from "@/lib/imeKeys";
+import { onAppEvent } from "@/lib/appEvents";
+import { cachedInkPages, type InkSide } from "./inkStore";
 
 interface TranslationDialogProps {
   open: boolean;
@@ -157,6 +159,19 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     enabled: open && !!selection.pages?.length,
     retry: false,
   });
+  const { data: savedInkPages = [], refetch: refetchInkPages } = useQuery({
+    queryKey: [QK.inkPages, paperId],
+    queryFn: async () => await unwrap(api.GET("/api/papers/{paper_id}/ink-pages", {
+      params: { path: { paper_id: paperId } },
+    })) as { side: InkSide; page: number; count: number }[],
+    enabled: open,
+  });
+  useEffect(() => onAppEvent("ink-changed", (detail) => {
+    if (detail.paperId === paperId && open) void refetchInkPages();
+  }), [paperId, open, refetchInkPages]);
+  const inkPages = new Map(savedInkPages.map((item) => [`${item.side}:${item.page}`, item]));
+  for (const item of cachedInkPages(paperId)) inkPages.set(`${item.side}:${item.page}`, item);
+  const affectedInkPages = retranslatedInkPages(planFetching ? undefined : plan, [...inkPages.values()]);
   // Only the terms this paper uses count: editing a dictionary it does not use is no reason to check again.
   const currentKey = glossaryKey(effectiveTerms(glossary.terms, domainSelection));
   // A plan being refetched (after a glossary save or a finished run) may be out of date.
@@ -347,6 +362,9 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
             {!domainJob && choices.domainNote && <p className="text-muted-foreground">{choices.domainNote}</p>}
             {unchosenMessage && <p className="text-amber-700 dark:text-amber-400">{unchosenMessage}</p>}
             {warning && <p className="text-amber-700 dark:text-amber-400">{warning}</p>}
+            {affectedInkPages.length > 0 && <p className="text-amber-700 dark:text-amber-400">
+              注意：再翻訳の対象となる日本語訳のうち、{affectedInkPages.length}ページに書き込みがあります。訳文や文章の配置が変わっても書き込みは元の位置に残るため、線や蛍光ペンが意図した箇所からずれる可能性があります。
+            </p>}
           </div>
         </div>
         <DialogFooter>

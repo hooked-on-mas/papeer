@@ -157,6 +157,15 @@ export function retranslationWarning(plan: TranslationPlan | undefined, hasDomai
   return `翻訳済みの${count}ページも訳し直します（保存済みの訳文と原文・辞書などの条件が異なるため。${domains}利用枠を使います）。`;
 }
 
+/** Translated pages whose saved writing may no longer point at the same words after this run. */
+export function retranslatedInkPages(plan: TranslationPlan | undefined,
+  inkPages: readonly { side: string; page: number; count: number }[]): number[] {
+  if (!plan?.needs_ai) return [];
+  const affected = new Set(plan.retranslated_pages);
+  return [...new Set(inkPages.filter((item) => item.side === "translated" && item.count > 0 && affected.has(item.page))
+    .map((item) => item.page))].sort((a, b) => a - b);
+}
+
 /** "翻訳対象" under the page selection: with the plan, the pages the run covers (the requested ones and
  * the pages their sentences continue on) and how many of them come from saved translations. */
 export function translationTargetText(requested: number, plan: TranslationPlan | undefined): string {

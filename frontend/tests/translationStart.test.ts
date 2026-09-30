@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   effectiveTerms, glossaryKey, glossaryReviewSkip, isResuming, mergeDraftTerms, normalizeTerms, primaryDomain, readReviewedGlossary,
-  recordReviewedGlossary, retranslationWarning, reviewSkipMessage, startButtonLabel, translationTargetText, type TranslationPlan,
+  recordReviewedGlossary, retranslatedInkPages, retranslationWarning, reviewSkipMessage, startButtonLabel, translationTargetText, type TranslationPlan,
 } from "../src/features/reader/translationStart.ts";
 
 const plan = (overrides: Partial<TranslationPlan> = {}): TranslationPlan => ({
@@ -116,6 +116,17 @@ test("retranslating translated pages is announced, naming a model change", () =>
   assert.doesNotMatch(retranslationWarning(same) ?? "", /分野辞書/);
   assert.match(retranslationWarning(same, true) ?? "", /^翻訳済みの1ページも訳し直します（.*分野辞書の選択が変わったことも原因になります。.*利用枠を使います）。$/);
   assert.doesNotMatch(retranslationWarning(plan({ retranslated_pages: [1], previous_models: ["model-a"] }), true) ?? "", /分野辞書/);
+});
+
+test("writing warning applies only to Japanese pages being retranslated", () => {
+  const ink = [
+    { side: "translated", page: 1, count: 2 }, { side: "original", page: 2, count: 1 },
+    { side: "translated", page: 2, count: 1 }, { side: "translated", page: 3, count: 1 },
+    { side: "translated", page: 4, count: 0 },
+  ];
+  assert.deepEqual(retranslatedInkPages(plan({ retranslated_pages: [1, 2, 4] }), ink), [1, 2]);
+  assert.deepEqual(retranslatedInkPages(plan({ needs_ai: false, retranslated_pages: [1, 2] }), ink), []);
+  assert.deepEqual(retranslatedInkPages(undefined, ink), []);
 });
 
 test("candidates already in the glossary are not added twice", () => {
