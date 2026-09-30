@@ -732,6 +732,16 @@ def _newest(view: View, ids: list[str]) -> str:
     return max(ids, key=lambda identity: (view.created(identity) or 0, identity))
 
 
+def _same_library(view: View, head: str, base: str, state: dict) -> bool:
+    """Whether the generation `head` holds the library this PC last synced on (its base `base`): the same hash
+    as the base's generation, or, when that is no longer here, as the library had then (the state's)."""
+    generation = view.generations.get(head)
+    if generation is None:
+        return False
+    known = view.generations.get(base)
+    return generation["hash"] in {known["hash"] if known is not None else None, state.get("hash")} - {None}
+
+
 def _single(view: View, ids: list[str], base: str | None) -> str | None:
     """The one head the sync goes by: the only one, or, of heads that all hold the same library (two PCs
     that published the same contents at once), this PC's base or else the newest. None when heads differ
@@ -824,6 +834,11 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
         if choice in incomplete:
             raise ValueError(f"選んだ同期データはまだ届いていません。{SYNC_CLIENT}の同期完了後に再試行してください。")
     single = _single(view, current, base)
+    if single is not None and known_base is not None and single != known_base \
+            and _same_library(view, single, known_base, state):
+        # The one head holds the library this PC last synced on (another PC made it of the same contents): it is
+        # this PC's base as much as the base itself, so this PC's changes since are no conflict with it.
+        base = known_base = single
     # With no base known (never synced, or one older than any lineage), a differing head is always a choice;
     # so is a revision an earlier Papeer published.
     conflict = bool(legacy) or (single is None and bool(current)) or (
@@ -935,7 +950,11 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
                         choice, content_hash, cancel, progress, set_aside)
                 recorded += set_aside
             publish_hash, publish_schema = content_hash, content_schema
-            if choice is not None or (not pull and (dirty or not ids)):
+            # A head chosen that is the only one (no other head, no revision of the first format to take over)
+            # is taken in and becomes the base, as a head taken in unasked: published again, it would be a second
+            # generation of the same library, which the PC that made the first would take for changes of this PC.
+            adopted = selected is not None and ids == [choice]
+            if (choice is not None and not adopted) or (not pull and (dirty or not ids)):
                 check_cancel(cancel)
                 if earlier is not None:
                     # A revision of the first format has no manifest: it is recorded in this PC's history as

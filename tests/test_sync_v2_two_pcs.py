@@ -203,7 +203,7 @@ def pcs(tmp_path, monkeypatch):
     head = result["conflicts"][0]["id"]
     assert b.sync(choice=head, expected_heads=[head])["reloaded"] is True
     transfer(b, a)
-    # The generation b made over a's holds a's library: only a's base moves.
+    # b took a's generation in as its base (test_a_generation_chosen_and_taken_in_is_not_published_again).
     assert a.sync() == {"status": "synced", "reloaded": False, "previous_path": None}
     assert a.state()["base"] == b.state()["base"]
     # b's history was empty, so the (empty) library it replaced stays beside it, as with the first format.
@@ -241,7 +241,7 @@ def test_a_change_travels_as_the_blobs_it_changed(pcs):
     # Both PCs are on the head, so the clean-up left only it; its lineage names those it took over.
     generations = a.store().view().generations
     head = generations[heads(a)[0]]
-    assert set(generations) == {head["id"]} and len(head["lineage"]) >= 2
+    assert set(generations) == {head["id"]} and len(head["lineage"]) >= 1
 
 
 def test_a_generation_that_arrives_before_its_blobs_is_waited_for(pcs):
@@ -1107,6 +1107,41 @@ def test_a_right_copy_beside_a_blob_that_is_damaged_is_put_back(pcs):
     if result["status"] == "waiting":  # The copy is taken in by the next sync.
         result = b.sync()
     assert result["status"] == "synced" and b.note(identity) == "second"
+
+
+# --- A choice of another PC's generation (checked on Google Drive) ---
+
+def test_a_generation_chosen_and_taken_in_is_not_published_again(pcs):
+    """b's first sync chose a's generation (see pcs): taken in as b's base, it is not published again as a
+    second generation of the same library, which a would take for b's changes once a changed its own."""
+    a, b, identity = pcs
+    head = heads(a)[0]
+    assert b.files("gens") == {head + ".gen"} and b.state()["base"] == head
+    a.edit(identity, note="a changed")
+    assert a.sync()["status"] == "synced"
+    transfer(a, b)
+    assert b.sync()["reloaded"] is True and b.note(identity) == "a changed"
+
+
+def test_a_head_holding_the_library_this_pc_synced_on_is_no_conflict(pcs):
+    """A generation of the same library made over this PC's base (as a choice published it before it was
+    taken in as it is, or a choice among more heads): this PC's changes since go over it."""
+    a, b, identity = pcs
+    base = heads(b)[0]
+    with b:
+        store = b.store()
+        view = store.view()
+        item = view.generations[base]
+        v2._publish(b.root, store, view, {"files": item["files"], "db": item["db"]}, parents=[base],
+                    library_hash=item["hash"], schema_version=item["schema_version"], counts=item["counts"],
+                    device_id=b.state()["device_id"], local_files={}, cancel=threading.Event(),
+                    progress=lambda _: None)
+    transfer(b, a)
+    assert heads(a) != [base]
+    a.edit(identity, note="a changed")
+    assert a.sync()["status"] == "synced"
+    transfer(a, b)
+    assert b.sync()["reloaded"] is True and b.note(identity) == "a changed"
 
 
 # --- Names Google Drive gives files (checked on Google Drive) ---
