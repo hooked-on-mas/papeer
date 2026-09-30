@@ -69,7 +69,7 @@ just setup
 
 ### 開発時の起動
 
-開発時は sidecar とフロントエンドを別々のターミナルで起動します。デバッグビルドの Tauri は sidecar を起動せず、`127.0.0.1:8000` に接続します。
+開発時は sidecar とフロントエンドを別々のターミナルで起動します。デバッグビルドの Tauri は sidecar を起動せず、`127.0.0.1:8000` に接続します。そのため `just dev-frontend` は `TAURI_CONFIG` で `bundle.resources` を外し、同梱用の sidecar のフォルダー（`frontend/src-tauri/sidecar`、`just build-sidecar` で作るもの）がなくても起動できます。
 
 ```bash
 just dev-sidecar    # ターミナル 1: FastAPI サーバー (ポート 8000)
@@ -106,7 +106,7 @@ GitHub の Actions の画面から手動で実行（Run workflow）すると、m
 just e2e              # すべてのシナリオ（例: just e2e library で名前に library を含むファイルだけ、just e2e --repeat 3 で 3 回続けて）
 ```
 
-実際のアプリの画面（デバッグ版の `papeer.exe` と WebView2）を、playwright-core の `connectOverCDP` で操作して確かめます（`frontend/e2e`、node:test）。Windows 11 と WebView2 ランタイムが前提で、所要時間は約 5 分です（シナリオごとにライブラリ・sidecar・アプリを起動し直すため、1 本あたり 15〜40 秒。初回だけ、同梱フォントの変換に約 30 秒余計にかかります。変換結果は pytest と同じ `.pytest_cache` 内に置いて使い回します）。`just e2e` はまず `cargo build`（デバッグ版。変更がなければすぐ終わる）を行い、次に `frontend/e2e/run.ts` が共通の準備をして、シナリオごとに新しいライブラリ・sidecar・アプリを起動します。この `cargo build` は sidecar のフォルダーなしで通るよう `just clippy` と同じく `TAURI_CONFIG` で `bundle.resources` を外すため、`just dev-frontend` と交互に使うとアプリ本体（`papeer` クレート）だけが作り直されます（約 40 秒）。
+実際のアプリの画面（デバッグ版の `papeer.exe` と WebView2）を、playwright-core の `connectOverCDP` で操作して確かめます（`frontend/e2e`、node:test）。Windows 11 と WebView2 ランタイムが前提で、所要時間は約 5 分です（シナリオごとにライブラリ・sidecar・アプリを起動し直すため、1 本あたり 15〜40 秒。初回だけ、同梱フォントの変換に約 30 秒余計にかかります。変換結果は pytest と同じ `.pytest_cache` 内に置いて使い回します）。`just e2e` はまず `cargo build`（デバッグ版。変更がなければすぐ終わる）を行い、次に `frontend/e2e/run.ts` が共通の準備をして、シナリオごとに新しいライブラリ・sidecar・アプリを起動します。この `cargo build` は sidecar のフォルダーなしで通るよう `just clippy` と同じく `TAURI_CONFIG` で `bundle.resources` を外します（`just dev-frontend` も同じ設定なので、交互に使っても作り直しません）。
 
 - デバッグ版のアプリは sidecar を `127.0.0.1:8000`、画面を Vite の `1420` から読むため、`just dev-sidecar`・`just dev-frontend` を止めてから実行します（使われていれば始める前に止まります）。CDP のポートは毎回空いているものを選びます。
 - 実際のデータには触れません。守り方は次の 3 段です。

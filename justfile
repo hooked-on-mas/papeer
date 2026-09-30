@@ -95,7 +95,10 @@ dev-sidecar: (stop-stale-dev '-Port 8000')
 
 # Run frontend in development
 # 前回の Vite (1420) とデバッグ版のウィンドウが残っていれば止めてから起動する
+# デバッグ版は sidecar を同梱せず 8000 に接続するので、just clippy と同じく TAURI_CONFIG で bundle.resources を外し、
+# sidecar のフォルダー（frontend/src-tauri/sidecar）がなくても起動できるようにする（just e2e と設定が同じなので交互に使っても作り直さない）
 [working-directory: 'frontend']
+[env('TAURI_CONFIG', '{"bundle":{"resources":[]}}')]
 dev-frontend: (stop-stale-dev '-Port 1420 -ExePath frontend/src-tauri/target/debug/papeer.exe')
     pnpm tauri dev
 
