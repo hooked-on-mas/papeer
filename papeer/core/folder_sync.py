@@ -55,13 +55,35 @@ def _pending(state: dict) -> bool:
     return isinstance(state.get("migration"), dict)
 
 
+def _told(state: dict) -> bool:
+    """A migration the user asked for goes on at the next sync ("migration_pending"); the start of a folder
+    chosen empty (connect) is not told as one."""
+    return _pending(state) and not state["migration"].get("empty")
+
+
+def connect(root: Path, value: str) -> dict:
+    """drive_sync.connect, as the settings choose a folder: an empty one (no data of either format, and this PC
+    never synced there) starts in the new format at the first sync, without asking (there is no earlier Papeer
+    to warn of: none has synced there). That sync is a migration of an empty folder (_migrate), which also puts
+    a marker stopping an earlier Papeer from publishing there; stopped, the next sync goes on with it. The
+    status (folder_sync.status)."""
+    drive_sync.connect(root, value)
+    state = read_state(root)
+    folder = Path(state["folder"])
+    if (not state.get("base") and not _pending(state) and not any(folder.glob("*.papeer-sync"))
+            and not GenerationStore(folder).has_generations()):
+        state["migration"] = {"started": _now().isoformat(), "empty": True}
+        save_state(root, state)
+    return status(root)
+
+
 def status(root: Path) -> dict:
     """drive_sync.status, with what the sync waits for (drive_sync_v2.waiting_status), the format this PC
     last synced in ("format") and whether a migration it began goes on at the next sync ("migration_pending")."""
     result = drive_sync_v2.status(root)
     state = read_state(root)
     result["format"] = 2 if state.get("format") == sync_store.FORMAT else 1
-    result["migration_pending"] = _pending(state)
+    result["migration_pending"] = _told(state)
     return result
 
 
@@ -93,6 +115,11 @@ def sync_connected(root: Path, cancel: threading.Event, progress: Progress, *, c
         lib = Library(root)
         if folder_format(folder, state) == 2:
             return _sync_new(lib, folder, state, cancel, progress, **options)
+        if _pending(state) and state["migration"].get("empty") and any(folder.glob("*.papeer-sync")):
+            # An earlier Papeer published in the folder chosen empty before this PC's first sync: the move to
+            # the new format is asked first, as for any folder of the first format.
+            state.pop("migration")
+            save_state(root, state)
         if _pending(state):
             return _migrate(lib, folder, cancel, progress, **options)
         return drive_sync.sync(lib, drive_sync.FolderDrive(folder), cancel, progress, **options)
@@ -121,8 +148,8 @@ def abandon_migration(root: Path) -> None:
     leaves it to go on instead. Once its generation is written the folder is in the new format, and what is
     left (_finish_migration) is done all the same."""
     state = read_state(root)
-    if not _pending(state):
-        return
+    if not _pending(state) or state["migration"].get("empty"):
+        return  # The start of an empty folder (connect) was not asked for: stopping its sync does not undo it.
     if state.get("folder") and folder_format(Path(state["folder"]), state) == 2:
         return
     state.pop("migration")
@@ -298,7 +325,7 @@ def format_status(root: Path) -> dict:
     """
     state = read_state(root)
     empty = {"count": 0, "size": 0}
-    result = {"format": None, "migration_pending": _pending(state), "revisions": dict(empty),
+    result = {"format": None, "migration_pending": _told(state), "revisions": dict(empty),
               "removable": {**empty, "ids": []}, "later": [], "unmigrated": [], "ready": False}
     if not state.get("connected") or not state.get("folder"):
         return result

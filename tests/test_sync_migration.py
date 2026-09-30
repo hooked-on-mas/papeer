@@ -449,6 +449,8 @@ def test_a_marker_that_arrives_before_the_generation_is_waited_for(synced):
             deliver(a, b, rel)
     result = b.sync()
     assert result["status"] == "waiting" and b.status()["waiting"]["device"] == "PC-A"
+    # Nothing is known of what is still to come: no count is told ("残り 0 ファイル").
+    assert b.status()["waiting"]["message"] == "PC-A のデータが届くのを待っています。"
     assert b.status()["error"] is None
     transfer(a, b)
     assert b.sync()["status"] == "synced" and b.state()["format"] == 2
@@ -726,6 +728,53 @@ def test_stopping_a_migration_gives_it_up_unless_the_app_is_closing(synced, monk
         # A sync of the first format, as before the user asked; asked again, the migration runs.
         assert "migrated" not in result and not a.view().ids() and a.status()["format"] == 1
         assert a.migrate()["migrated"] is True
+
+
+def test_an_empty_folder_chosen_in_the_settings_starts_in_the_new_format(tmp_path, monkeypatch):
+    """folder_sync.connect (the settings): the first sync in an empty folder moves it without asking, and puts
+    a marker stopping an earlier Papeer; the user's 中止 of that sync does not undo it."""
+    monkeypatch.setattr(drive_sync, "_now_ns", lambda: time.time_ns() + 10 * drive_sync.RACY_NS)
+    a, b = PC("a", tmp_path, monkeypatch), PC("b", tmp_path, monkeypatch)
+    with a as lib:
+        folder_sync.connect(a.root, str(a.drive))
+        identity, _ = lib.import_pdf(SAMPLE)
+    # Not told as a migration the user asked for; stopped, it goes on all the same.
+    assert "migration" in a.state() and a.status()["migration_pending"] is False
+    with a:
+        folder_sync.abandon_migration(a.root)
+    assert "migration" in a.state()
+    result = a.sync()
+    assert result["status"] == "synced" and result["migrated"] is True
+    state = a.state()
+    assert state["format"] == 2 and "migration" not in state
+    [marker] = a.markers()
+    assert marker["parents"] == [] and [item["id"] for item in a.revisions()] == [marker["id"]]
+    formats = a.formats()
+    assert formats["format"] == 2 and formats["revisions"]["count"] == 0 and not formats["ready"]
+    # Another PC choosing the same folder (in its copy, not arrived yet) follows it once it arrives.
+    with b:
+        folder_sync.connect(b.root, str(b.drive))
+    transfer(a, b)
+    result = b.sync()
+    assert result["status"] == "conflict" and "migration" not in b.state()
+    heads = [item["id"] for item in result["conflicts"]]
+    assert b.sync(choice=heads[0], expected_heads=heads)["reloaded"] is True
+    assert b.fingerprint() == a.fingerprint() and b.state()["format"] == 2
+
+
+def test_a_folder_chosen_empty_where_an_earlier_papeer_published_first_asks_before_moving(tmp_path, monkeypatch):
+    monkeypatch.setattr(drive_sync, "_now_ns", lambda: time.time_ns() + 10 * drive_sync.RACY_NS)
+    a, b = PC("a", tmp_path, monkeypatch), PC("b", tmp_path, monkeypatch)
+    with a:
+        folder_sync.connect(a.root, str(a.drive))
+    b.connect()
+    with b as lib:
+        lib.import_pdf(SAMPLE)
+    assert b.old_sync()["status"] == "synced"
+    transfer(b, a)
+    result = a.sync()
+    assert "migrated" not in result and a.status()["format"] == 1 and not a.status()["migration_pending"]
+    assert not a.view().ids() and not a.markers()
 
 
 def test_a_device_folder_brought_from_another_pc_gets_its_own_id(monkeypatch):

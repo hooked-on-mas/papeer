@@ -6,7 +6,7 @@
  */
 import { syncClientNames } from "../../lib/platform.ts";
 
-export type SyncWarning = "conflict" | "review" | "failed";
+export type SyncWarning = "conflict" | "review" | "failed" | "waiting";
 
 export const SYNC_WARNINGS: Record<SyncWarning, { title: string; description: string }> = {
   conflict: {
@@ -20,6 +20,11 @@ export const SYNC_WARNINGS: Record<SyncWarning, { title: string; description: st
   failed: {
     title: "同期フォルダーを更新できませんでした",
     description: "データはこのPCに保存されています。設定 → 保存先・同期から再試行できます。",
+  },
+  // Only once it has been waited for a day (drive_sync_v2.WAIT_WARNING): until then it is the usual delay.
+  waiting: {
+    title: "同期データの到着を24時間以上待っています",
+    description: `${syncClientNames().service}の同期が止まっていないか確認してください。設定 → 保存先・同期から、待たずに進めることもできます。`,
   },
 };
 

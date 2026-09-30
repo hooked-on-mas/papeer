@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError, unwrap } from "@/api/client";
 import { invalidate } from "@/api/mutations";
 import { QK } from "@/lib/queryKeys";
-import { cancelSync, confirmOpenEdits, reportSyncOutcome, runDriveSync, syncDrive, useSyncState } from "./driveSync";
+import { cancelSync, confirmOpenEdits, migrateDrive, reportSyncOutcome, runDriveSync, syncDrive, useSyncState } from "./driveSync";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,9 +17,11 @@ import { openEditLabels } from "@/lib/pendingSaves";
 import { isAppClosing } from "@/app/appClosing";
 import { PublishSchedule } from "./autoSyncSchedule";
 import { describeDifference, type Counts } from "./conflictSummary";
-import { fetchDriveStatus, fetchSyncCheck, type SyncReview } from "./driveApi";
+import { fetchDriveFormat, fetchDriveStatus, fetchSyncCheck, removeOldSyncData, type DriveFormat, type DriveStatus, type SyncReview, type SyncWaiting } from "./driveApi";
 import { isAutoSyncFailure } from "./syncWarnings";
 import { VersionNoticeSetting } from "./VersionNoticeHost";
+import { formatSize } from "./historyApi";
+import { oldDataConfirmText, revisionNote } from "./syncFolderText";
 import { PLATFORM, syncClientNames } from "@/lib/platform";
 
 const client = syncClientNames();
@@ -28,6 +30,8 @@ const COUNT_LABELS: [keyof Counts, string][] = [["papers", "論文"], ["notes", 
 // Told once per launch; the settings keep showing it.
 let missingLibraryShown = false;
 let reviewShown = false;
+// 「あとで」 on the move to the new format: asked again at the next launch.
+let migrationLater = false;
 
 /** A stopped sync waits for an answer in the settings; say so once per launch, not only in the status line. */
 async function tellReview(review: SyncReview): Promise<void> {
@@ -47,8 +51,11 @@ export function DriveSyncHost() {
   const background = useSyncState(s => s.background);
   const jobId = useSyncState(s => s.jobId);
   const cancelling = useSyncState(s => s.cancelling);
+  const migrating = useSyncState(s => s.migrating);
   const queryClient = useQueryClient();
   const blocking = busy && !background;
+  // A sync going on with a migration left to go on gives it up too when stopped (folder_sync.abandon_migration).
+  const moving = migrating || !!queryClient.getQueryData<DriveStatus>([QK.drive])?.migration_pending;
   useEffect(() => {
     if (!blocking) return;
     const block = (event: KeyboardEvent) => {
@@ -83,6 +90,9 @@ export function DriveSyncHost() {
         }
         // A review waits for the user's answer, like a conflict or an error.
         if (state.connected && state.review) { await tellReview(state.review); return; }
+        // Waiting for another PC's data goes on by itself (the check starts a sync once something arrived);
+        // after a day, the user is told.
+        if (state.connected && state.waiting?.overdue) reportSyncOutcome("waiting");
         if (!state.connected || !state.auto_sync || state.conflicts.length || state.error) return;
         syncOn = true;
         // Cheap, and the library stays usable meanwhile: a sync (which holds it) runs only when there is
@@ -116,6 +126,7 @@ export function DriveSyncHost() {
   return <Dialog open={blocking}><DialogContent showCloseButton={false}>
     <DialogTitle>同期フォルダーを更新中</DialogTitle>
     <DialogDescription>{cancelling ? "中止しています…" : "完了までお待ちください…"}</DialogDescription>
+    {moving && !cancelling && <p className="text-xs text-muted-foreground">中止すると、同期の形式の移行もやめます（保存先・同期から、もう一度始められます）。</p>}
     <DialogFooter>
       <Button variant="outline" disabled={!jobId || cancelling} onClick={() => void cancelSync()}>中止</Button>
     </DialogFooter>
@@ -125,6 +136,9 @@ export function DriveSyncHost() {
 export function DriveSection() {
   const queryClient = useQueryClient();
   const { data, error } = useQuery({ queryKey: [QK.drive], queryFn: fetchDriveStatus, refetchInterval: 3000 });
+  // Reads the sync folder's list of old revisions: fetched when the settings open and after each change, not every 3 s.
+  const { data: format } = useQuery({ queryKey: [QK.drive, "format"], queryFn: fetchDriveFormat, enabled: !!data?.connected });
+  const [later, setLater] = useState(migrationLater);
   const [pending, setPending] = useState(false);
   const [folder, setFolder] = useState<string | null>(null);
   const jobsBusy = useStore(s => s.activeJobs.some(isRunning));
@@ -175,6 +189,26 @@ export function DriveSection() {
     } catch (e) { showError(e, "新しいライブラリを作成できませんでした"); }
     finally { setPending(false); void refresh(); }
   };
+  const migrate = async () => {
+    if (!await confirmOpenEdits()) return;
+    migrationLater = false;
+    setLater(false);
+    try { await migrateDrive(); }
+    catch (e) { showError(e, "同期の形式を移せませんでした"); }
+    finally { void refresh(); }
+  };
+  const removeOldData = async (info: DriveFormat) => {
+    if (!await askConfirm("古い形式の同期データを削除", oldDataConfirmText(info, PLATFORM !== "linux"), "削除する", true)) return;
+    setPending(true);
+    try {
+      const result = await removeOldSyncData(info.removable.ids);
+      showToast({ title: "古い形式の同期データを削除しました",
+        description: `${result.removed}個（${formatSize(result.size)}）を削除しました。`
+          + (result.failed ? `${result.failed}個は削除できませんでした。もう一度「削除」を押してください。` : ""),
+        tone: result.failed ? "error" : "success" });
+    } catch (e) { showError(e, "古い形式の同期データを削除できませんでした"); }
+    finally { setPending(false); void refresh(); }
+  };
   const disconnect = async () => {
     if (!await askConfirm("ローカル保存に戻す", "同期フォルダーへの保存を停止します。このPCと同期フォルダーの保存済みデータは残ります。", "フォルダー同期を停止")) return;
     try { await unwrap(api.DELETE("/api/drive")); await refresh(); }
@@ -208,6 +242,9 @@ export function DriveSection() {
       <p>最終フォルダー同期：{data.last_sync ? new Date(data.last_sync).toLocaleString() : "まだ同期していません"}</p>
       {data.error && <p role="alert" className="text-destructive">{data.error}</p>}
       {data.restored && !data.review && <p className="text-amber-700 dark:text-amber-400">要確認：バックアップから復元しました。次の同期で、同期フォルダーに保存してよいか確認します。</p>}
+      {data.waiting && <WaitingPanel waiting={data.waiting} busy={busy} onGoOn={() => void sync("local", false, data.waiting?.heads)} />}
+      <MigrationPanel status={data} format={format} busy={busy} later={later}
+        onMigrate={() => void migrate()} onLater={() => { migrationLater = true; setLater(true); }} />
       {data.review && <ReviewPanel review={data.review} busy={busy}
         onSync={() => void sync(undefined, true)} onSkip={() => void skipReview()}
         onChoose={choice => void sync(choice, false, data.review?.heads)} />}
@@ -218,7 +255,7 @@ export function DriveSection() {
         <Button variant="outline" disabled={busy} onClick={() => void sync("local")}>このPCのデータを使う</Button>
         {data.conflicts.map(item => <div key={item.id} className="space-y-1">
           <Button variant="outline" disabled={busy} onClick={() => void sync(item.id)}>
-            {item.device} — {new Date(item.created).toLocaleString()} のデータを使う
+            {item.device} — {new Date(item.created).toLocaleString()}{revisionNote(item)} のデータを使う
           </Button>
           {item.diff !== undefined && <ul aria-label="このPCとの違い" className="list-disc space-y-0.5 pl-5 text-xs break-all">
             {describeDifference(item.diff).map(line => <li key={line}>{line}</li>)}
@@ -231,9 +268,12 @@ export function DriveSection() {
           <li key={item.id}>{item.device} — {new Date(item.created).toLocaleString()}</li>)}</ul>
       </div>}
       {data.previous_path && <p className="break-all text-xs">取り込み前のデータ（このPCの履歴で確かめられなかったため、フォルダーに残しています）：{data.previous_path}</p>}
+      {format?.format === 2 && !!format.revisions.count && <OldSyncData format={format} busy={busy} onRemove={() => void removeOldData(format)} />}
     </>}
     <VersionNoticeSetting />
-    <p className="text-xs text-muted-foreground">PC間の転送は{client.app}が行います。「今すぐ同期」の後、{client.service}側の同期完了も確認してから別PCに移ってください。別PCでは同じ同期フォルダーを指定します。変更時はライブラリ全体を保存し、履歴の分だけ容量を使います。</p>
+    <p className="text-xs text-muted-foreground">PC間の転送は{client.app}が行います。「今すぐ同期」の後、{client.service}側の同期完了も確認してから別PCに移ってください。別PCでは同じ同期フォルダーを指定します。{format?.format === 1
+      ? "以前の形式では、変更のたびにライブラリ全体を保存し、履歴の分だけ容量を使います。"
+      : "同期フォルダーには変わったファイルだけを保存し、以前の状態はこのPCの履歴に残します。"}</p>
     <Button variant="outline" onClick={() => openSettings("backup")}>バックアップ・復元を開く</Button>
   </div>;
 }
@@ -264,5 +304,55 @@ function ReviewPanel({ review, busy, onSync, onSkip, onChoose }: {
         : review.heads.length === 1 && <Button variant="outline" disabled={busy} onClick={() => onChoose(review.heads[0])}>同期フォルダーのデータに戻す</Button>}
       <Button variant="outline" disabled={busy} onClick={onSkip}>同期しない（自動同期を停止）</Button>
     </div>
+  </div>;
+}
+
+/** What the sync waits for, and going on with this PC's library without waiting (its choice "local"). */
+function WaitingPanel({ waiting, busy, onGoOn }: { waiting: SyncWaiting; busy: boolean; onGoOn: () => void }) {
+  return <div role="status" className={`space-y-2 rounded border p-3 ${waiting.overdue ? "border-amber-500" : ""}`}>
+    <p className="font-medium">同期データの到着を待っています</p>
+    <p>{waiting.message}</p>
+    <p className="text-xs text-muted-foreground">届くと自動で同期します。待っている間、このPCの変更は同期フォルダーに保存しません（このPCには保存されています）。</p>
+    <Button variant="outline" disabled={busy} onClick={onGoOn}>このPCのデータで続ける</Button>
+  </div>;
+}
+
+/**
+ * The move to the new format (folder_sync.migrate): offered while the sync folder is in the first format and
+ * holds its data (an empty one starts in the new format without asking); told while one goes on.
+ */
+function MigrationPanel({ status, format, busy, later, onMigrate, onLater }: {
+  status: Pick<DriveStatus, "migration_pending">; format: DriveFormat | undefined; busy: boolean; later: boolean;
+  onMigrate: () => void; onLater: () => void;
+}) {
+  if (status.migration_pending) {
+    return <p role="status" className="text-amber-700 dark:text-amber-400">移行の途中です（次の同期で続けます）。</p>;
+  }
+  if (format?.format !== 1 || !format.revisions.count) return null;
+  if (later) {
+    return <div className="flex flex-wrap items-center gap-2">
+      <span>同期の形式：以前の形式</span>
+      <Button variant="outline" disabled={busy} onClick={onMigrate}>新しい形式に移す</Button>
+    </div>;
+  }
+  return <div role="region" aria-label="同期の形式の移行" className="space-y-2 rounded border border-primary/50 p-3">
+    <p className="font-medium">新しい同期の形式に移せます</p>
+    <p>新しい同期の形式に移すと、{client.service}の使用量が減り、履歴はこのPCに残ります。</p>
+    <p className="text-xs text-muted-foreground">ほかのPCもPapeerを更新してください。更新するまで、そのPCでは同期できません。初回はライブラリ全体を新しい形式で保存するため、時間がかかります。以前の形式のデータは、移した後に削除できます。</p>
+    <div className="flex gap-2">
+      <Button disabled={busy} onClick={onMigrate}>移す</Button>
+      <Button variant="outline" disabled={busy} onClick={onLater}>あとで</Button>
+    </div>
+  </div>;
+}
+
+/** In the new format: the first format's data left in the sync folder, removed after confirming (at any time). */
+function OldSyncData({ format, busy, onRemove }: { format: DriveFormat; busy: boolean; onRemove: () => void }) {
+  return <div className={`space-y-2 rounded border p-3 ${format.ready ? "border-primary/50" : ""}`}>
+    <p>古い形式の同期データ：{format.revisions.count}個・{formatSize(format.revisions.size)}</p>
+    {format.ready
+      ? <p role="status">すべてのPCが新しい形式で同期しました。古い形式の同期データは同期に使わないため、削除して容量を空けられます。</p>
+      : <p className="text-xs text-muted-foreground">同期には使いません。ほかのPCが新しい形式で同期してから削除することをおすすめします。</p>}
+    <Button variant="outline" disabled={busy || !format.removable.count} onClick={onRemove}>削除する…</Button>
   </div>;
 }

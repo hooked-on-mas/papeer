@@ -14,9 +14,12 @@ import { openSettings } from "./settingsNavigation";
 import { clearsOnReconnect, nextSyncWarning, SYNC_WARNINGS, type SyncWarning } from "./syncWarnings";
 import { syncClientNames } from "@/lib/platform";
 
-/** background: the automatic sync that runs without the waiting screen (it never replaces the library). */
-export const useSyncState = create<{ busy: boolean; jobId: string | null; cancelling: boolean; background: boolean }>(
-  () => ({ busy: false, jobId: null, cancelling: false, background: false }));
+/**
+ * background: the automatic sync that runs without the waiting screen (it never replaces the library).
+ * migrating: the sync moves the sync folder to the new format (the user's 中止 gives the move up).
+ */
+export const useSyncState = create<{ busy: boolean; jobId: string | null; cancelling: boolean; background: boolean; migrating: boolean }>(
+  () => ({ busy: false, jobId: null, cancelling: false, background: false, migrating: false }));
 
 // When the last sync ended, if it ran in the background: a refusal answered just before that is its own too.
 let backgroundEndedAt = 0;
@@ -113,29 +116,59 @@ export async function syncDrive(choice?: string, heads?: string[], confirm = fal
 
 /**
  * syncDrive, also telling how the sync ended: the result's status ("synced", "deferred", "conflict",
- * "review"), "cancelled", or undefined when it did not run.
+ * "review", "waiting"), "cancelled", or undefined when it did not run.
  */
 export async function runDriveSync(choice?: string, heads?: string[], confirm = false, background = false):
     Promise<{ reloading: boolean; status?: string }> {
+  return await runSyncJob("/api/drive/sync", { choice, expected_heads: heads, confirm, background }, background, false);
+}
+
+/**
+ * Move the sync folder to the new format, once the user agreed (POST /api/drive/migrate): a sync first,
+ * which may stop for a choice, a review or data still arriving (shown in the settings as for any sync);
+ * the move then goes on at the sync that settles it. "migrated" tells whether the folder moved.
+ */
+export async function migrateDrive(): Promise<{ reloading: boolean; status?: string; migrated?: boolean }> {
+  return await runSyncJob("/api/drive/migrate", {}, false, true);
+}
+
+async function runSyncJob(path: string, body: object, background: boolean, migrating: boolean):
+    Promise<{ reloading: boolean; status?: string; migrated?: boolean }> {
   if (useSyncState.getState().busy || useStore.getState().activeJobs.some(isRunning)) return { reloading: false };
-  useSyncState.setState({ busy: true, background });
+  useSyncState.setState({ busy: true, background, migrating });
   let reloading = false;
   let status: string | undefined;
+  let migrated: boolean | undefined;
   try {
     const failure = await flushPendingSaves();
     if (failure) throw new Error(describeFailure(failure));
     await flushUiState();
     suspendUiStateSync(true);
     await new Promise<void>((resolve, reject) => {
-      startJob("/api/drive/sync", { choice, expected_heads: heads, confirm, background }, { kind: "drive-sync", paperId: null }, event => {
+      startJob(path, body, { kind: "drive-sync", paperId: null }, event => {
         // Stopped on request: not an error (the status line already says so).
-        if (event.status === "cancelled") { status = "cancelled"; resolve(); return; }
+        if (event.status === "cancelled") {
+          status = "cancelled";
+          if (migrating) showToast({ title: "移行を中止しました", description: "もう一度始めるときは、設定 → 保存先・同期で「移す」を押してください。" });
+          resolve();
+          return;
+        }
         if (event.status !== "succeeded") { reject(new Error(event.error || "同期を完了できませんでした。")); return; }
         status = event.result.status;
+        migrated = event.result.migrated ?? undefined;
         // A background sync found another PC's library to take in; the caller takes it in with the waiting screen.
         if (status === "deferred") { resolve(); return; }
         if (status === "conflict" || status === "review") {
           reportSyncOutcome(status);
+          resolve();
+          return;
+        }
+        if (status === "waiting") {
+          // Another PC's data is still on its way: nothing was saved or taken in, and the next check tries again.
+          // Told as a warning once it has been waited for a day (DriveSyncHost).
+          const message = (event.result.waiting as { message?: string } | null | undefined)?.message ?? "他のPCのデータが届くのを待っています。";
+          if (background) useStore.getState().setStatus(message);
+          else showToast({ id: "drive-synced", title: "同期データの到着を待っています", description: message });
           resolve();
           return;
         }
@@ -151,6 +184,10 @@ export async function runDriveSync(choice?: string, heads?: string[], confirm = 
           showToast({ title: "選んだデータで同期しました", description: "選ばなかった同期データの一部は退避できませんでした（設定 → 保存先・同期）。", tone: "error" });
         } else if (event.result.set_aside?.length) {
           showToast({ title: "選んだデータで同期しました", description: "選ばなかったデータはこのPCの履歴に退避しています（設定 → バックアップ → このPCの履歴から戻す）。", tone: "success" });
+        } else if (migrating && migrated) {
+          showToast({ id: "drive-synced", title: "新しい同期の形式に移しました", description: "ほかのPCもPapeerを更新してください。更新するまで、そのPCでは同期できません。", tone: "success" });
+        } else if (migrating) {
+          showToast({ id: "drive-synced", title: "同期しました", description: "別のPCで同期されたため、同期の形式の移行は次の同期で続けます。" });
         } else if (background) {
           // The automatic sync every minute: the status bar only, which clears itself.
           useStore.getState().setStatus(`同期フォルダーに保存しました。PC間の転送状況は${syncClientNames().service}で確認してください。`);
@@ -167,11 +204,11 @@ export async function runDriveSync(choice?: string, heads?: string[], confirm = 
     if (!reloading) {
       suspendUiStateSync(false);
       backgroundEndedAt = background ? Date.now() : 0;
-      useSyncState.setState({ busy: false, jobId: null, cancelling: false, background: false });
+      useSyncState.setState({ busy: false, jobId: null, cancelling: false, background: false, migrating: false });
       // Pages turned during a background sync were not saved meanwhile.
       if (background) void flushUiState();
     }
   }
-  return { reloading, status };
+  return { reloading, status, migrated };
 }
 

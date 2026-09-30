@@ -28,8 +28,7 @@ def idle():
 def select_folder(body: FolderRequest):
     root = deps.get_data_dir()
     with idle():
-        drive_sync.connect(root, body.path)
-    return folder_sync.status(root)
+        return folder_sync.connect(root, body.path)
 
 
 @router.delete("/api/drive")
