@@ -19,6 +19,7 @@ import time
 import uuid
 import zlib
 
+import pymupdf
 import pytest
 
 from papeer.core import drive_sync, drive_sync_v2 as v2, local_history, sync_store
@@ -202,7 +203,7 @@ def pcs(tmp_path, monkeypatch):
     head = result["conflicts"][0]["id"]
     assert b.sync(choice=head, expected_heads=[head])["reloaded"] is True
     transfer(b, a)
-    # The generation b made over a's holds a's library: only a's base moves.
+    # b took a's generation in as its base (test_a_generation_chosen_and_taken_in_is_not_published_again).
     assert a.sync() == {"status": "synced", "reloaded": False, "previous_path": None}
     assert a.state()["base"] == b.state()["base"]
     # b's history was empty, so the (empty) library it replaced stays beside it, as with the first format.
@@ -240,7 +241,7 @@ def test_a_change_travels_as_the_blobs_it_changed(pcs):
     # Both PCs are on the head, so the clean-up left only it; its lineage names those it took over.
     generations = a.store().view().generations
     head = generations[heads(a)[0]]
-    assert set(generations) == {head["id"]} and len(head["lineage"]) >= 2
+    assert set(generations) == {head["id"]} and len(head["lineage"]) >= 1
 
 
 def test_a_generation_that_arrives_before_its_blobs_is_waited_for(pcs):
@@ -483,10 +484,10 @@ def test_a_blob_that_cannot_be_read_for_a_moment_is_tried_again_not_reported(pcs
     name = local_history.blob_name(hashlib.sha256(b"summary two").hexdigest(), True)
     original = local_history.stored_content
 
-    def offline(path, cancel=None, limit=None):
+    def offline(path, cancel=None, limit=None, **kwargs):
         if path.name == name and path.is_relative_to(b.drive):
             raise local_history.SourceUnreadable() from OSError("Google Drive is offline for a moment")
-        return original(path, cancel, limit)
+        return original(path, cancel, limit, **kwargs)
 
     monkeypatch.setattr(local_history, "stored_content", offline)
     result = b.sync()
@@ -508,10 +509,10 @@ def test_a_blob_of_the_history_is_moved_aside_only_when_damaged(pcs, monkeypatch
     view = sync_store.View()  # Nothing in the sync folder: the history is the only source.
     original = local_history.stored_content
 
-    def held(path, cancel=None, limit=None):
+    def held(path, cancel=None, limit=None, **kwargs):
         if path.parent == folder / "blobs":
             raise local_history.SourceUnreadable() from PermissionError("held by a virus scan")
-        return original(path, cancel, limit)
+        return original(path, cancel, limit, **kwargs)
 
     with b:
         sources = v2._Sources(b.root, b.store(), view, {}, None)
@@ -535,10 +536,10 @@ def test_publishing_over_a_history_blob_held_for_a_moment_writes_it_from_the_lib
     name = local_history.blob_name(hashlib.sha256(b"summary two").hexdigest(), True)
     copy_blob = local_history.copy_blob
 
-    def held(source, *args):
+    def held(source, *args, **kwargs):
         if source.name == name:
             raise local_history.SourceUnreadable() from PermissionError("held by a virus scan")
-        return copy_blob(source, *args)
+        return copy_blob(source, *args, **kwargs)
 
     monkeypatch.setattr(local_history, "copy_blob", held)
     assert a.sync()["status"] == "synced" and name in a.files("blobs")
@@ -554,10 +555,10 @@ def reads_of_the_sync_folder(pc: PC, monkeypatch) -> list[str]:
     reads = []
     original = local_history.stored_content
 
-    def counting(path, cancel=None, limit=None):
+    def counting(path, cancel=None, limit=None, **kwargs):
         if path.is_relative_to(pc.drive):
-            reads.append(path.name)
-        return original(path, cancel, limit)
+            reads.append(kwargs.get("expected") or path.name)  # The blob's name (its file's may differ).
+        return original(path, cancel, limit, **kwargs)
 
     monkeypatch.setattr(local_history, "stored_content", counting)
     return reads
@@ -1106,6 +1107,110 @@ def test_a_right_copy_beside_a_blob_that_is_damaged_is_put_back(pcs):
     if result["status"] == "waiting":  # The copy is taken in by the next sync.
         result = b.sync()
     assert result["status"] == "synced" and b.note(identity) == "second"
+
+
+# --- A choice of another PC's generation (checked on Google Drive) ---
+
+def test_a_generation_chosen_and_taken_in_is_not_published_again(pcs):
+    """b's first sync chose a's generation (see pcs): taken in as b's base, it is not published again as a
+    second generation of the same library, which a would take for b's changes once a changed its own."""
+    a, b, identity = pcs
+    head = heads(a)[0]
+    assert b.files("gens") == {head + ".gen"} and b.state()["base"] == head
+    a.edit(identity, note="a changed")
+    assert a.sync()["status"] == "synced"
+    transfer(a, b)
+    assert b.sync()["reloaded"] is True and b.note(identity) == "a changed"
+
+
+def test_a_head_holding_the_library_this_pc_synced_on_is_no_conflict(pcs):
+    """A generation of the same library made over this PC's base (as a choice published it before it was
+    taken in as it is, or a choice among more heads): this PC's changes since go over it."""
+    a, b, identity = pcs
+    base = heads(b)[0]
+    with b:
+        store = b.store()
+        view = store.view()
+        item = view.generations[base]
+        v2._publish(b.root, store, view, {"files": item["files"], "db": item["db"]}, parents=[base],
+                    library_hash=item["hash"], schema_version=item["schema_version"], counts=item["counts"],
+                    device_id=b.state()["device_id"], local_files={}, cancel=threading.Event(),
+                    progress=lambda _: None)
+    transfer(b, a)
+    assert heads(a) != [base]
+    a.edit(identity, note="a changed")
+    assert a.sync()["status"] == "synced"
+    transfer(a, b)
+    assert b.sync()["reloaded"] is True and b.note(identity) == "a changed"
+
+
+# --- Names Google Drive gives files (checked on Google Drive) ---
+
+def drive_renames_pdfs(pc: PC) -> list[str]:
+    """What Google Drive for desktop does to a PDF file without an extension a few seconds after uploading it
+    (and to nothing else: not a file with an extension, not other contents): renames it "<name>.pdf", or
+    "<name> (1).pdf" when that name is taken. The names given."""
+    renamed = []
+    folder = pc.drive / "v2" / "blobs"
+    for path in sorted(folder.iterdir()):
+        if is_temporary(path) or "." in path.name or not path.read_bytes().startswith(b"%PDF"):
+            continue
+        target, n = path.with_name(path.name + ".pdf"), 0
+        while target.exists():
+            n += 1
+            target = path.with_name(f"{path.name} ({n}).pdf")
+        path.rename(target)
+        renamed.append(target.name)
+    return renamed
+
+
+def another_pdf(path: Path) -> Path:
+    with pymupdf.open() as pdf:
+        pdf.new_page().insert_text((40, 70), "Another paper")
+        pdf.save(path)
+    return path
+
+
+def test_a_pdf_is_written_so_google_drive_leaves_its_name(pcs, tmp_path):
+    a, b, _identity = pcs
+    with a as lib:
+        lib.import_pdf(another_pdf(tmp_path / "another.pdf"))
+    assert a.sync()["status"] == "synced"
+    assert drive_renames_pdfs(a) == []
+    transfer(a, b)
+    result = b.sync()
+    assert result["status"] == "synced" and result["reloaded"] is True
+    assert a.fingerprint() == b.fingerprint()
+    # Nothing is written again at the next syncs, so no copies pile up.
+    blobs = a.files("blobs")
+    for _round in range(2):
+        assert a.sync()["status"] == "synced" and drive_renames_pdfs(a) == []
+    assert a.files("blobs") == blobs and not any(" (" in name for name in blobs)
+
+
+def test_a_blob_file_google_drive_gave_another_extension_is_put_back(pcs, tmp_path):
+    """Should Google Drive rename a blob's file all the same ("<sha256>.pdf", or "<sha256> (1).pdf" beside a
+    file of that name), each PC puts it back once its content is checked: the PC taking it in does not wait
+    for ever, and the PC that wrote it does not write it again at each sync."""
+    a, b, identity = pcs
+    before = a.files("blobs")
+    with a as lib:
+        lib.import_pdf(another_pdf(tmp_path / "another.pdf"))
+    assert a.sync()["status"] == "synced"
+    [file] = [name for name in a.files("blobs") - before if not name.endswith(".z")]
+    digest = file.split(".")[0]
+    transfer(a, b, only=lambda rel: rel != "blobs/" + file)
+    shutil.copy2(a.drive / "v2" / "blobs" / file, b.drive / "v2" / "blobs" / f"{digest}.pdf")
+    result = b.sync()
+    assert result["status"] == "synced" and result["reloaded"] is True and a.fingerprint() == b.fingerprint()
+    assert file in b.files("blobs") and not any(".pdf" in name for name in b.files("blobs"))
+    # On a's side, renamed beside another file of that name: put back, not written again.
+    (a.drive / "v2" / "blobs" / f"{digest}.pdf").write_bytes(b"another file")
+    (a.drive / "v2" / "blobs" / file).rename(a.drive / "v2" / "blobs" / f"{digest} (1).pdf")
+    assert a.check() == "quiet"
+    a.edit(identity, note="a changed")
+    assert a.sync()["status"] == "synced"
+    assert file in a.files("blobs") and f"{digest} (1).pdf" not in a.files("blobs")
 
 
 # --- The first format is left as it is ---

@@ -229,9 +229,24 @@ def test_migrating_moves_the_folder_and_the_other_pc_follows(synced):
     assert a.fingerprint() == b.fingerprint()
 
 
-def test_a_pc_with_changes_when_the_folder_moved_is_offered_the_choice(synced):
+def test_a_pc_with_changes_when_the_folder_moved_publishes_them_over_the_generation(synced):
+    """The migration's generation holds the library b last synced on (the same hash): b's changes since are
+    no conflict with it, and go over it."""
     a, b, identity = synced
     b.edit(identity, "b's change")
+    assert a.migrate()["migrated"] is True
+    transfer(a, b)
+    [generation] = a.view().heads()
+    result = b.sync()
+    assert result["status"] == "synced" and b.view().heads() != [generation]
+    transfer(b, a)
+    assert a.sync()["reloaded"] is True and a.note(identity) == "b's change"
+
+
+def test_changes_on_both_pcs_when_the_folder_moved_offer_the_choice(synced):
+    a, b, identity = synced
+    b.edit(identity, "b's change")
+    a.edit(identity, "a's change")
     assert a.migrate()["migrated"] is True
     transfer(a, b)
     result = b.sync()
@@ -584,10 +599,10 @@ def test_a_renamed_pc_goes_on_repairing_what_it_published(synced):
     identity_before = a.state()["device_id"]
     [head] = a.view().heads()
     victim = sorted(sync_store.blob_names(a.view().generations[head]))[0]
-    (a.drive / "v2" / "blobs" / victim).unlink()
+    (a.drive / "v2" / "blobs" / sync_store.file_name(victim)).unlink()
     a.name = "a2"  # macOS names itself after the network it is on.
     assert a.sync()["status"] == "synced"
-    assert (a.drive / "v2" / "blobs" / victim).exists()
+    assert (a.drive / "v2" / "blobs" / sync_store.file_name(victim)).exists()
     assert a.state()["device_id"] == identity_before and a.state()["device_name"] == "PC-A2"
     # A copy of a's device folder on another machine is another PC.
     c_state = dict(a.state())
