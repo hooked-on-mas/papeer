@@ -56,6 +56,7 @@ type Choices = {
   draftMessage: string;
   /** How the AI's work on the domain dictionaries ended, when the dialog has something to tell about it. */
   domainNote: string;
+  startNote: string;
 };
 
 /** Reopen with the previous request, as the old dialog did: its pages, unless they were all of them. */
@@ -68,7 +69,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   useOpenEdit(open, "翻訳の設定・辞書");
   const session = open ? paperId : null;
   const [choices, choose] = useSessionState<Choices>(session, () => ({
-    request: null, model: "", effort: "", reviewed: false, draftMessage: "", domainNote: "",
+    request: null, model: "", effort: "", reviewed: false, draftMessage: "", domainNote: "", startNote: "",
     reviewedKey: readReviewedGlossary(() => globalThis.localStorage, paperId),
   }));
   const { model, effort } = choices;
@@ -152,14 +153,14 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   // What starting would do with these pages and this model: which pages come from saved
   // translations, and which translated pages the model would redo.
   const pagesParam = scope === "all" ? "" : (selection.pages?.join(",") ?? "");
-  const { data: plan, isFetching: planFetching } = useQuery({
+  const { data: plan, isFetching: planFetching, isError: planError, refetch: refetchPlan } = useQuery({
     queryKey: [QK.translationPlan, paperId, pagesParam, model],
     queryFn: async () => await unwrap(api.GET("/api/papers/{paper_id}/translation-plan", {
       params: { path: { paper_id: paperId }, query: { pages: pagesParam, ...(model ? { model } : {}) } } })) as TranslationPlan,
     enabled: open && !!selection.pages?.length,
     retry: false,
   });
-  const { data: savedInkPages = [], refetch: refetchInkPages } = useQuery({
+  const { data: savedInkPages, isFetching: inkFetching, isError: inkError, refetch: refetchInkPages } = useQuery({
     queryKey: [QK.inkPages, paperId],
     queryFn: async () => await unwrap(api.GET("/api/papers/{paper_id}/ink-pages", {
       params: { path: { paper_id: paperId } },
@@ -169,9 +170,11 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   useEffect(() => onAppEvent("ink-changed", (detail) => {
     if (detail.paperId === paperId && open) void refetchInkPages();
   }), [paperId, open, refetchInkPages]);
-  const inkPages = new Map(savedInkPages.map((item) => [`${item.side}:${item.page}`, item]));
+  const inkPages = new Map((savedInkPages ?? []).map((item) => [`${item.side}:${item.page}`, item]));
   for (const item of cachedInkPages(paperId)) inkPages.set(`${item.side}:${item.page}`, item);
   const affectedInkPages = retranslatedInkPages(planFetching ? undefined : plan, [...inkPages.values()]);
+  const startReady = !!plan && !!savedInkPages && !planFetching && !inkFetching && !planError && !inkError
+    && !fetchingDomains && !saveDomains.isPending && !glossary.fetching;
   // Only the terms this paper uses count: editing a dictionary it does not use is no reason to check again.
   const currentKey = glossaryKey(effectiveTerms(glossary.terms, domainSelection));
   // A plan being refetched (after a glossary save or a finished run) may be out of date.
@@ -242,13 +245,25 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   }, [open, paperId, domainRecord, savedGlossary, settings, glossary.dirty, glossary.fetching, fetchingDomains, paperJobRunning, generating, launching, starting, saving]);
 
   const handleStart = async () => {
-    if (!selection.pages?.length || busy || !savedGlossary) return;
+    if (!selection.pages?.length || busy || !savedGlossary || !startReady) return;
     const pages = scope === "all" ? "" : selection.pages.join(",");
     // Every page from saved translations: the run only makes the PDF again (said so while it runs).
-    const rebuild = skip === "reusable";
+    let rebuild = skip === "reusable";
     setStarting(true);
+    choose({ startNote: "" });
     try {
-      if (glossary.dirty) await glossary.save();
+      if (glossary.dirty) {
+        await glossary.save();
+        const updated = await refetchPlan();
+        if (updated.error) throw updated.error;
+        if (!updated.data) return;
+        rebuild = !updated.data.needs_ai;
+        // Leave newly affected writing announced in the dialog before accepting another start.
+        if (retranslatedInkPages(updated.data, [...inkPages.values()]).some((page) => !affectedInkPages.includes(page))) {
+          choose({ startNote: "訳語を保存しました。再翻訳の対象が変わったため、下の注意を表示しています。" });
+          return;
+        }
+      }
       const jobId = await startJob(`/api/papers/${paperId}/translate`,
         { pages, model: model || undefined, effort: effort || undefined },
         { kind: "translate", paperId });
@@ -362,6 +377,13 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
             {!domainJob && choices.domainNote && <p className="text-muted-foreground">{choices.domainNote}</p>}
             {unchosenMessage && <p className="text-amber-700 dark:text-amber-400">{unchosenMessage}</p>}
             {warning && <p className="text-amber-700 dark:text-amber-400">{warning}</p>}
+            {choices.startNote && <p className="text-muted-foreground">{choices.startNote}</p>}
+            {(planError || inkError) && <div className="flex items-center gap-2 text-destructive">
+              <p>翻訳対象と書き込みを確認できませんでした。</p>
+              <Button variant="outline" disabled={planFetching || inkFetching} onClick={() => {
+                void refetchPlan(); void refetchInkPages();
+              }}>再試行</Button>
+            </div>}
             {affectedInkPages.length > 0 && <p className="text-amber-700 dark:text-amber-400">
               注意：再翻訳の対象となる日本語訳のうち、{affectedInkPages.length}ページに書き込みがあります。訳文や文章の配置が変わっても書き込みは元の位置に残るため、線や蛍光ペンが意図した箇所からずれる可能性があります。
             </p>}
@@ -376,8 +398,8 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
             disabled={!selection.pages?.length || busy || !savedGlossary || !settings}>
             {generating ? "用語を抽出中…" : "用語を確認してから翻訳"}
           </Button>}
-          <Button onClick={handleStart} disabled={!selection.pages?.length || busy || !savedGlossary}>
-            {startButtonLabel({ reviewed: choices.reviewed, skip })}
+          <Button onClick={handleStart} disabled={!selection.pages?.length || busy || !savedGlossary || !startReady}>
+            {planFetching || inkFetching ? "翻訳対象を確認中…" : startButtonLabel({ reviewed: choices.reviewed, skip })}
           </Button>
         </DialogFooter>
       </DialogContent>
