@@ -3,6 +3,7 @@ import { useStore } from "@/store";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 import type { TranslateResult } from "@/api/jobTypes";
+import { invalidationsFor } from "@/api/invalidation";
 import type { JobFinished, JobHandlers } from "@/features/jobs/jobHandlers";
 import { finishGlossaryDraft, isGlossaryDialogOpen } from "./glossaryDraft";
 
@@ -42,6 +43,12 @@ function openPaper(event: JobFinished): boolean {
   return true;
 }
 
+/** What the AI's choice of a paper's domain dictionaries changes: which terms apply, so what the pages can reuse. */
+function domainQueries(event: JobFinished) {
+  if (!event.paper_id) return [];
+  return invalidationsFor({ kind: "glossaryDomains", paperId: event.paper_id }).map((stale) => [...stale.queryKey]);
+}
+
 export const translationJobHandlers: JobHandlers = {
   translate: {
     succeeded: (event, { visible, done }) => {
@@ -70,5 +77,13 @@ export const translationJobHandlers: JobHandlers = {
       notifyIfAway("用語の確認が終わりました", message);
     },
     resume: { label: "翻訳の設定を開く…", run: openTranslationDialog },
+  },
+  // Started by the translation dialog itself: it shows a failure in its own text, and the result is
+  // saved by the sidecar, so a refresh is all there is to do.
+  "glossary-select": { quiet: true, refresh: domainQueries },
+  "glossary-split": {
+    quiet: true,
+    // The dictionary is shared by every paper: whatever depends on it, and the domains, are read again.
+    refresh: (event) => [...invalidationsFor({ kind: "glossary" }).map((stale) => [...stale.queryKey]), ...domainQueries(event)],
   },
 };

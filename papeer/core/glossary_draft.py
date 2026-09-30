@@ -4,21 +4,27 @@ from __future__ import annotations
 import json
 
 from papeer.core import prompts
-from papeer.core.terminology import effective_glossary, matching_terms
+from papeer.core.terminology import GENERAL_DOMAIN, chosen_domains, effective_glossary, matching_terms, paper_domains
 
 
 def validate_terms(terms: object) -> list[dict[str, str]]:
+    """Terms {source, target, domain?}: a term without a domain (or 共通) is in the general dictionary, and
+    the same source may appear once in each dictionary."""
     if not isinstance(terms, list) or any(not isinstance(item, dict) or
-            not isinstance(item.get("source"), str) or not isinstance(item.get("target"), str) for item in terms):
+            not isinstance(item.get("source"), str) or not isinstance(item.get("target"), str) or
+            not isinstance(item.get("domain", ""), str) for item in terms):
         raise ValueError("辞書には原語（source）と訳語（target）の文字列の一覧が必要です。")
     result = []
     seen = set()
     for item in terms:
         source, target = item.get("source", "").strip(), item.get("target", "").strip()
-        if not source or not target or max(len(source), len(target)) > 100 or source.casefold() in seen:
-            raise ValueError("用語と訳語を入力し、重複をなくしてください（各100文字まで）。")
-        seen.add(source.casefold())
-        result.append({"source": source, "target": target})
+        domain = item.get("domain", "").strip()
+        if domain == GENERAL_DOMAIN:
+            domain = ""
+        if not source or not target or max(len(source), len(target)) > 100 or len(domain) > 40 or (domain, source.casefold()) in seen:
+            raise ValueError("用語と訳語を入力し、同じ分野辞書の中で原語を重複させないでください（各100文字まで、分野は40文字まで）。")
+        seen.add((domain, source.casefold()))
+        result.append({"source": source, "target": target, **({"domain": domain} if domain else {})})
     return result
 
 
@@ -29,8 +35,12 @@ def draft_glossary(lib, paper_id, provider, cancel, progress, existing):
     text = "\n\n".join(text for _, text in lib.page_texts(paper_id))
     if not text.strip():
         raise ValueError("専門用語を抽出できる原文がありません。")
+    # Known: the paper's effective dictionary and the unsaved terms of its domains (another domain may
+    # give the same source another rendering).
+    record = paper_domains(lib.root, paper_id)
     known = {t["source"].casefold(): t for t in effective_glossary(lib, paper_id)}
-    known.update({t["source"].casefold(): t for t in existing})
+    known.update({t["source"].casefold(): t for t in existing
+                  if not t.get("domain") or record is None or t["domain"] in chosen_domains(record)})
     result = []
     schema = {"type": "object", "properties": {"terms": {"type": "array", "items": {
         "type": "object", "properties": {"source": {"type": "string"}, "target": {"type": "string"}},

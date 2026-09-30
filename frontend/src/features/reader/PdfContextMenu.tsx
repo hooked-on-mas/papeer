@@ -16,6 +16,7 @@ import { highlightColor } from "./highlights";
 import { useStickyNotes } from "./stickyNotesStore";
 import { emitAppEvent } from "@/lib/appEvents";
 import { shortcutLabel } from "@/lib/platform";
+import { GENERAL_DOMAIN } from "./translationStart";
 
 /**
  * Replaces the webview's browser menu (戻る, 印刷, 検査…) over a PDF page:
@@ -69,17 +70,19 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
             </ContextMenuItem>
             <ContextMenuItem onClick={withPassage(async (current) => {
               const text = await current.text;
-              const source = await askText("共通辞書に登録", "原語（100文字まで）", text.slice(0, 100));
+              const source = await askText("辞書に登録", "原語（100文字まで）", text.slice(0, 100));
               if (!source?.trim()) return;
-              const target = await askText("共通辞書に登録", `「${source}」の訳語`);
+              const target = await askText("辞書に登録", `「${source}」の訳語`);
               if (!target?.trim()) return;
+              const paperId = useStore.getState().activePaperId;
+              if (!paperId) return;
               try {
                 // Saved; what the glossary changes (which saved translations can be reused…) is loaded again after.
-                await addTerm.mutateAsync({ source: source.trim(), target: target.trim() });
-                useStore.getState().setStatus("共通辞書に登録しました。すべての論文の次の翻訳から適用します。");
+                const { domain } = await addTerm.mutateAsync({ paperId, source: source.trim(), target: target.trim() });
+                useStore.getState().setStatus(`辞書に登録しました${domain === GENERAL_DOMAIN ? "" : `（分野: ${domain}）`}。この論文の次の翻訳から適用します。`);
               } catch (error) { showError(error, "用語を登録できませんでした"); }
             })}>
-              <Languages /> 共通辞書に登録…
+              <Languages /> 辞書に登録…
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={withPassage(explainPassage)}>

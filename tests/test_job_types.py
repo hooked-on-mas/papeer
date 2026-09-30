@@ -41,6 +41,15 @@ def test_the_frontend_names_the_same_kinds():
     assert set(re.findall(r'^\s*"?([a-z-]+)"?:', block[1], re.M)) == {kind.value for kind in JobKind}
 
 
+def test_the_domain_jobs_have_results_of_their_shape():
+    assert job_result(JobKind.GLOSSARY_SELECT, {"domains": ["電池"], "new_domain": None}).model_dump() == {
+        "domains": ["電池"], "new_domain": None}
+    split = {"moved": 3, "domains": [{"name": "電池", "count": 5}]}
+    assert job_result(JobKind.GLOSSARY_SPLIT, split).model_dump() == split
+    with pytest.raises(ValueError):
+        job_result(JobKind.GLOSSARY_SPLIT, {"moved": 3})
+
+
 def test_the_frontend_result_types_are_the_generated_ones():
     # The generated types follow the models (tests/test_openapi_schema.py); jobTypes.ts only names them.
     source = (FRONTEND / "api/jobTypes.ts").read_text("utf-8")

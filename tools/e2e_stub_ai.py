@@ -3,10 +3,11 @@
 An OpenAI-compatible server on 127.0.0.1 that answers like the one in tools/smoke_sidecar.py
 (stub_answer), so the tests translate through the real sidecar without calling a real AI and
 without anything leaving the PC. It also answers the glossary draft (用語抽出) with a few words
-of the source, and has two routes for the tests themselves:
+of the source, the choice of a paper's domain dictionaries (nothing chosen) and the split of a
+dictionary (no groups), and has two routes for the tests themselves:
 
 - POST /_e2e/delay {"seconds": 1.5}: wait that long before each chat answer (to catch a job while it runs)
-- GET /_e2e/requests: how many chat requests came in, by kind ({"translation": 3, "glossary": 1, "other": 0})
+- GET /_e2e/requests: how many chat requests came in, by kind ({"translation": 3, "glossary": 1, "domains": 0, "other": 0})
 
 Run with `python tools/e2e_stub_ai.py`; it prints "PORT <n>" once it listens on a free port.
 """
@@ -30,6 +31,10 @@ from tools.smoke_sidecar import stub_answer  # noqa: E402
 # papeer.core.reading_tools sends {"source": ..., "existing_terms": [...]} for the glossary draft.
 GLOSSARY_MARKER = '"existing_terms"'
 GLOSSARY_TERMS = 6
+# papeer.core.glossary_domains sends {"paper": ..., "available_domains": [...]} to choose a paper's domain
+# dictionaries and {"domain": ..., "terms": [...], "existing_domains": [...]} to split one.
+SELECT_MARKER = '"available_domains"'
+SPLIT_MARKER = '"existing_domains"'
 
 
 def glossary_answer(data: str) -> str:
@@ -45,9 +50,18 @@ def glossary_answer(data: str) -> str:
                       ensure_ascii=False)
 
 
+def domains_answer(data: str) -> str:
+    """Nothing chosen and no new domain for a selection; no groups (nothing moves) for a split."""
+    if SELECT_MARKER in data:
+        return json.dumps({"domains": [], "new_domain": None})
+    return json.dumps({"domains": []})
+
+
 def answer(messages: list[dict[str, Any]]) -> tuple[str, str]:
-    """(kind, content) for a chat request: kind is "glossary", "translation" or "other"."""
+    """(kind, content) for a chat request: kind is "glossary", "domains", "translation" or "other"."""
     instruction, data = str(messages[0]["content"]), str(messages[-1]["content"])
+    if SELECT_MARKER in data or SPLIT_MARKER in data:
+        return "domains", domains_answer(data)
     if GLOSSARY_MARKER in data:
         return "glossary", glossary_answer(data)
     kind = "translation" if '"blocks"' in data or '"texts"' in data else "other"
@@ -58,7 +72,7 @@ class StubState:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.delay = 0.0
-        self.counts = {"translation": 0, "glossary": 0, "other": 0}
+        self.counts = {"translation": 0, "glossary": 0, "domains": 0, "other": 0}
 
 
 def make_handler(state: StubState) -> type[BaseHTTPRequestHandler]:

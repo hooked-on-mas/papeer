@@ -40,6 +40,8 @@ export type DataChange =
   | { kind: "stickyNoteMoved" }
   /** The common glossary saved (the translation dialog, the PDF's context menu). */
   | { kind: "glossary" }
+  /** The domain dictionaries a paper uses chosen (by the AI, or in the dialog): which of the glossary applies to it. */
+  | { kind: "glossaryDomains"; paperId: string }
   /** A paragraph's translation revised (TranslationReview). */
   | { kind: "translationRevised"; paperId: string }
   /** A note template saved or deleted. */
@@ -89,7 +91,12 @@ export function invalidationsFor(change: DataChange): StaleQuery[] {
       return roots(QK.stickyNotes);
     case "glossary":
       // A term changes the source of the pages that contain it, so which saved translations can be reused.
-      return roots(QK.glossary, QK.effectiveGlossary, QK.paragraphs, QK.translationPlan);
+      // The domains a paper uses follow the dictionary (a domain gone, a new one), so they are read again too.
+      return roots(QK.glossary, QK.glossaryDomains, QK.effectiveGlossary, QK.paragraphs, QK.translationPlan);
+    case "glossaryDomains":
+      // Which dictionaries apply changes the terms the paper's pages were translated with, like a term edit does.
+      return [{ queryKey: [QK.glossaryDomains, change.paperId] }, { queryKey: [QK.translationPlan, change.paperId] },
+        { queryKey: [QK.paragraphs, change.paperId] }, { queryKey: [QK.effectiveGlossary, change.paperId] }];
     case "translationRevised":
       return [{ queryKey: [QK.paragraphs, change.paperId] }, { queryKey: [QK.revisions, change.paperId] }];
     case "noteTemplates":

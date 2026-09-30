@@ -21,7 +21,7 @@ def export_glossary(path: Path, terms: list[dict], library_root: Path) -> int:
         raise ValueError("辞書はライブラリの外に保存してください。")
     if path.suffix.lower() != ".json":
         raise ValueError("保存先には .json ファイルを指定してください。")
-    content = json.dumps({"format": "papeer-glossary", "version": 1, "terms": terms},
+    content = json.dumps({"format": "papeer-glossary", "version": 2, "terms": terms},
                          ensure_ascii=False, indent=2) + "\n"
     if len(content.encode("utf-8")) > MAX_FILE_BYTES:
         raise ValueError("辞書ファイルは10MBまでです。")
@@ -46,18 +46,22 @@ def import_glossary(path: Path, existing: list[dict]) -> dict:
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("UTF-8のJSON辞書ファイルを選択してください。") from exc
     if isinstance(value, dict):
-        if value.get("format") not in {"papeer-glossary", "paperdesk-glossary"} or value.get("version") != 1:
+        version = value.get("version")
+        if value.get("format") not in {"papeer-glossary", "paperdesk-glossary"} or value.get("version") not in {1, 2}:
             raise ValueError("対応していない辞書形式・バージョンです。")
         value = value.get("terms")
+        if version == 1 and isinstance(value, list):  # Version 1 has no domains.
+            value = [{k: v for k, v in item.items() if k != "domain"} if isinstance(item, dict) else item for item in value]
     imported = validate_terms(value)
-    known = {term["source"].casefold(): term for term in existing}
+    # A version 1 file or a bare list has no domains: its terms are the general dictionary's (validate_terms).
+    known = {(term.get("domain", ""), term["source"].casefold()): term for term in existing}
     added, conflicts, skipped = [], [], 0
     for term in imported:
-        previous = known.get(term["source"].casefold())
+        previous = known.get((term.get("domain", ""), term["source"].casefold()))
         if previous is None:
             added.append(term)
         else:
             skipped += 1
             if previous["target"] != term["target"]:
-                conflicts.append({"source": term["source"], "existing": previous["target"], "imported": term["target"]})
+                conflicts.append({"source": term["source"], **({"domain": term["domain"]} if term.get("domain") else {}), "existing": previous["target"], "imported": term["target"]})
     return {"terms": existing + added, "added": added, "skipped": skipped, "conflicts": conflicts}

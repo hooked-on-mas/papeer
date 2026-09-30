@@ -23,6 +23,7 @@ export const QK = {
   revisions: "revisions",
   tags: "tags",
   glossary: "glossary",
+  glossaryDomains: "glossary-domains",
   inkPages: "ink-pages",
   stickyNotes: "sticky-notes",
   effectiveGlossary: "effective-glossary",

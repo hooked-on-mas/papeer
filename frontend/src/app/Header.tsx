@@ -26,7 +26,7 @@ export function Header() {
   const translateJobId = useStore((s) => runningPaperJob(s.activeJobs, s.activePaperId, TRANSLATION_JOBS)?.job_id);
   const busy = useStore((s) => paperBusy(s.activeJobs, s.activePaperId));
   // The translation dialog opens while the AI checks the paper's terms, showing that check as it goes on.
-  const translateBlocked = useStore((s) => paperBusy(s.activeJobs, s.activePaperId, ["glossary-draft"]));
+  const translateBlocked = useStore((s) => paperBusy(s.activeJobs, s.activePaperId, ["glossary-draft", "glossary-select", "glossary-split"]));
   const sidebarCollapsed = useStore((s) => s.sidebarCollapsed);
   const rebuilding = useRebuilding(translateJobId);
 

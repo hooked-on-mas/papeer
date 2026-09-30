@@ -11,6 +11,8 @@ const KIND_LABELS: Record<string, string> = {
   revision: "段落の再翻訳",
   "revision-draft": "訳文の修正案の作成",
   "glossary-draft": "専門用語の確認",
+  "glossary-select": "分野辞書の選択",
+  "glossary-split": "辞書の分野分け",
   article: "解説の作成",
   ask: "チャットの回答",
   check: "接続の確認",

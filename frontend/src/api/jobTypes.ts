@@ -23,6 +23,10 @@ export type TranslateResult = Schemas["TranslateResult"];
 export type RevisionDraftResult = Schemas["RevisionDraftResult"];
 export type GlossaryTerm = Schemas["GlossaryTerm"];
 export type GlossaryDraftResult = Schemas["GlossaryDraftResult"];
+/** glossary-select: the domain dictionaries chosen for the paper (recorded by the sidecar), and a new domain for its terms. */
+export type GlossaryDomainsResult = Schemas["GlossaryDomainsResult"];
+/** glossary-split: how many terms were given a domain, and every domain dictionary afterwards with its terms. */
+export type GlossarySplitResult = Schemas["GlossarySplitResult"];
 export type ArticleResult = Schemas["ArticleResult"];
 export type AskResult = Schemas["AskResult"];
 /** paper_ids in the order the paths were sent; a PDF already in the library gives its paper. */
@@ -46,6 +50,8 @@ export type JobResults = {
   revision: TranslateResult;
   "revision-draft": RevisionDraftResult;
   "glossary-draft": GlossaryDraftResult;
+  "glossary-select": GlossaryDomainsResult;
+  "glossary-split": GlossarySplitResult;
   article: ArticleResult;
   ask: AskResult;
   check: CheckResult;

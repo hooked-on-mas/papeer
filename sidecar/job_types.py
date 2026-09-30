@@ -20,6 +20,8 @@ class JobKind(StrEnum):
     REVISION = "revision"  # A paragraph's corrected translation adopted: the pages it is on are made again.
     REVISION_DRAFT = "revision-draft"
     GLOSSARY_DRAFT = "glossary-draft"
+    GLOSSARY_SELECT = "glossary-select"  # The AI chooses the domain dictionaries a paper uses.
+    GLOSSARY_SPLIT = "glossary-split"  # The AI splits a dictionary into domain dictionaries by subject.
     ARTICLE = "article"
     ASK = "ask"
     CHECK = "check"
@@ -89,6 +91,21 @@ class GlossaryTerm(BaseModel):
 
 class GlossaryDraftResult(BaseModel):
     terms: list[GlossaryTerm]
+
+
+class GlossaryDomainsResult(BaseModel):
+    domains: list[str]
+    new_domain: str | None = None
+
+
+class GlossaryDomainCount(BaseModel):
+    name: str
+    count: int
+
+
+class GlossarySplitResult(BaseModel):
+    moved: int  # Terms given a domain.
+    domains: list[GlossaryDomainCount]  # Every domain dictionary afterwards (not 共通), with its terms.
 
 
 class ArticleResult(BaseModel):
@@ -167,6 +184,8 @@ RESULT_TYPES: dict[JobKind, Any] = {
     JobKind.REVISION: TranslateResult,
     JobKind.REVISION_DRAFT: RevisionDraftResult,
     JobKind.GLOSSARY_DRAFT: GlossaryDraftResult,
+    JobKind.GLOSSARY_SELECT: GlossaryDomainsResult,
+    JobKind.GLOSSARY_SPLIT: GlossarySplitResult,
     JobKind.ARTICLE: ArticleResult,
     JobKind.ASK: AskResult,
     JobKind.CHECK: CheckResult,
@@ -183,7 +202,7 @@ RESULT_TYPES: dict[JobKind, Any] = {
 # Which one belongs to which kind is RESULT_TYPES (and the frontend's JobResults); the union is only
 # the schema's answer to "what can a result be".
 JobResult = Union[
-    TranslateResult, RevisionDraftResult, GlossaryDraftResult, ArticleResult, AskResult, ImportResult,
+    TranslateResult, RevisionDraftResult, GlossaryDraftResult, GlossaryDomainsResult, GlossarySplitResult, ArticleResult, AskResult, ImportResult,
     ExportResult, InterleavedResult, BackupResult, RestoreResult, DriveSyncResult, OcrResult, OcrDataResult,
     CheckResult,
 ]

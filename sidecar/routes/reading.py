@@ -8,10 +8,11 @@ import zipfile
 
 from fastapi import APIRouter, Depends, Query
 
-from papeer.core import drive_sync, history_restore, reading_tools as tools
+from papeer.core import drive_sync, glossary_domains, history_restore, reading_tools as tools
 from papeer.core.errors import Invalid
 from papeer.providers import Cancelled, check_cancel
-from papeer.core.terminology import global_glossary, save_global_glossary
+from papeer.core.terminology import (
+    GENERAL_DOMAIN, SPLIT_AT, add_glossary_term, domain_names, global_glossary, paper_domains, save_global_glossary, save_paper_domains)
 from sidecar import deps
 from sidecar.job_types import JobKind, JobStarted
 from sidecar.schemas.reading import (
@@ -19,6 +20,10 @@ from sidecar.schemas.reading import (
     GlobalGlossaryRequest,
     GlossaryDraftRequest,
     GlossaryFileRequest,
+    GlossarySelectRequest,
+    GlossarySplitRequest,
+    GlossaryTermRequest,
+    PaperDomainsRequest,
     RestoreRequest,
     RevisionRequest,
     TagRequest,
@@ -120,6 +125,69 @@ def effective_glossary(paper_id: str):
     lib = deps.get_library()
     lib.paper_folder(paper_id)
     return tools.effective_glossary(lib, paper_id)
+
+def _domains_state(paper_id: str) -> dict:
+    available = domain_names(global_glossary(deps.get_library().root))
+    record = paper_domains(deps.get_library().root, paper_id)
+    return {"domains": record["domains"] if record else [], "new_domain": record["new_domain"] if record else None,
+            "chosen_by": record["chosen_by"] if record else None,
+            "known_domains": record["known_domains"] if record else [],
+            "available": available, "stale": bool(record) and record["known_domains"] != available,
+            "split_at": SPLIT_AT}
+
+@router.get("/api/papers/{paper_id}/glossary-domains")
+def get_paper_domains(paper_id: str):
+    deps.get_library().paper_folder(paper_id)
+    return _domains_state(paper_id)
+
+@router.put("/api/papers/{paper_id}/glossary-domains")
+def put_paper_domains(paper_id: str, body: PaperDomainsRequest):
+    lib = deps.get_library()
+    lib.paper_folder(paper_id)
+    available = domain_names(global_glossary(lib.root))
+    by_folded = {name.casefold(): name for name in available}
+    domains = []
+    for name in body.domains:
+        name = by_folded.get(name.strip().casefold())
+        if name and name not in domains:
+            domains.append(name)
+    new_domain = (body.new_domain or "").strip()
+    new_domain = None if new_domain in {"", GENERAL_DOMAIN} else new_domain
+    if new_domain and new_domain.casefold() in by_folded:
+        new_domain = by_folded[new_domain.casefold()]
+        if new_domain not in domains:
+            domains.append(new_domain)
+        new_domain = None
+    save_paper_domains(lib.root, paper_id, domains, new_domain, "user", available)
+    return _domains_state(paper_id)
+
+@router.post("/api/papers/{paper_id}/glossary/terms")
+def add_paper_term(paper_id: str, body: GlossaryTermRequest):
+    lib = deps.get_library()
+    lib.paper_folder(paper_id)
+    with deps.job_manager.idle("実行中の処理が終わってから辞書に登録してください。"):
+        term = tools.validate_terms([{"source": body.source, "target": body.target}])[0]
+        return {"domain": add_glossary_term(lib.root, paper_id, term["source"], term["target"])}
+
+@router.post("/api/papers/{paper_id}/glossary-domains/select")
+def select_paper_domains(paper_id: str, body: GlossarySelectRequest) -> JobStarted:
+    lib = deps.get_library()
+    lib.paper_folder(paper_id)
+    settings = deps.settings_for_run(body.model, body.effort)
+    def action(cancel, progress, _page_ready):
+        progress("この論文に使う分野辞書を選んでいます…")
+        return glossary_domains.select_domains(lib, paper_id, deps.provider_for(settings, cancel), cancel)
+    return deps.submit_job(JobKind.GLOSSARY_SELECT, action, paper_id)
+
+@router.post("/api/papers/{paper_id}/glossary/split")
+def split_glossary(paper_id: str, body: GlossarySplitRequest) -> JobStarted:
+    lib = deps.get_library()
+    lib.paper_folder(paper_id)
+    glossary_domains.split_target(global_glossary(lib.root), body.domain)  # Invalid (400) before the job starts.
+    settings = deps.settings_for_run(body.model, body.effort)
+    def action(cancel, progress, _page_ready):
+        return glossary_domains.split_domain(lib.root, deps.provider_for(settings, cancel), cancel, progress, body.domain)
+    return deps.submit_job(JobKind.GLOSSARY_SPLIT, action, paper_id)
 
 @router.post("/api/papers/{paper_id}/glossary-draft")
 def glossary_draft(paper_id: str, body: GlossaryDraftRequest) -> JobStarted:

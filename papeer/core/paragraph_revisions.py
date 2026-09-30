@@ -15,7 +15,7 @@ from papeer.core.errors import Conflict, Invalid
 from papeer.core.fileio import atomic_write_json
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library
-from papeer.core.terminology import apply_glossary, effective_glossary, validate_revision
+from papeer.core.terminology import apply_glossary, effective_glossary, matching_terms, validate_revision
 from papeer.pdf.pdf_engine import translation_units
 
 if TYPE_CHECKING:
@@ -53,7 +53,7 @@ def draft_revision(lib: Library, paper_id: str, paragraph: dict, instruction: st
     from papeer.providers import check_cancel, parse_json_answer
 
     payload = {"source": paragraph["source"], "current": paragraph["text"],
-               "glossary": effective_glossary(lib, paper_id)}
+               "glossary": matching_terms(paragraph["source"], effective_glossary(lib, paper_id))}
     prompt = prompts.load("revision_draft") + " " + instruction
     if char_budget:
         payload["max_characters"] = char_budget

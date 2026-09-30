@@ -14,6 +14,8 @@ import { useRef } from "react";
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { queryClient as appQueryClient } from "@/lib/queryClient";
 import type { StickyNote } from "@/features/reader/stickyNotes";
+import type { PaperDomains } from "@/features/reader/glossaryDomains";
+import type { Term } from "@/features/reader/translationStart";
 import { api, unwrap } from "./client";
 import { invalidationsFor, type DataChange } from "./invalidation";
 import type { components } from "./schema";
@@ -103,8 +105,6 @@ function deleteTagChoice(kind: TagKind, name: string): Promise<unknown> {
 
 // --- The common glossary ------------------------------------------------------------------------
 
-export type Term = { source: string; target: string };
-
 /** GET /api/glossary. */
 export async function fetchGlossary(): Promise<Term[]> {
   return await unwrap(api.GET("/api/glossary")) as Term[];
@@ -120,17 +120,33 @@ export function useSaveGlossary() {
   });
 }
 
-/** Adds one term to the glossary as it is now, replacing a term of the same source (case aside); settles once saved. */
+/**
+ * Registers one term for this paper, in its main domain (the new domain, else the first domain selected, else
+ * 共通), replacing a term of the same source there (case aside); settles once saved with the domain it went to.
+ */
 export function useAddGlossaryTerm() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: async ({ source, target }: Term) => {
-      const terms = await fetchGlossary();
-      const key = source.toLocaleLowerCase();
-      await unwrap(api.PUT("/api/glossary", { body: {
-        expected_terms: terms, terms: [...terms.filter((t) => t.source.toLocaleLowerCase() !== key), { source, target }] } }));
-    },
+    mutationFn: async ({ paperId, source, target }: { paperId: string; source: string; target: string }): Promise<{ domain: string }> =>
+      await unwrap(api.POST("/api/papers/{paper_id}/glossary/terms", {
+        params: { path: { paper_id: paperId } }, body: { source, target } })) as { domain: string },
     onSuccess: () => { void invalidate({ kind: "glossary" }, client); },
+  });
+}
+
+/** GET /api/papers/{id}/glossary-domains: the domain dictionaries this paper uses, and the ones there are. */
+export async function fetchPaperDomains(paperId: string): Promise<PaperDomains> {
+  return await unwrap(api.GET("/api/papers/{paper_id}/glossary-domains", { params: { path: { paper_id: paperId } } })) as PaperDomains;
+}
+
+/** Saves the domain dictionaries this paper uses (as chosen by the user); the sidecar keeps the names that exist. */
+export function useSavePaperDomains() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ paperId, domains, newDomain }: { paperId: string; domains: string[]; newDomain: string | null }): Promise<PaperDomains> =>
+      await unwrap(api.PUT("/api/papers/{paper_id}/glossary-domains", {
+        params: { path: { paper_id: paperId } }, body: { domains, new_domain: newDomain } })) as PaperDomains,
+    onSuccess: (_saved, { paperId }) => invalidate({ kind: "glossaryDomains", paperId }, client),
   });
 }
 

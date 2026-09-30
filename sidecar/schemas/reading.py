@@ -25,6 +25,27 @@ class GlossaryDraftRequest(BaseModel):
     effort: str | None = None
 
 
+class PaperDomainsRequest(BaseModel):
+    domains: list[str] = Field(default_factory=list, max_length=200)
+    new_domain: str | None = Field(default=None, max_length=40)
+
+
+class GlossarySelectRequest(BaseModel):
+    model: str | None = None
+    effort: str | None = None
+
+
+class GlossarySplitRequest(BaseModel):
+    domain: str = Field(min_length=1, max_length=40)  # The dictionary to split: a domain's name, or 共通.
+    model: str | None = None
+    effort: str | None = None
+
+
+class GlossaryTermRequest(BaseModel):
+    source: str = Field(min_length=1, max_length=100)
+    target: str = Field(min_length=1, max_length=100)
+
+
 class BackupRequest(BaseModel):
     path: str
 

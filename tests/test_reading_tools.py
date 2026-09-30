@@ -590,3 +590,90 @@ def test_choices_templates_and_revisions_without_the_routes(library):
         tools.adopt_revision(lib, identity, paragraph["id"], edited, provider, threading.Event(),
                              lambda _: None, lambda *_: None, paragraph["text"])
     assert len(tools.revision_history(lib.folder(identity))) == 1
+
+
+def test_paper_domains_api_term_registration_and_delete(library, tmp_path, monkeypatch):
+    from sidecar import app as runtime
+    lib, identity = library
+    monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
+    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
+    monkeypatch.setattr("sidecar.deps.job_manager", JobManager())
+    terms = [{"source": "cell", "target": "セル", "domain": "電池"}, {"source": "control", "target": "制御"},
+             {"source": "cell", "target": "細胞", "domain": "生物"}]
+    base = f"/api/papers/{identity}"
+    with TestClient(runtime.app) as client:
+        assert client.put("/api/glossary", json={"terms": terms, "expected_terms": []}).status_code == 200
+        assert client.get("/api/glossary").json() == terms
+        state = client.get(base + "/glossary-domains").json()
+        assert state == {"domains": [], "new_domain": None, "chosen_by": None, "known_domains": [],
+                         "available": ["電池", "生物"], "stale": False, "split_at": 150}
+        assert client.get("/api/papers/nope/glossary-domains").status_code == 404
+        state = client.put(base + "/glossary-domains", json={"domains": ["生物", "無い", "生物"], "new_domain": "新"}).json()
+        assert (state["domains"], state["new_domain"], state["chosen_by"], state["stale"]) == (["生物"], "新", "user", False)
+        assert effective_glossary(lib, identity) == [{"source": "control", "target": "制御"}, {"source": "cell", "target": "細胞"}]
+        # Registered in the new domain first; the same source of another domain is not replaced.
+        assert client.post(base + "/glossary/terms", json={"source": "gain", "target": "利得"}).json() == {"domain": "新"}
+        assert client.post(base + "/glossary/terms", json={"source": "Gain", "target": "ゲイン"}).json() == {"domain": "新"}
+        assert client.get("/api/glossary").json()[-1] == {"source": "Gain", "target": "ゲイン", "domain": "新"}
+        # The new domain counts as chosen: what was registered there is in the paper's effective dictionary.
+        assert {"source": "Gain", "target": "ゲイン"} in effective_glossary(lib, identity)
+        assert len(client.get("/api/glossary").json()) == 4
+        client.put(base + "/glossary-domains", json={"domains": ["電池"]})
+        assert client.post(base + "/glossary/terms", json={"source": "CELL", "target": "電池セル"}).json() == {"domain": "電池"}
+        assert client.get("/api/glossary").json()[0] == {"source": "CELL", "target": "電池セル", "domain": "電池"}
+        for blank in ("", "  ", "共通"):
+            assert client.put(base + "/glossary-domains", json={"domains": [], "new_domain": blank}).json()["new_domain"] is None
+        client.put(base + "/glossary-domains", json={"domains": []})
+        assert client.post(base + "/glossary/terms", json={"source": "control", "target": "コントロール"}).json() == {"domain": "共通"}
+        assert client.get("/api/glossary").json()[1] == {"source": "control", "target": "コントロール"}
+        assert client.put("/api/glossary", json={"terms": terms[:1], "expected_terms": client.get("/api/glossary").json()}).status_code == 200
+        assert client.get(base + "/glossary-domains").json()["stale"] is True
+    with lib.connection() as db:
+        assert db.execute("SELECT COUNT(*) FROM paper_glossary_domains").fetchone()[0] == 1
+    lib.delete_paper(identity)
+    with lib.connection() as db:
+        assert db.execute("SELECT COUNT(*) FROM paper_glossary_domains").fetchone()[0] == 0
+
+
+def test_glossary_draft_may_suggest_a_source_that_another_domain_has_and_revisions_send_matching_terms(library):
+    from papeer.core.reading_tools import draft_glossary
+    from papeer.core.terminology import save_paper_domains
+    lib, identity = library
+    with lib.connection() as db:
+        db.execute("UPDATE pages SET text=? WHERE paper_id=?", ("The cell grows. Control is used.", identity))
+    save_global_glossary(lib.root, [{"source": "cell", "target": "セル", "domain": "電池"}, {"source": "control", "target": "制御"}])
+    save_paper_domains(lib.root, identity, [], None, "user", ["電池"])
+    sent = []
+
+    class Provider:
+        def generate(self, instruction, data, schema):
+            sent.append(json.loads(data))
+            return json.dumps({"terms": [{"source": "cell", "target": "細胞"}, {"source": "control", "target": "操作"}]})
+
+    result = draft_glossary(lib, identity, Provider(), threading.Event(), lambda _: None, [])
+    assert result["terms"] == [{"source": "cell", "target": "細胞"}]
+    assert sent[0]["existing_terms"] == [{"source": "control", "target": "制御"}]
+    # An unsaved term of an unchosen domain is not known either.
+    result = draft_glossary(lib, identity, Provider(), threading.Event(), lambda _: None,
+                            [{"source": "cell", "target": "セル", "domain": "電池"}])
+    assert result["terms"] == [{"source": "cell", "target": "細胞"}]
+
+    class Revision:
+        def generate(self, instruction, data, schema):
+            sent.append(json.loads(data))
+            return json.dumps({"text": "訳"})
+
+    save_paper_domains(lib.root, identity, [], "電池", "user", ["電池"])
+    assert draft_glossary(lib, identity, Provider(), threading.Event(), lambda _: None,
+                          [{"source": "cell", "target": "セル", "domain": "電池"}])["terms"] == []
+    save_paper_domains(lib.root, identity, [], None, "user", ["電池"])
+    draft_revision(lib, identity, {"source": "Control it.", "text": "x"}, "直して", Revision(), threading.Event())
+    assert sent[-1]["glossary"] == [{"source": "control", "target": "制御"}]
+
+
+def test_registering_with_the_general_domain_as_new_domain_adds_no_domain_key(library):
+    from papeer.core.terminology import add_glossary_term, save_paper_domains
+    lib, identity = library
+    save_paper_domains(lib.root, identity, [], "共通", "user", [])
+    assert add_glossary_term(lib.root, identity, "gain", "利得") == "共通"
+    assert global_glossary(lib.root) == [{"source": "gain", "target": "利得"}]

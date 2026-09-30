@@ -99,3 +99,22 @@ def test_a_file_that_cannot_be_read_or_written_is_the_users_to_fix(tmp_path):
     (tmp_path / "file").write_text("not a folder")
     with pytest.raises(Invalid):
         export_glossary(tmp_path / "file" / "glossary.json", terms, tmp_path / "library")
+
+
+def test_version_2_roundtrip_keeps_domains_and_version_1_goes_to_the_general_dictionary(tmp_path):
+    terms = [{"source": "cell", "target": "セル", "domain": "電池"}, {"source": "cell", "target": "細胞"}]
+    path = tmp_path / "d.json"
+    export_glossary(path, terms, tmp_path / "library")
+    assert json.loads(path.read_text("utf-8"))["version"] == 2
+    assert import_glossary(path, [])["terms"] == terms
+    result = import_glossary(path, [{"source": "Cell", "target": "別", "domain": "電池"}])
+    assert result["added"] == [terms[1]] and result["skipped"] == 1
+    assert result["conflicts"] == [{"source": "cell", "domain": "電池", "existing": "別", "imported": "セル"}]
+    old = {"format": "papeer-glossary", "version": 1, "terms": [{"source": "cell", "target": "セル", "domain": "電池"}]}
+    path.write_text(json.dumps(old), "utf-8")
+    assert import_glossary(path, [])["terms"] == [{"source": "cell", "target": "セル"}]
+    path.write_text(json.dumps([{"source": "cell", "target": "セル"}]), "utf-8")
+    assert import_glossary(path, [])["terms"] == [{"source": "cell", "target": "セル"}]
+    path.write_text(json.dumps({**old, "version": 2, "terms": [{"source": "a", "target": "b", "domain": 3}]}), "utf-8")
+    with pytest.raises(ValueError):
+        import_glossary(path, [])

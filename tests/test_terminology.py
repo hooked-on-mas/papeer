@@ -197,3 +197,77 @@ def test_search_of_the_translation_reads_saved_translations_once_for_all_pages(t
     found = search.search_paper(library, identity, "訳", "translated")
     assert [item["page"] for item in found["results"]] == [1, 2, 3]
     assert len(calls) == 1
+
+
+DOMAIN_TERMS = [
+    {"source": "cell", "target": "セル", "domain": "電池"},
+    {"source": "policy", "target": "方策", "domain": "強化学習"},
+    {"source": "control", "target": "制御"},
+    {"source": "Cell", "target": "細胞", "domain": "生物"},
+    {"source": "delay", "target": "遅延", "domain": "強化学習"},
+]
+
+
+def domain_library(tmp_path):
+    from papeer.core.terminology import save_paper_domains
+    lib = Library(tmp_path / "lib")
+    save_global_glossary(lib.root, DOMAIN_TERMS)
+    return lib.root, lambda paper, domains, by="user": save_paper_domains(lib.root, paper, domains, None, by, ["電池", "強化学習", "生物"])
+
+
+def test_effective_glossary_keeps_the_order_takes_the_first_source_and_drops_domains(tmp_path):
+    from papeer.core.terminology import glossary_for_folder, domain_names
+    root, choose = domain_library(tmp_path)
+    folder = root / "papers" / "p1"
+    assert domain_names(DOMAIN_TERMS) == ["電池", "強化学習", "生物"]
+    # Nothing recorded: the general dictionary and every domain, as before (a repeated source: the first).
+    assert glossary_for_folder(folder) == [{"source": t["source"], "target": t["target"]} for t in DOMAIN_TERMS[:3] + DOMAIN_TERMS[4:]]
+    choose("p1", ["生物", "強化学習"])
+    assert glossary_for_folder(folder) == [{"source": "policy", "target": "方策"}, {"source": "control", "target": "制御"},
+                                           {"source": "Cell", "target": "細胞"}, {"source": "delay", "target": "遅延"}]
+    choose("p1", [])
+    assert glossary_for_folder(folder) == [{"source": "control", "target": "制御"}]
+    assert glossary_for_folder(root / "papers" / "p2")[0]["source"] == "cell"
+
+
+def test_domains_are_recorded_only_when_written_and_the_user_choice_stays(tmp_path):
+    import sqlite3
+    from papeer.core.terminology import paper_domains, save_paper_domains
+    root, choose = domain_library(tmp_path)
+    assert paper_domains(root, "p1") is None
+    with sqlite3.connect(root / "library.sqlite3") as db:
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name='paper_glossary_domains'").fetchone()
+    assert save_paper_domains(root, "p1", ["電池"], None, "ai", [], only_if_ai=True)
+    assert save_paper_domains(root, "p1", ["生物"], "新分野", "ai", ["電池"], only_if_ai=True)
+    choose("p1", ["強化学習"])
+    assert not save_paper_domains(root, "p1", ["電池"], None, "ai", [], only_if_ai=True)
+    assert paper_domains(root, "p1") == {"domains": ["強化学習"], "new_domain": None, "chosen_by": "user",
+                                         "known_domains": ["電池", "強化学習", "生物"]}
+    assert save_paper_domains(root, "p2", ["電池"], None, "ai", [], only_if_ai=True)
+
+
+def test_a_domain_does_not_change_what_a_translation_is_cached_by(tmp_path):
+    from papeer.core.terminology import glossary_for_folder
+    plain = [{"source": t["source"], "target": t["target"]} for t in DOMAIN_TERMS[:3]]
+    root = Library(tmp_path / "lib").root
+    units = [{"id": "a", "page": 1, "text": "The cell policy uses control."}]
+    before = [dict(u) for u in units]
+    apply_glossary(before, plain)
+    save_global_glossary(root, DOMAIN_TERMS[:3])
+    after = [dict(u) for u in units]
+    apply_glossary(after, glossary_for_folder(root / "papers" / "p1"))
+    assert after == before and after[0]["glossary"] == plain
+    assert page_fingerprint(after) == page_fingerprint(before)
+
+
+def test_validate_terms_takes_a_domain_and_repeats_by_domain():
+    from papeer.core.glossary_draft import validate_terms
+    assert validate_terms([{"source": "cell", "target": "セル", "domain": " 電池 "}, {"source": "Cell", "target": "細胞"},
+                           {"source": "cell2", "target": "細胞", "domain": "共通"}]) == [
+        {"source": "cell", "target": "セル", "domain": "電池"}, {"source": "Cell", "target": "細胞"},
+        {"source": "cell2", "target": "細胞"}]
+    for bad in ([{"source": "a", "target": "b"}, {"source": "A", "target": "c", "domain": ""}],
+                [{"source": "a", "target": "b", "domain": "x"}, {"source": "A", "target": "c", "domain": "x"}],
+                [{"source": "a", "target": "b", "domain": "d" * 41}], [{"source": "a", "target": "b", "domain": None}]):
+        with pytest.raises(ValueError):
+            validate_terms(bad)

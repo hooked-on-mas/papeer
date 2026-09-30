@@ -139,7 +139,7 @@ export interface App {
   setViewport(width: number, height: number): Promise<void>;
   stopSidecar(): Promise<void>;
   startSidecar(): Promise<void>;
-  stubRequests(): Promise<{ translation: number; glossary: number; other: number }>;
+  stubRequests(): Promise<{ translation: number; glossary: number; domains: number; other: number }>;
   setStubDelay(seconds: number): Promise<void>;
   /** Asks the window to close, like its × button (WM_CLOSE). */
   requestWindowClose(): void;
@@ -306,7 +306,7 @@ async function launch(name: string, options: LaunchOptions): Promise<Launch> {
     await setViewport(viewport.width, viewport.height);
     await page.waitForLoadState("domcontentloaded");
 
-    const stubRequests = async () => (await (await fetch(`${run.stubUrl}/_e2e/requests`)).json()) as { translation: number; glossary: number; other: number };
+    const stubRequests = async () => (await (await fetch(`${run.stubUrl}/_e2e/requests`)).json()) as { translation: number; glossary: number; domains: number; other: number };
     const setStubDelay = async (seconds: number) => {
       await fetch(`${run.stubUrl}/_e2e/delay`, { method: "POST", body: JSON.stringify({ seconds }) });
     };

@@ -14,6 +14,10 @@ const PROMPT_LABELS: Record<string, string> = {
   summary_article: "サマリー（記事）",
   chat_keywords: "チャット（検索キーワード）",
   chat_answer: "チャット（回答）",
+  glossary_draft: "専門用語の抽出",
+  glossary_select: "分野辞書の選択",
+  glossary_split: "辞書の分野分け",
+  revision_draft: "訳文の修正案",
 };
 
 /** Edited prompt texts; the dialog owns it so that one 保存 covers every section. */

@@ -166,6 +166,7 @@ async function paperTitle(queryClient: QueryClient, paperId: string): Promise<st
 async function reportFailure(event: JobFinished, visible: boolean, queryClient: QueryClient): Promise<void> {
   const message = event.error || "不明なエラー";
   const handler = jobHandler(event.kind);
+  if (handler?.quiet) return;
   const advice = errorAdvice(message, { kind: event.kind, canResume: !!handler?.resume });
   if (visible) useStore.getState().setStatus(`${jobKindLabel(event.kind)}を完了できませんでした：${advice.summary}`);
   shell.setProgress("error").catch(() => undefined);

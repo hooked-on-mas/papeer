@@ -31,6 +31,11 @@ export type JobHandler<K extends JobKind = JobKind> = {
   succeeded?: (event: JobSucceeded<K>, context: JobContext) => void;
   /** Queries to refresh when the job ends, whatever the outcome. */
   refresh?: (event: JobFinished<K>) => QueryKey[];
+  /**
+   * The feature tells of a failure itself (a message in its own dialog): the job's failure raises no error
+   * dialog, notice or status line. For a job started by the app without being asked for.
+   */
+  quiet?: boolean;
   /** How the error dialog's 再開 starts a failed job's work again (none: the dialog offers no 再開). */
   resume?: { label: string; run: (event: JobFinished<K>) => void };
 };

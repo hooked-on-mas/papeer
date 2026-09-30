@@ -6,7 +6,7 @@ import json
 import pymupdf
 
 from tools import e2e_pdfs
-from tools.e2e_stub_ai import answer, glossary_answer
+from tools.e2e_stub_ai import answer, domains_answer, glossary_answer
 from tools.smoke_sidecar import SCHEMA_MARKER
 
 
@@ -25,6 +25,18 @@ def test_answer_tells_glossary_translation_and_other_requests_apart():
     assert kind == "translation"
     assert [t["id"] for t in json.loads(content)["translations"]] == ["p1-b1"]
     assert answer([{"content": "Summarize"}, {"content": "text"}])[0] == "other"
+
+
+def test_answer_chooses_no_domains_and_splits_nothing():
+    select = [{"content": "Choose"}, {"content": json.dumps({"paper": {"title": "T"}, "available_domains": [{"name": "電池"}]})}]
+    kind, content = answer(select)
+    assert kind == "domains"
+    assert json.loads(content) == {"domains": [], "new_domain": None}
+    split = [{"content": "Split"}, {"content": json.dumps({"domain": "共通", "terms": [], "existing_domains": []})}]
+    kind, content = answer(split)
+    assert kind == "domains"
+    assert json.loads(content) == {"domains": []}
+    assert json.loads(domains_answer('{"available_domains": []}'))["new_domain"] is None
 
 
 def test_pdfs_are_two_column_papers_with_their_titles(tmp_path):

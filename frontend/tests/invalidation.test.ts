@@ -53,7 +53,10 @@ test("sticky notes: the library's search finds their text, but not where they ar
 });
 
 test("the glossary, from the translation dialog and the PDF's context menu alike", () => {
-  assert.deepEqual(keys({ kind: "glossary" }), roots(QK.glossary, QK.effectiveGlossary, QK.paragraphs, QK.translationPlan));
+  assert.deepEqual(keys({ kind: "glossary" }), roots(QK.glossary, QK.glossaryDomains, QK.effectiveGlossary, QK.paragraphs, QK.translationPlan));
+  assert.deepEqual(keys({ kind: "glossaryDomains", paperId: "p1" }), [
+    { queryKey: [QK.glossaryDomains, "p1"] }, { queryKey: [QK.translationPlan, "p1"] },
+    { queryKey: [QK.paragraphs, "p1"] }, { queryKey: [QK.effectiveGlossary, "p1"] }]);
   assert.deepEqual(keys({ kind: "translationRevised", paperId: "p1" }),
     [{ queryKey: [QK.paragraphs, "p1"] }, { queryKey: [QK.revisions, "p1"] }]);
 });
@@ -72,7 +75,7 @@ test("every key the table names is one of QK's", () => {
     { kind: "paper", paperId: "p", collection: true }, { kind: "paperTags" }, { kind: "note" },
     { kind: "tagChoice", tagKind: "paper", removed: true }, { kind: "tagChoice", tagKind: "status", removed: true },
     { kind: "tagChoice", tagKind: "sticky", removed: false }, { kind: "stickyNote" }, { kind: "stickyNoteMoved" },
-    { kind: "glossary" }, { kind: "translationRevised", paperId: "p" }, { kind: "noteTemplates" }, { kind: "settings" },
+    { kind: "glossary" }, { kind: "glossaryDomains", paperId: "p" }, { kind: "translationRevised", paperId: "p" }, { kind: "noteTemplates" }, { kind: "settings" },
     { kind: "drive" },
   ];
   for (const change of changes) {

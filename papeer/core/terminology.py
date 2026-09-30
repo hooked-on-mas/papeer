@@ -51,14 +51,125 @@ def save_global_glossary(root: Path, terms: list[dict[str, str]], expected=None)
         db.execute("UPDATE global_glossary SET terms=? WHERE id=1", (json.dumps(terms, ensure_ascii=False),))
 
 
+GENERAL_DOMAIN = "共通"  # Terms without a domain: applied to every paper. Never a name a term carries.
+SPLIT_AT = 150  # A domain with this many terms is worth splitting into domains by subject.
+
+
+def domain_names(terms: list[dict]) -> list[str]:
+    """The domains the terms carry, in the order of their first appearance (no domain is 共通, not listed)."""
+    names: dict[str, None] = {}
+    for term in terms:
+        if term.get("domain"):
+            names.setdefault(term["domain"], None)
+    return list(names)
+
+
+def _has_table(db: sqlite3.Connection) -> bool:
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_glossary_domains'").fetchone() is not None
+
+
+def _record(row) -> dict:
+    return {"domains": json.loads(row[0]), "new_domain": row[1], "chosen_by": row[2], "known_domains": json.loads(row[3])}
+
+
+def paper_domains(root: Path, paper_id: str) -> dict | None:
+    """The domain dictionaries chosen for a paper, or None when none were recorded.
+
+    Reading never creates the table: an empty CREATE alone would make the sync publish a new generation.
+    """
+    if not (root / "library.sqlite3").is_file():
+        return None
+    with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db:
+        if not _has_table(db):
+            return None
+        row = db.execute("SELECT domains,new_domain,chosen_by,known_domains FROM paper_glossary_domains WHERE paper_id=?",
+                         (paper_id,)).fetchone()
+    return _record(row) if row else None
+
+
+def _write_paper_domains(db: sqlite3.Connection, paper_id: str, domains: list[str], new_domain: str | None,
+                         chosen_by: str, known_domains: list[str]) -> None:
+    db.execute("CREATE TABLE IF NOT EXISTS paper_glossary_domains (paper_id TEXT PRIMARY KEY, domains TEXT NOT NULL, "
+               "new_domain TEXT, chosen_by TEXT NOT NULL CHECK(chosen_by IN ('ai','user')), known_domains TEXT NOT NULL)")
+    db.execute("INSERT OR REPLACE INTO paper_glossary_domains VALUES(?,?,?,?,?)",
+               (paper_id, json.dumps(domains, ensure_ascii=False), new_domain, chosen_by,
+                json.dumps(known_domains, ensure_ascii=False)))
+
+
+def save_paper_domains(root: Path, paper_id: str, domains: list[str], new_domain: str | None, chosen_by: str,
+                       known_domains: list[str], only_if_ai: bool = False) -> bool:
+    """Record the domains of a paper. With only_if_ai (the AI's choice) a choice the user made stays: returns
+    whether anything was written."""
+    with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        if only_if_ai and _has_table(db):
+            row = db.execute("SELECT chosen_by FROM paper_glossary_domains WHERE paper_id=?", (paper_id,)).fetchone()
+            if row and row[0] != "ai":
+                return False
+        _write_paper_domains(db, paper_id, domains, new_domain, chosen_by, known_domains)
+    return True
+
+
+def chosen_domains(record: dict) -> set[str]:
+    """The domains a paper uses: the ones chosen and its new domain (terms registered there count too)."""
+    return set(record["domains"]) | ({record["new_domain"]} if record["new_domain"] else set())
+
+
+def _filtered(terms: list[dict], record: dict | None) -> list[dict[str, str]]:
+    """The terms of the general dictionary and the chosen domains (all when nothing was recorded), in the
+    order the glossary has them, as {source, target}. The first of a source wins."""
+    chosen = None if record is None else chosen_domains(record)
+    seen, result = set(), []
+    for term in terms:
+        domain = term.get("domain")
+        key = term["source"].casefold()
+        if (domain and chosen is not None and domain not in chosen) or key in seen:
+            continue
+        seen.add(key)
+        result.append({"source": term["source"], "target": term["target"]})
+    return result
+
+
+def _effective(root: Path, paper_id: str) -> list[dict[str, str]]:
+    return _filtered(global_glossary(root), paper_domains(root, paper_id))
+
+
+def add_glossary_term(root: Path, paper_id: str, source: str, target: str) -> str:
+    """Register a term in the paper's main domain (the new domain, else the first chosen one, else 共通),
+    replacing the same source there; returns the domain. Read and written in one transaction."""
+    global_glossary(root)
+    with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        terms = json.loads(db.execute("SELECT terms FROM global_glossary WHERE id=1").fetchone()[0])
+        record = None
+        if _has_table(db):
+            row = db.execute("SELECT domains,new_domain,chosen_by,known_domains FROM paper_glossary_domains WHERE paper_id=?",
+                             (paper_id,)).fetchone()
+            record = _record(row) if row else None
+        domain = (record["new_domain"] or (record["domains"][0] if record["domains"] else "")) if record else ""
+        if domain == GENERAL_DOMAIN:
+            domain = ""
+        term = {"source": source, "target": target, **({"domain": domain} if domain else {})}
+        key = source.casefold()
+        for index, old in enumerate(terms):
+            if old.get("domain", "") == domain and old["source"].casefold() == key:
+                terms[index] = term
+                break
+        else:
+            terms.append(term)
+        db.execute("UPDATE global_glossary SET terms=? WHERE id=1", (json.dumps(terms, ensure_ascii=False),))
+    return domain or GENERAL_DOMAIN
+
+
 def glossary_for_folder(folder: Path) -> list[dict[str, str]]:
     root = folder.parent.parent
-    return global_glossary(root) if (root / "library.sqlite3").is_file() else []
+    return _effective(root, folder.name) if (root / "library.sqlite3").is_file() else []
 
 
 def effective_glossary(lib, paper_id: str) -> list[dict[str, str]]:
+    """The terms a paper uses: the general dictionary and its domains, as {source, target}."""
     lib.paper(paper_id)
-    return global_glossary(lib.root)
+    return _effective(lib.root, paper_id)
 
 
 # Letters of scripts written with spaces between words, where a term starts and ends on a word
