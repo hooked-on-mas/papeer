@@ -1,4 +1,8 @@
-/** What an automatic sync would do now (GET /api/drive/check, papeer/core/drive_sync.py: check). */
+/**
+ * What an automatic sync would do now (GET /api/drive/check, papeer/core/folder_sync.py: check_connected).
+ * While a sync waits for another PC's data (status "waiting"), the check says "none" until some of it
+ * arrives, then "quiet" (or "pull" once all of it is there): the sync is not run again every minute for nothing.
+ */
 export type SyncCheck = {
   /** none: nothing changed. quiet: publish this PC's changes or record a conflict, without touching the library. pull: take in another PC's library (reloads the page). */
   action: "none" | "quiet" | "pull";

@@ -169,7 +169,7 @@ def waiting_status(state: dict) -> dict | None:
                    + (f"{name} でPapeerを起動して同期してください。" if overdue else ""))
     else:
         message = (f"{name} のデータが24時間以上届いていません。{name} の{SYNC_CLIENT}の同期が止まっていないか確認してください。"
-                   if overdue else f"{name} のデータが届くのを待っています（残り {missing} ファイル）。")
+                   if overdue else f"{name} のデータが届くのを待っています" + (f"（残り {missing} ファイル）。" if missing else "。"))
     if overdue:
         message += "待たずに進めるときは「このPCのデータで続ける」を選んでください。"
     return {"reason": reason, "device": device, "missing": missing, "since": waiting.get("since"),
