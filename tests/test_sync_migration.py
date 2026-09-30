@@ -584,10 +584,10 @@ def test_a_renamed_pc_goes_on_repairing_what_it_published(synced):
     identity_before = a.state()["device_id"]
     [head] = a.view().heads()
     victim = sorted(sync_store.blob_names(a.view().generations[head]))[0]
-    (a.drive / "v2" / "blobs" / victim).unlink()
+    (a.drive / "v2" / "blobs" / sync_store.file_name(victim)).unlink()
     a.name = "a2"  # macOS names itself after the network it is on.
     assert a.sync()["status"] == "synced"
-    assert (a.drive / "v2" / "blobs" / victim).exists()
+    assert (a.drive / "v2" / "blobs" / sync_store.file_name(victim)).exists()
     assert a.state()["device_id"] == identity_before and a.state()["device_name"] == "PC-A2"
     # A copy of a's device folder on another machine is another PC.
     c_state = dict(a.state())

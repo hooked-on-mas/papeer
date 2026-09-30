@@ -42,7 +42,7 @@ def store(tmp_path) -> GenerationStore:
 
 def put(store: GenerationStore, data: bytes, compress: bool) -> str:
     name = local_history.blob_name(digest(data), compress)
-    (store.blobs / name).write_bytes(zlib.compress(data) if compress else data)
+    store.blob_path(name).write_bytes(zlib.compress(data) if compress else data)
     return name
 
 
@@ -80,17 +80,19 @@ def test_a_file_is_stored_as_the_blob_its_content_names(store, tmp_path):
     path.write_bytes(b"memo")
     store.put_content(digest(b"memo") + ".z", path)
     assert zlib.decompress((store.blobs / (digest(b"memo") + ".z")).read_bytes()) == b"memo"
+    # One stored as it is has ".bin" added: Google Drive renames a PDF without an extension.
     store.put_content(digest(b"memo"), path)
-    assert (store.blobs / digest(b"memo")).read_bytes() == b"memo"
+    assert (store.blobs / (digest(b"memo") + ".bin")).read_bytes() == b"memo"
     with pytest.raises(ValueError):
         store.put_content(digest(b"changed") + ".z", path)
-    assert sorted(item.name for item in store.blobs.iterdir()) == sorted([digest(b"memo") + ".z", digest(b"memo")])
+    assert sorted(item.name for item in store.blobs.iterdir())         == sorted([digest(b"memo") + ".z", digest(b"memo") + ".bin"])
+    assert set(store.view().blobs) == {digest(b"memo") + ".z", digest(b"memo")}
 
 
 def test_the_view_leaves_out_temporary_files_and_copies_drive_named_again(store):
     name = put(store, b"pdf", False)
     (store.blobs / f".{name}.123.tmp").write_bytes(b"half")
-    (store.blobs / f"{name} (1)").write_bytes(b"pdf")
+    (store.blobs / f"{name} (1).bin").write_bytes(b"pdf")
     item = generation()
     store.write_generation(item)
     (store.gens / f"{item['id']} (1).gen").write_bytes((store.gens / f"{item['id']}.gen").read_bytes())
@@ -201,7 +203,7 @@ def test_a_generation_is_complete_once_every_blob_it_uses_is_there(store):
     assert len(store.view().missing(item)) == 3 and not store.view().complete(item["id"])
     put(store, b"db", True)
     put(store, b"memo", True)
-    (store.blobs / digest(b"pdf")).write_bytes(b"pd")  # Still arriving: shorter than the size named.
+    store.blob_path(digest(b"pdf")).write_bytes(b"pd")  # Still arriving: shorter than the size named.
     assert store.view().missing(item) == {digest(b"pdf")}
     put(store, b"pdf", False)
     assert store.view().complete(item["id"])
@@ -233,7 +235,7 @@ def test_a_generation_is_recorded_in_the_history_from_the_blobs_it_lacks(store, 
     assert (tmp_path / "state" / "papers" / "x" / "original.pdf").read_bytes() == b"pdf"
     # A damaged blob in the sync folder is not recorded.
     other = generation(files={"papers/y/original.pdf": [digest(b"other"), 5]})
-    (store.blobs / digest(b"other")).write_bytes(b"wrong")
+    store.blob_path(digest(b"other")).write_bytes(b"wrong")
     with pytest.raises(SourceUnreadable):
         local_history.record_manifest(root, other["files"], other["db"], store.blob_path, kind="set_aside",
                                       library_hash=other["hash"], counts=None, schema_version=1)
@@ -457,7 +459,7 @@ def test_blob_removal_is_limited_a_day(monkeypatch):
 def test_the_cleaner_leaves_a_blob_written_again_since_it_looked(store):
     name = put(store, b"old", True)
     view = store.view()
-    path = store.blobs / name
+    path = store.blob_path(name)
     stat = path.stat()
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))  # Another PC wrote it again.
     cleaner = sync_store.Cleaner(store, view)
@@ -549,11 +551,62 @@ def test_a_copy_written_just_now_is_left_for_later(store):
 
 def test_a_blob_here_but_cut_short_is_replaced_by_a_right_copy(store):
     name = put(store, b"content of the blob", False)
-    right = (store.blobs / name).read_bytes()
-    (store.blobs / (name + " (1)")).write_bytes(right)
-    (store.blobs / name).write_bytes(right[:5])  # Cut short (the other size: "missing" to a generation).
+    right = store.blob_path(name).read_bytes()
+    (store.blobs / (name + " (1).bin")).write_bytes(right)
+    store.blob_path(name).write_bytes(right[:5])  # Cut short (the other size: "missing" to a generation).
     assert store.recover({name}) == {name}
-    assert (store.blobs / name).read_bytes() == right
+    assert store.blob_path(name).read_bytes() == right
     # A whole one is left as it is.
-    (store.blobs / (name + " (1)")).write_bytes(right)
+    (store.blobs / (name + " (1).bin")).write_bytes(right)
     assert store.recover({name}) == set()
+
+
+# --- Names Google Drive gives a blob's file ---
+
+def test_a_blob_stored_as_it_is_is_written_with_an_extension(store, tmp_path):
+    """Google Drive for desktop renames a PDF without an extension to "<name>.pdf": a blob stored as it is is
+    written as "<sha256>.bin", whether from this PC's history (named without it) or from the library."""
+    history = tmp_path / "history"
+    history.mkdir()
+    name = local_history.blob_name(digest(b"%PDF-1.7"), False)
+    (history / name).write_bytes(b"%PDF-1.7")
+    store.put_blob(history / name)
+    assert [path.name for path in store.blobs.iterdir()] == [name + ".bin"]
+    assert store.blob_path(name) == store.blobs / (name + ".bin")
+    assert store.view().blobs.keys() == {name} and store.view().copies == {}
+    # Recorded in this PC's history from the sync folder under the history's own name.
+    target = tmp_path / "copied"
+    target.mkdir()
+    local_history.copy_blob(store.blob_path(name), target, name=name)
+    assert [path.name for path in target.iterdir()] == [name]
+
+
+@pytest.mark.parametrize("renamed", ["{} (1).pdf", "{}.pdf", "{}", "{} (2).PDF", "{} (1).bin"])
+def test_a_blob_file_google_drive_renamed_is_put_back_once_checked(store, renamed):
+    name = local_history.blob_name(digest(b"%PDF-1.7 paper"), False)
+    copy = store.blobs / renamed.format(name)
+    copy.write_bytes(b"%PDF-1.7 paper")
+    wrong = store.blobs / f"{digest(b'other')}.pdf"
+    wrong.write_bytes(b"not it")
+    view = store.view()
+    assert view.blobs == {} and set(view.copies) == {name, digest(b"other")}
+    item = generation(files={"papers/x/original.pdf": [digest(b"%PDF-1.7 paper"), 14]})
+    assert name in view.missing(item)
+    assert store.recover({name, digest(b"other")}) == {name}
+    assert not copy.exists() and store.blob_path(name).read_bytes() == b"%PDF-1.7 paper"
+    assert name not in store.view().missing(item) and wrong.exists()
+
+
+def test_a_renamed_blob_file_is_tidied_as_a_copy(store):
+    name = put(store, b"%PDF-1.7 paper", False)
+    same = store.blobs / f"{name} (1).pdf"
+    same.write_bytes(b"%PDF-1.7 paper")
+    lone = local_history.blob_name(digest(b"%PDF-1.7 alone"), False)
+    (store.blobs / f"{lone}.pdf").write_bytes(b"%PDF-1.7 alone")
+    wrong = store.blobs / f"{digest(b'other')}.pdf"
+    wrong.write_bytes(b"not it")
+    old = seconds(NOW - timedelta(days=2))
+    for path in store.blobs.iterdir():
+        os.utime(path, (old, old))
+    sync_store.Cleaner(store, store.view()).leftovers(None, NOW)
+    assert sorted(path.name for path in store.blobs.iterdir()) == sorted([name + ".bin", lone + ".bin", wrong.name])

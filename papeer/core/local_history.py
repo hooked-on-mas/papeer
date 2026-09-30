@@ -196,6 +196,13 @@ def compressed(path: str) -> bool:
 
 
 def blob_name(digest: str, compress: bool) -> str:
+    """The name of a blob in this history: its content's SHA-256, with ".z" when stored compressed.
+
+    It is also the name the sync folder's format (sync_store) knows a blob by, but there a blob stored as
+    it is is written as "<name>.bin" (sync_store.file_name): Google Drive for desktop renames a PDF without an
+    extension to "<name>.pdf". This history is kept on this PC only, never in a synced folder, so its
+    files keep the plain names: renaming them would leave the states recorded before without their blobs.
+    """
     return digest + (".z" if compress else "")
 
 
@@ -802,13 +809,15 @@ def stored_content(path: Path, cancel=None, limit: int | None = None, *, expecte
     content.finish()
 
 
-def copy_blob(source: Path, folder: Path, cancel=None, limit: int | None = None) -> int:
-    """Copy the blob file `source` as it is stored into `folder` (same name), checked against its name while
-    it is copied; the content's size. Written to a temporary file renamed into place only when it matches,
-    over a blob of that name already there (a damaged one is so mended). A source that cannot be read
-    raises SourceUnreadable, one that does not match (or holds more than `limit`) BlobDamaged, and nothing
-    is written either way."""
-    name = source.name
+def copy_blob(source: Path, folder: Path, cancel=None, limit: int | None = None, *, name: str | None = None,
+              file_name: str | None = None) -> int:
+    """Copy the blob file `source` as it is stored into `folder`, checked against its blob name `name` (by
+    default the source's file name) while it is copied, as the file `file_name` (by default `name`); the
+    content's size. The sync folder names a file otherwise than this history (sync_store.file_name).
+    Written to a temporary file renamed into place only when it matches, over a blob of that name already
+    there (a damaged one is so mended). A source that cannot be read raises SourceUnreadable, one that does
+    not match (or holds more than `limit`) BlobDamaged, and nothing is written either way."""
+    name = name or source.name
     if not re.fullmatch(r"[0-9a-f]{64}(\.z)?", name):
         raise BlobDamaged()
     content = _Content(name, limit)
@@ -836,7 +845,7 @@ def copy_blob(source: Path, folder: Path, cancel=None, limit: int | None = None)
             os.fsync(output.fileno())
         content.finish()
         size = content.size
-        move_file(temporary, folder / name)
+        move_file(temporary, folder / (file_name or name))
         return size
     finally:
         temporary.unlink(missing_ok=True)
@@ -884,7 +893,7 @@ def manifest(root: Path, entry_id: str) -> dict | None:
 def record_manifest(root: Path, files: dict, db: dict, source, *, kind: str, library_hash: str,
                     counts: dict | None, schema_version: int, cancel=None, **meta) -> str:
     """Record a state given as a manifest whose blobs lie, as stored, where `source(name)` says (another PC's
-    generation in the sync folder); the new entry's ID.
+    generation in the sync folder, where the file may be named otherwise); the new entry's ID.
 
     Only the blobs this history lacks are copied, each checked against its name (copy_blob). A blob that is
     missing there, damaged, or a path that must not be written raises SourceUnreadable; writing this PC's
@@ -910,7 +919,7 @@ def record_manifest(root: Path, files: dict, db: dict, source, *, kind: str, lib
         limits = blob_limits(wanted)
         for name in needed:
             _check(cancel)
-            copy_blob(paths[name], blobs.folder, cancel, limits.get(name))
+            copy_blob(paths[name], blobs.folder, cancel, limits.get(name), name=name)
             blobs.names.add(name)
         entry = _new_entry(found, kind, library_hash, counts, schema_version, db, files, meta, verified=False)
         _check(cancel)

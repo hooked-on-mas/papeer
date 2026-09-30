@@ -212,9 +212,9 @@ def _wait(root: Path, store: GenerationStore, view: View, state: dict, *, reason
                           # The damaged blobs as they were: a change to one is worth another try (check).
                           "blobs": {name: list(view.blobs[name]) for name in sorted(bad) if name in view.blobs}},
                  conflicts=[], error=None, review=None)
-    # The copies Google Drive named "<blob> (1)" of what is waited for, as they were (check: only a change
-    # to them is worth another try; one found not to hold the blob is not read again at each check). One that
-    # could not be read is left out: it is looked at again as soon as it can be.
+    # The copies Google Drive renamed ("<blob> (1)", "<sha256>.pdf") of what is waited for, as they were
+    # (check: only a change to them is worth another try; one found not to hold the blob is not read again at
+    # each check). One that could not be read is left out: it is looked at again as soon as it can be.
     names = _lacking(view, ids) | set(bad)
     unreadable = store.unreadable_copies(view, names)
     state["waiting"]["copies"] = {copy: stat for copy, stat in _copies_of(view, names).items()
@@ -314,8 +314,7 @@ class _Sources:
         if history is not None:
             sources.append(("history", lambda: _bounded(local_history.stored_content(history, self.cancel), limit)))
         if name in self.view.blobs:
-            sources.append(("remote", lambda: _bounded(
-                local_history.stored_content(self.store.blob_path(name), self.cancel), limit)))
+            sources.append(("remote", lambda: _bounded(self.store.content(name, self.cancel), limit)))
         for kind, source in sources:
             output.seek(start)
             output.truncate()
@@ -482,10 +481,16 @@ def _repair(root: Path, store: GenerationStore, view: View, state: dict, local_f
             progress) -> int:
     """Write again what this PC's own generations (its base, and the heads it made) lack in the folder, or
     what another PC reported damaged among what they use and this PC finds so, from this PC; how many
-    blobs were written. A reported blob read whole is remembered as it was ("checked_blobs", saved with the
-    state), so it is not read again at each sync while the report stays."""
+    blobs were written or put back. A reported blob read whole is remembered as it was ("checked_blobs",
+    saved with the state), so it is not read again at each sync while the report stays."""
     own = _own(view, state)
     wanted = set().union(*(view.missing(generation) for generation in own)) if own else set()
+    # One here only as a copy Google Drive renamed ("<sha256>.pdf", "<name> (1)") is put back once checked,
+    # rather than written again beside the copy at each sync.
+    recovered = len(_recover_names(store, wanted, cancel)) if wanted & set(view.copies) else 0
+    if recovered:
+        view = store.view()
+        wanted = set().union(*(view.missing(generation) for generation in own))
     limits: dict[str, int] = {}
     for generation in own:
         limits.update(local_history.blob_limits(generation))
@@ -498,7 +503,7 @@ def _repair(root: Path, store: GenerationStore, view: View, state: dict, local_f
         if name in wanted:
             continue
         try:
-            for _piece in _bounded(local_history.stored_content(store.blob_path(name), cancel), limits.get(name)):
+            for _piece in _bounded(store.content(name, cancel), limits.get(name)):
                 pass
         except BlobDamaged:
             wanted.add(name)
@@ -508,7 +513,7 @@ def _repair(root: Path, store: GenerationStore, view: View, state: dict, local_f
         kept[name] = seen
     state["checked_blobs"] = kept
     if not wanted:
-        return 0
+        return recovered
     progress("同期フォルダーの欠けたデータを書き直しています…")
     library = _library_sources(root, local_files)
     written = 0
@@ -519,7 +524,7 @@ def _repair(root: Path, store: GenerationStore, view: View, state: dict, local_f
                 written += _supply(root, store, name, library, cancel, limits.get(name))
             except OSError:
                 continue  # Writing to the sync folder failed: the next sync tries again.
-    return written
+    return written + recovered
 
 
 def _recover_names(store: GenerationStore, names: set[str], cancel) -> set[str]:
@@ -531,7 +536,8 @@ def _recover_names(store: GenerationStore, names: set[str], cancel) -> set[str]:
 
 def _recover(store: GenerationStore, view: View, incomplete: list[str], heads: dict, cancel) -> set[str]:
     """Put back the blobs the incomplete heads lack that are here only as a copy Google Drive renamed
-    ("<name> (1)"): another PC's clean-up may have removed the right name, taking it for the copy."""
+    ("<name> (1)", or "<sha256>.pdf": sync_store.View.copies): another PC's clean-up may have removed the
+    right name, taking it for the copy, and Google Drive may rename a file itself."""
     names = set().union(*(view.missing(heads[identity]) for identity in incomplete if identity in heads))
     if not names & set(view.copies):
         return set()
@@ -1040,8 +1046,8 @@ def check(root: Path, store: GenerationStore) -> dict:
     waiting = state.get("waiting") if isinstance(state.get("waiting"), dict) else None
     blobs = waiting.get("blobs") if waiting and isinstance(waiting.get("blobs"), dict) else {}
     rewritten = any(list(view.blobs.get(name, ())) != value for name, value in blobs.items())
-    # A copy Google Drive renamed ("<blob> (1)") of what is waited for, new or changed since the wait
-    # began: the sync puts it back when it holds the blob.
+    # A copy Google Drive renamed ("<blob> (1)", "<sha256>.pdf") of what is waited for, new or changed since
+    # the wait began: the sync puts it back when it holds the blob.
     copies = waiting.get("copies") if waiting and isinstance(waiting.get("copies"), dict) else {}
     rewritten = rewritten or _copies_of(view, _lacking(view, ids) | set(blobs)) != copies
     still = any(not view.complete(identity) for identity in ids) or (where == "unknown" and not _expired(state)) \

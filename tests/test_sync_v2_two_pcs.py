@@ -19,6 +19,7 @@ import time
 import uuid
 import zlib
 
+import pymupdf
 import pytest
 
 from papeer.core import drive_sync, drive_sync_v2 as v2, local_history, sync_store
@@ -483,10 +484,10 @@ def test_a_blob_that_cannot_be_read_for_a_moment_is_tried_again_not_reported(pcs
     name = local_history.blob_name(hashlib.sha256(b"summary two").hexdigest(), True)
     original = local_history.stored_content
 
-    def offline(path, cancel=None, limit=None):
+    def offline(path, cancel=None, limit=None, **kwargs):
         if path.name == name and path.is_relative_to(b.drive):
             raise local_history.SourceUnreadable() from OSError("Google Drive is offline for a moment")
-        return original(path, cancel, limit)
+        return original(path, cancel, limit, **kwargs)
 
     monkeypatch.setattr(local_history, "stored_content", offline)
     result = b.sync()
@@ -508,10 +509,10 @@ def test_a_blob_of_the_history_is_moved_aside_only_when_damaged(pcs, monkeypatch
     view = sync_store.View()  # Nothing in the sync folder: the history is the only source.
     original = local_history.stored_content
 
-    def held(path, cancel=None, limit=None):
+    def held(path, cancel=None, limit=None, **kwargs):
         if path.parent == folder / "blobs":
             raise local_history.SourceUnreadable() from PermissionError("held by a virus scan")
-        return original(path, cancel, limit)
+        return original(path, cancel, limit, **kwargs)
 
     with b:
         sources = v2._Sources(b.root, b.store(), view, {}, None)
@@ -535,10 +536,10 @@ def test_publishing_over_a_history_blob_held_for_a_moment_writes_it_from_the_lib
     name = local_history.blob_name(hashlib.sha256(b"summary two").hexdigest(), True)
     copy_blob = local_history.copy_blob
 
-    def held(source, *args):
+    def held(source, *args, **kwargs):
         if source.name == name:
             raise local_history.SourceUnreadable() from PermissionError("held by a virus scan")
-        return copy_blob(source, *args)
+        return copy_blob(source, *args, **kwargs)
 
     monkeypatch.setattr(local_history, "copy_blob", held)
     assert a.sync()["status"] == "synced" and name in a.files("blobs")
@@ -554,10 +555,10 @@ def reads_of_the_sync_folder(pc: PC, monkeypatch) -> list[str]:
     reads = []
     original = local_history.stored_content
 
-    def counting(path, cancel=None, limit=None):
+    def counting(path, cancel=None, limit=None, **kwargs):
         if path.is_relative_to(pc.drive):
-            reads.append(path.name)
-        return original(path, cancel, limit)
+            reads.append(kwargs.get("expected") or path.name)  # The blob's name (its file's may differ).
+        return original(path, cancel, limit, **kwargs)
 
     monkeypatch.setattr(local_history, "stored_content", counting)
     return reads
@@ -1106,6 +1107,75 @@ def test_a_right_copy_beside_a_blob_that_is_damaged_is_put_back(pcs):
     if result["status"] == "waiting":  # The copy is taken in by the next sync.
         result = b.sync()
     assert result["status"] == "synced" and b.note(identity) == "second"
+
+
+# --- Names Google Drive gives files (checked on Google Drive) ---
+
+def drive_renames_pdfs(pc: PC) -> list[str]:
+    """What Google Drive for desktop does to a PDF file without an extension a few seconds after uploading it
+    (and to nothing else: not a file with an extension, not other contents): renames it "<name>.pdf", or
+    "<name> (1).pdf" when that name is taken. The names given."""
+    renamed = []
+    folder = pc.drive / "v2" / "blobs"
+    for path in sorted(folder.iterdir()):
+        if is_temporary(path) or "." in path.name or not path.read_bytes().startswith(b"%PDF"):
+            continue
+        target, n = path.with_name(path.name + ".pdf"), 0
+        while target.exists():
+            n += 1
+            target = path.with_name(f"{path.name} ({n}).pdf")
+        path.rename(target)
+        renamed.append(target.name)
+    return renamed
+
+
+def another_pdf(path: Path) -> Path:
+    with pymupdf.open() as pdf:
+        pdf.new_page().insert_text((40, 70), "Another paper")
+        pdf.save(path)
+    return path
+
+
+def test_a_pdf_is_written_so_google_drive_leaves_its_name(pcs, tmp_path):
+    a, b, _identity = pcs
+    with a as lib:
+        lib.import_pdf(another_pdf(tmp_path / "another.pdf"))
+    assert a.sync()["status"] == "synced"
+    assert drive_renames_pdfs(a) == []
+    transfer(a, b)
+    result = b.sync()
+    assert result["status"] == "synced" and result["reloaded"] is True
+    assert a.fingerprint() == b.fingerprint()
+    # Nothing is written again at the next syncs, so no copies pile up.
+    blobs = a.files("blobs")
+    for _round in range(2):
+        assert a.sync()["status"] == "synced" and drive_renames_pdfs(a) == []
+    assert a.files("blobs") == blobs and not any(" (" in name for name in blobs)
+
+
+def test_a_blob_file_google_drive_gave_another_extension_is_put_back(pcs, tmp_path):
+    """Should Google Drive rename a blob's file all the same ("<sha256>.pdf", or "<sha256> (1).pdf" beside a
+    file of that name), each PC puts it back once its content is checked: the PC taking it in does not wait
+    for ever, and the PC that wrote it does not write it again at each sync."""
+    a, b, identity = pcs
+    before = a.files("blobs")
+    with a as lib:
+        lib.import_pdf(another_pdf(tmp_path / "another.pdf"))
+    assert a.sync()["status"] == "synced"
+    [file] = [name for name in a.files("blobs") - before if not name.endswith(".z")]
+    digest = file.split(".")[0]
+    transfer(a, b, only=lambda rel: rel != "blobs/" + file)
+    shutil.copy2(a.drive / "v2" / "blobs" / file, b.drive / "v2" / "blobs" / f"{digest}.pdf")
+    result = b.sync()
+    assert result["status"] == "synced" and result["reloaded"] is True and a.fingerprint() == b.fingerprint()
+    assert file in b.files("blobs") and not any(".pdf" in name for name in b.files("blobs"))
+    # On a's side, renamed beside another file of that name: put back, not written again.
+    (a.drive / "v2" / "blobs" / f"{digest}.pdf").write_bytes(b"another file")
+    (a.drive / "v2" / "blobs" / file).rename(a.drive / "v2" / "blobs" / f"{digest} (1).pdf")
+    assert a.check() == "quiet"
+    a.edit(identity, note="a changed")
+    assert a.sync()["status"] == "synced"
+    assert file in a.files("blobs") and f"{digest} (1).pdf" not in a.files("blobs")
 
 
 # --- The first format is left as it is ---

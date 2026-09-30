@@ -5,9 +5,11 @@ Inside the folder the user chose for folder sync (beside the revisions of the fi
     v2/format.json          the format of what follows (FORMAT), written once
     v2/gens/<id>.gen        a generation: the library at one sync, as a manifest (gzip-compressed JSON).
                             Never rewritten once written.
-    v2/blobs/<sha256>[.z]   each content once, named and compressed as in this PC's history (local_history):
-                            PDFs and images as they are, the rest zlib-compressed (".z"), the database as
-                            chunks of local_history.CHUNK bytes
+    v2/blobs/<sha256>.bin   each content once, compressed as in this PC's history (local_history): PDFs and
+    v2/blobs/<sha256>.z     images as they are (".bin"), the rest zlib-compressed (".z"), the database as
+                            chunks of local_history.CHUNK bytes. A blob is known by its name in that history
+                            ("<sha256>" or "<sha256>.z", local_history.blob_name); its file here always has an
+                            extension (file_name), as Google Drive for desktop renames a PDF without one
     v2/devices/<id>.json    one per PC, written by that PC only: the generation it last synced on (its base)
                             and the blobs it found damaged
 
@@ -28,7 +30,7 @@ the first format to it is folder_sync's.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -68,7 +70,34 @@ DEVICE_LIMIT = 1024**2
 
 _ID = re.compile(r"[0-9a-f]{32}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+# A blob's name, as this PC's history names it (local_history.blob_name): what a generation's manifest,
+# View.blobs and a device file's "bad_blobs" speak of.
 _BLOB = re.compile(r"[0-9a-f]{64}(\.z)?")
+# A blob stored as it is is written as "<name>.bin": Google Drive for desktop renames a PDF file without an
+# extension to "<name>.pdf" (or "<name> (1).pdf" when that name is taken) a few seconds after uploading it,
+# but leaves one with an extension, and one of other contents, as it is (checked on Google Drive).
+PLAIN_SUFFIX = ".bin"
+# A file of the blobs folder: "<sha256>", then " (1)" when Google Drive named it as a second file of one name,
+# then an extension, which Google Drive may have given it (see _blob_file).
+_BLOB_FILE = re.compile(r"([0-9a-f]{64})(?: \((\d+)\))?(\.[A-Za-z0-9]{1,16})?")
+
+
+def file_name(name: str) -> str:
+    """The file in the blobs folder of the blob `name` (local_history.blob_name)."""
+    return name if name.endswith(".z") else name + PLAIN_SUFFIX
+
+
+def _blob_file(file: str) -> tuple[str, bool] | None:
+    """(the blob a file of the blobs folder stands for, whether it is that blob's own file); None for another
+    file. A file not the blob's own is a copy: named "<file> (1)" by Google Drive, or given another extension
+    (a PDF left without one, which "<sha256>.pdf" may hold), and put in place once found to hold the blob
+    (GenerationStore.recover, Cleaner.leftovers). One ending ".z" holds a compressed blob, any other the
+    content as it is."""
+    match = _BLOB_FILE.fullmatch(file)
+    if match is None:
+        return None
+    name = match[1] + (".z" if match[3] == ".z" else "")
+    return name, match[2] is None and file == file_name(name)
 
 NEWER_FORMAT = "この同期データは新しい形式（{}）で保存されています。Papeerを最新版に更新してください。"
 
@@ -209,13 +238,13 @@ class View:
     # Generation files that could not be read (damaged, or still being replaced), and those of a newer format.
     unreadable: set[str] = field(default_factory=set)
     newer: dict[str, object] = field(default_factory=dict)
-    # Each blob present, with its size and modification time.
+    # Each blob present (by its name, not its file's: see file_name), with its size and modification time.
     blobs: dict[str, tuple[int, int]] = field(default_factory=dict)
     devices: dict[str, dict] = field(default_factory=dict)
     # When it was looked at (None: never compared with the time, as in a view made by hand).
     now: datetime | None = None
-    # The copies Google Drive named "<blob> (1)", by the blob name they stand for, each with its size and
-    # modification time (see GenerationStore.recover).
+    # The copies Google Drive named "<file> (1)" or gave another extension, by the blob name they stand for,
+    # each file with its size and modification time (see _blob_file, GenerationStore.recover).
     copies: dict[str, dict[str, tuple[int, int]]] = field(default_factory=dict)
 
     def ids(self) -> set[str]:
@@ -394,11 +423,13 @@ class GenerationStore:
             for key in [key for key in _CACHE if Path(key[0]).parent == self.gens and key not in seen]:
                 del _CACHE[key]
         for entry in _scan(self.blobs):
-            if _BLOB.fullmatch(entry.name):
-                stat = entry.stat()
-                result.blobs[entry.name] = (stat.st_size, stat.st_mtime_ns)
-            elif (match := _DUPLICATE.fullmatch(entry.name)) and _BLOB.fullmatch(name := match[1] + (match[3] or "")):
-                stat = entry.stat()
+            if (parsed := _blob_file(entry.name)) is None:
+                continue
+            name, own = parsed
+            stat = entry.stat()
+            if own:
+                result.blobs[name] = (stat.st_size, stat.st_mtime_ns)
+            else:
                 result.copies.setdefault(name, {})[entry.name] = (stat.st_size, stat.st_mtime_ns)
         for entry in _scan(self.devices):
             name = entry.name
@@ -410,21 +441,21 @@ class GenerationStore:
 
     def recover(self, names: Iterable[str], cancel=None) -> set[str]:
         """Put in place of each blob of `names` that is missing, or here but not whole (the rule of the
-        clean-up's copies), a copy Google Drive named "<name> (1)" whose content is that blob's: when a PC's
-        clean-up removed the file of the right name as a copy, only the renamed one may be left. The names
-        put back."""
+        clean-up's copies), a copy (View.copies) whose content is that blob's: when a PC's clean-up removed
+        the file of the right name as a copy, only the renamed one may be left, and Google Drive may have
+        renamed the file itself ("<sha256>.pdf"). The names put back."""
         view = self.view()
         result = set()
         for name in names:
             copies = sorted(view.copies.get(name, {}))
-            if not copies or (name in view.blobs and _intact(self.blobs / name, name)):
+            if not copies or (name in view.blobs and _intact(self.blob_path(name), name)):
                 continue
             for copy in copies:
                 if cancel is not None:
                     check_cancel(cancel)
                 if _intact(self.blobs / copy, name):
                     try:
-                        move_file(self.blobs / copy, self.blobs / name)
+                        move_file(self.blobs / copy, self.blob_path(name))
                     except FileNotFoundError:
                         continue  # Removed meanwhile.
                     result.add(name)
@@ -432,22 +463,29 @@ class GenerationStore:
         return result
 
     def unreadable_copies(self, view: View, names: Iterable[str]) -> set[str]:
-        """The copies Google Drive named "<name> (1)" of `names` that cannot be read now (not those found to hold
-        something else): worth reading again at the next sync, whatever they were."""
+        """The copies (View.copies) of `names` that cannot be read now (not those found to hold something
+        else): worth reading again at the next sync, whatever they were."""
         return {copy for name in names for copy in view.copies.get(name, {})
                 if _content_state(self.blobs / copy, name) == "unreadable"}
 
     def blob_path(self, name: str) -> Path:
+        """The file of the blob `name` (local_history.blob_name) in the blobs folder (file_name)."""
         if not _BLOB.fullmatch(name):
             raise ValueError("同期データの名前が不正です。")
-        return self.blobs / name
+        return self.blobs / file_name(name)
+
+    def content(self, name: str, cancel=None) -> Iterator[bytes]:
+        """The content of the blob `name`, checked against that name (local_history.stored_content)."""
+        return local_history.stored_content(self.blob_path(name), cancel, expected=name)
 
     # --- Writing ---
 
     def put_blob(self, source: Path, cancel=None, limit: int | None = None) -> None:
-        """Copy a blob of this PC's history (its file `source`) as it is stored, checked against its name
-        (local_history.copy_blob: nothing is written unless it matches)."""
-        local_history.copy_blob(source, self.blobs, cancel, limit)
+        """Copy a blob of this PC's history (its file `source`, named local_history.blob_name) as it is
+        stored, checked against its name, to its file here (file_name; local_history.copy_blob: nothing is
+        written unless it matches)."""
+        local_history.copy_blob(source, self.blobs, cancel, limit, name=source.name,
+                                file_name=file_name(source.name))
 
     def put_content(self, name: str, path: Path, cancel=None) -> None:
         """Store the file `path` (of the library) as the blob `name`, compressed when the name says so;
@@ -469,7 +507,7 @@ class GenerationStore:
                 os.fsync(output.fileno())
             if digest.hexdigest() != name.removesuffix(".z"):
                 raise ValueError("記録中にライブラリのファイルが変わりました。もう一度同期してください。")
-            move_file(temporary, self.blobs / name)
+            move_file(temporary, self.blob_path(name))
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -553,7 +591,8 @@ BLOB_GRACE = timedelta(days=3)
 TEMPORARY_GRACE = timedelta(days=1)
 BLOB_REMOVE_LIMIT = 2000
 BLOB_REMOVE_BYTES = 2 * 1024**3
-# "<name> (1)", "<name> (2).gen": what Google Drive names a second file of one name in one folder.
+# "<name> (1)", "<name> (2).gen": what Google Drive names a second file of one name in one folder. For the
+# blobs folder, _blob_file tells the copies (a blob's file is renamed in other ways as well).
 _DUPLICATE = re.compile(r"(.+) \((\d+)\)(\.[a-z]+)?")
 
 
@@ -652,7 +691,7 @@ class Cleaner:
     def blobs(self, names: Iterable[str]) -> None:
         for name in names:
             self._check()
-            path = self.store.blobs / name
+            path = self.store.blob_path(name)
             try:
                 stat = path.stat()
             except FileNotFoundError:
@@ -664,9 +703,9 @@ class Cleaner:
 
     def leftovers(self, own_device: str | None, now: datetime) -> None:
         """Temporary files a forced exit left (older than TEMPORARY_GRACE), and the copies Google Drive names
-        "<name> (1)": removed when the file of the right name holds the same, put in its place when that is
-        missing (or, for a blob, damaged) and the copy is right. Of device files, this PC's own only:
-        another PC's copies are that PC's to tidy."""
+        "<name> (1)" (for a blob, any copy View.copies lists, as "<sha256>.pdf"): removed when the file of
+        the right name holds the same, put in its place when that is missing (or, for a blob, damaged) and
+        the copy is right. Of device files, this PC's own only: another PC's copies are that PC's to tidy."""
         oldest = (now - TEMPORARY_GRACE).timestamp()
         for folder in (self.store.root, self.store.gens, self.store.blobs, self.store.devices):
             try:
@@ -684,29 +723,35 @@ class Cleaner:
                         continue
                 except FileNotFoundError:
                     continue
-                match = _DUPLICATE.fullmatch(path.name)
+                if folder == self.store.blobs:
+                    parsed = _blob_file(path.name)
+                    name = parsed[0] if parsed is not None and not parsed[1] else None
+                else:
+                    match = _DUPLICATE.fullmatch(path.name)
+                    name = match[1] + (match[3] or "") if match else None
                 try:
                     # Written a while ago only: two PCs tidying the same pair at once might otherwise each
                     # remove the file the other keeps.
                     settled = path.stat().st_mtime < oldest
                 except FileNotFoundError:
                     continue
-                if match and folder != self.store.root and settled:
+                if name is not None and folder != self.store.root and settled:
                     try:
-                        self._duplicate(folder, path, match[1] + (match[3] or ""), own_device)
+                        self._duplicate(folder, path, name, own_device)
                     except OSError:
                         continue  # Held, or removed meanwhile: the next clean-up looks again.
 
     def _duplicate(self, folder: Path, path: Path, name: str, own_device: str | None) -> None:
-        target = folder / name
+        """Tidy the copy `path` of `name` (for a blob, its blob name; else the file name it stands for)."""
         if folder == self.store.blobs:
-            if not _BLOB.fullmatch(name):
-                return
+            target = self.store.blob_path(name)
             if _intact(target, name):
                 self._unlink(path)
             elif _intact(path, name):
                 move_file(path, target)
-        elif folder == self.store.gens:
+            return
+        target = folder / name
+        if folder == self.store.gens:
             if not (name.endswith(".gen") and _ID.fullmatch(name[:-4])):
                 return
             if target.is_file() and target.read_bytes() == path.read_bytes():
