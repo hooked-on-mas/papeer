@@ -6040,6 +6040,7 @@
     "/api/drive": {
       "get": {
         "summary": "Drive Status",
+        "description": "The connection and the last sync (folder_sync.status: in either format).",
         "operationId": "drive_status_api_drive_get",
         "parameters": [
           {
@@ -6593,6 +6594,201 @@
                 "schema": {
                   "$ref": "#/components/schemas/JobStarted"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/drive/format": {
+      "get": {
+        "summary": "Drive Format",
+        "description": "The sync folder's format, and what the first format left there (folder_sync.format_status).",
+        "operationId": "drive_format_api_drive_format_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/drive/migrate": {
+      "post": {
+        "summary": "Migrate",
+        "description": "Move the sync folder to the new format, once the user agreed (folder_sync.migrate): a sync job whose\nresult also says whether the folder moved (\"migrated\"). What stops it (a conflict, a failure, the app\nclosing) goes on at the next sync, but the user's \u4e2d\u6b62 gives it up (abandoned_when_stopped).",
+        "operationId": "migrate_api_drive_migrate_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/drive/legacy/remove": {
+      "post": {
+        "summary": "Remove Drive Legacy",
+        "description": "Remove the first format's revisions the user confirmed (their IDs as GET /api/drive/format listed them\nunder \"removable\"); those no longer removable are left.",
+        "operationId": "remove_drive_legacy_api_drive_legacy_remove_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DriveLegacyRemoveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -8120,6 +8316,22 @@
         ],
         "title": "CreateCollectionRequest"
       },
+      "DriveLegacyRemoveRequest": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "title": "DriveLegacyRemoveRequest"
+      },
       "DriveSyncResult": {
         "properties": {
           "status": {
@@ -8128,7 +8340,8 @@
               "synced",
               "deferred",
               "conflict",
-              "review"
+              "review",
+              "waiting"
             ],
             "title": "Status"
           },
@@ -8189,6 +8402,43 @@
               }
             ],
             "title": "Review"
+          },
+          "waiting": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting"
+          },
+          "heads": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heads"
+          },
+          "migrated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Migrated"
           }
         },
         "additionalProperties": true,
@@ -8197,7 +8447,7 @@
           "status"
         ],
         "title": "DriveSyncResult",
-        "description": "drive_sync.sync: \"synced\", or why it did not (yet): \"deferred\", \"conflict\", \"review\"."
+        "description": "folder_sync.sync_connected (drive_sync.sync, drive_sync_v2.sync) and folder_sync.migrate: \"synced\", or\nwhy it did not (yet): \"deferred\", \"conflict\", \"review\", \"waiting\" (the new format: another PC's data is\nstill arriving)."
       },
       "ExportRequest": {
         "properties": {

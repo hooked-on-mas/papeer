@@ -1148,7 +1148,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Drive Status */
+        /**
+         * Drive Status
+         * @description The connection and the last sync (folder_sync.status: in either format).
+         */
         get: operations["drive_status_api_drive_get"];
         /** Options */
         put: operations["options_api_drive_put"];
@@ -1272,6 +1275,69 @@ export interface paths {
         put?: never;
         /** Sync */
         post: operations["sync_api_drive_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/drive/format": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Drive Format
+         * @description The sync folder's format, and what the first format left there (folder_sync.format_status).
+         */
+        get: operations["drive_format_api_drive_format_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/drive/migrate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Migrate
+         * @description Move the sync folder to the new format, once the user agreed (folder_sync.migrate): a sync job whose
+         *     result also says whether the folder moved ("migrated"). What stops it (a conflict, a failure, the app
+         *     closing) goes on at the next sync, but the user's 中止 gives it up (abandoned_when_stopped).
+         */
+        post: operations["migrate_api_drive_migrate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/drive/legacy/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove Drive Legacy
+         * @description Remove the first format's revisions the user confirmed (their IDs as GET /api/drive/format listed them
+         *     under "removable"); those no longer removable are left.
+         */
+        post: operations["remove_drive_legacy_api_drive_legacy_remove_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1791,16 +1857,23 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** DriveLegacyRemoveRequest */
+        DriveLegacyRemoveRequest: {
+            /** Ids */
+            ids: string[];
+        };
         /**
          * DriveSyncResult
-         * @description drive_sync.sync: "synced", or why it did not (yet): "deferred", "conflict", "review".
+         * @description folder_sync.sync_connected (drive_sync.sync, drive_sync_v2.sync) and folder_sync.migrate: "synced", or
+         *     why it did not (yet): "deferred", "conflict", "review", "waiting" (the new format: another PC's data is
+         *     still arriving).
          */
         DriveSyncResult: {
             /**
              * Status
              * @enum {string}
              */
-            status: "synced" | "deferred" | "conflict" | "review";
+            status: "synced" | "deferred" | "conflict" | "review" | "waiting";
             /**
              * Reloaded
              * @default false
@@ -1822,6 +1895,14 @@ export interface components {
             review?: {
                 [key: string]: unknown;
             } | null;
+            /** Waiting */
+            waiting?: {
+                [key: string]: unknown;
+            } | null;
+            /** Heads */
+            heads?: string[] | null;
+            /** Migrated */
+            migrated?: boolean | null;
         } & {
             [key: string]: unknown;
         };
@@ -6500,6 +6581,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    drive_format_api_drive_format_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    migrate_api_drive_migrate_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_drive_legacy_api_drive_legacy_remove_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DriveLegacyRemoveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

@@ -31,6 +31,8 @@ class JobManager:
         self._jobs: dict[str, JobInfo] = {}
         self._finished: deque[str] = deque()
         self._events: dict[str, threading.Event] = {}
+        # The running jobs the user stopped (their 中止), as opposed to those stopped as the app closes.
+        self._stopped_by_user: set[str] = set()
         self._threads: dict[str, threading.Thread] = {}
         self._listeners: set[asyncio.Queue] = set()
         self._loop = event_loop
@@ -71,7 +73,9 @@ class JobManager:
         with self._lock:
             return self._jobs.get(job_id)
 
-    def cancel_job(self, job_id: str) -> bool:
+    def cancel_job(self, job_id: str, *, by_user: bool = True) -> bool:
+        """Ask a running job to stop. by_user=False: the app is closing (cancel-all, /shutdown), which a job
+        that would otherwise give up what it began may tell apart (stopped_by_user)."""
         with self._lock:
             event = self._events.get(job_id)
             job = self._jobs.get(job_id)
@@ -79,14 +83,21 @@ class JobManager:
                 return False
             event.set()
             job.cancelled = True
+            if by_user:
+                self._stopped_by_user.add(job_id)
             return True
+
+    def stopped_by_user(self, cancel: threading.Event) -> bool:
+        """Whether the running job with this cancel event was stopped by the user (its 中止), not by the app closing."""
+        with self._lock:
+            return any(event is cancel and job_id in self._stopped_by_user for job_id, event in self._events.items())
 
     def close(self) -> int:
         """Refuse new jobs from now on and ask the running ones to stop; returns how many were running."""
         with self._lock:
             self._closed = True
             running = [job_id for job_id, job in self._jobs.items() if job.running]
-        return sum(self.cancel_job(job_id) for job_id in running)
+        return sum(self.cancel_job(job_id, by_user=False) for job_id in running)
 
     def wait_idle(self, timeout: float) -> bool:
         """Wait until no job thread is left running; False if some are still running after `timeout` seconds."""
@@ -221,6 +232,7 @@ class JobManager:
     def _finish(self, job_id: str) -> None:
         """Keep a job that has just ended among the finished ones, forgetting the oldest beyond FINISHED_JOBS_KEPT."""
         self._events.pop(job_id, None)
+        self._stopped_by_user.discard(job_id)
         self._threads.pop(job_id, None)
         self._finished.append(job_id)
         while len(self._finished) > FINISHED_JOBS_KEPT:

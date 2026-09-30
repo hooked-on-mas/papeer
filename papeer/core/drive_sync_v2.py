@@ -1,7 +1,7 @@
 """Folder sync in the new format (sync_store): what drive_sync.sync does, over generations and blobs.
 
-Not used by the app yet: sync_connected and check_connected still run the first format (drive_sync), and
-the migration of a later stage switches a sync folder over. Until then this module serves its tests only.
+The app runs it for a sync folder moved to the new format (folder_sync, which also moves one when the user
+asks); a folder not moved yet is synced in the first format (drive_sync).
 
 The decision is drive_sync.sync's, three-way as there: this PC's base (the generation it last synced on),
 whether this library changed since (its hash), and the heads of the sync folder. What differs:
@@ -11,14 +11,16 @@ whether this library changed since (its hash), and the heads of the sync folder.
 - The base need not be in the folder: when a generation there names it in its lineage, it was taken over
   ("inherited"), and the decision is as when it is there. When nothing names it, it has not arrived yet
   (a generation made over it is still on its way), and the sync waits; once it is older than lineages reach
-  (sync_store.LINEAGE_DAYS), the libraries are compared whole instead: the same contents move the base, and
-  others are offered as a choice, never taken in unasked.
+  (sync_store.LINEAGE_DAYS), or when this PC last synced in the first format, the libraries are compared
+  whole instead: the same contents move the base, and others are offered as a choice, never taken in unasked.
 - A head whose blobs have not all arrived is waited for: {"status": "waiting"}, not an error; nothing is
   taken in or published meanwhile. The user may still go on with this PC's library (choice="local"), which
   keeps the heads it cannot read as not set aside, as a choice over an unreadable revision does now.
 - A blob is checked against its name whenever it is read. A damaged one is reported in this PC's device
   file ("bad_blobs") and waited for; the PC whose generation uses it writes it again at its next sync, as it
   writes again any blob its own generations (its base and heads) lack (_repair).
+- A revision of the first format that an earlier Papeer published beside the new format is offered as a
+  choice (see "The first format's revisions beside the new format" below).
 
 Publishing writes the blobs the sync folder lacks first, from this PC's history (checked against their
 names), and the generation last (sync_store). Taking a generation in puts it together beside the library
@@ -29,6 +31,7 @@ in once validated as a restore is (backup.restore_folder). A sync that settles t
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import functools
 import hashlib
 import json
 import os
@@ -36,6 +39,8 @@ from pathlib import Path, PurePosixPath
 import platform
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import uuid
@@ -80,16 +85,66 @@ def _age(value: object) -> timedelta | None:
 
 
 def _expired(state: dict) -> bool:
-    """Whether this PC's base is older than lineages reach (its time unknown counts as such)."""
+    """Whether a base no generation names is compared whole rather than waited for: it is older than lineages
+    reach (its time unknown counts as such), or of the first format (this PC last synced in it: the migration's
+    generation names the revisions it took over, and one that names none of them cannot be waited for)."""
+    if state.get("format") != sync_store.FORMAT:
+        return True
     age = _age(state.get("base_created") or state.get("last_sync"))
     return age is None or age > BASE_EXPIRY
 
 
+@functools.cache
+def machine_key() -> str | None:
+    """A digest of the ID the OS gives this machine (Windows: MachineGuid; macOS: IOPlatformUUID; Linux:
+    machine-id), which a copied device folder does not carry along; None when it cannot be read."""
+    value = None
+    try:
+        if sys.platform == "win32":
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography", 0,
+                                winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+                value = str(winreg.QueryValueEx(key, "MachineGuid")[0])
+        elif sys.platform == "darwin":
+            output = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True,
+                                    text=True, timeout=10, check=False).stdout
+            match = re.search(r'"IOPlatformUUID"\s*=\s*"([^"]+)"', output)
+            value = match[1] if match else None
+        else:
+            for path in (Path("/etc/machine-id"), Path("/var/lib/dbus/machine-id")):
+                if path.is_file():
+                    value = path.read_text("utf-8").strip()
+                    break
+    except (OSError, subprocess.SubprocessError, ValueError):
+        value = None
+    if not value:
+        return None
+    return hashlib.sha256(b"papeer-machine:" + value.encode("utf-8")).hexdigest()
+
+
 def _device_id(state: dict) -> str:
-    """This PC's ID in the sync folder, made at its first sync in the new format (PC names can collide)."""
+    """This PC's ID in the sync folder, made at its first sync in the new format (PC names can collide).
+
+    It stays when the PC is renamed (macOS names itself after the network it is on), so the PC goes on
+    repairing the generations it made (_own). A state brought from another PC (its device folder copied)
+    gets a new ID, so two PCs never write one device file nor take each other's generations for their own:
+    it is told by the machine's own ID (machine_key, recorded in the state as a digest), or, when that cannot
+    be read, by the PC's name. A state from before the machine's ID was recorded keeps its ID and records it."""
     value = state.get("device_id")
-    if not (isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value)):
+    name, machine = platform.node(), machine_key()
+    recorded = state.get("device_machine")
+    if machine is not None and isinstance(recorded, str):
+        brought = recorded != machine
+    elif machine is None:
+        brought = state.get("device_name", name) != name
+    else:
+        brought = False
+    if not (isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value)) or brought:
         value = state["device_id"] = uuid.uuid4().hex
+        state["device_created"] = _now().isoformat()
+    state["device_name"] = name
+    if machine is not None:
+        state["device_machine"] = machine
     return value
 
 
@@ -132,8 +187,8 @@ def _write_device(store: GenerationStore, view: View, state: dict) -> None:
     """Write this PC's device file when what it says changed (its base, the blobs it found damaged)."""
     identity = _device_id(state)
     device = {"format": sync_store.FORMAT, "device_id": identity, "device": platform.node(),
-              "base": state.get("base"), "updated": _now().isoformat(), "app_version": __version__,
-              "bad_blobs": sorted(set(state.get("bad_blobs") or []))}
+              "created": state.get("device_created"), "base": state.get("base"), "updated": _now().isoformat(),
+              "app_version": __version__, "bad_blobs": sorted(set(state.get("bad_blobs") or []))}
     current = view.devices.get(identity)
     age = _age(current.get("updated")) if current is not None else None
     # Written again once a day as well, so other PCs keep this PC's base (DEVICE_KEPT) while it syncs.
@@ -357,11 +412,12 @@ def _kept(view: View) -> set[str]:
 
 def _publish(root: Path, store: GenerationStore, view: View, manifest: dict, *, parents: list[str],
              library_hash: str, schema_version: int, counts: dict, device_id: str, local_files: dict,
-             cancel, progress) -> dict:
+             cancel, progress, lineage: list[list] | None = None) -> dict:
     """Write a generation of `manifest` over `parents`: the blobs first, then the generation; the generation.
 
     Blobs the folder lacks are written, and those it has but no kept generation uses, which may be on
-    their way out (written again, their clean-up starts over).
+    their way out (written again, their clean-up starts over). `lineage` is given for a generation made over
+    revisions of the first format (the migration's, folder_sync); else it is worked out from the parents'.
     """
     needed = sorted(view.missing(manifest) | (blob_names(manifest) - _kept(view)))
     library = _library_sources(root, local_files)
@@ -389,7 +445,8 @@ def _publish(root: Path, store: GenerationStore, view: View, manifest: dict, *, 
     generation = {"format": sync_store.FORMAT, "id": uuid.uuid4().hex, "created": now.isoformat(),
                   "device_id": device_id, "device": platform.node(), "app_version": __version__,
                   "schema_version": schema_version, "parents": list(parents),
-                  "lineage": sync_store.lineage(view, parents, now), "hash": library_hash, "counts": counts,
+                  "lineage": sync_store.lineage(view, parents, now) if lineage is None else lineage,
+                  "hash": library_hash, "counts": counts,
                   "db": manifest["db"], "files": manifest["files"]}
     store.write_generation(generation)
     return generation
@@ -538,6 +595,68 @@ def collect_garbage(root: Path, store: GenerationStore, state: dict, cancel=None
     return cleaner.removed if cleaner is not None else []
 
 
+# --- The first format's revisions beside the new format ---
+#
+# A folder moved to the new format (folder_sync) keeps the first format's revisions until the user removes
+# them, and a marker over those the new format took over (drive_sync.MARKER_SCHEMA), which stops an earlier
+# Papeer. One with changes of its own may still choose to publish them over the marker: such a revision is
+# a head of the first format that no generation names, and each sync offers it as a choice beside the heads
+# (_legacy_heads), never taken in unasked. Chosen or not, the generation that settles the choice names it
+# among its parents, and a marker is put over it (_mark_taken_over), so an earlier Papeer stops again.
+
+def legacy_revisions(folder: Path) -> list[dict]:
+    """The first format's revisions in `folder`, those that can be read (drive_sync.FolderDrive(strict=False))."""
+    try:
+        return drive_sync.FolderDrive(folder).revisions(strict=False)
+    except (OSError, ValueError):
+        return []  # The folder cannot be listed just now: the generations' side says so, if anything.
+
+
+def _legacy_heads(revisions: list[dict], view: View) -> dict[str, dict]:
+    """The revisions an earlier Papeer published that no generation took over, by ID."""
+    covered = view.covered() | view.ids()
+    return {revision["id"]: revision for revision in drive_sync.revision_heads(revisions)
+            if not drive_sync.is_marker(revision) and revision["id"] not in covered}
+
+
+def _moving(revision: dict) -> bool:
+    """Whether a revision of the first format was published by a Papeer that reads the new format as well
+    (drive_sync.sync says so): made while the folder was being moved, before the new format reached it."""
+    return type(revision.get("newest_format")) is int and revision["newest_format"] >= sync_store.FORMAT
+
+
+def _mark_taken_over(store: GenerationStore, view: View, revisions: list[dict], cancel) -> str | None:
+    """Put a marker over the heads of the first format that a generation took over (in its lineage) but no
+    marker stands over yet (a migration stopped before its marker, a revision of an earlier Papeer just
+    chosen or left out); its ID, None when there is none to write or it could not be written."""
+    covered = view.covered()
+    parents = [revision["id"] for revision in drive_sync.revision_heads(revisions)
+               if not drive_sync.is_marker(revision) and revision["id"] in covered]
+    ids = [identity for identity in view.heads() if identity in view.generations]
+    if not parents or not ids:
+        return None
+    successor = view.generations[_newest(view, ids)]
+    try:
+        return drive_sync.FolderDrive(store.folder).write_marker(parents, successor["id"], cancel)
+    except OSError:
+        return None  # Written at the next sync; an earlier Papeer's revision meanwhile is offered as a choice.
+
+
+def _take_legacy(folder: Path, revision: dict, staging: Path, directory: Path, cancel, progress) -> None:
+    """Write a revision of the first format as a library folder at `staging`, checked as drive_sync.sync
+    checks one it takes in (its archive's digest, then restored as a backup is)."""
+    remote = drive_sync.FolderDrive(folder)
+    archive = directory / "legacy.zip"
+    remote.download(revision["id"], archive, cancel, progress)
+    check_cancel(cancel)
+    with archive.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != revision["archive_hash"]:
+            raise ValueError("同期データの検証に失敗しました。再試行してください。")
+    staging.mkdir()
+    drive_sync.restore_backup(Library(staging), archive, cancel)
+    archive.unlink()
+
+
 # --- Choosing between libraries ---
 
 def conflict_differences(root: Path, store: GenerationStore, view: View, ids: list[str], local_files: dict,
@@ -641,12 +760,18 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
     view = store.view()
     if _repair(root, store, view, state, local_files, cancel, progress):
         view = store.view()
-    ids = view.heads()
+    revisions = legacy_revisions(store.folder)
+    _mark_taken_over(store, view, revisions, cancel)
+    # The heads, and the revisions an earlier Papeer published beside them (offered as choices): together
+    # they are what a choice names (expected_heads) and what the generation that settles it takes over.
+    current = view.heads()
+    legacy = _legacy_heads(revisions, view)
+    ids = sorted(current + list(legacy))
     if choice is not None and sorted(expected_heads or []) != ids:
         raise ValueError("別のPCで同期されました。再度同期してから選択してください。")
-    if newer := [identity for identity in ids if identity in view.newer]:
+    if newer := [identity for identity in current if identity in view.newer]:
         raise NewerFormatError(sync_store.NEWER_FORMAT.format(sync_store._newer_papeer(view.newer[newer[0]])))
-    heads = {identity: view.generations[identity] for identity in ids if identity in view.generations}
+    heads = {identity: view.generations[identity] for identity in current if identity in view.generations}
     where = view.base_status(base)
     expired = where == "unknown" and _expired(state)
     known_base = base if where in ("visible", "inherited") else None
@@ -676,10 +801,10 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
         finish(base=chosen, hash=local_hash, base_created=heads[chosen]["created"])
         collect_garbage(root, store, state, cancel, progress)
         return {"status": "synced", "reloaded": False, "previous_path": None}
-    incomplete = [identity for identity in ids if not view.complete(identity)]
+    incomplete = [identity for identity in current if not view.complete(identity)]
     if incomplete and _recover(store, view, incomplete, heads, cancel):
         view = store.view()
-        incomplete = [identity for identity in ids if not view.complete(identity)]
+        incomplete = [identity for identity in current if not view.complete(identity)]
     if choice is None and incomplete:
         first = heads.get(incomplete[0])
         missing = sum(len(view.missing(heads[identity])) if identity in heads else 1 for identity in incomplete)
@@ -692,18 +817,40 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
             raise ValueError("選んだ同期データが見つかりません。")
         if choice in incomplete:
             raise ValueError(f"選んだ同期データはまだ届いていません。{SYNC_CLIENT}の同期完了後に再試行してください。")
-    single = _single(view, ids, base)
-    # With no base known (never synced, or one older than any lineage), a differing head is always a choice.
-    conflict = single is None and bool(ids) or (single is not None and known_base != single
-                                                 and (dirty or known_base is None))
+    single = _single(view, current, base)
+    # With no base known (never synced, or one older than any lineage), a differing head is always a choice;
+    # so is a revision an earlier Papeer published.
+    conflict = bool(legacy) or (single is None and bool(current)) or (
+        single is not None and known_base != single and (dirty or known_base is None))
     if conflict and choice is None:
-        differences = conflict_differences(root, store, view, ids, local_files, cancel)
-        message = ("前回の同期から長い期間がたったため、どちらのデータを使うか確認が必要です。保存先・同期で使用するデータを選択してください。"
-                   if expired else "両方のPCに変更があります。保存先・同期で使用するデータを選択してください。")
-        state.update(conflicts=[{"id": identity, "device": heads[identity]["device"],
-                                 "created": heads[identity]["created"], "diff": differences.get(identity)}
-                                for identity in ids],
-                     error=message, review=None, waiting=None)
+        differences = conflict_differences(root, store, view, current, local_files, cancel)
+        earlier = sorted(identity for identity in legacy if not _moving(legacy[identity]))
+        if legacy:
+            differences.update(drive_sync.conflict_differences(
+                root, drive_sync.FolderDrive(store.folder), [legacy[identity] for identity in sorted(legacy)], cancel))
+        if earlier:
+            device = legacy[earlier[0]]["device"]
+            message = (f"{device} の古いバージョンのPapeerで保存された同期データがあります。そのPCのPapeerを更新してください。"
+                       "このデータを使うこともできます。保存先・同期で使用するデータを選択してください。")
+        elif legacy:
+            device = legacy[sorted(legacy)[0]]["device"]
+            message = (f"同期の形式を新しくしている途中に、{device} で保存された変更があります。"
+                       "保存先・同期で使用するデータを選択してください。")
+        elif expired and state.get("format") != sync_store.FORMAT:
+            message = "同期の形式が新しくなったため、どちらのデータを使うか確認が必要です。保存先・同期で使用するデータを選択してください。"
+        elif expired:
+            message = "前回の同期から長い期間がたったため、どちらのデータを使うか確認が必要です。保存先・同期で使用するデータを選択してください。"
+        else:
+            message = "両方のPCに変更があります。保存先・同期で使用するデータを選択してください。"
+        conflicts = []
+        for identity in ids:
+            item = heads.get(identity) or legacy.get(identity) or {}
+            # "legacy": published in the first format beside the new one; "old_papeer": by an earlier Papeer
+            # (the choice says to update it), not by one that published before the new format reached it.
+            conflicts.append({"id": identity, "device": item.get("device"), "created": item.get("created"),
+                              "diff": differences.get(identity), "legacy": identity in legacy,
+                              "old_papeer": identity in earlier})
+        state.update(conflicts=conflicts, error=message, review=None, waiting=None)
         drive_sync.save_state(root, state)
         return {"status": "conflict", "conflicts": state["conflicts"]}
     publish_local = choice is None and (dirty or not ids) and not (ids and known_base != single)
@@ -732,19 +879,24 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
         # Put together beside the library, so the swap renames it rather than copying it across drives.
         with tempfile.TemporaryDirectory(dir=folder.parent, prefix=f".{folder.name}-sync-", suffix=".tmp") as directory:
             selected = heads.get(choice) if choice not in (None, "local") else None
-            pull = selected or (heads[single] if choice is None and single and known_base != single and not dirty
-                                else None)
+            # A revision of the first format chosen: taken in from its archive, and published as a generation.
+            earlier = legacy.get(choice) if choice not in (None, "local") else None
+            pull = selected or earlier or (heads[single] if choice is None and single and known_base != single
+                                           and not dirty else None)
             content_hash, content_schema, content_counts = local_hash, SCHEMA_VERSION, counts
             staging = Path(directory) / "library"
             if pull:
-                if pull["schema_version"] > SCHEMA_VERSION:
+                if pull.get("schema_version", 0) > SCHEMA_VERSION:
                     raise NewerSchemaError(f"この同期データは{newer_papeer(pull.get('app_version'))}で作成されたため取り込めません。"
                                            "このPCのPapeerを最新版に更新してから同期してください。")
                 if background and choice is None:
                     return {"status": "deferred", "reloaded": False, "previous_path": None}
                 progress("同期データを組み立てています…")
                 try:
-                    _assemble(root, store, view, pull, staging, local_files, cancel)
+                    if earlier is not None:
+                        _take_legacy(store.folder, earlier, staging, Path(directory), cancel, progress)
+                    else:
+                        _assemble(root, store, view, pull, staging, local_files, cancel)
                 except _NotReady as exc:
                     _recover_names(store, exc.missing | exc.bad, cancel)  # The next sync (or check) takes it in then.
                     return _wait(root, store, view, state, reason="damaged" if exc.bad else "arrival", ids=ids,
@@ -769,12 +921,31 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
             else:
                 content_files = local_files
             if choice is not None:
-                not_set_aside = _set_aside(lib, store, view, ids, choice, library_hash, content_hash, counts,
+                not_set_aside = _set_aside(lib, store, view, current, choice, library_hash, content_hash, counts,
                                            local_files, cancel, progress, set_aside)
+                if legacy:
+                    not_set_aside += drive_sync.set_aside_revisions(
+                        lib, drive_sync.FolderDrive(store.folder), [legacy[identity] for identity in sorted(legacy)],
+                        choice, content_hash, cancel, progress, set_aside)
                 recorded += set_aside
+            publish_hash, publish_schema = content_hash, content_schema
             if choice is not None or (not pull and (dirty or not ids)):
                 check_cancel(cancel)
-                if pull:
+                if earlier is not None:
+                    # A revision of the first format has no manifest: it is recorded in this PC's history as
+                    # taken in, and published from there as it is once opened here (like this PC's library).
+                    progress("このPCの履歴に記録しています…")
+                    entry = local_history.record_folder(
+                        root, staging, kind="pull", library_hash=local_hash, counts=content_counts,
+                        files=content_files, cancel=cancel, progress=progress, revision=earlier["id"],
+                        source_device=earlier["device"], source_created=earlier["created"])
+                    drive_sync._recorded(recorded, entry)
+                    state_id = entry or local_history.current_state(root, local_hash)
+                    manifest = local_history.manifest(root, state_id) if state_id else None
+                    if manifest is None:
+                        raise ValueError("このPCの履歴に記録できませんでした。もう一度同期してください。")
+                    publish_hash, publish_schema = local_hash, database_version(staging / "library.sqlite3")
+                elif pull:
                     manifest = {"files": pull["files"], "db": pull["db"]}
                 else:
                     progress("このPCの履歴に記録しています…")
@@ -786,17 +957,18 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
                     manifest = local_history.manifest(root, state_id) if state_id else None
                     if manifest is None:
                         raise ValueError("このPCの履歴に記録できませんでした。もう一度同期してください。")
-                generation = _publish(root, store, view, manifest, parents=ids, library_hash=content_hash,
-                                      schema_version=content_schema, counts=content_counts, device_id=device_id,
+                generation = _publish(root, store, view, manifest, parents=ids, library_hash=publish_hash,
+                                      schema_version=publish_schema, counts=content_counts, device_id=device_id,
                                       local_files=local_files, cancel=cancel, progress=progress)
                 uploaded = True
                 base, base_created = generation["id"], generation["created"]
             if pull:
-                progress("このPCの履歴に記録しています…")
-                drive_sync._recorded(recorded, local_history.record_folder(
-                    root, staging, kind="pull", library_hash=local_hash, counts=content_counts, files=content_files,
-                    cancel=cancel, progress=progress, revision=pull["id"], source_device=pull["device"],
-                    source_created=pull["created"]))
+                if earlier is None:
+                    progress("このPCの履歴に記録しています…")
+                    drive_sync._recorded(recorded, local_history.record_folder(
+                        root, staging, kind="pull", library_hash=local_hash, counts=content_counts,
+                        files=content_files, cancel=cancel, progress=progress, revision=pull["id"],
+                        source_device=pull["device"], source_created=pull["created"]))
                 progress("このPCの履歴を確かめています…")
                 try:
                     kept = local_history.verified_state(root, library_hash, cancel)
@@ -806,7 +978,7 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
                     spared.append(kept)
                 def fill(target: Path) -> None:
                     shutil.move(os.fspath(staging), os.fspath(target))
-                moved = restore_folder(lib, fill, cancel, schema_version=pull["schema_version"],
+                moved = restore_folder(lib, fill, cancel, schema_version=pull.get("schema_version", 0),
                                        app_version=pull.get("app_version"))
                 replaced = True
                 if kept is not None:
@@ -823,6 +995,9 @@ def sync(lib: Library, store: GenerationStore, cancel: threading.Event, progress
             except OSError:
                 pass
         raise
+    if legacy:
+        # The revisions of an earlier Papeer the choice took over (or left out): a marker over them stops it again.
+        _mark_taken_over(store, store.view(), legacy_revisions(store.folder), cancel)
     collect_garbage(root, store, state, cancel, progress)
     try:
         local_history.prune(root, protect=recorded + spared)
@@ -852,6 +1027,8 @@ def check(root: Path, store: GenerationStore) -> dict:
     if local_hash is None:
         return answer("quiet")
     dirty = local_hash != state.get("hash")
+    if _legacy_heads(legacy_revisions(store.folder), view):
+        return answer("quiet")  # A revision an earlier Papeer published: the sync offers it as a choice.
     heads = {identity: view.generations[identity] for identity in ids if identity in view.generations}
     own = _own(view, state)
     if any(view.missing(generation) for generation in own) or _unchecked_reports(view, state, own):

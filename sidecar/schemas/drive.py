@@ -17,6 +17,11 @@ class SyncRequest(BaseModel):
     background: bool = False
 
 
+class DriveLegacyRemoveRequest(BaseModel):
+    # IDs of the first format's revisions as GET /api/drive/format listed them ("removable"), confirmed by the user.
+    ids: list[str]
+
+
 class OptionsRequest(BaseModel):
     auto_sync: bool
 

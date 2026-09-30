@@ -1,21 +1,22 @@
 """Device-local folder selection and exclusive library synchronization jobs."""
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from fastapi import APIRouter, Depends
 
-from papeer.core import drive_sync, history_restore, local_history
+from papeer.core import drive_sync, folder_sync, history_restore, local_history
 from papeer.providers import Cancelled
 from sidecar import deps
 from sidecar.job_types import JobKind, JobStarted
 from sidecar.routes.reading import start_restore
-from sidecar.schemas.drive import (FolderRequest, HistoryRestoreRequest, HistorySettingsRequest, LegacyRemoveRequest,
-                                   OptionsRequest, OtherHistoriesRemoveRequest, SyncRequest)
+from sidecar.schemas.drive import (DriveLegacyRemoveRequest, FolderRequest, HistoryRestoreRequest, HistorySettingsRequest,
+                                   LegacyRemoveRequest, OptionsRequest, OtherHistoriesRemoveRequest, SyncRequest)
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
 
 @router.get("/api/drive")
 def drive_status():
-    return drive_sync.status(deps.get_data_dir())
+    """The connection and the last sync (folder_sync.status: in either format)."""
+    return folder_sync.status(deps.get_data_dir())
 
 
 def idle():
@@ -25,8 +26,10 @@ def idle():
 
 @router.post("/api/drive/folder")
 def select_folder(body: FolderRequest):
+    root = deps.get_data_dir()
     with idle():
-        return drive_sync.connect(deps.get_data_dir(), body.path)
+        drive_sync.connect(root, body.path)
+    return folder_sync.status(root)
 
 
 @router.delete("/api/drive")
@@ -39,21 +42,27 @@ def disconnect():
 @router.delete("/api/drive/review")
 def dismiss_review():
     """「同期しない」 on a sync that stopped for review: automatic sync stops until turned on again."""
+    root = deps.get_data_dir()
     with idle():
-        return drive_sync.dismiss_review(deps.get_data_dir())
+        drive_sync.dismiss_review(root)
+    return folder_sync.status(root)
 
 
 @router.post("/api/drive/new-library")
 def start_new_library():
     """The data folder of a synced library is gone and the user chose to start a new, empty one."""
+    root = deps.get_data_dir()
     with idle():
-        return drive_sync.start_new_library(deps.get_data_dir())
+        drive_sync.start_new_library(root)
+    return folder_sync.status(root)
 
 
 @router.put("/api/drive")
 def options(body: OptionsRequest):
+    root = deps.get_data_dir()
     with idle():
-        return drive_sync.set_auto_sync(deps.get_data_dir(), body.auto_sync)
+        drive_sync.set_auto_sync(root, body.auto_sync)
+    return folder_sync.status(root)
 
 
 @router.get("/api/drive/side-backups")
@@ -70,7 +79,7 @@ def check():
     Unlike a sync it does not hold the library, so the user's edits go on while it looks. Being an
     ordinary library request, a sync or backup waits for it to finish, and it is refused while one runs.
     """
-    return drive_sync.check_connected(deps.get_data_dir())
+    return folder_sync.check_connected(deps.get_data_dir())
 
 
 @router.post("/api/drive/sync")
@@ -83,14 +92,60 @@ def sync(body: SyncRequest) -> JobStarted:
             return run(cancel, progress)
 
     def run(cancel, progress):
-        try:
-            deps.wait_for_library_requests(side_reads=not body.background, cancel=cancel)
-        except Cancelled:
-            # Stopping is not a failure: no error is recorded, so automatic sync resumes next time.
-            raise Cancelled(drive_sync.SYNC_CANCELLED) from None
-        return drive_sync.sync_connected(root, cancel, progress, choice=body.choice, expected_heads=body.expected_heads,
-                                         confirm=body.confirm, background=body.background)
+        with abandoned_when_stopped(root, cancel):
+            try:
+                deps.wait_for_library_requests(side_reads=not body.background, cancel=cancel)
+            except Cancelled:
+                # Stopping is not a failure: no error is recorded, so automatic sync resumes next time.
+                raise Cancelled(drive_sync.SYNC_CANCELLED) from None
+            return folder_sync.sync_connected(root, cancel, progress, choice=body.choice,
+                                              expected_heads=body.expected_heads, confirm=body.confirm,
+                                              background=body.background)
     return deps.submit_job(JobKind.DRIVE_SYNC, action)
+
+
+@contextmanager
+def abandoned_when_stopped(root, cancel):
+    """A migration going on in this job (a sync goes on with one left to go on) that the user stops is given up
+    (folder_sync.abandon_migration): not taken up again by the next automatic sync. Stopped as the app closes,
+    it goes on at the next sync."""
+    try:
+        yield
+    except Cancelled:
+        if deps.job_manager.stopped_by_user(cancel):
+            folder_sync.abandon_migration(root)
+        raise
+
+
+@router.get("/api/drive/format")
+def drive_format():
+    """The sync folder's format, and what the first format left there (folder_sync.format_status)."""
+    return folder_sync.format_status(deps.get_data_dir())
+
+
+@router.post("/api/drive/migrate")
+def migrate() -> JobStarted:
+    """Move the sync folder to the new format, once the user agreed (folder_sync.migrate): a sync job whose
+    result also says whether the folder moved ("migrated"). What stops it (a conflict, a failure, the app
+    closing) goes on at the next sync, but the user's 中止 gives it up (abandoned_when_stopped)."""
+    root = deps.get_data_dir()
+
+    def action(cancel, progress, _):
+        with abandoned_when_stopped(root, cancel):
+            try:
+                deps.wait_for_library_requests(cancel=cancel)
+            except Cancelled:
+                raise Cancelled(drive_sync.SYNC_CANCELLED) from None
+            return folder_sync.migrate(root, cancel, progress)
+    return deps.submit_job(JobKind.DRIVE_SYNC, action)
+
+
+@router.post("/api/drive/legacy/remove")
+def remove_drive_legacy(body: DriveLegacyRemoveRequest):
+    """Remove the first format's revisions the user confirmed (their IDs as GET /api/drive/format listed them
+    under "removable"); those no longer removable are left."""
+    with idle():
+        return folder_sync.remove_old_data(deps.get_data_dir(), body.ids)
 
 
 @router.get("/api/history")

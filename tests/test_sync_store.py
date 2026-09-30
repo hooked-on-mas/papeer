@@ -404,6 +404,21 @@ def test_a_generation_its_own_pc_has_gone_past_is_no_head_once_its_lineage_aged_
         == [ids(1), ids(3)]
 
 
+def test_the_base_that_shows_a_generation_superseded_stays_while_that_generation_does():
+    """Its PC has been away past DEVICE_KEPT, but its base is what tells the old generation is no head (S6)."""
+    now = NOW + timedelta(days=70)
+    later = NOW + timedelta(days=5)
+    old = generation(ids(1), device_id="e" * 32)
+    base = generation(ids(2), created=later, device_id="e" * 32)
+    head = generation(ids(3), created=now, parents=[ids(2)], lineage=[(ids(2), seconds(later))])
+    devices = {"e" * 32: device(ids(2), updated=now - timedelta(days=40))}
+    view = view_of(old, base, head, devices=devices, now=now)
+    assert view.heads() == [ids(3)] and ids(2) in view.kept()
+    assert sync_store.removable_generations(view) == {ids(1)}
+    # Once the old one is gone, nothing needs the base any more.
+    assert sync_store.removable_generations(view_of(base, head, devices=devices, now=now)) == {ids(2)}
+
+
 def test_the_lineage_keeps_an_ancestor_still_in_the_folder_however_old():
     old = seconds(NOW - timedelta(days=100))
     parent = generation(ids(2), lineage=[(ids(1), old), (ids(5), old)])
