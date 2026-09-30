@@ -16,6 +16,8 @@ class InkStroke(BaseModel):
     points: list[tuple[Coordinate, Coordinate]] = Field(min_length=1, max_length=20000)
     kind: Literal["pen", "highlighter", "line", "arrow", "rectangle", "ellipse", "text"] = "pen"
     text: str | None = Field(default=None, max_length=2000)
+    # Preferred head size in page-width units, retained when the shaft is shortened.
+    arrowHeadLength: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def validate_text(self):

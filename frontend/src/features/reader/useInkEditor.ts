@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { useInkPage, type InkSide } from "./inkStore";
-import { boundsOf, fitInk, transformInk, type InkStroke, type InkTool, type Point } from "./inkGeometry";
+import { boundsOf, fitInk, SHAPE_KINDS, transformInk, type InkStroke, type InkTool, type Point } from "./inkGeometry";
 import { onScreen } from "./pageTurn";
 import { useStore } from "@/store";
 
@@ -31,7 +31,7 @@ export const useInkTools = create<{
   tool: "select", lastPen: "pen", lastRange: "region", version: 0, listOpen: false,
   setListOpen: listOpen => set({ listOpen }),
   setTool: tool => set(state => ({ tool, version: state.version + 1,
-    lastPen: ["pen", "highlighter", "line", "arrow", "rectangle", "ellipse"].includes(tool) ? tool : state.lastPen,
+    lastPen: ["pen", "highlighter", ...SHAPE_KINDS].includes(tool) ? tool : state.lastPen,
     lastRange: tool === "region" || tool === "lasso" ? tool : state.lastRange,
   })),
 }));

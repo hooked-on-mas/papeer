@@ -59,13 +59,24 @@ def test_ink_persists_and_isolated_by_page_side_and_paper(ink_env):
 
 
 @pytest.mark.parametrize("value", [stroke(points=[]), stroke(points=[[-0.1, 0.5]]),
-    stroke(points=[[0.1, 1.01]]), stroke(color="red"), stroke(width=0), stroke(width=0.1)])
+    stroke(points=[[0.1, 1.01]]), stroke(color="red"), stroke(width=0), stroke(width=0.1),
+    stroke(kind="arrow", arrowHeadLength=0), stroke(kind="arrow", arrowHeadLength=-0.025)])
 def test_invalid_ink_rejected_without_losing_saved_ink(ink_env, value):
     client, _, identity = ink_env
     path = f"/api/papers/{identity}/ink-v2/original/1"
     assert client.put(path, json={"strokes": [stroke()]}).status_code == 200
     assert client.put(path, json={"strokes": [value]}).status_code == 422
     assert client.get(path).json()["strokes"] == [stroke()]
+
+
+def test_arrow_preferred_head_size_survives_save_and_reload(ink_env):
+    client, lib, identity = ink_env
+    path = f"/api/papers/{identity}/ink-v2/original/1"
+    arrow = stroke(kind="arrow", arrowHeadLength=0.05,
+                   points=[[0.3, 0.3], [0.31, 0.3], [0.307, 0.301], [0.31, 0.3], [0.307, 0.299]])
+    assert client.put(path, json={"strokes": [arrow]}).status_code == 200
+    assert client.get(path).json()["strokes"] == [arrow]
+    assert Library(lib.root).ink(identity, "original", 1) == [arrow]
 
 
 def test_ink_api_auth_and_missing_pages(ink_env, monkeypatch):

@@ -2212,6 +2212,8 @@ export interface components {
             kind?: "pen" | "highlighter" | "line" | "arrow" | "rectangle" | "ellipse" | "text";
             /** Text */
             text?: string | null;
+            /** Arrowheadlength */
+            arrowHeadLength?: number | null;
         };
         /** InterleavedResult */
         InterleavedResult: {

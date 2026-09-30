@@ -9499,6 +9499,18 @@
               }
             ],
             "title": "Text"
+          },
+          "arrowHeadLength": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arrowheadlength"
           }
         },
         "type": "object",
