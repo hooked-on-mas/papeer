@@ -30,6 +30,12 @@ class PaperDomainsRequest(BaseModel):
     new_domain: str | None = Field(default=None, max_length=40)
 
 
+class PaperGlossaryRequest(BaseModel):
+    terms: list[dict[str, str]] = Field(max_length=2000)
+    dismissed: list[str] = Field(max_length=2000)
+    expected: dict
+
+
 class GlossarySelectRequest(BaseModel):
     model: str | None = None
     effort: str | None = None
@@ -39,6 +45,7 @@ class GlossarySplitRequest(BaseModel):
     domain: str = Field(min_length=1, max_length=40)  # The dictionary to split: a domain's name, or 共通.
     model: str | None = None
     effort: str | None = None
+    preview: bool = False
 
 
 class GlossaryTermRequest(BaseModel):

@@ -26,6 +26,15 @@ from sidecar.jobs import JobManager, ConcurrencyConflict
 FIXTURE = Path(__file__).parent / "fixtures/sample.pdf"
 
 
+def candidate(source, target):
+    return {"source": source, "target": target, "reason": "この文脈での用語の意味を確認", "reusable": True,
+            "needs_confirmation": True, "priority": 2}
+
+
+def pairs(terms):
+    return [{"source": t["source"], "target": t["target"]} for t in terms]
+
+
 class FakeProvider:
     def __init__(self, settings=None, cancel=None):
         self.settings = settings or Settings(translation_concurrency=1)
@@ -427,9 +436,9 @@ def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
         def generate(self, instruction, data, schema):
             calls.append(json.loads(data))
             return json.dumps({"terms": [
-                {"source": "adaptive control", "target": "上書きしない"},
-                {"source": "tracking error", "target": "追従誤差"},
-                {"source": "invented term", "target": "原文にない用語"}]})
+                candidate("adaptive control", "上書きしない"),
+                candidate("tracking error", "追従誤差"),
+                candidate("invented term", "原文にない用語")]})
 
     monkeypatch.setattr("sidecar.deps.create_provider", GlossaryProvider)
     with TestClient(runtime.app) as client:
@@ -443,7 +452,7 @@ def test_ai_glossary_draft_is_reviewed_before_saving(library, monkeypatch):
         while job.running and time.monotonic() < deadline:
             time.sleep(0.01)
         assert job.status == "succeeded"
-        terms = job.result.model_dump()["terms"]
+        terms = pairs(job.result.model_dump()["terms"])
         assert terms == [{"source": "tracking error", "target": "追従誤差"}]
         assert calls[0]["existing_terms"] == existing
         assert client.get("/api/glossary").json() == existing
@@ -522,11 +531,10 @@ def test_glossary_draft_can_extend_large_global_dictionary(library):
     class DraftProvider:
         def generate(self, instruction, data, schema):
             assert json.loads(data)["existing_terms"] == [{"source": "control", "target": "制御"}]
-            return json.dumps({"terms": [{"source": "CONTROL", "target": "変更しない"},
-                                        {"source": "tracking error", "target": "追従誤差"}]})
+            return json.dumps({"terms": [candidate("CONTROL", "変更しない"), candidate("tracking error", "追従誤差")]})
 
     result = draft_glossary(lib, identity, DraftProvider(), threading.Event(), lambda _: None, terms)
-    assert result == {"terms": [{"source": "tracking error", "target": "追従誤差"}]}
+    assert pairs(result["terms"]) == [{"source": "tracking error", "target": "追従誤差"}]
     assert global_glossary(lib.root) == terms
 
 
@@ -605,12 +613,12 @@ def test_paper_domains_api_term_registration_and_delete(library, tmp_path, monke
         assert client.put("/api/glossary", json={"terms": terms, "expected_terms": []}).status_code == 200
         assert client.get("/api/glossary").json() == terms
         state = client.get(base + "/glossary-domains").json()
-        assert state == {"domains": [], "new_domain": None, "chosen_by": None, "known_domains": [],
+        assert {k: v for k, v in state.items() if k not in {"scope_terms", "scope_stale", "selection_key"}} == {"domains": [], "new_domain": None, "chosen_by": None, "known_domains": [],
                          "available": ["電池", "生物"], "stale": False, "split_at": 150}
         assert client.get("/api/papers/nope/glossary-domains").status_code == 404
         state = client.put(base + "/glossary-domains", json={"domains": ["生物", "無い", "生物"], "new_domain": "新"}).json()
         assert (state["domains"], state["new_domain"], state["chosen_by"], state["stale"]) == (["生物"], "新", "user", False)
-        assert effective_glossary(lib, identity) == [{"source": "control", "target": "制御"}, {"source": "cell", "target": "細胞"}]
+        assert effective_glossary(lib, identity) == [{"source": "control", "target": "制御"}]
         # Registered in the new domain first; the same source of another domain is not replaced.
         assert client.post(base + "/glossary/terms", json={"source": "gain", "target": "利得"}).json() == {"domain": "新"}
         assert client.post(base + "/glossary/terms", json={"source": "Gain", "target": "ゲイン"}).json() == {"domain": "新"}
@@ -648,15 +656,15 @@ def test_glossary_draft_may_suggest_a_source_that_another_domain_has_and_revisio
     class Provider:
         def generate(self, instruction, data, schema):
             sent.append(json.loads(data))
-            return json.dumps({"terms": [{"source": "cell", "target": "細胞"}, {"source": "control", "target": "操作"}]})
+            return json.dumps({"terms": [candidate("cell", "細胞"), candidate("control", "操作")]})
 
     result = draft_glossary(lib, identity, Provider(), threading.Event(), lambda _: None, [])
-    assert result["terms"] == [{"source": "cell", "target": "細胞"}]
+    assert pairs(result["terms"]) == [{"source": "cell", "target": "細胞"}]
     assert sent[0]["existing_terms"] == [{"source": "control", "target": "制御"}]
     # An unsaved term of an unchosen domain is not known either.
     result = draft_glossary(lib, identity, Provider(), threading.Event(), lambda _: None,
                             [{"source": "cell", "target": "セル", "domain": "電池"}])
-    assert result["terms"] == [{"source": "cell", "target": "細胞"}]
+    assert pairs(result["terms"]) == [{"source": "cell", "target": "細胞"}]
 
     class Revision:
         def generate(self, instruction, data, schema):

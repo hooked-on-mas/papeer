@@ -281,6 +281,8 @@ class PaperRecords(LibraryBase):
             db.execute("DELETE FROM papers WHERE id=?", (paper_id,))
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_glossary_domains'").fetchone():
                 db.execute("DELETE FROM paper_glossary_domains WHERE paper_id=?", (paper_id,))
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_glossary'").fetchone():
+                db.execute("DELETE FROM paper_glossary WHERE paper_id=?", (paper_id,))
         if folder.exists():
             shutil.rmtree(folder, ignore_errors=True)
 

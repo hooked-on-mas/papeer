@@ -30,6 +30,8 @@ class Scripted:
     def generate(self, instruction, data, schema=None):
         self.sent.append((instruction, json.loads(data)))
         answer = self.answers.pop(0)
+        if isinstance(answer, dict) and "candidate_terms" in json.loads(data):
+            answer = {"allowed_terms": [], **answer}
         return answer if isinstance(answer, str) else json.dumps(answer, ensure_ascii=False)
 
 
@@ -157,7 +159,7 @@ def test_split_writes_only_domains_and_keeps_the_order(tmp_path):
     provider = Scripted({"domains": [
         {"name": "強化学習", "sources": ["w0", "W2", "w4", "w6", "w8", "w0", "unknown"]},
         {"name": "電池", "sources": ["w0", "w1", "w5", "w7", "w9", "w11"]},  # w0 is taken by the first group
-        {"name": "少ない", "sources": ["w10"]},  # fewer than 5: stays
+        {"name": "少ない", "sources": ["w10"]},  # Small specialist dictionaries are allowed.
         {"name": "共通", "sources": ["w12"]},
         {"name": "x" * 41, "sources": ["w13"]}]})
     result = split_domain(root, provider, cancel(), progress.append, "共通")
@@ -166,9 +168,9 @@ def test_split_writes_only_domains_and_keeps_the_order(tmp_path):
     assert [t["target"] for t in after] == [t["target"] for t in terms]
     assert {t["source"]: t.get("domain") for t in after} == {
         "w0": "強化学習", "w1": "電池", "w2": "強化学習", "w3": "既存", "w4": "強化学習", "w5": "電池", "w6": "強化学習",
-        "w7": "電池", "w8": "強化学習", "w9": "電池", "w10": None, "w11": "電池", "w12": None, "w13": None}
-    assert result == {"moved": 10, "domains": [{"name": "強化学習", "count": 5}, {"name": "電池", "count": 5},
-                                                 {"name": "既存", "count": 1}]}
+        "w7": "電池", "w8": "強化学習", "w9": "電池", "w10": "少ない", "w11": "電池", "w12": None, "w13": None}
+    assert result == {"moved": 11, "domains": [{"name": "強化学習", "count": 5}, {"name": "電池", "count": 5},
+                                                 {"name": "既存", "count": 1}, {"name": "少ない", "count": 1}]}
     sent = provider.sent[0][1]
     assert sent["domain"] == "共通" and sent["existing_domains"] == ["既存"]
     assert [t["source"] for t in sent["terms"]] == [f"w{i}" for i in range(14) if i != 3]  # Only the general dictionary's.
@@ -215,10 +217,10 @@ def test_split_in_chunks_passes_the_names_on_and_counts_them_together(tmp_path, 
     assert [call[1]["existing_domains"] for call in provider.sent] == [[], ["A"]]
     assert [len(call[1]["terms"]) for call in provider.sent] == [4, 4]
     assert progress == ["辞書を分野ごとに分けています… 1/2", "辞書を分野ごとに分けています… 2/2"]
-    # "a" is A: 6 terms in all. B has 1 (term 0 is not in the second chunk): stays.
+    # "a" is A: 6 terms in all. B has 1 (term 0 is not in the second chunk).
     assert sources(root, "A") == ["term 0", "term 1", "term 2", "term 4", "term 5", "term 6"]
-    assert sources(root, "B") == []
-    assert result["moved"] == 6
+    assert sources(root, "B") == ["term 7"]
+    assert result["moved"] == 7
 
 
 def test_split_keeps_terms_if_nothing_is_grouped_and_does_not_write(tmp_path, monkeypatch):
@@ -226,7 +228,7 @@ def test_split_keeps_terms_if_nothing_is_grouped_and_does_not_write(tmp_path, mo
     save_global_glossary(root, numbered(6))
     saved = []
     monkeypatch.setattr("papeer.core.glossary_domains.save_global_glossary", lambda *a, **k: saved.append(a))
-    result = split_domain(root, Scripted({"domains": [{"name": "少", "sources": ["term 0"]}]}), cancel(), lambda _: None, "共通")
+    result = split_domain(root, Scripted({"domains": []}), cancel(), lambda _: None, "共通")
     assert result == {"moved": 0, "domains": []}
     assert saved == []
 
@@ -304,7 +306,7 @@ def test_the_routes_start_paper_jobs_with_the_chosen_model(library, monkeypatch)
 
         def generate(self, instruction, data, schema):
             if "available_domains" in data:
-                return json.dumps({"domains": ["電池"], "new_domain": None})
+                return json.dumps({"domains": ["電池"], "new_domain": None, "allowed_terms": []})
             return json.dumps({"domains": [{"name": "新", "sources": [f"term {i}" for i in range(5)]}]})
 
     monkeypatch.setattr("sidecar.deps.create_provider", Provider)

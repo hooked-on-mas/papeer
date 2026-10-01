@@ -45,7 +45,9 @@ def test_the_domain_jobs_have_results_of_their_shape():
     assert job_result(JobKind.GLOSSARY_SELECT, {"domains": ["電池"], "new_domain": None}).model_dump() == {
         "domains": ["電池"], "new_domain": None}
     split = {"moved": 3, "domains": [{"name": "電池", "count": 5}]}
-    assert job_result(JobKind.GLOSSARY_SPLIT, split).model_dump() == split
+    assert job_result(JobKind.GLOSSARY_SPLIT, split).model_dump() == {**split, "terms": None, "original": None}
+    preview = {**split, "terms": [{"source": "cell", "target": "セル", "domain": "電池"}], "original": []}
+    assert job_result(JobKind.GLOSSARY_SPLIT, preview).model_dump() == preview
     with pytest.raises(ValueError):
         job_result(JobKind.GLOSSARY_SPLIT, {"moved": 3})
 

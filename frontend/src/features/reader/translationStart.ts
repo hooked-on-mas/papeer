@@ -9,9 +9,10 @@ export const GENERAL_DOMAIN = "共通";
 
 /** A glossary term; without `domain` it is in 共通. */
 export type Term = { source: string; target: string; domain?: string };
+export type GlossaryCandidate = Term & { reason?: string; context?: string };
 
 /** The domain dictionaries a paper uses besides 共通 (GET /api/papers/{id}/glossary-domains); null: nothing recorded. */
-export type DomainSelection = { domains: readonly string[]; new_domain: string | null };
+export type DomainSelection = { domains: readonly string[]; new_domain: string | null; scope_terms?: readonly Term[] };
 
 /** GET /api/papers/{id}/translation-plan: what starting with these pages and model would do. */
 export type TranslationPlan = {
@@ -53,17 +54,20 @@ export function normalizeTerms(terms: readonly Term[]): Term[] {
 /**
  * The terms a paper uses: 共通 and the domains selected (new_domain too), in the glossary's order, and
  * for a source in several of them the first (as the sidecar's effective glossary). Nothing recorded
- * (`selection` null): every term, as before domains existed.
+ * (`selection` null): only common terms, until the contextual selection is ready.
  */
 export function effectiveTerms(terms: readonly Term[], selection: DomainSelection | null): Term[] {
-  if (!selection) return [...terms];
+  if (!selection) return terms.filter((t) => !domainOf(t));
   const chosen = new Set(selection.domains);
   if (selection.new_domain) chosen.add(selection.new_domain);
+  const keyOf = (t: Term) => JSON.stringify([domainOf(t), t.source.toLocaleLowerCase(), t.target]);
+  const allowed = new Set((selection.scope_terms ?? []).map(keyOf));
   const seen = new Set<string>();
   const result: Term[] = [];
   for (const term of terms) {
     const domain = domainOf(term);
     if (domain && !chosen.has(domain)) continue;
+    if (domain && !allowed.has(keyOf(term))) continue;
     const key = term.source.trim().toLocaleLowerCase();
     if (key) {
       if (seen.has(key)) continue;
@@ -130,16 +134,14 @@ export function reviewSkipMessage(skip: ReviewSkip): string {
     case "reusable": return "指定ページはすべて保存済みの訳文を使えます。AIには送らず、PDFだけを作り直します。";
     case "resume": return "中断した翻訳の続きを行います。用語の確認は省略します（辞書は下の欄で確認・修正できます）。";
     case "unchanged": return "前回この論文の用語を確認したときから、この論文に使う辞書が変わっていないため、用語の確認は省略します。";
-    default: return "用語の確認は任意です。「用語を確認してから翻訳」を選ぶと、AIがこの論文から訳語の判断が必要な未登録語を抽出します（利用枠を使います）。";
+    default: return "通常はそのまま翻訳できます。「訳語を確認する」では、判断が読解に影響する語だけ最大5件を確認します（利用枠を使います）。";
   }
 }
 
 /** The main button: after the check it applies the (edited) candidates and starts. */
-export function startButtonLabel({ reviewed, skip }: { reviewed: boolean; skip: ReviewSkip }): string {
-  if (reviewed) return "確認して開始";
+export function startButtonLabel({ skip }: { reviewed: boolean; skip: ReviewSkip }): string {
   if (skip === "reusable") return "保存済みの訳文でPDFを作り直す";
-  if (skip) return "翻訳を開始";
-  return "用語を確認せずに翻訳";
+  return "翻訳を開始";
 }
 
 /**
@@ -198,7 +200,7 @@ export function mergeDraftTerms(glossary: readonly Term[], candidates: readonly 
 
 export function draftResultMessage(count: number): string {
   return count
-    ? `訳語の判断が必要な未登録語を${count}件抽出しました。確認・修正して「確認して開始」を押すと、辞書に追加して翻訳を開始します。`
+    ? `確認候補は${count}件です。使いたい訳語だけ選んでください。この論文だけに適用します。`
     : "訳語の判断が必要な未登録語はありません。既存の辞書を使って翻訳できます。";
 }
 

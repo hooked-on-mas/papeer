@@ -37,14 +37,15 @@ test("the terms a paper uses: 共通 and the domains selected, first source firs
     { source: "RL", target: "強化学習" }, { source: "policy", target: "方策", domain: "強化学習" },
     { source: "Cell", target: "セル（共通）" }, { source: "loss", target: "損失", domain: "機械学習" },
   ];
-  assert.deepEqual(effectiveTerms(terms, { domains: ["電池"], new_domain: null }), [terms[1], terms[2]]);
+  assert.deepEqual(effectiveTerms(terms, { domains: ["電池"], new_domain: null, scope_terms: terms }), [terms[1], terms[2]]);
   // Order of the glossary, not of the selection; the first of a source in several selected domains wins.
-  assert.deepEqual(effectiveTerms(terms, { domains: ["電池", "生物"], new_domain: null }), [terms[0], terms[2]]);
+  assert.deepEqual(effectiveTerms(terms, { domains: ["電池", "生物"], new_domain: null, scope_terms: terms }), [terms[0], terms[2]]);
   // A new domain counts as selected.
-  assert.deepEqual(effectiveTerms(terms, { domains: [], new_domain: "機械学習" }), [terms[2], terms[4], terms[5]]);
+  assert.deepEqual(effectiveTerms(terms, { domains: [], new_domain: "機械学習", scope_terms: terms }), [terms[2], terms[4], terms[5]]);
   assert.deepEqual(effectiveTerms(terms, { domains: [], new_domain: null }), [terms[2], terms[4]]);
-  // Nothing recorded: every term, as before domains existed.
-  assert.deepEqual(effectiveTerms(terms, null), terms);
+  // An unchecked domain is never applied merely because it exists.
+  assert.deepEqual(effectiveTerms(terms, null), [terms[2], terms[4]]);
+  assert.deepEqual(effectiveTerms(terms, { domains: ["電池"], new_domain: null }), [terms[2], terms[4]]);
 });
 
 test("the domain a paper's new terms go to", () => {
@@ -57,9 +58,9 @@ test("the domain a paper's new terms go to", () => {
 test("the key follows the terms in use, and tells domains apart without changing for 共通", () => {
   const common = [{ source: "RL", target: "強化学習" }];
   const terms = [...common, { source: "cell", target: "細胞", domain: "生物" }, { source: "cell", target: "セル", domain: "電池" }];
-  const key = (domains: string[]) => glossaryKey(effectiveTerms(terms, { domains, new_domain: null }));
+  const key = (domains: string[]) => glossaryKey(effectiveTerms(terms, { domains, new_domain: null, scope_terms: terms }));
   // A dictionary the paper does not use is no reason to suggest the check again.
-  assert.equal(glossaryKey(effectiveTerms([...terms, { source: "x", target: "y", domain: "他" }], { domains: ["生物"], new_domain: null })), key(["生物"]));
+  assert.equal(glossaryKey(effectiveTerms([...terms, { source: "x", target: "y", domain: "他" }], { domains: ["生物"], new_domain: null, scope_terms: terms })), key(["生物"]));
   assert.notEqual(key(["生物"]), key(["電池"]));
   assert.notEqual(key(["生物"]), key([]));
   assert.equal(glossaryKey([...terms].reverse()), glossaryKey(terms));
@@ -94,9 +95,9 @@ test("the check for unregistered terms is suggested only when it may tell someth
 });
 
 test("the main button starts without the check unless it has been done", () => {
-  assert.equal(startButtonLabel({ reviewed: false, skip: null }), "用語を確認せずに翻訳");
-  assert.equal(startButtonLabel({ reviewed: true, skip: null }), "確認して開始");
-  assert.equal(startButtonLabel({ reviewed: true, skip: "unchanged" }), "確認して開始");
+  assert.equal(startButtonLabel({ reviewed: false, skip: null }), "翻訳を開始");
+  assert.equal(startButtonLabel({ reviewed: true, skip: null }), "翻訳を開始");
+  assert.equal(startButtonLabel({ reviewed: true, skip: "unchanged" }), "翻訳を開始");
   assert.equal(startButtonLabel({ reviewed: false, skip: "reusable" }), "保存済みの訳文でPDFを作り直す");
   assert.equal(startButtonLabel({ reviewed: false, skip: "resume" }), "翻訳を開始");
   for (const skip of ["reusable", "resume", "unchanged", null] as const) assert.ok(reviewSkipMessage(skip));

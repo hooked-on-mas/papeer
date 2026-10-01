@@ -216,18 +216,19 @@ def domain_library(tmp_path):
 
 
 def test_effective_glossary_keeps_the_order_takes_the_first_source_and_drops_domains(tmp_path):
-    from papeer.core.terminology import glossary_for_folder, domain_names
+    from papeer.core.terminology import glossary_for_folder, domain_names, paper_domains, save_paper_scope, glossary_scope_key
     root, choose = domain_library(tmp_path)
     folder = root / "papers" / "p1"
     assert domain_names(DOMAIN_TERMS) == ["電池", "強化学習", "生物"]
-    # Nothing recorded: the general dictionary and every domain, as before (a repeated source: the first).
-    assert glossary_for_folder(folder) == [{"source": t["source"], "target": t["target"]} for t in DOMAIN_TERMS[:3] + DOMAIN_TERMS[4:]]
+    # A domain name alone cannot authorize its specialized translations.
+    assert glossary_for_folder(folder) == [{"source": "control", "target": "制御"}]
     choose("p1", ["生物", "強化学習"])
+    save_paper_scope(root, "p1", {"key": glossary_scope_key(DOMAIN_TERMS), "terms": DOMAIN_TERMS}, paper_domains(root, "p1"))
     assert glossary_for_folder(folder) == [{"source": "policy", "target": "方策"}, {"source": "control", "target": "制御"},
                                            {"source": "Cell", "target": "細胞"}, {"source": "delay", "target": "遅延"}]
     choose("p1", [])
     assert glossary_for_folder(folder) == [{"source": "control", "target": "制御"}]
-    assert glossary_for_folder(root / "papers" / "p2")[0]["source"] == "cell"
+    assert glossary_for_folder(root / "papers" / "p2")[0]["source"] == "control"
 
 
 def test_domains_are_recorded_only_when_written_and_the_user_choice_stays(tmp_path):
@@ -247,13 +248,15 @@ def test_domains_are_recorded_only_when_written_and_the_user_choice_stays(tmp_pa
 
 
 def test_a_domain_does_not_change_what_a_translation_is_cached_by(tmp_path):
-    from papeer.core.terminology import glossary_for_folder
+    from papeer.core.terminology import glossary_for_folder, save_paper_domains, paper_domains, save_paper_scope, glossary_scope_key
     plain = [{"source": t["source"], "target": t["target"]} for t in DOMAIN_TERMS[:3]]
     root = Library(tmp_path / "lib").root
     units = [{"id": "a", "page": 1, "text": "The cell policy uses control."}]
     before = [dict(u) for u in units]
     apply_glossary(before, plain)
     save_global_glossary(root, DOMAIN_TERMS[:3])
+    save_paper_domains(root, "p1", ["電池", "強化学習"], None, "ai", ["電池", "強化学習"])
+    save_paper_scope(root, "p1", {"key": glossary_scope_key(DOMAIN_TERMS[:3]), "terms": DOMAIN_TERMS[:3]}, paper_domains(root, "p1"))
     after = [dict(u) for u in units]
     apply_glossary(after, glossary_for_folder(root / "papers" / "p1"))
     assert after == before and after[0]["glossary"] == plain

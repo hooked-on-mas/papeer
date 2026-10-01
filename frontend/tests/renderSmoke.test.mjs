@@ -223,10 +223,10 @@ test("the translation dialog's glossary shows the saved glossary until it is edi
       domains: { record: undefined, canSplit: true, onSplit: () => {}, onChoose: () => {} } });
   }
   const html = render(React.createElement(Glossary), {}, {}, [[["glossary"], [{ source: "observer", target: "オブザーバ" }]]]);
-  assert.match(html, /全論文共通の専門用語辞書（(<!-- -->)?1(<!-- -->)?件）/);
+  assert.match(html, /共用辞書を管理（1件）/);
   assert.match(html, /value="observer"/);
   assert.match(html, /value="オブザーバ"/);
-  assert.match(html, /AIで未登録の専門用語を確認/);
+  assert.doesNotMatch(html, /AIで未登録の専門用語を確認/);
   // No domain dictionary: nothing to choose.
   assert.doesNotMatch(html, /この論文に使う分野辞書/);
 });
@@ -241,7 +241,7 @@ test("the translation dialog's glossary offers the domain dictionaries the paper
   }
   const terms = [{ source: "RL", target: "強化学習" }, { source: "cell", target: "セル", domain: "電池" }, { source: "cell", target: "細胞", domain: "生物" }];
   const html = render(React.createElement(Glossary), {}, {}, [[["glossary"], terms]]);
-  assert.match(html, /専門用語辞書（(<!-- -->)?3(<!-- -->)?件・分野辞書 (<!-- -->)?2(<!-- -->)?）/);
+  assert.match(html, /共用辞書を管理（3件）/);
   assert.match(html, /この論文に使う分野辞書/);
   assert.match(html, /共通（常に適用/);
   // 電池 is checked, 生物 is not; the new domain the AI proposed is offered.
@@ -253,7 +253,7 @@ test("the translation dialog's glossary offers the domain dictionaries the paper
   // Each term has its domain, and the list can be narrowed to one.
   assert.match(html, /aria-label="分野で絞り込み"/);
   assert.match(html, /aria-label="分野 2"[^>]*>.*?<option value="電池" selected=""/);
-  assert.match(html, /AIで分野ごとに分ける/);
+  assert.match(html, /AIで細かい分野に分ける/);
 });
 
 const libraryPapers = [

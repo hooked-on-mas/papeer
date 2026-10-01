@@ -1,6 +1,6 @@
 /**
- * When the translation dialog starts the AI's work on the domain dictionaries by itself: choosing the
- * ones a paper uses, and splitting a dictionary that has grown. Kept free of React and the API so that
+ * When the translation dialog checks the applicability of existing translations. Dictionary splitting
+ * is an explicit management action. Kept free of React and the API so that
  * tests/glossaryDomains.test.ts can check the rules.
  */
 import { GENERAL_DOMAIN, type DomainSelection, type Term } from "./translationStart.ts";
@@ -19,8 +19,11 @@ export type PaperDomains = {
   available: string[];
   /** The dictionaries changed since the choice. */
   stale: boolean;
-  /** A dictionary of this many terms is split by the AI. */
+  /** Suggested size for manual dictionary organization (never triggers a split automatically). */
   split_at: number;
+  scope_terms?: Term[];
+  scope_stale?: boolean;
+  selection_key?: string;
 };
 
 /** The domain dictionaries with the terms in each, for the rules below. */
@@ -34,17 +37,13 @@ export type AutoGlossaryJobs = {
 };
 
 /**
- * What to start when the dialog has read the dictionary. Nothing while the glossary has unsaved edits
- * (the sidecar would work on the saved one) or a paper job runs. A dictionary of `splitAt` terms or
- * more is split first, unless it was split (or found not to split) at that very count before; the
- * choice of dictionaries waits for it, since a split makes the choice stale. The choice is made when
- * there is a domain dictionary to choose from and no choice yet, or the AI's choice is stale; the
- * user's stale choice is left to the user.
+ * Check the meanings once the shared dictionary loads, including legacy choices without a term scope.
+ * A user's domain choices stay fixed, while the translations inside them are still checked.
  */
-export function autoGlossaryJobs({ availableDomains, domainCounts, record, dirty, running, splitChecked, splitAt }: {
+export function autoGlossaryJobs({ availableDomains, record, dirty, running }: {
   availableDomains: readonly string[];
   domainCounts: DomainCounts;
-  record: { chosen_by: "ai" | "user" | null; stale: boolean } | null;
+  record: { chosen_by: "ai" | "user" | null; stale: boolean; scope_stale?: boolean; selection_key?: string } | null;
   dirty: boolean;
   running: boolean;
   /** Term counts of the dictionaries at the time they were last split (readSplitChecked). */
@@ -52,12 +51,9 @@ export function autoGlossaryJobs({ availableDomains, domainCounts, record, dirty
   splitAt: number;
 }): AutoGlossaryJobs {
   if (dirty || running) return { select: false, split: null };
-  const split = [GENERAL_DOMAIN, ...availableDomains].find((name) => {
-    const count = domainCounts[name] ?? 0;
-    return count >= splitAt && splitChecked[name] !== count;
-  }) ?? null;
-  if (split !== null) return { select: false, split };
-  const needsChoice = !record || record.chosen_by === null || (record.chosen_by === "ai" && record.stale);
+  // Organizing the shared dictionary is an explicit management action, never a prerequisite to reading.
+  const needsChoice = !record || record.chosen_by === null || record.scope_stale
+    || (record.chosen_by === "ai" && record.stale);
   return { select: availableDomains.length > 0 && needsChoice, split: null };
 }
 
@@ -67,29 +63,20 @@ export type AutoStart =
 
 /**
  * What the dialog starts now, if anything: autoGlossaryJobs, less what this window started already, so that a
- * job that did not go through (or whose result is not read yet) is not started again in a loop, and the
- * choice is not held up by a split that was started already. `tried.splits`: the term count of a dictionary
- * when its split was started (by itself or by hand); `tried.selects`: the keys of the choices started (the
- * key is the paper and the domain dictionaries there were). A dictionary of the size that was split is
- * left as it was; the next dictionary that needs it, and the choice, are looked at as usual.
+ * job that did not go through (or whose result is not read yet) is not started again in a loop.
+ * The key includes the paper, available domains, and dictionary/source fingerprint.
  */
 export function nextAutoStart({ paperId, tried, ...rules }: Parameters<typeof autoGlossaryJobs>[0] & {
   paperId: string;
   tried: { splits: DomainCounts; selects: ReadonlySet<string> };
 }): AutoStart | null {
-  let splitChecked = rules.splitChecked;
-  for (;;) {
-    const jobs = autoGlossaryJobs({ ...rules, splitChecked });
-    if (jobs.split !== null) {
-      const count = rules.domainCounts[jobs.split] ?? 0;
-      if (tried.splits[jobs.split] !== count) return { kind: "split", domain: jobs.split };
-      splitChecked = { ...splitChecked, [jobs.split]: count };
-      continue;
-    }
-    if (!jobs.select) return null;
-    const key = `${paperId}:${rules.availableDomains.join("\n")}`;
-    return tried.selects.has(key) ? null : { kind: "select", key };
-  }
+  if (!autoGlossaryJobs(rules).select) return null;
+  const key = selectionAttemptKey(paperId, rules.availableDomains, rules.record?.selection_key);
+  return tried.selects.has(key) ? null : { kind: "select", key };
+}
+
+export function selectionAttemptKey(paperId: string, domains: readonly string[], contentKey?: string): string {
+  return `${paperId}:${domains.join("\n")}:${contentKey ?? ""}`;
 }
 
 /** The number of terms each dictionary has: 共通 and every domain that has a term. */
@@ -179,14 +166,15 @@ export function withDomain<T extends Term>(term: T, domain: string): T {
   return (name && name !== GENERAL_DOMAIN ? { ...rest, domain: name } : rest) as T;
 }
 
-/** The choice of the paper as far as it is recorded: null when nothing is (every domain dictionary applies then). */
-export function selectionOf(record: Pick<PaperDomains, "domains" | "new_domain" | "chosen_by"> | undefined): DomainSelection | null {
-  return record && record.chosen_by !== null ? { domains: record.domains, new_domain: record.new_domain } : null;
+/** The recorded choice: null while unreviewed, when only common and paper-local terms apply. */
+export function selectionOf(record: Pick<PaperDomains, "domains" | "new_domain" | "chosen_by" | "scope_terms"> | undefined): DomainSelection | null {
+  return record && record.chosen_by !== null ? { domains: record.domains, new_domain: record.new_domain,
+    scope_terms: record.scope_terms ?? [] } : null;
 }
 
-/** The domain dictionaries checked in the list: those chosen, or every one while no choice is recorded. */
+/** The domain dictionaries checked in the list: only those explicitly chosen. */
 export function checkedDomains(record: Pick<PaperDomains, "domains" | "chosen_by" | "available">): string[] {
-  return record.chosen_by === null ? [...record.available] : [...record.domains];
+  return record.chosen_by === null ? [] : [...record.domains];
 }
 
 /**
@@ -206,7 +194,7 @@ export function unchosenNewDomains(record: Pick<PaperDomains, "chosen_by" | "sta
 }
 
 export function unchosenNewDomainsMessage(names: readonly string[]): string | null {
-  return names.length ? `新しい分野辞書 ${names.join("、")} は未選択です。使うときは「専門用語辞書」の「この論文に使う分野辞書」で選んでください。` : null;
+  return names.length ? `新しい分野辞書 ${names.join("、")} は未選択です。使うときは「共用辞書を管理」の「この論文に使う分野辞書」で選んでください。` : null;
 }
 
 export type DomainJob = "select" | "split";
@@ -214,7 +202,7 @@ export type DomainJob = "select" | "split";
 /** What the dialog says while the AI works on the dictionaries. */
 export function domainJobMessage(running: DomainJob | null): string | null {
   switch (running) {
-    case "select": return "AIがこの論文の分野辞書を選んでいます…";
+    case "select": return "AIが原文の使われ方を見て、適用する訳語を選んでいます…";
     case "split": return "AIが辞書を分野ごとに分けています…";
     default: return null;
   }
@@ -224,8 +212,8 @@ export function domainJobMessage(running: DomainJob | null): string | null {
 export function domainFailureMessage(job: DomainJob, error: string | null): string {
   const reason = error?.trim() || "不明なエラー";
   return job === "select"
-    ? `AIが分野辞書を選べませんでした（${reason}）。「専門用語辞書」の「この論文に使う分野辞書」のチェックで選べます。`
-    : `AIが辞書を分けられませんでした（${reason}）。「専門用語辞書」の「AIで分野ごとに分ける」で、もう一度実行できます。`;
+    ? `AIが訳語の適用を判定できませんでした（${reason}）。未確認の分野の訳語は適用しません。「共用辞書を管理」の「分類の整理」で選び直せます。`
+    : `AIが辞書を分けられませんでした（${reason}）。「共用辞書を管理」の「分類の整理」で、もう一度実行できます。`;
 }
 
 /** What the dialog says when a split ended. */

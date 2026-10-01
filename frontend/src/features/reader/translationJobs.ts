@@ -6,6 +6,7 @@ import type { TranslateResult } from "@/api/jobTypes";
 import { invalidationsFor } from "@/api/invalidation";
 import type { JobFinished, JobHandlers } from "@/features/jobs/jobHandlers";
 import { finishGlossaryDraft, isGlossaryDialogOpen } from "./glossaryDraft";
+import { rememberSplitPreview } from "./glossaryJobs";
 
 function translateMessage(report: TranslateResult): string {
   let message = `指定した${report.selected_pages.length}ページの翻訳処理が終了しました。`
@@ -83,6 +84,14 @@ export const translationJobHandlers: JobHandlers = {
   "glossary-select": { quiet: true, refresh: domainQueries },
   "glossary-split": {
     quiet: true,
+    succeeded: (event, { done }) => {
+      rememberSplitPreview(event);
+      if (event.result.terms && !isGlossaryDialogOpen(event.paper_id)) {
+        done("分野の分割案ができました。翻訳の設定で確認して保存できます。", {
+          title: "辞書の分割案", action: { label: "確認する", run: () => openTranslationDialog(event) },
+        });
+      }
+    },
     // The dictionary is shared by every paper: whatever depends on it, and the domains, are read again.
     refresh: (event) => [...invalidationsFor({ kind: "glossary" }).map((stale) => [...stale.queryKey]), ...domainQueries(event)],
   },

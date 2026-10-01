@@ -12,7 +12,8 @@ from papeer.core import drive_sync, glossary_domains, history_restore, reading_t
 from papeer.core.errors import Invalid
 from papeer.providers import Cancelled, check_cancel
 from papeer.core.terminology import (
-    GENERAL_DOMAIN, SPLIT_AT, add_glossary_term, domain_names, global_glossary, paper_domains, save_global_glossary, save_paper_domains)
+    GENERAL_DOMAIN, SPLIT_AT, add_glossary_term, domain_names, global_glossary, glossary_scope_key,
+    paper_domains, paper_glossary, save_global_glossary, save_paper_domains, save_paper_glossary)
 from sidecar import deps
 from sidecar.job_types import JobKind, JobStarted
 from sidecar.schemas.reading import (
@@ -24,6 +25,7 @@ from sidecar.schemas.reading import (
     GlossarySplitRequest,
     GlossaryTermRequest,
     PaperDomainsRequest,
+    PaperGlossaryRequest,
     RestoreRequest,
     RevisionRequest,
     TagRequest,
@@ -127,13 +129,41 @@ def effective_glossary(paper_id: str):
     return tools.effective_glossary(lib, paper_id)
 
 def _domains_state(paper_id: str) -> dict:
-    available = domain_names(global_glossary(deps.get_library().root))
+    terms = global_glossary(deps.get_library().root)
+    available = domain_names(terms)
     record = paper_domains(deps.get_library().root, paper_id)
+    scope = paper_glossary(deps.get_library().root, paper_id)["scope"]
+    source = "\n\n".join(text for _, text in deps.get_library().page_texts(paper_id)) if available else ""
+    key = glossary_scope_key(terms, source)
     return {"domains": record["domains"] if record else [], "new_domain": record["new_domain"] if record else None,
             "chosen_by": record["chosen_by"] if record else None,
             "known_domains": record["known_domains"] if record else [],
             "available": available, "stale": bool(record) and record["known_domains"] != available,
-            "split_at": SPLIT_AT}
+            "split_at": SPLIT_AT, "scope_terms": scope["terms"] if scope and scope["key"] == key else [],
+            "scope_stale": scope is None or scope["key"] != key, "selection_key": key}
+
+
+@router.get("/api/papers/{paper_id}/glossary")
+def get_local_glossary(paper_id: str):
+    lib = deps.get_library()
+    lib.paper_folder(paper_id)
+    state = paper_glossary(lib.root, paper_id)
+    return {"terms": state["terms"], "dismissed": state["dismissed"]}
+
+
+@router.put("/api/papers/{paper_id}/glossary")
+def put_local_glossary(paper_id: str, body: PaperGlossaryRequest):
+    lib = deps.get_library()
+    lib.paper_folder(paper_id)
+    terms = tools.validate_terms(body.terms)
+    if any(t.get("domain") for t in terms):
+        raise Invalid("この論文だけの訳語指定には分野を付けられません。")
+    if any(not s.strip() or len(s) > 100 for s in body.dismissed):
+        raise Invalid("確認しない語は1〜100文字で指定してください。")
+    dismissed = list(dict.fromkeys(s.strip().casefold() for s in body.dismissed))
+    with deps.job_manager.idle("実行中の処理が終わってから訳語指定を保存してください。"):
+        save_paper_glossary(lib.root, paper_id, terms, dismissed, body.expected)
+    return {"terms": terms, "dismissed": dismissed}
 
 @router.get("/api/papers/{paper_id}/glossary-domains")
 def get_paper_domains(paper_id: str):
@@ -186,7 +216,8 @@ def split_glossary(paper_id: str, body: GlossarySplitRequest) -> JobStarted:
     glossary_domains.split_target(global_glossary(lib.root), body.domain)  # Invalid (400) before the job starts.
     settings = deps.settings_for_run(body.model, body.effort)
     def action(cancel, progress, _page_ready):
-        return glossary_domains.split_domain(lib.root, deps.provider_for(settings, cancel), cancel, progress, body.domain)
+        return glossary_domains.split_domain(lib.root, deps.provider_for(settings, cancel), cancel, progress, body.domain,
+                                             preview=body.preview)
     return deps.submit_job(JobKind.GLOSSARY_SPLIT, action, paper_id)
 
 @router.post("/api/papers/{paper_id}/glossary-draft")

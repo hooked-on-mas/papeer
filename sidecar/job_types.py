@@ -87,6 +87,8 @@ class RevisionDraftResult(BaseModel):
 class GlossaryTerm(BaseModel):
     source: str
     target: str
+    reason: str = ""
+    context: str = ""
 
 
 class GlossaryDraftResult(BaseModel):
@@ -106,6 +108,8 @@ class GlossaryDomainCount(BaseModel):
 class GlossarySplitResult(BaseModel):
     moved: int  # Terms given a domain.
     domains: list[GlossaryDomainCount]  # Every domain dictionary afterwards (not 共通), with its terms.
+    terms: list[dict[str, str]] | None = None
+    original: list[dict[str, str]] | None = None
 
 
 class ArticleResult(BaseModel):

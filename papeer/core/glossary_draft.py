@@ -4,7 +4,9 @@ from __future__ import annotations
 import json
 
 from papeer.core import prompts
-from papeer.core.terminology import GENERAL_DOMAIN, chosen_domains, effective_glossary, matching_terms, paper_domains
+from papeer.core.terminology import GENERAL_DOMAIN, chosen_domains, effective_glossary, matching_terms, paper_domains, paper_glossary, term_contexts
+
+MAX_CANDIDATES = 5  # A paper-wide review budget, not a quota per chunk.
 
 
 def validate_terms(terms: object) -> list[dict[str, str]]:
@@ -38,22 +40,27 @@ def draft_glossary(lib, paper_id, provider, cancel, progress, existing):
     # Known: the paper's effective dictionary and the unsaved terms of its domains (another domain may
     # give the same source another rendering).
     record = paper_domains(lib.root, paper_id)
+    preferences = paper_glossary(lib.root, paper_id)
+    dismissed = set(preferences["dismissed"])
     known = {t["source"].casefold(): t for t in effective_glossary(lib, paper_id)}
     known.update({t["source"].casefold(): t for t in existing
                   if not t.get("domain") or record is None or t["domain"] in chosen_domains(record)})
     result = []
     schema = {"type": "object", "properties": {"terms": {"type": "array", "items": {
-        "type": "object", "properties": {"source": {"type": "string"}, "target": {"type": "string"}},
-        "required": ["source", "target"], "additionalProperties": False}}},
+        "type": "object", "properties": {"source": {"type": "string"}, "target": {"type": "string"},
+        "reason": {"type": "string"}, "reusable": {"type": "boolean"}, "needs_confirmation": {"type": "boolean"},
+        "priority": {"type": "integer", "minimum": 1, "maximum": 3}},
+        "required": ["source", "target", "reason", "reusable", "needs_confirmation", "priority"], "additionalProperties": False}}},
         "required": ["terms"], "additionalProperties": False}
     # Overlap preserves phrases crossing chunk boundaries, while bounding each request.
     chunks = [text[i:i + 24000] for i in range(0, len(text), 23000)]
     for index, chunk in enumerate(chunks):
         check_cancel(cancel)
-        progress(f"専門用語の翻訳対応表を作っています… {index + 1}/{len(chunks)}")
+        progress(f"判断が必要な訳語を確認しています… {index + 1}/{len(chunks)}")
         answer = provider.generate(
             prompts.load("glossary_draft"),
-            json.dumps({"source": chunk, "existing_terms": matching_terms(chunk, list(known.values()))}, ensure_ascii=False), schema)
+            json.dumps({"source": chunk, "existing_terms": matching_terms(chunk, list(known.values())),
+                        "dismissed_terms": preferences["dismissed"]}, ensure_ascii=False), schema)
         try:
             value = parse_json_answer(answer, schema)
         except ValueError:
@@ -66,10 +73,17 @@ def draft_glossary(lib, paper_id, provider, cancel, progress, existing):
         for item in terms:
             term = {"source": item["source"].strip(), "target": item["target"].strip()}
             key = term["source"].casefold()
+            reason = item.get("reason", "")
+            priority = item.get("priority")
+            if (item.get("reusable") is not True or item.get("needs_confirmation") is not True
+                    or not isinstance(reason, str) or not reason.strip()
+                    or type(priority) is not int or not 1 <= priority <= 3 or key in dismissed):
+                continue
             if (term["source"] and term["target"] and max(len(term["source"]), len(term["target"])) <= 100
-                    # In the source, as a translation finds glossary terms (plural, across lines) or as a part.
-                    and key not in known and (key in chunk.casefold() or matching_terms(chunk, [term]))):
-                result.append(term)
+                    and key not in known and matching_terms(chunk, [term])):
+                context = "\n…\n".join(term_contexts(chunk, term, limit=1))
+                result.append({**term, "reason": reason.strip()[:300], "context": context, "priority": priority})
                 known[key] = term
     check_cancel(cancel)
-    return {"terms": result}
+    ranked = sorted(result, key=lambda t: t["priority"], reverse=True)[:MAX_CANDIDATES]
+    return {"terms": [{k: v for k, v in t.items() if k != "priority"} for t in ranked]}

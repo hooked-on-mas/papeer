@@ -378,12 +378,12 @@ def test_removed_compatibility_routes_stay_removed():
         ("GET", "/api/papers/{paper_id}/bookmarks"), ("POST", "/api/papers/{paper_id}/bookmarks"),
         ("PATCH", "/api/papers/{paper_id}/bookmarks/{bookmark_id}"),
         ("DELETE", "/api/papers/{paper_id}/bookmarks/{bookmark_id}"),
-        ("GET", "/api/papers/{paper_id}/glossary"), ("PUT", "/api/papers/{paper_id}/glossary"),
         ("GET", "/api/papers/{paper_id}/ink/{side}/{page}"), ("PUT", "/api/papers/{paper_id}/ink/{side}/{page}"),
         ("POST", "/api/papers/{paper_id}/ink-capture"),
     }
     assert not removed & routes
     assert {("GET", "/api/papers/{paper_id}/sticky-notes"), ("GET", "/api/glossary"),
+            ("GET", "/api/papers/{paper_id}/glossary"), ("PUT", "/api/papers/{paper_id}/glossary"),
             ("PUT", "/api/papers/{paper_id}/ink-v2/{side}/{page}"), ("POST", "/api/papers/{paper_id}/ink-capture-v2")} <= routes
 
 

@@ -5016,6 +5016,152 @@
         }
       }
     },
+    "/api/papers/{paper_id}/glossary": {
+      "get": {
+        "summary": "Get Local Glossary",
+        "operationId": "get_local_glossary_api_papers__paper_id__glossary_get",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Put Local Glossary",
+        "operationId": "put_local_glossary_api_papers__paper_id__glossary_put",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperGlossaryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/papers/{paper_id}/glossary-domains": {
       "get": {
         "summary": "Get Paper Domains",
@@ -9101,6 +9247,11 @@
               }
             ],
             "title": "Effort"
+          },
+          "preview": {
+            "type": "boolean",
+            "title": "Preview",
+            "default": false
           }
         },
         "type": "object",
@@ -9121,6 +9272,40 @@
             },
             "type": "array",
             "title": "Domains"
+          },
+          "terms": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terms"
+          },
+          "original": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original"
           }
         },
         "type": "object",
@@ -9139,6 +9324,16 @@
           "target": {
             "type": "string",
             "title": "Target"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          },
+          "context": {
+            "type": "string",
+            "title": "Context",
+            "default": ""
           }
         },
         "type": "object",
@@ -10471,6 +10666,41 @@
         },
         "type": "object",
         "title": "PaperDomainsRequest"
+      },
+      "PaperGlossaryRequest": {
+        "properties": {
+          "terms": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "maxItems": 2000,
+            "title": "Terms"
+          },
+          "dismissed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 2000,
+            "title": "Dismissed"
+          },
+          "expected": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Expected"
+          }
+        },
+        "type": "object",
+        "required": [
+          "terms",
+          "dismissed",
+          "expected"
+        ],
+        "title": "PaperGlossaryRequest"
       },
       "PaperOpened": {
         "properties": {

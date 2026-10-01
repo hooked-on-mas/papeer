@@ -17,11 +17,13 @@ import { useOpenEdit } from "@/lib/pendingSaves";
 import { parsePageSelection } from "@/lib/pageSelection";
 import { useSessionState } from "@/lib/useSessionState";
 import { GlossaryEditor, useGlossaryEditor } from "./GlossaryEditor";
+import { PaperGlossaryReview, usePaperGlossaryEditor } from "./PaperGlossaryReview";
+import { withPaperTerms } from "./paperGlossary";
 import {
-  countDomainTerms, nextAutoStart, domainFailureMessage, domainJobMessage, readSplitChecked, recordSplitChecked, selectionOf,
-  splitCheckedCounts, splitDoneMessage, unchosenNewDomains, unchosenNewDomainsMessage, type DomainJob, type PaperDomains,
+  countDomainTerms, nextAutoStart, domainFailureMessage, domainJobMessage, readSplitChecked, selectionOf, selectionAttemptKey,
+  unchosenNewDomains, unchosenNewDomainsMessage, type DomainJob, type PaperDomains,
 } from "./glossaryDomains";
-import { startDomainSelect, startGlossarySplit } from "./glossaryJobs";
+import { startDomainSelect, startGlossarySplit, takeSplitPreview, useGlossarySplitPreviews } from "./glossaryJobs";
 import { setGlossaryDialogPaper, startGlossaryDraft, takeGlossaryDraft, useGlossaryDrafts } from "./glossaryDraft";
 import { markRebuildJob } from "./rebuildJobs";
 import {
@@ -103,7 +105,17 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   const { data: settings } = useSettings();
   const { data: reading } = useReading(open ? paperId : null);
   const glossary = useGlossaryEditor(session);
+  const localGlossary = usePaperGlossaryEditor(session, paperId);
   const savedGlossary = glossary.saved;
+  const splitPreview = useGlossarySplitPreviews((s) => s.previews[paperId]);
+  useEffect(() => {
+    if (!open || !savedGlossary || !splitPreview || glossary.dirty) return;
+    const preview = takeSplitPreview(paperId);
+    if (!preview) return;
+    glossary.previewSplit(preview.terms, preview.original);
+    choose({ domainNote: `分割案で${preview.moved}語の分野を変更しました。確認して「辞書を保存」で適用できます。` });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a finished preview is consumed once, after the current glossary loads
+  }, [open, savedGlossary, splitPreview, glossary.dirty, paperId]);
   // The domain dictionaries this paper uses; the sidecar keeps the choice (the AI's, or the user's).
   const { data: domainRecord, isPending: loadingDomains, isFetching: fetchingDomains } = useQuery({
     queryKey: [QK.glossaryDomains, paperId], queryFn: () => fetchPaperDomains(paperId), enabled: open, retry: false,
@@ -111,20 +123,20 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   const saveDomains = useSavePaperDomains();
   const queryClient = useQueryClient();
   const domainSelection = selectionOf(domainRecord);
-  const busy = holding || generating || paperJobRunning || !!launching || (open && loadingDomains);
+  const busy = holding || generating || paperJobRunning || !!launching || (open && loadingDomains)
+    || localGlossary.fetching || saveDomains.isPending;
   // Show a finished check here, also one that finished while the dialog was closed. The list is this
   // opening's already (started over during the render): without unsaved edits, the saved glossary.
   useEffect(() => {
     // The main domain comes from the choice, which has to be read first: it cannot be put right afterwards.
-    if (!open || !savedGlossary || loadingDomains || fetchingDomains || draft?.status !== "done") return;
+    if (!open || !savedGlossary || !localGlossary.saved || localGlossary.fetching || loadingDomains || fetchingDomains || draft?.status !== "done") return;
     const terms = takeGlossaryDraft(paperId);
     if (!terms) return;
     // Only candidates the list does not have yet (the user may have added some meanwhile) count as new.
-    const { glossary: merged, added } = mergeDraftTerms(glossary.terms, terms, primaryDomain(domainSelection));
-    if (added.length) glossary.addCandidates(merged, added, { expand: true });
-    choose({ reviewed: true, draftMessage: draftResultMessage(added.length) });
+    const count = localGlossary.addCandidates(terms);
+    choose({ reviewed: true, draftMessage: draftResultMessage(count) });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- glossary and choose are new on every render; a finished check is what it waits for
-  }, [open, paperId, draft, savedGlossary, loadingDomains, fetchingDomains]);
+  }, [open, paperId, draft, savedGlossary, localGlossary.saved, localGlossary.fetching, loadingDomains, fetchingDomains]);
   const provider = settings?.provider ?? "";
   const pageCount = reading?.source_page_count ?? reading?.page_count ?? 0;
   // Once the paper is loaded; a choice made before that stays.
@@ -176,10 +188,10 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   const startReady = !!plan && !!savedInkPages && !planFetching && !inkFetching && !planError && !inkError
     && !fetchingDomains && !saveDomains.isPending && !glossary.fetching;
   // Only the terms this paper uses count: editing a dictionary it does not use is no reason to check again.
-  const currentKey = glossaryKey(effectiveTerms(glossary.terms, domainSelection));
+  const currentKey = glossaryKey(withPaperTerms(effectiveTerms(glossary.terms, domainSelection), localGlossary.effective));
   // A plan being refetched (after a glossary save or a finished run) may be out of date.
   const skip = glossaryReviewSkip({
-    plan: planFetching ? undefined : plan, glossaryDirty: glossary.dirty, resuming: isResuming(reading?.preview, selection.pages),
+    plan: planFetching ? undefined : plan, glossaryDirty: glossary.dirty || localGlossary.dirty, resuming: isResuming(reading?.preview, selection.pages),
     reviewedKey: choices.reviewedKey, currentKey,
   });
   const warning = retranslationWarning(planFetching ? undefined : plan, !!domainRecord?.available.length);
@@ -187,6 +199,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
 
   // The AI's work on the dictionaries. A failure is told in the dialog only (the handlers are quiet, translationJobs).
   const runSelect = async () => {
+    started.current.selects.add(selectionAttemptKey(paperId, domainRecord?.available ?? [], domainRecord?.selection_key));
     setLaunching("select");
     choose({ domainNote: "" });
     try {
@@ -209,12 +222,10 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     setLaunching("split");
     choose({ domainNote: "" });
     try {
-      await startGlossarySplit(paperId, { domain, model: model || undefined, effort: effort || undefined }, (event) => {
+      await startGlossarySplit(paperId, { domain, model: model || undefined, effort: effort || undefined, preview: true }, (event) => {
         if (event.status === "failed") choose({ domainNote: domainFailureMessage("split", event.error) });
         else if (event.status === "succeeded") {
-          // The same dictionary of the same size is not sent to the AI again by itself.
-          recordSplitChecked(() => globalThis.localStorage, splitCheckedCounts(event.result, domain, before));
-          choose({ domainNote: splitDoneMessage(event.result.moved) });
+          if (!event.result.moved) choose({ domainNote: "分野を分け直す必要がある語はありませんでした。" });
         }
       });
     } catch (error) {
@@ -232,7 +243,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     const next = nextAutoStart({
       availableDomains: domainRecord.available, domainCounts: countDomainTerms(savedGlossary), record: domainRecord, dirty: glossary.dirty,
       // A dictionary or a choice being read again may be what a job has just changed: the cached one is not to go by.
-      running: paperJobRunning || generating || !!launching || starting || saving || glossary.fetching || fetchingDomains,
+      running: paperJobRunning || generating || !!launching || starting || saving || glossary.fetching || fetchingDomains || saveDomains.isPending,
       splitChecked: readSplitChecked(() => globalThis.localStorage), splitAt: domainRecord.split_at,
       paperId, tried: started.current,
     });
@@ -242,7 +253,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
       void runSelect();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runSelect and runSplit are new on every render; what they wait for is listed
-  }, [open, paperId, domainRecord, savedGlossary, settings, glossary.dirty, glossary.fetching, fetchingDomains, paperJobRunning, generating, launching, starting, saving]);
+  }, [open, paperId, domainRecord, savedGlossary, settings, glossary.dirty, glossary.fetching, fetchingDomains, paperJobRunning, generating, launching, starting, saving, saveDomains.isPending]);
 
   const handleStart = async () => {
     if (!selection.pages?.length || busy || !savedGlossary || !startReady) return;
@@ -254,6 +265,18 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     try {
       if (glossary.dirty) {
         await glossary.save();
+        // Saving a shared translation invalidates the semantic selection; finish that before translating.
+        const record = await fetchPaperDomains(paperId);
+        started.current.selects.add(selectionAttemptKey(paperId, record.available, record.selection_key));
+        if (record.available.length) await new Promise<void>((resolve, reject) => {
+          startDomainSelect(paperId, { model: model || undefined, effort: effort || undefined }, (event) => {
+            if (event.status === "succeeded") resolve();
+            else reject(new Error(event.error || "訳語の適用判定を完了できませんでした。"));
+          }).catch(reject);
+        });
+      }
+      await localGlossary.save();
+      if (glossary.dirty || localGlossary.dirty) {
         const updated = await refetchPlan();
         if (updated.error) throw updated.error;
         if (!updated.data) return;
@@ -269,7 +292,11 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
         { kind: "translate", paperId });
       if (rebuild) markRebuildJob(jobId);
       // The next start skips the check while the glossary stays as it is now.
-      if (choices.reviewed) recordReviewedGlossary(() => globalThis.localStorage, paperId, currentKey);
+      if (choices.reviewed) {
+        const record = await fetchPaperDomains(paperId);
+        recordReviewedGlossary(() => globalThis.localStorage, paperId,
+          glossaryKey(withPaperTerms(effectiveTerms(glossary.terms, selectionOf(record)), localGlossary.effective)));
+      }
       onOpenChange(false);
     } catch (error) {
       showError(error, "翻訳を開始できませんでした");
@@ -283,7 +310,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     choose({ draftMessage: "" });
     try {
       await startGlossaryDraft(paperId, {
-        terms: normalizeTerms(glossary.terms),
+        terms: normalizeTerms(withPaperTerms(effectiveTerms(glossary.terms, domainSelection), localGlossary.effective)),
         model: model || undefined, effort: effort || undefined,
       });
     } catch (error) {
@@ -297,16 +324,18 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   return (
     <Dialog open={open} onOpenChange={async next => {
       if (!next && holding) return;
-      if (!next && glossary.dirty && !await askConfirm("辞書の変更を破棄", "保存していない辞書の変更を破棄しますか？", "破棄")) return;
+      if (!next && (glossary.dirty || localGlossary.dirty) && !await askConfirm("訳語の変更を破棄", "保存していない訳語の変更を破棄しますか？", "破棄")) return;
       onOpenChange(next);
     }}>
       <DialogContent className="sm:max-w-xl max-h-[calc(100vh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>翻訳の設定</DialogTitle>
-          <DialogDescription>今回の翻訳に使うモデルと推論の強さ (effort)</DialogDescription>
+          <DialogDescription>ページと必要な訳語指定を確認して翻訳します。</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-1">
-          <div className="grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2">
+          <details className="border rounded p-2 text-[0.8125rem]">
+          <summary className="cursor-pointer font-medium">詳細設定（モデル: {effectiveModel || "既定モデル"}）</summary>
+          <div className="grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2 mt-2">
             <label className="text-[0.8125rem]">モデル</label>
             <NativeSelect value={model} onChange={(e) => choose({ model: e.target.value, effort: "" })} disabled={loadingModels && !models.length}>
               <option value="">AI接続の設定と同じ</option>
@@ -332,6 +361,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
               + "同じモデルでは保存済みの訳文を再利用します（effortの変更は次のAI処理から適用）。\n"
               + "モデルを変更すると指定ページを再翻訳します。指定外のページは以前の訳文のまま残ります。"}
           </p>
+          </details>
           <div className="grid gap-2">
             <NativeSelect value={scope} onChange={(e) => setRequest({ scope: e.target.value as Scope })}>
               <option value="all">全ページ</option>
@@ -349,16 +379,21 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
               {selection.error ?? (selection.pages ? translationTargetText(selection.pages.length, planFetching ? undefined : plan) : "")}
             </p>
           </div>
-          <GlossaryEditor editor={glossary} transferKey={`${paperId}-${open}`} busy={busy} generating={generating}
-            canGenerate={!!savedGlossary && !!settings} onGenerate={() => void generateGlossary()} onPending={setSaving}
+          <PaperGlossaryReview editor={localGlossary} busy={busy} onShare={(term) => {
+            const { glossary: merged, added } = mergeDraftTerms(glossary.terms, [term], primaryDomain(domainSelection));
+            if (added.length) glossary.addCandidates(merged, added, { expand: true });
+          }} />
+          <GlossaryEditor editor={glossary} transferKey={`${paperId}-${open}`} busy={busy} onPending={setSaving}
             domains={{
               record: domainRecord, canSplit: !!savedGlossary && !!settings, onSplit: (domain) => void runSplit(domain),
+              onRefresh: () => { started.current.selects.clear(); void runSelect(); },
               onChoose: async (domains, newDomain) => {
+                started.current.selects.clear();
                 // The boxes follow the click; the saved choice is read again when the save ends. A read still under way
                 // (after a job) would put the previous choice back.
                 const key = [QK.glossaryDomains, paperId];
                 await queryClient.cancelQueries({ queryKey: key });
-                queryClient.setQueryData<PaperDomains>(key, (old) => old && { ...old, domains, new_domain: newDomain, chosen_by: "user" });
+                queryClient.setQueryData<PaperDomains>(key, (old) => old && { ...old, domains, new_domain: newDomain, chosen_by: "user", scope_terms: [], scope_stale: true });
                 saveDomains.mutate({ paperId, domains, newDomain }, { onError: (error) => {
                   void queryClient.invalidateQueries({ queryKey: key });
                   showError(error, "分野辞書の選択を保存できませんでした");
@@ -391,12 +426,12 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
         </div>
         <DialogFooter>
           <Button variant="outline" disabled={holding} onClick={async () => {
-            if (glossary.dirty && !await askConfirm("辞書の変更を破棄", "保存していない辞書の変更を破棄しますか？", "破棄")) return;
+            if ((glossary.dirty || localGlossary.dirty) && !await askConfirm("訳語の変更を破棄", "保存していない訳語の変更を破棄しますか？", "破棄")) return;
             onOpenChange(false);
           }}>{generating ? "閉じる" : "キャンセル"}</Button>
           {!choices.reviewed && !skip && <Button variant="outline" onClick={generateGlossary}
             disabled={!selection.pages?.length || busy || !savedGlossary || !settings}>
-            {generating ? "用語を抽出中…" : "用語を確認してから翻訳"}
+            {generating ? "用語を確認中…" : "訳語を確認する"}
           </Button>}
           <Button onClick={handleStart} disabled={!selection.pages?.length || busy || !savedGlossary || !startReady}>
             {planFetching || inkFetching ? "翻訳対象を確認中…" : startButtonLabel({ reviewed: choices.reviewed, skip })}

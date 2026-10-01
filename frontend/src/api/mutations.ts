@@ -130,7 +130,10 @@ export function useAddGlossaryTerm() {
     mutationFn: async ({ paperId, source, target }: { paperId: string; source: string; target: string }): Promise<{ domain: string }> =>
       await unwrap(api.POST("/api/papers/{paper_id}/glossary/terms", {
         params: { path: { paper_id: paperId } }, body: { source, target } })) as { domain: string },
-    onSuccess: () => { void invalidate({ kind: "glossary" }, client); },
+    onSuccess: (_saved, { paperId }) => {
+      void invalidate({ kind: "glossary" }, client);
+      void invalidate({ kind: "paperGlossary", paperId }, client);
+    },
   });
 }
 

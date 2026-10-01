@@ -42,6 +42,7 @@ export type DataChange =
   | { kind: "glossary" }
   /** The domain dictionaries a paper uses chosen (by the AI, or in the dialog): which of the glossary applies to it. */
   | { kind: "glossaryDomains"; paperId: string }
+  | { kind: "paperGlossary"; paperId: string }
   /** A paragraph's translation revised (TranslationReview). */
   | { kind: "translationRevised"; paperId: string }
   /** A note template saved or deleted. */
@@ -96,6 +97,9 @@ export function invalidationsFor(change: DataChange): StaleQuery[] {
     case "glossaryDomains":
       // Which dictionaries apply changes the terms the paper's pages were translated with, like a term edit does.
       return [{ queryKey: [QK.glossaryDomains, change.paperId] }, { queryKey: [QK.translationPlan, change.paperId] },
+        { queryKey: [QK.paragraphs, change.paperId] }, { queryKey: [QK.effectiveGlossary, change.paperId] }];
+    case "paperGlossary":
+      return [{ queryKey: [QK.paperGlossary, change.paperId] }, { queryKey: [QK.translationPlan, change.paperId] },
         { queryKey: [QK.paragraphs, change.paperId] }, { queryKey: [QK.effectiveGlossary, change.paperId] }];
     case "translationRevised":
       return [{ queryKey: [QK.paragraphs, change.paperId] }, { queryKey: [QK.revisions, change.paperId] }];

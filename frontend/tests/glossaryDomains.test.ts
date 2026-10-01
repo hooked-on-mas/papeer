@@ -30,23 +30,10 @@ test("the choice is made once there is a domain dictionary and no choice, or the
   assert.deepEqual(autoGlossaryJobs({ ...base, availableDomains: [], domainCounts: {} }), { select: false, split: null });
 });
 
-test("a dictionary that reached the split size is split first, and only once at that size", () => {
-  const big = { ...base, domainCounts: { 共通: 150, 強化学習: 20, 電池: 5 } };
-  assert.deepEqual(autoGlossaryJobs(big), { select: false, split: "共通" });
-  // The choice waits for the split, whatever the record says.
-  assert.deepEqual(autoGlossaryJobs({ ...big, record: { chosen_by: "ai", stale: true } }), { select: false, split: "共通" });
-  assert.deepEqual(autoGlossaryJobs({ ...big, splitChecked: { 共通: 150 } }), { select: true, split: null });
-  // Grown since, so worth another look.
-  assert.deepEqual(autoGlossaryJobs({ ...big, splitChecked: { 共通: 149 } }), { select: false, split: "共通" });
-  assert.deepEqual(autoGlossaryJobs({ ...base, domainCounts: { 共通: 149 } }), { select: true, split: null });
-  // The first of the dictionaries that need it: 共通, then the domains in order.
-  const several = { ...base, domainCounts: { 共通: 200, 強化学習: 151, 電池: 400 } };
-  assert.deepEqual(autoGlossaryJobs(several), { select: false, split: "共通" });
-  assert.deepEqual(autoGlossaryJobs({ ...several, splitChecked: { 共通: 200 } }), { select: false, split: "強化学習" });
-  assert.deepEqual(autoGlossaryJobs({ ...several, splitChecked: { 共通: 200, 強化学習: 151 } }), { select: false, split: "電池" });
-  assert.deepEqual(autoGlossaryJobs({ ...several, splitChecked: { 共通: 200, 強化学習: 151, 電池: 400 } }), { select: true, split: null });
-  // The size comes from the sidecar.
-  assert.deepEqual(autoGlossaryJobs({ ...big, splitAt: 151 }), { select: true, split: null });
+test("large dictionaries are not split on the reading path, and legacy or edited scopes are rechecked", () => {
+  assert.deepEqual(autoGlossaryJobs({ ...base, domainCounts: { 共通: 500, 強化学習: 400 } }), { select: true, split: null });
+  assert.deepEqual(autoGlossaryJobs({ ...base, record: { chosen_by: "user", stale: false, scope_stale: true } }), { select: true, split: null });
+  assert.deepEqual(autoGlossaryJobs({ ...base, record: { chosen_by: "ai", stale: false, scope_stale: true } }), { select: true, split: null });
 });
 
 test("terms are counted per dictionary, 共通 for a term without a domain", () => {
@@ -125,10 +112,10 @@ const record = (overrides: Partial<Parameters<typeof toggledChoice>[0] & { stale
 
 test("the boxes checked are the choice, or every dictionary while none is recorded", () => {
   assert.deepEqual(checkedDomains(record()), ["電池"]);
-  assert.deepEqual(checkedDomains(record({ chosen_by: null, domains: [] })), ["電池", "生物", "強化学習"]);
+  assert.deepEqual(checkedDomains(record({ chosen_by: null, domains: [] })), []);
   assert.equal(selectionOf(undefined), null);
   assert.equal(selectionOf(record({ chosen_by: null, domains: [] })), null);
-  assert.deepEqual(selectionOf(record({ new_domain: "材料" })), { domains: ["電池"], new_domain: "材料" });
+  assert.deepEqual(selectionOf(record({ new_domain: "材料" })), { domains: ["電池"], new_domain: "材料", scope_terms: [] });
 });
 
 test("checking a box keeps the order of the others, and the sidecar's new domain", () => {
@@ -136,7 +123,7 @@ test("checking a box keeps the order of the others, and the sidecar's new domain
   assert.deepEqual(toggledChoice(record({ domains: ["生物", "電池"] }), "生物", false), { domains: ["電池"], newDomain: null });
   assert.deepEqual(toggledChoice(record({ domains: ["電池"], new_domain: "材料" }), "生物", true), { domains: ["電池", "生物"], newDomain: "材料" });
   // Nothing recorded: every box shows checked, so unchecking one keeps the rest.
-  assert.deepEqual(toggledChoice(record({ chosen_by: null, domains: [] }), "生物", false), { domains: ["電池", "強化学習"], newDomain: null });
+  assert.deepEqual(toggledChoice(record({ chosen_by: null, domains: [] }), "生物", false), { domains: [], newDomain: null });
   // A name that is not in the glossary any more is dropped, and cannot be checked.
   assert.deepEqual(toggledChoice(record({ domains: ["電池", "消えた分野"] }), "生物", true), { domains: ["電池", "生物"], newDomain: null });
   assert.deepEqual(toggledChoice(record(), "消えた分野", true), { domains: ["電池"], newDomain: null });
@@ -155,10 +142,10 @@ test("the dictionaries added after the user chose are announced, and only to the
 });
 
 test("the status line says what the AI is doing, and how it failed", () => {
-  assert.equal(domainJobMessage("select"), "AIがこの論文の分野辞書を選んでいます…");
+  assert.equal(domainJobMessage("select"), "AIが原文の使われ方を見て、適用する訳語を選んでいます…");
   assert.equal(domainJobMessage("split"), "AIが辞書を分野ごとに分けています…");
   assert.equal(domainJobMessage(null), null);
-  assert.match(domainFailureMessage("select", "接続できません"), /^AIが分野辞書を選べませんでした（接続できません）。.*チェックで選べます/);
+  assert.match(domainFailureMessage("select", "接続できません"), /^AIが訳語の適用を判定できませんでした（接続できません）。.*選び直せます/);
   assert.doesNotMatch(domainFailureMessage("select", "x"), /共通だけ/);
   assert.match(domainFailureMessage("split", null), /^AIが辞書を分けられませんでした（不明なエラー）/);
   assert.match(domainFailureMessage("split", "  "), /不明なエラー/);
@@ -168,37 +155,13 @@ test("the status line says what the AI is doing, and how it failed", () => {
 
 const rules = { ...base, paperId: "p1", tried: { splits: {}, selects: new Set<string>() } };
 
-test("what the window started is not started again, and does not hold up the choice", () => {
-  const big = { ...rules, domainCounts: { 共通: 160, 強化学習: 20, 電池: 5 } };
-  // A split that is due goes first, and the choice waits for it.
-  assert.deepEqual(nextAutoStart(big), { kind: "split", domain: "共通" });
-  // It was started at this size (and did not go through, or its result is not read yet): the choice is looked at.
-  const tried = { splits: { 共通: 160 }, selects: new Set<string>() };
-  assert.deepEqual(nextAutoStart({ ...big, tried }), { kind: "select", key: "p1:強化学習\n電池" });
-  assert.equal(nextAutoStart({ ...big, tried, record: { chosen_by: "ai", stale: false } }), null);
-  // The dictionary has changed in size since: worth a look again.
-  assert.deepEqual(nextAutoStart({ ...big, tried: { ...tried, splits: { 共通: 159 } } }), { kind: "split", domain: "共通" });
-  // The next dictionary that is due is split even when the first is not.
-  assert.deepEqual(nextAutoStart({ ...big, domainCounts: { 共通: 160, 強化学習: 151, 電池: 5 }, tried }), { kind: "split", domain: "強化学習" });
-  // A choice started for these dictionaries is not started again; other dictionaries, or another paper, are new.
-  const chosen = { splits: {}, selects: new Set(["p1:強化学習\n電池"]) };
-  assert.equal(nextAutoStart({ ...rules, tried: chosen }), null);
-  assert.deepEqual(nextAutoStart({ ...rules, tried: chosen, paperId: "p2" }), { kind: "select", key: "p2:強化学習\n電池" });
-  assert.deepEqual(nextAutoStart({ ...rules, tried: chosen, availableDomains: ["強化学習", "電池", "生物"] }),
-    { kind: "select", key: "p1:強化学習\n電池\n生物" });
-});
-
-test("a split just done, or dictionaries still being read, do not start the split again", () => {
-  const big = { ...rules, domainCounts: { 共通: 160, 強化学習: 20 } };
-  // After a split by hand the counts left are recorded, but the glossary read is still the old one (160): the size
-  // the split started at stops it, whatever was recorded.
-  const byHand = { ...big, splitChecked: { 共通: 100 }, tried: { splits: { 共通: 160 }, selects: new Set<string>() } };
-  assert.equal(nextAutoStart({ ...byHand, record: { chosen_by: "ai", stale: false } }), null);
-  // What the storage remembers of another size does not bring the split back either.
-  assert.equal(nextAutoStart({ ...byHand, splitChecked: { 共通: 160 }, record: { chosen_by: "ai", stale: false } }), null);
-  // Cached data while it is read again (a job may have changed it): nothing is started.
-  assert.deepEqual(nextAutoStart({ ...big, running: true }), null);
-  assert.deepEqual(nextAutoStart({ ...rules, running: true }), null);
-  // Once read: the split has shrunk the dictionary, so no split is due, and the choice follows.
-  assert.deepEqual(nextAutoStart({ ...byHand, domainCounts: { 共通: 100, 強化学習: 60 } }), { kind: "select", key: "p1:強化学習\n電池" });
+test("term selections do not repeat on failure, but changed translations get a new attempt", () => {
+  const record = { chosen_by: "ai" as const, stale: false, scope_stale: true, selection_key: "first" };
+  const key = "p1:強化学習\n電池:first";
+  assert.deepEqual(nextAutoStart({ ...rules, record }), { kind: "select", key });
+  const tried = { splits: {}, selects: new Set([key]) };
+  assert.equal(nextAutoStart({ ...rules, record, tried }), null);
+  assert.deepEqual(nextAutoStart({ ...rules, record: { ...record, selection_key: "edited" }, tried }),
+    { kind: "select", key: "p1:強化学習\n電池:edited" });
+  assert.equal(nextAutoStart({ ...rules, record, running: true }), null);
 });

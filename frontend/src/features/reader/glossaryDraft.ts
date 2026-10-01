@@ -1,12 +1,12 @@
 import { create } from "zustand";
 import { startJob } from "@/features/jobs/jobEvents";
 import type { JobFinished } from "@/features/jobs/jobHandlers";
-import type { Term } from "./translationStart";
+import type { Term, GlossaryCandidate } from "./translationStart";
 
 /** The AI's check for unregistered terms of one paper, kept while the translation dialog is closed. */
 export type GlossaryDraft =
   | { status: "running"; jobId: string | null }
-  | { status: "done"; jobId: string; terms: Term[] };
+  | { status: "done"; jobId: string; terms: GlossaryCandidate[] };
 
 type GlossaryDraftState = {
   drafts: Record<string, GlossaryDraft>;
@@ -69,7 +69,7 @@ export async function startGlossaryDraft(paperId: string, body: { terms: Term[];
 }
 
 /** The finished check's candidates, handed over once. */
-export function takeGlossaryDraft(paperId: string): Term[] | null {
+export function takeGlossaryDraft(paperId: string): GlossaryCandidate[] | null {
   const draft = useGlossaryDrafts.getState().drafts[paperId];
   if (draft?.status !== "done") return null;
   setDraft(paperId, null);

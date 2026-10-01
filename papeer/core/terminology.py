@@ -5,6 +5,7 @@ from collections import Counter
 from contextlib import closing
 from functools import lru_cache
 import json
+import hashlib
 from pathlib import Path
 import re
 import sqlite3
@@ -107,6 +108,8 @@ def save_paper_domains(root: Path, paper_id: str, domains: list[str], new_domain
             if row and row[0] != "ai":
                 return False
         _write_paper_domains(db, paper_id, domains, new_domain, chosen_by, known_domains)
+        if chosen_by == "user" and db.execute("SELECT 1 FROM sqlite_master WHERE name='paper_glossary'").fetchone():
+            db.execute("UPDATE paper_glossary SET scope=NULL WHERE paper_id=?", (paper_id,))
     return True
 
 
@@ -131,7 +134,76 @@ def _filtered(terms: list[dict], record: dict | None) -> list[dict[str, str]]:
 
 
 def _effective(root: Path, paper_id: str) -> list[dict[str, str]]:
-    return _filtered(global_glossary(root), paper_domains(root, paper_id))
+    terms = global_glossary(root)
+    preferences = paper_glossary(root, paper_id)
+    scope = preferences["scope"]
+    if scope:
+        with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db:
+            source = "\n\n".join(row[0] for row in db.execute("SELECT text FROM pages WHERE paper_id=? ORDER BY number", (paper_id,)))
+        if scope["key"] != glossary_scope_key(terms, source):
+            scope = None
+    # A dictionary name alone does not establish that its translations fit this paper.
+    allowed = {term_identity(t) for t in scope["terms"]} if scope else set()
+    scoped = [t for t in terms if not t.get("domain") or term_identity(t) in allowed]
+    local = [{"source": t["source"], "target": t["target"]} for t in preferences["terms"]]
+    overridden = {t["source"].casefold() for t in local}
+    return local + [t for t in _filtered(scoped, paper_domains(root, paper_id))
+                    if t["source"].casefold() not in overridden]
+
+
+def term_identity(term: dict) -> tuple[str, str, str]:
+    return term.get("domain", ""), term["source"].casefold(), term["target"]
+
+
+def glossary_scope_key(terms: list[dict], source: str = "") -> str:
+    """Refresh the semantic selection even when a dictionary changes without changing its size."""
+    value = sorted(term_identity(t) for t in terms if t.get("domain"))
+    return hashlib.sha256((json.dumps(value, ensure_ascii=False) + "\0" + source).encode()).hexdigest()
+
+
+def paper_glossary(root: Path, paper_id: str) -> dict:
+    """Paper-only overrides, dismissed suggestions and the AI's term selection. Reads never migrate."""
+    empty = {"terms": [], "dismissed": [], "scope": None}
+    if not (root / "library.sqlite3").is_file():
+        return empty
+    with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='paper_glossary'").fetchone():
+            return empty
+        row = db.execute("SELECT terms,dismissed,scope FROM paper_glossary WHERE paper_id=?", (paper_id,)).fetchone()
+    return {"terms": json.loads(row[0]), "dismissed": json.loads(row[1]),
+            "scope": json.loads(row[2]) if row[2] else None} if row else empty
+
+
+def _ensure_paper_glossary(db: sqlite3.Connection, paper_id: str) -> None:
+    db.execute("CREATE TABLE IF NOT EXISTS paper_glossary (paper_id TEXT PRIMARY KEY, terms TEXT NOT NULL, "
+               "dismissed TEXT NOT NULL, scope TEXT)")
+    db.execute("INSERT OR IGNORE INTO paper_glossary VALUES(?, '[]', '[]', NULL)", (paper_id,))
+
+
+def save_paper_glossary(root: Path, paper_id: str, terms: list[dict], dismissed: list[str], expected: dict) -> None:
+    """Save explicit paper-only choices, preserving the scope and refusing concurrent edits."""
+    with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        _ensure_paper_glossary(db, paper_id)
+        row = db.execute("SELECT terms,dismissed FROM paper_glossary WHERE paper_id=?", (paper_id,)).fetchone()
+        current = {"terms": json.loads(row[0]), "dismissed": json.loads(row[1])}
+        if current != expected:
+            raise GlossaryConflict("この論文の訳語指定が別の画面で変更されました。開き直してください。")
+        db.execute("UPDATE paper_glossary SET terms=?,dismissed=? WHERE paper_id=?",
+                   (json.dumps(terms, ensure_ascii=False), json.dumps(dismissed, ensure_ascii=False), paper_id))
+
+
+def save_paper_scope(root: Path, paper_id: str, scope: dict, expected_record: dict | None) -> bool:
+    """A user changing domains while the AI works invalidates its selection."""
+    with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        row = (db.execute("SELECT domains,new_domain,chosen_by,known_domains FROM paper_glossary_domains WHERE paper_id=?",
+                          (paper_id,)).fetchone() if _has_table(db) else None)
+        if (_record(row) if row else None) != expected_record:
+            return False
+        _ensure_paper_glossary(db, paper_id)
+        db.execute("UPDATE paper_glossary SET scope=? WHERE paper_id=?", (json.dumps(scope, ensure_ascii=False), paper_id))
+    return True
 
 
 def add_glossary_term(root: Path, paper_id: str, source: str, target: str) -> str:
@@ -158,6 +230,11 @@ def add_glossary_term(root: Path, paper_id: str, source: str, target: str) -> st
         else:
             terms.append(term)
         db.execute("UPDATE global_glossary SET terms=? WHERE id=1", (json.dumps(terms, ensure_ascii=False),))
+        # An explicit registration is also an override for the paper where the user made it.
+        _ensure_paper_glossary(db, paper_id)
+        local = json.loads(db.execute("SELECT terms FROM paper_glossary WHERE paper_id=?", (paper_id,)).fetchone()[0])
+        local = [t for t in local if t["source"].casefold() != key] + [{"source": source, "target": target}]
+        db.execute("UPDATE paper_glossary SET terms=? WHERE paper_id=?", (json.dumps(local, ensure_ascii=False), paper_id))
     return domain or GENERAL_DOMAIN
 
 
@@ -274,6 +351,21 @@ def matching_terms(text: str, terms: list[dict]) -> list[dict]:
     searchable = _searchable(text)
     folded = searchable.casefold()
     return [term for term in terms if (matcher := _matcher(term["source"])) and matcher.search(searchable, folded)]
+
+
+def term_contexts(text: str, term: dict, limit: int = 3) -> list[str]:
+    """Bounded evidence using the same boundary, plural and PDF normalization rules as translation."""
+    matcher = _matcher(term["source"])
+    if matcher is None:
+        return []
+    searchable = _searchable(text)
+    matches = list(matcher.pattern.finditer(searchable))
+    if not matches:
+        return []
+    # Show occurrences throughout the paper, not only the first page of a long article.
+    positions = sorted({round(i * (len(matches) - 1) / max(1, limit - 1)) for i in range(min(limit, len(matches)))})
+    return list(dict.fromkeys(searchable[max(0, matches[i].start() - 150):matches[i].end() + 250]
+                             .replace("\0", " ") for i in positions))
 
 
 def apply_glossary(units: list[dict], terms: list[dict]) -> None:

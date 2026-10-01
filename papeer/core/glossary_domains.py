@@ -7,19 +7,22 @@ from pathlib import Path
 from papeer.core import prompts
 from papeer.core.errors import Invalid
 from papeer.core.terminology import (
-    GENERAL_DOMAIN, domain_names, global_glossary, paper_domains, save_global_glossary, save_paper_domains)
+    GENERAL_DOMAIN, domain_names, global_glossary, glossary_scope_key, matching_terms,
+    paper_domains, save_global_glossary, save_paper_domains, save_paper_scope, term_contexts)
 from papeer.translation.translation_context import paper_context
 
 SAMPLE_TERMS = 15  # Terms of a domain shown to the AI to tell what it is about.
 NAME_LIMIT = 40  # Characters of a domain's name (validate_terms).
 SPLIT_CHUNK = 300  # Terms sent per request when splitting.
-MIN_DOMAIN = 5  # A new domain of fewer terms is not made: its terms stay where they are.
+SELECT_CHUNK = 40  # The applicability check includes several context excerpts per term.
+MIN_DOMAIN = 1  # A small specialist vocabulary must not be merged into an unrelated field.
 CONTEXT_PAGE_CHARS = 1500  # The start of page 1 that stands for a paper without a found title and abstract.
 
 _SELECT_SCHEMA = {"type": "object", "properties": {
     "domains": {"type": "array", "items": {"type": "string"}},
+    "allowed_terms": {"type": "array", "items": {"type": "integer"}},
     "new_domain": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
-    "required": ["domains", "new_domain"], "additionalProperties": False}
+    "required": ["domains", "new_domain", "allowed_terms"], "additionalProperties": False}
 
 _SPLIT_SCHEMA = {"type": "object", "properties": {"domains": {"type": "array", "items": {
     "type": "object", "properties": {"name": {"type": "string"}, "sources": {"type": "array", "items": {"type": "string"}}},
@@ -36,22 +39,43 @@ def select_domains(lib, paper_id: str, provider, cancel) -> dict:
     from papeer.providers import check_cancel, parse_json_answer
 
     terms = global_glossary(lib.root)
+    original_record = paper_domains(lib.root, paper_id)
     available = domain_names(terms)
     if not available:
         return {"domains": [], "new_domain": None}
     paper = paper_context(lib.document(paper_id))
     if paper is None:
         paper = {"title": lib.paper(paper_id)["title"], "abstract": lib.page_text(paper_id, 1)[:CONTEXT_PAGE_CHARS]}
+    text = "\n\n".join(text for _, text in lib.page_texts(paper_id))
+    candidates = matching_terms(text, [t for t in terms if t.get("domain")])
     listing = [{"name": name, "count": len(members), "sample_terms": [t["source"] for t in members[:SAMPLE_TERMS]]}
                for name in available for members in [[t for t in terms if t.get("domain") == name]]]
     check_cancel(cancel)
-    answer = provider.generate(
-        prompts.load("glossary_select"),
-        json.dumps({"paper": paper, "available_domains": listing}, ensure_ascii=False), _SELECT_SCHEMA)
-    try:
-        value = parse_json_answer(answer, _SELECT_SCHEMA)
-    except ValueError:
-        raise ValueError("AIから有効な分野辞書の選択を取得できませんでした。再試行してください。") from None
+    allowed = []
+    value = None
+    # Inspect each source/target in its actual use, including small vocabularies inside broad dictionaries.
+    for start in range(0, max(1, len(candidates)), SELECT_CHUNK):
+        members = candidates[start:start + SELECT_CHUNK]
+        entries = []
+        for index, term in enumerate(members, start):
+            entries.append({"id": index, **term, "context": "\n…\n".join(term_contexts(text, term))})
+        check_cancel(cancel)
+        answer = provider.generate(
+            prompts.load("glossary_select"),
+            json.dumps({"paper": paper, "available_domains": listing, "candidate_terms": entries,
+                        "fixed_domains": original_record["domains"] if original_record and original_record["chosen_by"] == "user" else None},
+                       ensure_ascii=False), _SELECT_SCHEMA)
+        try:
+            part = parse_json_answer(answer, _SELECT_SCHEMA)
+        except ValueError:
+            raise ValueError("AIから有効な分野辞書の選択を取得できませんでした。再試行してください。") from None
+        ids = part.get("allowed_terms")
+        if not isinstance(ids, list) or any(type(i) is not int for i in ids):
+            raise ValueError("AIから有効な用語の適用判定を取得できませんでした。再試行してください。")
+        allowed.extend(t for i, t in enumerate(members, start) if i in ids)
+        if value is None:
+            value = part
+    assert value is not None
     if (not isinstance(value.get("domains"), list) or any(not isinstance(name, str) for name in value["domains"])
             or not isinstance(value.get("new_domain"), (str, type(None)))):
         raise ValueError("AIから有効な分野辞書の選択を取得できませんでした。再試行してください。")
@@ -70,10 +94,19 @@ def select_domains(lib, paper_id: str, provider, cancel) -> dict:
             domains.append(canonical)
         new_domain = None
     check_cancel(cancel)
-    if not save_paper_domains(lib.root, paper_id, domains, new_domain, "ai", available, only_if_ai=True):
+    # The term approval is decisive; domain names from other batches need not repeat the first answer.
+    for term in allowed:
+        if term["domain"] not in domains:
+            domains.append(term["domain"])
+    expected = {"domains": domains, "new_domain": new_domain, "chosen_by": "ai", "known_domains": available}
+    if original_record and original_record["chosen_by"] == "user":
+        domains, new_domain = original_record["domains"], original_record["new_domain"]
+        expected = original_record
+    elif not save_paper_domains(lib.root, paper_id, domains, new_domain, "ai", available, only_if_ai=True):
         record = paper_domains(lib.root, paper_id)
         if record:  # The user chose meanwhile; that stays.
             return {"domains": record["domains"], "new_domain": record["new_domain"]}
+    save_paper_scope(lib.root, paper_id, {"key": glossary_scope_key(terms, text), "terms": allowed}, expected)
     return {"domains": domains, "new_domain": new_domain}
 
 
@@ -119,7 +152,7 @@ def _assignments(chunk: list[dict], answer_domains: list, names: dict[str, str],
     return result
 
 
-def split_domain(root: Path, provider, cancel, progress, domain: str) -> dict:
+def split_domain(root: Path, provider, cancel, progress, domain: str, *, preview: bool = False) -> dict:
     """Have the AI split one dictionary ("共通" for the general one) into domain dictionaries by subject.
 
     The terms stay where they are in the glossary: only a term's domain is written, so the order (which
@@ -178,7 +211,8 @@ def split_domain(root: Path, provider, cancel, progress, domain: str) -> dict:
         occupied.add(key)
         terms[index] = {**terms[index], "domain": new}
         moved += 1
-    if moved:
+    if moved and not preview:
         save_global_glossary(root, terms, expected=original)
     return {"moved": moved, "domains": [{"name": n, "count": sum(t.get("domain") == n for t in terms)}
-                                        for n in domain_names(terms)]}
+                                        for n in domain_names(terms)],
+            **({"terms": terms, "original": original} if preview else {})}

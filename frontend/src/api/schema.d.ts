@@ -933,6 +933,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/papers/{paper_id}/glossary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Local Glossary */
+        get: operations["get_local_glossary_api_papers__paper_id__glossary_get"];
+        /** Put Local Glossary */
+        put: operations["put_local_glossary_api_papers__paper_id__glossary_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/papers/{paper_id}/glossary-domains": {
         parameters: {
             query?: never;
@@ -2065,6 +2083,11 @@ export interface components {
             model?: string | null;
             /** Effort */
             effort?: string | null;
+            /**
+             * Preview
+             * @default false
+             */
+            preview?: boolean;
         };
         /** GlossarySplitResult */
         GlossarySplitResult: {
@@ -2072,6 +2095,14 @@ export interface components {
             moved: number;
             /** Domains */
             domains: components["schemas"]["GlossaryDomainCount"][];
+            /** Terms */
+            terms?: {
+                [key: string]: string;
+            }[] | null;
+            /** Original */
+            original?: {
+                [key: string]: string;
+            }[] | null;
         };
         /** GlossaryTerm */
         GlossaryTerm: {
@@ -2079,6 +2110,16 @@ export interface components {
             source: string;
             /** Target */
             target: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason?: string;
+            /**
+             * Context
+             * @default
+             */
+            context?: string;
         };
         /** GlossaryTermRequest */
         GlossaryTermRequest: {
@@ -2598,6 +2639,19 @@ export interface components {
             domains?: string[];
             /** New Domain */
             new_domain?: string | null;
+        };
+        /** PaperGlossaryRequest */
+        PaperGlossaryRequest: {
+            /** Terms */
+            terms: {
+                [key: string]: string;
+            }[];
+            /** Dismissed */
+            dismissed: string[];
+            /** Expected */
+            expected: {
+                [key: string]: unknown;
+            };
         };
         /**
          * PaperOpened
@@ -5898,6 +5952,80 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_local_glossary_api_papers__paper_id__glossary_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_local_glossary_api_papers__paper_id__glossary_put: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaperGlossaryRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
