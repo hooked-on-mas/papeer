@@ -42,10 +42,10 @@ test("v2 data without a side panel width keeps the default one", () => {
   assert.equal(restore({ zoom: 1.5 }, 2).zoom, 1.5);
 });
 
-test("the current version's side panel is taken as saved, and one this version doesn't know is closed", () => {
-  assert.equal(restore({ sidePanel: "summary", sidePanelWidth: 600 }, PERSIST_VERSION).sidePanel, "summary");
+test("the side panel always starts closed, even if it was saved open, and keeps its width", () => {
+  assert.equal(restore({ sidePanel: "summary", sidePanelWidth: 600 }, PERSIST_VERSION).sidePanel, null);
   assert.equal(restore({ sidePanel: "summary", sidePanelWidth: 600 }, PERSIST_VERSION).sidePanelWidth, 600);
-  for (const sidePanel of ["sticky-notes", "reader", 3, "", undefined]) {
+  for (const sidePanel of ["summary", "chat", "notes", "sticky-notes", "reader", 3, "", undefined]) {
     assert.equal(restore({ sidePanel }, PERSIST_VERSION).sidePanel, null, String(sidePanel));
   }
   assert.equal(restore({ pageFilter: "neon" }, PERSIST_VERSION).pageFilter, "normal");

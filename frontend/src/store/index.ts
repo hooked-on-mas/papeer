@@ -264,7 +264,6 @@ export const useStore = create<UiState>()(
         sidebarCollapsed: state.sidebarCollapsed,
         readerSplit: state.readerSplit,
         translatedOnly: state.translatedOnly,
-        sidePanel: state.sidePanel,
         sidePanelWidth: state.sidePanelWidth,
         inkBarOpen: state.inkBarOpen,
         inkBarStart: state.inkBarStart,
