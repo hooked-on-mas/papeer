@@ -19,6 +19,31 @@ export function paneEdges(pane: ScrollMetrics): PaneEdges {
   };
 }
 
+/** The same edge rules for panning across an enlarged page. */
+export function paneHorizontalEdges(pane: Pick<HTMLElement, "scrollLeft" | "scrollWidth" | "clientWidth">,
+  sideways = true, reservedGutter = 0): PaneEdges {
+  if (!sideways) return { atStart: true, atEnd: true };
+  return {
+    atStart: pane.scrollLeft <= 1,
+    // Chromium includes the stable scrollbar gutter in scrollWidth but cannot scroll into it.
+    atEnd: pane.scrollLeft + pane.clientWidth >= pane.scrollWidth - reservedGutter - 1,
+  };
+}
+
+export function horizontalEdges(pane: HTMLElement): PaneEdges {
+  const style = getComputedStyle(pane);
+  const gutter = style.scrollbarGutter.includes("stable") ? pane.offsetWidth - pane.clientWidth : 0;
+  return paneHorizontalEdges(pane, style.overflowX !== "hidden", gutter);
+}
+
+export const SWIPE_TURN_DISTANCE = 72;
+
+/** Finger movement has the opposite sign to scrolling. Decide only when the finger lifts. */
+export function touchSwipePage(dx: number, maxY: number, edges: PaneEdges): -1 | 0 | 1 {
+  if (Math.abs(dx) < SWIPE_TURN_DISTANCE || Math.abs(dx) < maxY * 1.5) return 0;
+  return dx < 0 ? edges.atEnd ? 1 : 0 : edges.atStart ? -1 : 0;
+}
+
 /** The page `amount` pages on, among all pages or only the translated ones. */
 export function steppedPage({ current, amount, pageCount, translatedOnly, completed }: {
   current: number; amount: number; pageCount: number; translatedOnly: boolean; completed: readonly number[];

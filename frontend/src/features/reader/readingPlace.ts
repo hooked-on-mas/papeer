@@ -23,6 +23,22 @@ export interface ReadingPlace {
   x: number;
 }
 
+/** A fractional point on the PDF and the viewport coordinates where it should stay during zoom. */
+export interface ZoomAnchor extends ReadingPlace {
+  atX: number;
+  atY: number;
+}
+
+/** Both the page rectangle and the finger position use viewport coordinates (clientX/clientY). */
+export function scrollDeltaForZoomAnchor(anchor: ZoomAnchor, page: {
+  left: number; top: number; width: number; height: number;
+}): { left: number; top: number } {
+  return {
+    left: page.left + anchor.x * page.width - anchor.atX,
+    top: page.top + anchor.y * page.height - anchor.atY,
+  };
+}
+
 /** Where the view is on the page, or null while there is no page to measure. */
 export function readingPlace(view: PaneView): ReadingPlace | null {
   const { page } = view;

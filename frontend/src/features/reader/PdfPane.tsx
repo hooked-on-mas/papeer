@@ -15,7 +15,8 @@ import { useTheme } from "@/app/ThemeProvider";
 import { externalHttpUrl } from "@/lib/externalLinks";
 import { PdfContextMenu } from "./PdfContextMenu";
 import { selectInTextLayer } from "./textLayerRange";
-import { useInkEditor, useInkPanes } from "./useInkEditor";
+import { inkToolActive, useInkEditor, useInkPanes } from "./useInkEditor";
+import { movePage } from "./navigation";
 import { InkOverlay } from "./InkOverlay";
 import { InkToolbar } from "./InkToolbar";
 import { InkCapture } from "./InkCapture";
@@ -27,10 +28,11 @@ import { highlightColor, highlightFill } from "./highlights";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { cappedPixelRatio, snapshotSize } from "./canvasBudget";
 import { resolveDestination, type PdfPlace } from "./pdfLinks";
-import { fitWidthFor, pageWidthFor, scrollsSideways } from "./zoomLevels";
+import { fitWidthFor, pageWidthFor, scrollsSideways, ZOOM_FIT_PAGE } from "./zoomLevels";
 import { createPlaceKeeper, scrollForPlace, type PaneView } from "./readingPlace";
 import { pageAppearance } from "./pageAppearance";
 import { inkToolbarSide } from "./readerBars";
+import { usePdfTouch, usePdfTouchOwner } from "./usePdfTouch";
 
 // Bundled worker, cMaps and fonts keep PDFs (including CJK text) readable offline.
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -197,7 +199,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
       // (see readingPlace.ts). The same scroll position would land elsewhere on a page drawn larger or smaller.
       const page = pageRef.current?.isConnected ? pageRef.current : null;
       const key = pageKey.current;
-      const place = page ? placeKeeper.measure(key, paneView(scroller, page), layoutWidth.current) : null;
+      const place = page && usePdfTouchOwner.getState().pane !== scroller ? placeKeeper.measure(key, paneView(scroller, page), layoutWidth.current) : null;
       // Before the paint, so a pane that just narrowed never shows the page cut off or out of place.
       flushSync(() => setContainerSize((size) =>
         size.width === rect.width && size.height === rect.height ? size : { width: rect.width, height: rect.height }));
@@ -269,9 +271,17 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   const [drawnWidth, setDrawnWidth] = useState(0);
   const [covering, setCovering] = useState(false);
   const snapshotRef = useRef<HTMLCanvasElement | null>(null);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const touchZooming = usePdfTouchOwner(s => s.pane !== null);
+  const { suppressClick: suppressTouchClick, ...touchHandlers } = usePdfTouch({
+    pageKey: inkKey, enabled: !!url && !placeholder, paneRef: containerRef, surfaceRef,
+    pageWidth, drawnWidth, fitWidth,
+    fitPageWidth: pageWidthFor(ZOOM_FIT_PAGE, fitWidth, containerSize.height - PADDING * 2 - 2, layoutRatio),
+    onPageSwipe: direction => { if (!inkToolActive()) movePage(direction); },
+  });
 
   useEffect(() => {
-    if (!containerWidth || pageWidth === drawnWidth) return;
+    if (!containerWidth || pageWidth === drawnWidth || touchZooming) return;
     if (!drawnWidth) {
       setDrawnWidth(pageWidth);
       return;
@@ -291,7 +301,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
       setDrawnWidth(pageWidth);
     }, 150);
     return () => clearTimeout(timer);
-  }, [containerWidth, pageWidth, drawnWidth]);
+  }, [containerWidth, pageWidth, drawnWidth, touchZooming]);
   const endCovering = useCallback(() => {
     setCovering(false);
     releaseCanvas(snapshotRef.current);
@@ -426,15 +436,22 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     <PdfContextMenu translated={translated}>
       <div
         ref={attachScroller}
+        data-pdf-scroller
         onScroll={(e) => {
           setScrolled(e.currentTarget.scrollTop > 4);
           onScroll?.(e);
         }}
-        onClickCapture={handleLinkClick}
         onAuxClickCapture={handleLinkClick}
+        {...touchHandlers}
+        onClickCapture={(e) => {
+          if ((e.nativeEvent as PointerEvent).pointerType === "touch" && suppressTouchClick()) {
+            e.preventDefault(); e.stopPropagation(); return;
+          }
+          handleLinkClick(e);
+        }}
         // A stable gutter keeps the width from changing as the scrollbar comes and goes; otherwise a
         // page that only just overflows at "fit width" shrinks to fit, loses its scrollbar and grows back.
-        className={`w-full h-full bg-reader-bg [scrollbar-gutter:stable] ${scrollsSideways(zoom, pageWidth, containerWidth - PADDING * 2) ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
+        className={`w-full h-full bg-reader-bg [scrollbar-gutter:stable] [touch-action:none] [overflow-anchor:none] ${scrollsSideways(zoom, pageWidth, containerWidth - PADDING * 2) ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
       >
         {placeholder ? message(placeholder) : !url ? message("PDFがありません。") : (
           <div className="w-fit min-w-full" style={{ padding: PADDING }}>
@@ -455,14 +472,14 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
               className="mx-auto w-fit"
             >
               {numPages !== null && pageNumber > numPages ? message(missingPageMessage ?? "このページはありません。") : drawnWidth > 0 && (
-                // The page's height is held while react-pdf draws it again at a new width: its box is briefly
-                // shorter meanwhile, the pane's content with it, and the browser would clamp the scroll
-                // position to the top, losing the place kept by readingPlace.ts (e.g. zoomed in, as the side
-                // panel opens). Floored, so that it never adds room below a page drawn at this width.
-                <div className="relative" style={{
+                // Keep the whole page box while react-pdf replaces its drawing. Its temporary loading
+                // content must not shrink the scroll extent or change the touch anchor's coordinates.
+                <div ref={surfaceRef} data-pdf-surface className="relative" style={{
                   ...pageStyle,
                   zoom: pageWidth === drawnWidth ? undefined : pageWidth / drawnWidth,
-                  minHeight: shapeKnown ? Math.floor(drawnWidth * layoutRatio) : undefined,
+                  // Stable geometry for touch anchoring while react-pdf replaces its canvas/text.
+                  width: drawnWidth + 2,
+                  height: shapeKnown ? drawnWidth * layoutRatio + 2 : undefined,
                 }}>
                   <Page
                     pageNumber={pageNumber}

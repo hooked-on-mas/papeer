@@ -7,6 +7,22 @@ function pane(height = 1000, width = 500) {
     clientHeight: 200, clientWidth: 200 };
 }
 
+test("a follower clamped by a zoom cannot move the pane held under the fingers", () => {
+  const left = pane(), right = pane(1800);
+  let owner: ReturnType<typeof pane> | null = left;
+  const sync = createScrollSync(() => owner);
+  left.scrollTop = 400;
+  sync(left, right);
+  // Resizing changes both the scroll extent and the follower's scroll position.
+  right.scrollHeight = 1000;
+  right.scrollTop = 600;
+  sync(right, left);
+  assert.equal(left.scrollTop, 400);
+  owner = null;
+  sync(right, left);
+  assert.equal(left.scrollTop, 600);
+});
+
 test("a delayed follower event does not rewind an ongoing native wheel animation", () => {
   const sync = createScrollSync();
   const source = pane();

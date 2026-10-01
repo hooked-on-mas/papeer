@@ -26,6 +26,7 @@ import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 import { useRebuilding } from "./rebuildJobs";
 import { isImeKey } from "@/lib/imeKeys";
+import { usePdfTouchOwner } from "./usePdfTouch";
 
 // Stable while the notes are loading or failed: a new array would redraw the text layer on every render.
 const NO_NOTES: StickyNote[] = [];
@@ -83,8 +84,10 @@ export function Reader() {
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
   // A fresh one for each page of each paper.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- the page and paper are what start it over
-  const syncScroll = useMemo(() => createScrollSync(), [activePaperId, currentPage]);
+  const syncScroll = useMemo(() => {
+    return createScrollSync(() => usePdfTouchOwner.getState().pane);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the page and paper are what start it over
+  }, [activePaperId, currentPage]);
   // The pane the pointer was last over, which the paging keys scroll.
   const activePane = useRef<"left" | "right">("left");
   // The pane to scroll and to judge the page's end by: `preferred`, unless it shows no page (a

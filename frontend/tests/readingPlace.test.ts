@@ -1,6 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPlaceKeeper, readingPlace, scrollForPlace, type PaneView } from "../src/features/reader/readingPlace.ts";
+import { createPlaceKeeper, readingPlace, scrollForPlace, scrollDeltaForZoomAnchor, type PaneView } from "../src/features/reader/readingPlace.ts";
+
+test("pinch keeps the point under the fingers regardless of the pane's position on screen", () => {
+  // Include the right pane, a toolbar above the page, and an already scrolled page.
+  for (const [left, top] of [[16, 16], [816, 156], [-184, -284]]) {
+    const before = { left, top, width: 600, height: 900 };
+    const atX = left + 240, atY = top + 540;
+    const anchor = { x: (atX - before.left) / before.width, y: (atY - before.top) / before.height, atX, atY };
+    for (const scale of [1, 1.5, 0.75]) {
+      const after = { ...before, width: before.width * scale, height: before.height * scale };
+      const delta = scrollDeltaForZoomAnchor(anchor, after);
+      assert.equal(delta.left, 240 * (scale - 1));
+      assert.equal(delta.top, 540 * (scale - 1));
+      // Applying the scroll correction returns the same PDF point to the finger midpoint.
+      assert.equal(after.left - delta.left + anchor.x * after.width, atX);
+      assert.equal(after.top - delta.top + anchor.y * after.height, atY);
+    }
+  }
+});
 
 /** A pane 400px wide and 800px tall showing a page `width` wide (A4-ish) below 16px of padding. */
 function view(width: number, scrollTop: number, scrollLeft = 0): PaneView {

@@ -2,9 +2,13 @@ type ScrollPane = Pick<HTMLElement,
   "scrollTop" | "scrollLeft" | "scrollHeight" | "scrollWidth" | "clientHeight" | "clientWidth">;
 
 /** Ignore synchronization echoes even when the browser delivers them in a later frame. */
-export function createScrollSync() {
+export function createScrollSync(touchOwner: () => ScrollPane | null = () => null) {
   const expected = new WeakMap<ScrollPane, { top: number; left: number }>();
   return (source: ScrollPane, target: ScrollPane | null) => {
+    // During a pinch both pages resize. A follower's native scroll clamp must not move the
+    // page being held under the fingers, even if it no longer matches the last expected echo.
+    const owner = touchOwner();
+    if (owner && owner !== source) return;
     const position = expected.get(source);
     if (position && source.scrollTop === position.top && source.scrollLeft === position.left) return;
     expected.delete(source);

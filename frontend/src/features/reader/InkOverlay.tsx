@@ -6,6 +6,7 @@ import type { InkEditor } from "./useInkEditor";
 import { AnnotationTextEditor } from "./AnnotationTextEditor";
 import { canResumeShape, inkChanged, LONG_PRESS_MS, LONG_PRESS_SLOP_PX, mayEditSelectedShape, pressTarget, shapeToolTarget, SHAPE_LIFT_GRACE_MS } from "./inkInteraction";
 import { useOpenEdit } from "@/lib/pendingSaves";
+import { usePdfTouchOwner } from "./usePdfTouch";
 export type { InkTool } from "./inkGeometry";
 
 type Gesture = {
@@ -195,7 +196,16 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
     const waiting = press.current;
     if (waiting && waiting.id === event.pointerId && Math.hypot(event.clientX - waiting.x, event.clientY - waiting.y) > LONG_PRESS_SLOP_PX) cancelPress();
   };
-  useEffect(() => () => { if (press.current) clearTimeout(press.current.timer); }, []);
+  useEffect(() => {
+    // Capture may move to the PDF before the SVG ever receives gotpointercapture,
+    // so lostpointercapture alone cannot cancel a two-finger long press.
+    const unsubscribe = usePdfTouchOwner.subscribe(({ pane }) => {
+      if (pane?.contains(root.current) && press.current) {
+        clearTimeout(press.current.timer); press.current = null;
+      }
+    });
+    return () => { unsubscribe(); if (press.current) clearTimeout(press.current.timer); };
+  }, []);
   useEffect(() => { if (!selectedIds.length) setMenu(null); }, [selectedIds.length]);
   useEffect(() => {
     if (!menu) return;

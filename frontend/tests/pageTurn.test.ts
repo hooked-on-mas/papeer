@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   createWheelPager, edgePage, keyTarget, paneEdges, readerKeyAction, readerOwnsKey, steppedPage, TOUCHPAD_TURN_DISTANCE, WHEEL_GESTURE_GAP_MS,
-  type WheelInput,
+  touchSwipePage, type WheelInput,
 } from "../src/features/reader/pageTurn.ts";
 
 const middle = { atStart: false, atEnd: false };
@@ -19,6 +19,16 @@ test("pane edges allow a pixel of rounding", () => {
   assert.deepEqual(paneEdges({ scrollTop: 1199.4, scrollHeight: 2000, clientHeight: 800 }), bottom);
   assert.deepEqual(paneEdges({ scrollTop: 600, scrollHeight: 2000, clientHeight: 800 }), middle);
   assert.deepEqual(paneEdges({ scrollTop: 0, scrollHeight: 800, clientHeight: 800 }), fits);
+});
+
+test("touch swipes use the start edge and reject short or vertical drags", () => {
+  assert.equal(touchSwipePage(-80, 5, fits), 1);
+  assert.equal(touchSwipePage(80, 5, fits), -1);
+  assert.equal(touchSwipePage(-30, 0, fits), 0);
+  assert.equal(touchSwipePage(-80, 70, fits), 0);
+  assert.equal(touchSwipePage(-200, 0, middle), 0);
+  assert.equal(touchSwipePage(-80, 0, bottom), 1);
+  assert.equal(touchSwipePage(80, 0, bottom), 0);
 });
 
 test("a mouse notch at the end of the page turns to the next one", () => {

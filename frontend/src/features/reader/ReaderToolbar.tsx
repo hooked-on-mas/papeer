@@ -189,12 +189,13 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             </button>
           )}
           <select
-            value={String(ZOOM_LEVELS.includes(zoom) ? zoom : 1)}
+            value={String(zoom)}
             onChange={(e) => setZoom(Number(e.target.value))}
             aria-label="表示倍率"
             title="原文・日本語訳の共通倍率（幅に合わせた表示が基準。「ページ全体」はページ全体が収まる大きさ）"
             className="h-6 bg-transparent border rounded text-[0.75rem] px-1 hover:bg-muted cursor-pointer tabular-nums"
           >
+            {!ZOOM_LEVELS.includes(zoom) && <option value={String(zoom)}>{zoomLabel(zoom)}</option>}
             {ZOOM_LEVELS.map((value) => (
               <option key={value} value={String(value)}>{zoomLabel(value)}</option>
             ))}
@@ -283,7 +284,8 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             {!shown("zoom") && (
               <DropdownMenuGroup>
                 <DropdownMenuLabel>表示倍率</DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={String(ZOOM_LEVELS.includes(zoom) ? zoom : 1)} onValueChange={(value) => setZoom(Number(value))}>
+                <DropdownMenuRadioGroup value={String(zoom)} onValueChange={(value) => setZoom(Number(value))}>
+                  {!ZOOM_LEVELS.includes(zoom) && <DropdownMenuRadioItem value={String(zoom)} className="tabular-nums">{zoomLabel(zoom)}</DropdownMenuRadioItem>}
                   {ZOOM_LEVELS.map((value) => (
                     <DropdownMenuRadioItem key={value} value={String(value)} className="tabular-nums">{zoomLabel(value)}</DropdownMenuRadioItem>
                   ))}

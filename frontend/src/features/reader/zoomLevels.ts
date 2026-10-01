@@ -12,11 +12,14 @@ export const ZOOM_FIT_PAGE = 0;
 /** Every level Ctrl+wheel and the zoom buttons step through, smallest first. */
 export const ZOOM_LEVELS = [ZOOM_FIT_PAGE, ...ZOOM_PRESETS];
 
-/** A valid zoom: ZOOM_FIT_PAGE, or a multiplier within the presets' range. */
+/** Continuous touch zoom can pass between fitting the page and fitting its width. */
+export const MIN_ZOOM = 0.1;
+
+/** A valid zoom: ZOOM_FIT_PAGE, or a continuous multiplier up to the largest preset. */
 export function clampZoom(zoom: number): number {
   if (zoom === ZOOM_FIT_PAGE) return ZOOM_FIT_PAGE;
   if (!Number.isFinite(zoom)) return ZOOM_PRESETS[0];
-  return Math.max(ZOOM_PRESETS[0], Math.min(ZOOM_PRESETS[ZOOM_PRESETS.length - 1], zoom));
+  return Math.max(MIN_ZOOM, Math.min(ZOOM_PRESETS[ZOOM_PRESETS.length - 1], zoom));
 }
 
 /** The level `steps` away from the one nearest `zoom`. */

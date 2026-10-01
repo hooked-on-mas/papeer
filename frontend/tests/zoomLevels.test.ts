@@ -16,9 +16,11 @@ test("「ページ全体」 sits below 「幅に合わせる」 in the zoom step
   assert.deepEqual(ZOOM_LEVELS, [ZOOM_FIT_PAGE, ...ZOOM_PRESETS]);
 });
 
-test("zooms are kept to 「ページ全体」 or the presets' range", () => {
+test("zooms allow continuous values between fit page and fit width, up to 400%", () => {
   assert.equal(clampZoom(ZOOM_FIT_PAGE), ZOOM_FIT_PAGE);
-  assert.equal(clampZoom(0.5), 1);
+  assert.equal(clampZoom(0.5), 0.5);
+  assert.equal(clampZoom(0.01), 0.1);
+  assert.equal(clampZoom(3.173), 3.173);
   assert.equal(clampZoom(9), 4);
   assert.equal(clampZoom(Number.NaN), 1);
   assert.equal(clampZoom(2), 2);
