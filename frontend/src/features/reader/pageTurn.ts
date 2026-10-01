@@ -67,8 +67,9 @@ export function edgePage(edge: "first" | "last", { current, pageCount, translate
 }
 
 export interface WheelInput extends PaneEdges {
-  /** Vertical movement in pixels; positive scrolls down. */
+  /** Movement along the chosen axis in pixels; positive goes to the next page. */
   dy: number;
+  axis?: "vertical" | "horizontal";
   /** Event time in milliseconds. */
   time: number;
   /** A mouse notch rather than a touchpad's stream of small steps. */
@@ -93,16 +94,20 @@ export const TOUCHPAD_TURN_DISTANCE = 120;
  * one more notch or swipe after a pause turns the page. A gesture turns at most one page, and its
  * remaining events are swallowed so that the new page stays at its start.
  */
-export function createWheelPager(): (input: WheelInput) => WheelDecision {
+export function createWheelPager({ horizontalDistance = TOUCHPAD_TURN_DISTANCE } = {}): (input: WheelInput) => WheelDecision {
   let lastTime = -Infinity;
   let direction = 0;
   let eligible = false;
   let spent = false;
   let distance = 0;
-  return ({ dy, time, notch, atStart, atEnd }) => {
+  let gestureAxis: "vertical" | "horizontal" = "vertical";
+  return ({ dy, time, notch, atStart, atEnd, axis = "vertical" }) => {
     const dir = Math.sign(dy);
     const gap = time - lastTime;
     lastTime = time;
+    // Lock the axis through the gesture, including diagonal inertia after a turn.
+    if (gap <= WHEEL_GESTURE_GAP_MS && axis !== gestureAxis) return { turn: 0, swallow: spent };
+    if (gap > WHEEL_GESTURE_GAP_MS) gestureAxis = axis;
     if (!dir) return { turn: 0, swallow: spent };
     const edge = dir > 0 ? atEnd : atStart;
     if (gap > WHEEL_GESTURE_GAP_MS || dir !== direction) {
@@ -117,9 +122,90 @@ export function createWheelPager(): (input: WheelInput) => WheelDecision {
     if (!edge) eligible = false;
     if (!eligible) return { turn: 0, swallow: false };
     distance += Math.abs(dy);
-    if (!notch && distance < TOUCHPAD_TURN_DISTANCE) return { turn: 0, swallow: false };
+    if (!notch && distance < (axis === "horizontal" ? horizontalDistance : TOUCHPAD_TURN_DISTANCE)) return { turn: 0, swallow: false };
     spent = true;
     return { turn: dir > 0 ? 1 : -1, swallow: true };
+  };
+}
+
+/** Choose the axis from a short run of movement, not the first noisy touchpad event. */
+export function createReaderWheelPager() {
+  type Input = { dx: number; dy: number; time: number; notch: boolean; horizontal: PaneEdges; vertical: PaneEdges };
+  let pager = createWheelPager({ horizontalDistance: SWIPE_TURN_DISTANCE });
+  let lastTime = -Infinity;
+  let lastTurn = -Infinity;
+  let axis: "horizontal" | "vertical" | null = null;
+  let x = 0, y = 0;
+  let swallow = false;
+  let first: { horizontal: PaneEdges; vertical: PaneEdges } | null = null;
+  let directionX = 0, peakSpeed = 0, previousSpeed = 0, falling = 0;
+  let tail = false;
+  let tailSpeed = Infinity;
+  let candidate: { x: number; y: number; first: Input } | null = null;
+  const reset = (input: Input) => {
+    pager = createWheelPager({ horizontalDistance: SWIPE_TURN_DISTANCE });
+    axis = null; x = 0; y = 0; swallow = false; first = { horizontal: input.horizontal, vertical: input.vertical };
+    directionX = 0; peakSpeed = 0; previousSpeed = 0; falling = 0; tail = false; tailSpeed = Infinity; candidate = null;
+  };
+  return (input: Input) => {
+    let { dx, dy } = input;
+    const { time, notch } = input;
+    const gap = time - lastTime;
+    if (gap > WHEEL_GESTURE_GAP_MS) reset(input);
+    // Compare movement per millisecond, so a delayed event covering more time is not
+    // mistaken for acceleration. The first event and same-frame events use a frame interval.
+    const interval = gap > 0 && gap <= WHEEL_GESTURE_GAP_MS ? gap : 16;
+    const speed = Math.abs(dx) / interval;
+    const horizontal = Math.abs(dx) > Math.abs(dy) * 1.2;
+    if (axis === "horizontal" && !swallow && dx !== 0 && Math.sign(dx) !== directionX) {
+      // Before a turn the pager accepts reversals. Its inertia must follow that accepted
+      // direction rather than look like a new reverse stroke after the page has turned.
+      directionX = Math.sign(dx);
+      peakSpeed = 0; previousSpeed = 0; falling = 0; tail = false; tailSpeed = Infinity; candidate = null;
+    }
+    // WheelEvent has no finger-up or momentum phase. A renewed strong movement after a
+    // decaying tail marks another stroke, even without a 200ms gap.
+    const renewed = axis === "horizontal" && horizontal && Math.sign(dx) === directionX
+      && time - lastTurn >= 120 && tail && Math.abs(dx) >= 0.5 && speed >= tailSpeed * 2.5;
+    if (renewed) reset(input);
+    // Require a full deliberate horizontal movement to reverse or leave a vertical gesture;
+    // a few pixels of opposite jitter must not unlock another page turn.
+    if (horizontal && (axis === "vertical" || (axis === "horizontal" && swallow && Math.sign(dx) !== directionX))) {
+      if (!candidate || Math.sign(candidate.x) !== Math.sign(dx)) candidate = { x: 0, y: 0, first: input };
+      candidate.x += dx; candidate.y += dy;
+      if (Math.abs(candidate.x) >= SWIPE_TURN_DISTANCE && time - lastTurn >= 120) {
+        const next = candidate;
+        reset(next.first);
+        dx = next.x; dy = next.y;
+      }
+    } else if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) candidate = null;
+    if (Math.abs(dx) >= 0.5) {
+      peakSpeed = Math.max(peakSpeed, speed);
+      falling = speed < previousSpeed ? falling + 1 : 0;
+      if (falling >= 2 && speed <= peakSpeed * 0.5) tail = true;
+      if (tail) tailSpeed = Math.min(tailSpeed, speed);
+      previousSpeed = speed;
+    }
+    // Subpixel tail events must not keep the previous swipe locked indefinitely.
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 0.5) return { turn: 0, swallow, axis } as const;
+    lastTime = time;
+    let distance: number;
+    if (!axis) {
+      x += dx; y += dy;
+      if (!notch && (Math.max(Math.abs(x), Math.abs(y)) < 12
+        || Math.max(Math.abs(x), Math.abs(y)) < Math.min(Math.abs(x), Math.abs(y)) * 1.2)) {
+        return { turn: 0, swallow: false, axis } as const;
+      }
+      axis = Math.abs(x) > Math.abs(y) ? "horizontal" : "vertical";
+      if (axis === "horizontal") directionX = Math.sign(x);
+      distance = axis === "horizontal" ? x : y;
+    } else distance = axis === "horizontal" ? dx : dy;
+    const now = input[axis], start = first![axis];
+    const result = pager({ dy: distance, axis, time, notch: notch && axis === "vertical",
+      atStart: start.atStart && now.atStart, atEnd: start.atEnd && now.atEnd });
+    swallow = result.swallow;
+    if (result.turn) lastTurn = time;
+    return { ...result, axis };
   };
 }
 

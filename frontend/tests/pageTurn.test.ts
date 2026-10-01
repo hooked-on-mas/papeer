@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  createWheelPager, edgePage, keyTarget, paneEdges, readerKeyAction, readerOwnsKey, steppedPage, TOUCHPAD_TURN_DISTANCE, WHEEL_GESTURE_GAP_MS,
-  touchSwipePage, type WheelInput,
+  createReaderWheelPager, createWheelPager, edgePage, keyTarget, paneEdges, paneHorizontalEdges, readerKeyAction, readerOwnsKey, steppedPage, touchSwipePage, TOUCHPAD_TURN_DISTANCE, WHEEL_GESTURE_GAP_MS,
+  type WheelInput,
 } from "../src/features/reader/pageTurn.ts";
 
 const middle = { atStart: false, atEnd: false };
@@ -21,6 +21,21 @@ test("pane edges allow a pixel of rounding", () => {
   assert.deepEqual(paneEdges({ scrollTop: 0, scrollHeight: 800, clientHeight: 800 }), fits);
 });
 
+test("a tiny vertical lead-in does not block a short horizontal trackpad swipe", () => {
+  const pager = createReaderWheelPager();
+  const move = (dx: number, dy: number, time: number) => pager({ dx, dy, time, notch: false, horizontal: fits, vertical: middle });
+  assert.equal(move(0, 2, 0).turn, 0);
+  assert.equal(move(20, 1, 16).axis, "horizontal");
+  assert.equal(move(20, 1, 32).turn, 0);
+  assert.equal(move(20, 1, 48).turn, 0);
+  assert.equal(move(20, 1, 64).turn, 1);
+  assert.equal(move(0, 20, 80).swallow, true);
+  assert.equal(move(0.1, 0, 100).swallow, true);
+  // A long subpixel tail does not block the next intentional swipe.
+  move(0.1, 0, 190);
+  assert.equal(move(-80, 0, 310).turn, -1);
+});
+
 test("touch swipes use the start edge and reject short or vertical drags", () => {
   assert.equal(touchSwipePage(-80, 5, fits), 1);
   assert.equal(touchSwipePage(80, 5, fits), -1);
@@ -31,9 +46,123 @@ test("touch swipes use the start edge and reject short or vertical drags", () =>
   assert.equal(touchSwipePage(80, 0, bottom), 0);
 });
 
+test("another horizontal stroke can start before the previous inertia has stopped", () => {
+  const pager = createReaderWheelPager();
+  let time = 0;
+  const move = (dx: number) => pager({ dx, dy: 0, time: time += 16, notch: false, horizontal: fits, vertical: middle }).turn;
+  assert.equal([24, 24, 24].map(move).filter(Boolean).length, 1);
+  assert.ok([40, 32, 24, 16, 8, 3, 1].map(move).every(turn => turn === 0), "decelerating inertia must not turn again");
+  assert.equal([24, 24, 24].map(move).filter(Boolean).length, 1, "a new accelerating stroke must work without a 200ms pause");
+});
+
+test("an intentional reverse swipe works immediately after a turn, while jitter does not", () => {
+  const pager = createReaderWheelPager();
+  const move = (dx: number, time: number) => pager({ dx, dy: 0, time, notch: false, horizontal: fits, vertical: middle }).turn;
+  assert.equal(move(80, 0), 1);
+  assert.equal(move(-4, 40), 0);
+  assert.equal(move(3, 60), 0);
+  assert.equal(move(-24, 130), 0);
+  assert.equal(move(-24, 146), 0);
+  assert.equal(move(-24, 162), -1);
+});
+
+test("a new swipe can accelerate gradually out of the previous tail", () => {
+  const pager = createReaderWheelPager();
+  let time = 0;
+  const move = (dx: number) => pager({ dx, dy: 0, time: time += 16, notch: false, horizontal: fits, vertical: middle }).turn;
+  [24, 24, 24, 40, 32, 24, 16, 8, 3, 1].forEach(move);
+  assert.equal([1, 2, 4, 8, 12, 20, 24, 24].map(move).filter(Boolean).length, 1);
+});
+
+test("turning direction before the first page turn does not count its remaining inertia as another swipe", () => {
+  const pager = createReaderWheelPager();
+  const events = [[20, 0], [-24, 16], [-24, 32], [-24, 48],
+    ...Array.from({ length: 12 }, (_, i) => [-24, 64 + i * 16])];
+  const turns = events.map(([dx, time]) => pager({ dx, dy: 0, time, notch: false, horizontal: fits, vertical: middle }).turn).filter(Boolean);
+  assert.deepEqual(turns, [-1]);
+});
+
+test("a weak swipe after the tail is recognized from its cumulative distance", () => {
+  const pager = createReaderWheelPager();
+  let time = 0;
+  const events = [24, 24, 24, 40, 32, 24, 16, 8, 3, 1, ...Array<number>(30).fill(4)];
+  const turns = events.map(dx => pager({ dx, dy: 0, time: time += 16, notch: false, horizontal: fits, vertical: middle }).turn).filter(Boolean);
+  assert.deepEqual(turns, [1, 1]);
+});
+
+test("a larger wheel delta covering a longer interval is still the same decelerating gesture", () => {
+  const pager = createReaderWheelPager();
+  // Velocity decreases from 3px/ms to 0.5px/ms. The final event covers 144ms at that same speed.
+  const events = [[24, 8], [24, 16], [24, 24], [24, 32], [16, 48], [8, 56], [4, 64], [72, 208]];
+  const turns = events.map(([dx, time]) => pager({ dx, dy: 0, time, notch: false, horizontal: fits, vertical: middle }).turn).filter(Boolean);
+  assert.deepEqual(turns, [1]);
+});
+
+test("a horizontal stroke can follow a vertical scroll without waiting for its tail", () => {
+  const pager = createReaderWheelPager();
+  const move = (dx: number, dy: number, time: number) => pager({ dx, dy, time, notch: false, horizontal: fits, vertical: middle }).turn;
+  move(0, 30, 0); move(0, 12, 16); move(0, 3, 32);
+  assert.equal(move(24, 1, 64), 0);
+  assert.equal(move(24, 1, 80), 0);
+  assert.equal(move(24, 1, 96), 1);
+});
+
+test("a long continuous swipe turns once, including pauses while the page redraws", () => {
+  const pager = createReaderWheelPager();
+  let time = 0;
+  const move = (dx: number, elapsed = 16) => pager({ dx, dy: 0, time: time += elapsed, notch: false,
+    horizontal: fits, vertical: middle }).turn;
+  assert.equal(Array.from({ length: 40 }, () => move(24)).filter(Boolean).length, 1);
+  assert.equal(move(24, 120), 0);
+  assert.equal(move(24), 0);
+  assert.equal(move(24), 0);
+  move(8); move(3); move(1);
+  assert.equal(move(24, 120), 0);
+  assert.equal(move(24), 0);
+  assert.equal(move(24), 1);
+});
+
 test("a mouse notch at the end of the page turns to the next one", () => {
   const pager = createWheelPager();
   assert.deepEqual(pager(notch(0, bottom)), { turn: 1, swallow: true });
+});
+
+test("horizontal swipes turn forward and back when the page fits across the pane", () => {
+  assert.deepEqual(paneHorizontalEdges({ scrollLeft: 0, scrollWidth: 600, clientWidth: 600 }), fits);
+  // Fit-width hides border/padding rounding overflow rather than allowing sideways scrolling.
+  assert.deepEqual(paneHorizontalEdges({ scrollLeft: 0, scrollWidth: 602, clientWidth: 600 }, false), fits);
+  assert.deepEqual(paneHorizontalEdges({ scrollLeft: 1089, scrollWidth: 1687, clientWidth: 583 }, true, 15), bottom);
+  const pager = createWheelPager();
+  const swipe = (dy: number, time: number) => pager({ dy, time, axis: "horizontal", notch: false, ...fits });
+  assert.deepEqual(swipe(40, 0), { turn: 0, swallow: false });
+  assert.equal(swipe(40, 16).turn, 0);
+  assert.deepEqual(swipe(40, 32), { turn: 1, swallow: true });
+  assert.deepEqual(swipe(100, 60), { turn: 0, swallow: true });
+  assert.deepEqual(swipe(-20, 90), { turn: 0, swallow: true });
+  assert.deepEqual(swipe(-120, 90 + WHEEL_GESTURE_GAP_MS + 1), { turn: -1, swallow: true });
+});
+
+test("horizontal panning must finish before a fresh swipe can turn an enlarged page", () => {
+  const pager = createWheelPager();
+  const swipe = (left: number, time: number) => pager({ dy: 120, time, axis: "horizontal", notch: false,
+    ...paneHorizontalEdges({ scrollLeft: left, scrollWidth: 1800, clientWidth: 600 }) });
+  assert.deepEqual(swipe(600, 0), { turn: 0, swallow: false });
+  assert.deepEqual(swipe(1200, 16), { turn: 0, swallow: false });
+  assert.equal(swipe(1200, 16 + WHEEL_GESTURE_GAP_MS + 1).turn, 1);
+});
+
+test("diagonal inertia cannot turn again on the other axis", () => {
+  const pager = createWheelPager();
+  assert.equal(pager({ dy: 120, time: 0, axis: "horizontal", notch: false, ...fits }).turn, 1);
+  assert.deepEqual(pager({ dy: 120, time: 16, notch: false, ...fits }), { turn: 0, swallow: true });
+  assert.deepEqual(pager({ dy: -120, time: 32, notch: false, ...fits }), { turn: 0, swallow: true });
+  assert.equal(pager({ dy: 120, time: 32 + WHEEL_GESTURE_GAP_MS + 1, notch: false, ...fits }).turn, 1);
+});
+
+test("a vertical scroll cannot become a page swipe through sideways jitter", () => {
+  const pager = createWheelPager();
+  assert.equal(pager({ dy: 12, time: 0, notch: false, ...middle }).turn, 0);
+  assert.deepEqual(pager({ dy: 120, time: 16, axis: "horizontal", notch: false, ...fits }), { turn: 0, swallow: false });
 });
 
 test("a notch at the start of the page turns back", () => {

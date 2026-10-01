@@ -11,7 +11,7 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/componen
 import { importPdfs } from "@/app/actions";
 import { ContinueReading } from "@/features/library/ContinueReading";
 import { bindReaderViewport, changeZoom, historyBack, historyForward, movePage, moveToEdgePage, navigateTo } from "./navigation";
-import { createWheelPager, keyTarget, onScreen, paneEdges, readerKeyAction, readerOwnsKey, type KeyPlace } from "./pageTurn";
+import { createReaderWheelPager, horizontalEdges, keyTarget, onScreen, paneEdges, readerKeyAction, readerOwnsKey, type KeyPlace } from "./pageTurn";
 import { savedAnchor } from "./sidePanel";
 import { loadOutline, originalPageFor, type OutlineEntry, type PdfPlace } from "./pdfLinks";
 import { pinchLevel, pinchStart } from "./zoomLevels";
@@ -184,7 +184,7 @@ export function Reader() {
     // Safari's engine (WKWebView, macOS) reports a touchpad pinch as gesture events whose scale is from
     // the pinch's start, not as Ctrl+wheel; the zoom the pinch started from while one is under way.
     let gestureStart: number | null = null;
-    const pager = createWheelPager();
+    const pager = createReaderWheelPager();
     const onWheel = (e: WheelEvent) => {
       const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? 400 : 1;
       const dx = e.deltaX * unit;
@@ -215,11 +215,12 @@ export function Reader() {
       activePane.current = pane === rightScrollRef.current ? "right" : "left";
       // Scrolling on past the end of the page turns it, except while writing on the page, where a
       // stray wheel movement should not take the page away.
-      if (!e.shiftKey && Math.abs(dy) > Math.abs(dx) && !inkToolActive()) {
-        const { turn, swallow } = pager({ dy, time: e.timeStamp, notch: mouseWheel, ...paneEdges(readingPane(activePane.current) ?? pane) });
+      if (!e.shiftKey && (dx !== 0 || dy !== 0) && !inkToolActive()) {
+        const { turn, swallow, axis } = pager({ dx, dy, time: e.timeStamp, notch: mouseWheel,
+          horizontal: horizontalEdges(pane), vertical: paneEdges(readingPane(activePane.current) ?? pane) });
         if (turn) {
           if (e.cancelable) e.preventDefault();
-          movePage(turn, { toEnd: turn < 0 });
+          movePage(turn, { toEnd: axis === "vertical" && turn < 0 });
           return;
         }
         if (swallow) {
