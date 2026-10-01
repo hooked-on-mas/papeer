@@ -86,7 +86,8 @@ test("the reading toolbar fits focus mode's narrowest main area, 320px, with the
     const options = { focusMode, hasOutline: true };
     const fit = fitReaderToolbar(width, options);
     assert.ok(usedWidth(readerToolbarItems(options), fit) <= itemRoom(width), `focusMode ${focusMode}`);
-    for (const id of ["pages", "spacer", "search", "focus"]) assert.ok(fit[id] >= 0, id);
+    for (const id of ["pages", "spacer", "ink", "focus"]) assert.ok(fit[id] >= 0, id);
+    assert.equal(fit.search, -1);
     assert.equal(fit.zoom, -1);
   }
 });

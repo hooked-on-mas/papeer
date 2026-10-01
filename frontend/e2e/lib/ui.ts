@@ -39,7 +39,7 @@ export async function openPaper(page: Page, text: string): Promise<void> {
   await page.locator("[data-page-number] canvas").first().waitFor({ timeout: 30_000 });
 }
 
-/** Opens a side panel (メモ, サマリー, チャット) next to the PDF or closes it, from the toolbar or its 「…」 menu. */
+/** Opens or closes a side panel from its button, dropdown, or the 「…」 menu. */
 export async function toggleSidePanel(page: Page, label: string): Promise<void> {
   const name = `${label}を右に表示`;
   const direct = page.getByRole("button", { name, exact: true });
@@ -47,8 +47,10 @@ export async function toggleSidePanel(page: Page, label: string): Promise<void> 
     await direct.first().click();
     return;
   }
-  await page.getByRole("button", { name: "その他の表示・操作" }).click();
-  await page.getByRole("menu").getByRole("menuitem", { name }).click();
+  const dropdown = page.getByRole("button", { name: "右パネルを選択", exact: true });
+  if (await dropdown.count() && await dropdown.isVisible()) await dropdown.click();
+  else await page.getByRole("button", { name: "その他の表示・操作" }).click();
+  await page.getByRole("menu").getByRole("menuitemcheckbox", { name }).click();
   await page.getByRole("menu").waitFor({ state: "detached" });
 }
 

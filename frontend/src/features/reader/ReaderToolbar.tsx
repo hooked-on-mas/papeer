@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  ChevronLeft, ChevronRight, ClipboardCheck, ListTree, Maximize2, MessageSquare, Minimize2, MoreHorizontal, NotebookPen,
+  ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, ListTree, Maximize2, MessageSquare, Minimize2, MoreHorizontal, NotebookPen, PanelRight,
   ScrollText, Search, StickyNote, Undo2, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { useStore, ZOOM_LEVELS } from "@/store";
@@ -17,6 +17,7 @@ import { zoomLabel } from "./zoomLevels";
 import { currentOutlineIndex, type OutlineEntry } from "./pdfLinks";
 import { fitReaderToolbar } from "./readerBars";
 import { ReaderSearch } from "./ReaderSearch";
+import { ReaderInkButton } from "./ReaderInkButton";
 import { TranslationReview } from "./TranslationReview";
 import { translationIssues } from "@/lib/translationIssues";
 import type { SidePanel } from "./sidePanel";
@@ -33,7 +34,7 @@ const SIDE_PANEL_BUTTONS: { tab: SidePanel; label: string; icon: typeof ScrollTe
 type Search = { query: string; side: "original" | "translated" };
 
 /**
- * The reader's one row of controls: pages, table of contents, search, zoom and focus
+ * The reader's one row of controls: pages, writing tools, table of contents, search, zoom and focus
  * mode. Whatever doesn't fit its width goes into the 「…」 menu at its end (see readerBars.ts).
  */
 export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: {
@@ -105,6 +106,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   const shown = (id: string) => (fit[id] ?? -1) >= 0;
   const full = (id: string) => (fit[id] ?? -1) >= 1;
   const panelTitle = (label: string, key: string) => `${label}を右に表示${focusMode ? `（${withShortcutLabels(key)}）` : ""}`;
+  const panelLabel = SIDE_PANEL_BUTTONS.find(({ tab }) => tab === sidePanel)?.label ?? "右パネル";
 
   const setPageFilter = (value: string) => {
     const only = value === "translated";
@@ -170,6 +172,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
           {shown("label") ? pageLabel : null}
         </span>
 
+        <ReaderInkButton />
         {shown("outline") && (
           <DropdownMenu>
             <DropdownMenuTrigger className={labeled} aria-label="目次" title={withShortcutLabels("PDF の目次から移動（Alt+← で戻る）")}>
@@ -178,9 +181,9 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             <DropdownMenuContent align="start" className={outlineMenuClass}>{outlineItems}</DropdownMenuContent>
           </DropdownMenu>
         )}
-        <button className={labeled} aria-label="論文内検索" aria-pressed={searchOpen} title={withShortcutLabels("論文内検索（Ctrl+F）")} onClick={() => setSearchOpen(!searchOpen)}>
+        {shown("search") && <button className={labeled} aria-label="論文内検索" aria-pressed={searchOpen} title={withShortcutLabels("論文内検索（Ctrl+F）")} onClick={() => setSearchOpen(!searchOpen)}>
           <Search className="size-3.5" />{full("search") && "検索"}
-        </button>
+        </button>}
         {shown("zoom") && <div className="ml-1.5 flex items-center gap-1 shrink-0">
           {full("zoom") && (
             <button onClick={() => changeZoom(-1)} disabled={zoom <= ZOOM_LEVELS[0]} className={button} aria-label="縮小"
@@ -212,7 +215,28 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             <StickyNote className="w-4 h-4" />
           </button>
         )}
-        {shown("panels") && (
+        {shown("panels") && !focusMode && (
+          <DropdownMenu>
+            <DropdownMenuTrigger className={`${chip(!!sidePanel)} ml-1.5`} aria-label="右パネルを選択"
+              title={sidePanel ? `${panelLabel}を右に表示中` : "サマリー・チャット・メモを右に表示"}>
+              <PanelRight className="size-3.5" />
+              {panelLabel}
+              <ChevronDown className="size-3" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              {SIDE_PANEL_BUTTONS.map(({ tab, label, icon: Icon, key }) => (
+                <DropdownMenuCheckboxItem key={tab} checked={sidePanel === tab} closeOnClick
+                  aria-label={`${label}を右に表示`} title={panelTitle(label, key)}
+                  onCheckedChange={() => setSidePanel(sidePanel === tab ? null : tab)}>
+                  <Icon /> {label}
+                </DropdownMenuCheckboxItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={!sidePanel} onClick={() => setSidePanel(null)}>右パネルを閉じる</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        {shown("panels") && focusMode && (
           <div className="ml-1.5 flex items-center gap-1 shrink-0">
             {SIDE_PANEL_BUTTONS.map(({ tab, label, icon: Icon, key }) => (
               <button
@@ -257,6 +281,9 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
               )}
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
+            {!shown("search") && (
+              <DropdownMenuItem onClick={() => setSearchOpen(true)}><Search /> {withShortcutLabels("論文内検索（Ctrl+F）")}</DropdownMenuItem>
+            )}
             {!shown("back") && (
               <DropdownMenuItem disabled={!canGoBack} onClick={historyBack}><Undo2 /> {withShortcutLabels("移動する前の場所に戻る（Alt+←）")}</DropdownMenuItem>
             )}
@@ -270,7 +297,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
               <ClipboardCheck /> 翻訳の確認・修正{reviewCount ? `（${reviewCount}）` : ""}
             </DropdownMenuItem>
             {!shown("panels") && SIDE_PANEL_BUTTONS.map(({ tab, label, icon: Icon, key }) => (
-              <DropdownMenuCheckboxItem key={tab} checked={sidePanel === tab} onCheckedChange={() => setSidePanel(sidePanel === tab ? null : tab)}>
+              <DropdownMenuCheckboxItem key={tab} checked={sidePanel === tab} closeOnClick onCheckedChange={() => setSidePanel(sidePanel === tab ? null : tab)}>
                 <Icon /> {panelTitle(label, key)}
               </DropdownMenuCheckboxItem>
             ))}

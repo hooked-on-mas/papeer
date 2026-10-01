@@ -7,7 +7,6 @@ import { useReading, type ReadingData } from "@/api/hooks";
 import { backendUrl } from "@/api/client";
 import { PdfPane } from "./PdfPane";
 import { ReaderToolbar } from "./ReaderToolbar";
-import { ReaderHeader } from "./ReaderHeader";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { importPdfs } from "@/app/actions";
 import { ContinueReading } from "@/features/library/ContinueReading";
@@ -354,11 +353,6 @@ export function Reader() {
     <div ref={readerRef} className="flex flex-col h-full w-full bg-reader-bg">
       <ReaderToolbar paperId={activePaperId} search={search} setSearch={setSearch} outline={outline} ownsKey={ownsKey} />
       <span role="status" className="sr-only">{rebuilding ? "PDFを作り直しています" : translating ? "翻訳中" : ""}</span>
-      <ReaderHeader caption={caption} badge={translating && (
-        <span aria-hidden="true" className="inline-flex shrink-0 items-center gap-1 text-primary">
-          <Loader2 className="size-3.5 animate-spin" />{rebuilding ? "PDF作り直し中" : "翻訳中"}
-        </span>
-      )} />
       {/* data-ink-toolbar-slot: INK_TOOLBAR_SLOT, which lets the toolbar's keys through to its pane. */}
       <div id="reader-ink-tools" ref={setInkToolbarSlot} data-ink-toolbar-slot="" className="flex flex-col shrink-0 max-h-[40%]" />
       {noTranslatedPages ? (
@@ -390,6 +384,7 @@ export function Reader() {
                 savedHighlights={sourceHighlights}
                 onDocumentLoad={onOriginalLoad}
                 onInternalLink={(place) => navigateTo({ ...place, side: "original" })}
+                caption="原文"
                 inkToolbarSlot={inkToolbarSlot}
               />
             </div>
@@ -417,6 +412,13 @@ export function Reader() {
                   const page = ref && reading ? originalPageFor(reading.translated_pages, ref.file, place.page - 1) : null;
                   if (page) navigateTo({ page, anchor_y: place.anchor_y, side: "translated" });
                 }}
+                caption={caption}
+                badge={translating && (
+                  // Announced by the status line under the toolbar, which is there before the translation starts.
+                  <span aria-hidden="true" className="flex items-center gap-1 pr-1 text-[0.75rem] leading-none text-primary">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />{rebuilding ? "PDF作り直し中" : "翻訳中"}
+                  </span>
+                )}
                 inkToolbarSlot={inkToolbarSlot}
               />
             </div>
