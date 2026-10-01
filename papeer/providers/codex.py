@@ -17,10 +17,13 @@ from papeer.providers.common import (
 )
 
 _FALLBACK_MODELS = [
-    ("gpt-5.6-sol", "gpt-5.6-sol — 推奨"),
-    ("gpt-5.6-terra", "gpt-5.6-terra — バランス"),
-    ("gpt-6-astra", "gpt-6-astra"),
-    ("o3-mini", "o3-mini"),
+    ("gpt-6-astra", "gpt-6-astra — 高性能"),
+    ("gpt-6-sol", "gpt-6-sol — 汎用"),
+    ("gpt-6-luna", "gpt-6-luna — 高速"),
+    ("gpt-5.6-sol", "gpt-5.6-sol — 旧世代・汎用"),
+    ("gpt-5.6-terra", "gpt-5.6-terra — 旧世代・バランス"),
+    ("gpt-5.6-luna", "gpt-5.6-luna — 旧世代・高速"),
+    ("gpt-5.5", "gpt-5.5 — レガシー"),
 ]
 
 _EFFORTS = [
@@ -163,6 +166,8 @@ class CodexProvider(CliBackend, ProviderBackend):
                                  encoding="utf-8", errors="replace", timeout=15, **hidden_window(command))
             if res.returncode == 0 and res.stdout:
                 for item in json.loads(res.stdout).get("models", []):
+                    if item.get("visibility") == "hide":
+                        continue
                     slug = item.get("slug")
                     if slug:
                         name = item.get("display_name") or slug

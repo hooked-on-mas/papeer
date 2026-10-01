@@ -545,20 +545,24 @@ class ProvidersTests(unittest.TestCase):
     def test_codex_models(self):
         fake_json = json.dumps({"models": [
             {"slug": "gpt-6-astra", "display_name": "GPT-6-Astra"},
-            {"slug": "gpt-5.6-sol", "display_name": "GPT-5.6-Sol"}
+            {"slug": "gpt-reserve", "display_name": "GPT-Reserve", "visibility": "hide"},
+            {"slug": "gpt-6-sol", "display_name": "GPT-6-Sol", "visibility": "list"}
         ]})
         with cli(CodexProvider), patch(RUN, return_value=Mock(returncode=0, stdout=fake_json)):
             models = CodexProvider(Settings()).list_models()
         self.assertEqual(len(models), 2)
         self.assertEqual(models[0][0], "gpt-6-astra")
         self.assertIn("GPT-6-Astra", models[0][1])
+        self.assertEqual(models[1][0], "gpt-6-sol")
 
     def test_models_fall_back_when_the_cli_fails(self):
         with patch(RUN, side_effect=OSError("CLI not found")), \
              patch("papeer.providers.antigravity.subprocess.run", side_effect=OSError("CLI not found")), \
              patch("papeer.providers.codex.subprocess.run", side_effect=OSError("CLI not found")):
             self.assertTrue(AntigravityProvider(Settings(provider="antigravity")).list_models())
-            self.assertTrue(CodexProvider(Settings()).list_models())
+            codex_models = [model[0] for model in CodexProvider(Settings()).list_models()]
+            self.assertEqual(codex_models[:3], ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"])
+            self.assertNotIn("o3-mini", codex_models)
 
     def test_efforts(self):
         self.assertEqual(AntigravityProvider(Settings(provider="antigravity")).list_efforts(), [])
