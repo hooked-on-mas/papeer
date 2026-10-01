@@ -59,13 +59,10 @@ export const TOOLBAR_SLACK = 8;
  * is 24px; a 14px icon with a label is padded by 12px (6px each side) and 4px apart from the label.
  * Items that start a group carry the 6px margin that sets them apart.
  */
-export function readerToolbarItems({ focusMode, hasOutline, reviewCount }: {
+export function readerToolbarItems({ focusMode, hasOutline }: {
   focusMode: boolean;
   hasOutline: boolean;
-  /** Pages the 翻訳の確認・修正 dialog lists; shown as a number beside it. */
-  reviewCount: number;
 }): BarItem[] {
-  const count = reviewCount ? 10 + 7 * String(reviewCount).length : 0;
   const items: BarItem[] = [
     // ‹ [page] ›
     { id: "pages", widths: [24 + 44 + 24 + 2 * TOOLBAR_GAP], required: true },
@@ -84,13 +81,7 @@ export function readerToolbarItems({ focusMode, hasOutline, reviewCount }: {
   // The page count beside the page number; it takes whatever room is left, and this much at least.
   items.push({ id: "label", widths: [56] });
   if (hasOutline) items.push({ id: "outline", widths: [26, 26 + 4 + 24] });
-  items.push(
-    { id: "ink", widths: [26, 26 + 4 + 48] },
-    { id: "back", widths: [24] },
-    { id: "review", widths: [26 + count, 26 + 4 + 96 + count] },
-    // 全ページ / 翻訳済みページのみ.
-    { id: "filter", widths: [6 + 140] },
-  );
+  items.push({ id: "back", widths: [24] });
   if (focusMode) items.push({ id: "sticky", widths: [6 + 24] });
   // 移動 only repeats Enter in the page field, so it is the first to go and has no menu entry.
   items.push({ id: "go", widths: [42] });

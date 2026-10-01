@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  ChevronLeft, ChevronRight, ClipboardCheck, ListTree, Maximize2, MessageSquare, Minimize2, MoreHorizontal, NotebookPen, PenLine,
+  ChevronLeft, ChevronRight, ClipboardCheck, ListTree, Maximize2, MessageSquare, Minimize2, MoreHorizontal, NotebookPen,
   ScrollText, Search, StickyNote, Undo2, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { useStore, ZOOM_LEVELS } from "@/store";
@@ -15,11 +15,10 @@ import { emitAppEvent } from "@/lib/appEvents";
 import { changeZoom, historyBack, jumpToPage, movePage, navigateTo } from "./navigation";
 import { zoomLabel } from "./zoomLevels";
 import { currentOutlineIndex, type OutlineEntry } from "./pdfLinks";
-import { fitReaderToolbar, inkToolbarOpen } from "./readerBars";
+import { fitReaderToolbar } from "./readerBars";
 import { ReaderSearch } from "./ReaderSearch";
 import { TranslationReview } from "./TranslationReview";
 import { translationIssues } from "@/lib/translationIssues";
-import { useInkTools } from "./useInkEditor";
 import type { SidePanel } from "./sidePanel";
 import { withShortcutLabels } from "@/lib/platform";
 import { isImeKey } from "@/lib/imeKeys";
@@ -34,7 +33,7 @@ const SIDE_PANEL_BUTTONS: { tab: SidePanel; label: string; icon: typeof ScrollTe
 type Search = { query: string; side: "original" | "translated" };
 
 /**
- * The reader's one row of controls: pages, table of contents, search, writing tools, zoom and focus
+ * The reader's one row of controls: pages, table of contents, search, zoom and focus
  * mode. Whatever doesn't fit its width goes into the 「…」 menu at its end (see readerBars.ts).
  */
 export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: {
@@ -56,9 +55,6 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   const sidePanel = useStore((s) => s.sidePanel);
   const setSidePanel = useStore((s) => s.setSidePanel);
   const canGoBack = useStore((s) => s.readerHistory.back.length > 0);
-  const inkBarOpen = useStore((s) => s.inkBarOpen);
-  const inkTool = useInkTools((s) => s.tool);
-  const inkListOpen = useInkTools((s) => s.listOpen);
   const { data: reading } = useReading(paperId);
   // Load what the side panels show, so opening one doesn't flash a loading state first.
   useArticle(paperId);
@@ -89,8 +85,6 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   const atEnd = translatedOnly ? !completed.length || currentPage >= completed[completed.length - 1] : currentPage >= count;
   const reviewCount = translationIssues(reading).length;
   const outlineIndex = outline?.length ? currentOutlineIndex(outline, currentPage) : -1;
-  // Pressed whenever the writing toolbar is on screen (see inkToolbarOpen).
-  const inkPressed = inkToolbarOpen({ open: inkBarOpen, tool: inkTool, listOpen: inkListOpen });
 
   // What fits: measured before the first paint, and again whenever the row changes width.
   const rowRef = useRef<HTMLDivElement>(null);
@@ -107,23 +101,11 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   }, []);
   // The widths in readerBars.ts are at 100%, less the row's padding (px-3); the UI size (lib/uiScale.ts)
   // scales everything drawn in the row.
-  const fit = fitReaderToolbar(Math.max(0, rowWidth / uiScale - 24), { focusMode, hasOutline: !!outline?.length, reviewCount });
+  const fit = fitReaderToolbar(Math.max(0, rowWidth / uiScale - 24), { focusMode, hasOutline: !!outline?.length });
   const shown = (id: string) => (fit[id] ?? -1) >= 0;
   const full = (id: string) => (fit[id] ?? -1) >= 1;
-  // Whether the menu holds anything besides the page information.
-  const folded = ["back", "ink", "review", "filter", "zoom"].some((id) => !shown(id)) || !full("zoom")
-    || (!!outline?.length && !shown("outline")) || !shown("panels") || (focusMode && !shown("sticky"));
   const panelTitle = (label: string, key: string) => `${label}を右に表示${focusMode ? `（${withShortcutLabels(key)}）` : ""}`;
 
-  const toggleInk = () => {
-    if (inkPressed) {
-      useStore.getState().setInkBarOpen(false);
-      useInkTools.getState().setListOpen(false);
-      useInkTools.getState().setTool("select");
-    } else {
-      useStore.getState().setInkBarOpen(true);
-    }
-  };
   const setPageFilter = (value: string) => {
     const only = value === "translated";
     setTranslatedOnly(only);
@@ -199,32 +181,6 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
         <button className={labeled} aria-label="論文内検索" aria-pressed={searchOpen} title={withShortcutLabels("論文内検索（Ctrl+F）")} onClick={() => setSearchOpen(!searchOpen)}>
           <Search className="size-3.5" />{full("search") && "検索"}
         </button>
-        {shown("review") && (
-          <button className={labeled} aria-label={reviewLabel} title={reviewLabel} onClick={() => emitAppEvent("open-translation-review")}>
-            <ClipboardCheck className="size-3.5" />
-            {full("review") && "翻訳の確認・修正"}
-            {!!reviewCount && <span className="tabular-nums">{full("review") ? `(${reviewCount})` : reviewCount}</span>}
-          </button>
-        )}
-        {shown("ink") && (
-          <button className={labeled} aria-label="書き込みツール" aria-pressed={inkPressed} onClick={toggleInk}
-            title={inkPressed ? "書き込みツールを閉じて本文選択に戻る" : "書き込みツールを表示（ペン・消しゴム・付箋・範囲キャプチャ・書き込み付きPDFの保存）"}>
-            <PenLine className="size-3.5" />{full("ink") && "書き込み"}
-          </button>
-        )}
-
-        {shown("filter") && (
-          <select
-            value={translatedOnly ? "translated" : "all"}
-            onChange={(e) => setPageFilter(e.target.value)}
-            aria-label="表示するページ"
-            title="表示するページ"
-            className="ml-1.5 h-6 shrink-0 bg-transparent border rounded text-[0.75rem] px-1 hover:bg-muted cursor-pointer"
-          >
-            <option value="all">全ページ</option>
-            <option value="translated">翻訳済みページのみ</option>
-          </select>
-        )}
         {shown("zoom") && <div className="ml-1.5 flex items-center gap-1 shrink-0">
           {full("zoom") && (
             <button onClick={() => changeZoom(-1)} disabled={zoom <= ZOOM_LEVELS[0]} className={button} aria-label="縮小"
@@ -299,7 +255,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
                 </DropdownMenuLabel>
               )}
             </DropdownMenuGroup>
-            {folded && <DropdownMenuSeparator />}
+            <DropdownMenuSeparator />
             {!shown("back") && (
               <DropdownMenuItem disabled={!canGoBack} onClick={historyBack}><Undo2 /> {withShortcutLabels("移動する前の場所に戻る（Alt+←）")}</DropdownMenuItem>
             )}
@@ -309,14 +265,9 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
                 <DropdownMenuSubContent className={outlineMenuClass}>{outlineItems}</DropdownMenuSubContent>
               </DropdownMenuSub>
             )}
-            {!shown("ink") && (
-              <DropdownMenuCheckboxItem checked={inkPressed} onCheckedChange={toggleInk}><PenLine /> 書き込みツール</DropdownMenuCheckboxItem>
-            )}
-            {!shown("review") && (
-              <DropdownMenuItem onClick={() => emitAppEvent("open-translation-review")}>
-                <ClipboardCheck /> 翻訳の確認・修正{reviewCount ? `（${reviewCount}）` : ""}
-              </DropdownMenuItem>
-            )}
+            <DropdownMenuItem title={reviewLabel} onClick={() => emitAppEvent("open-translation-review")}>
+              <ClipboardCheck /> 翻訳の確認・修正{reviewCount ? `（${reviewCount}）` : ""}
+            </DropdownMenuItem>
             {!shown("panels") && SIDE_PANEL_BUTTONS.map(({ tab, label, icon: Icon, key }) => (
               <DropdownMenuCheckboxItem key={tab} checked={sidePanel === tab} onCheckedChange={() => setSidePanel(sidePanel === tab ? null : tab)}>
                 <Icon /> {panelTitle(label, key)}
@@ -339,15 +290,13 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
                 </DropdownMenuRadioGroup>
               </DropdownMenuGroup>
             )}
-            {!shown("filter") && (
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>表示するページ</DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={translatedOnly ? "translated" : "all"} onValueChange={(value) => setPageFilter(String(value))}>
-                  <DropdownMenuRadioItem value="all">全ページ</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="translated">翻訳済みページのみ</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuGroup>
-            )}
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>表示するページ</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={translatedOnly ? "translated" : "all"} onValueChange={(value) => setPageFilter(String(value))}>
+                <DropdownMenuRadioItem value="all">全ページ</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="translated">翻訳済みページのみ</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
