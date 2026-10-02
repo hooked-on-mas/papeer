@@ -106,10 +106,10 @@ def test_ci_runs_the_checks_of_just_test_and_just_lint():
     linux = rust["steps"][[step.get("run") for step in rust["steps"]].index(runs[0])]
     assert linux["if"] == "runner.os == 'Linux'" and "libwebkit2gtk-4.1-dev" in linux["run"]
     # Without the onedir sidecar folder (made by `just build-sidecar`), tauri-build fails on bundle.resources;
-    # `just clippy` and `just e2e` drop it the same way.
+    # `just clippy`, `just e2e` and `just dev-frontend` drop it the same way.
     assert rust["env"]["TAURI_CONFIG"] == '{"bundle":{"resources":[]}}'
     justfile = (ROOT / "justfile").read_text("utf-8")
-    assert justfile.count("[env('TAURI_CONFIG', '" + rust["env"]["TAURI_CONFIG"] + "')]") == 2
+    assert justfile.count("[env('TAURI_CONFIG', '" + rust["env"]["TAURI_CONFIG"] + "')]") == 3
 
 
 def test_the_sidecar_is_built_as_the_release_builds_it_then_started_as_the_app_starts_it():
