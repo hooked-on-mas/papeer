@@ -44,7 +44,7 @@ interface TabState {
  * comes back with the reader tab.
  */
 export function tabChange(state: TabState, tab: string): Partial<TabState> {
-  if (tab === "sticky-notes") return { activeTab: tab, focusMode: false };
+  if (tab === "sticky-notes" || tab === "references") return { activeTab: tab, focusMode: false };
   if (state.focusMode && tab !== "reader") return isSidePanel(tab) ? { activeTab: "reader", sidePanel: tab } : {};
   return { activeTab: tab };
 }

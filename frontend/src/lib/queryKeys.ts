@@ -4,6 +4,7 @@
  * in one place, api/invalidation.ts.
  */
 export const QK = {
+  citations: "citations",
   papers: "papers",
   collections: "collections",
   reading: "reading",

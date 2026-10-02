@@ -199,3 +199,37 @@ def mark_references(document: dict) -> None:
             evidence = reference_evidence(block["text"])
             if evidence:
                 block.update(kind="reference", reference_evidence=evidence)
+
+
+def reference_text_blocks(document: dict) -> list[tuple[int, str]]:
+    """Reference text in column order, without headings; pages are one-based.
+
+    Read the existing marks and heading-gated evidence without changing the shared extraction.
+    A heading is retained as an empty separator so separate bibliographies never merge.
+    """
+    result = []
+    active = False
+    for block in _reading_sequence(document):
+        if block.get("kind") in {"formula", "table", "figure", "algorithm"}:
+            continue
+        lines = [line.strip() for line in block["text"].splitlines() if line.strip()]
+        rest = _split_heading(lines)
+        if rest is not None:
+            active = True
+            result.append((block["page"], ""))
+        elif lines and len(lines[0]) < 160 and _END.match(lines[0]):
+            active = False
+        if not active:
+            continue
+        text = rest if rest is not None else "\n".join(lines)
+        if not text:
+            continue
+        if block.get("kind") == "reference" or reference_evidence(text):
+            result.append((block["page"], text))
+            continue
+        # The translation deliberately leaves a mixed continuation/new-entry block translatable.
+        # For navigation, keep it if both parts independently have bibliographic evidence.
+        entry = _ENTRY.search(text)
+        if entry and text[:entry.start()].strip() and reference_evidence(text[:entry.start()]) and reference_evidence(text[entry.start():]):
+            result.append((block["page"], text))
+    return result

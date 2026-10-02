@@ -20,7 +20,7 @@ import { StartupReader } from "./StartupReader";
 import { ConnectionBanner } from "@/features/jobs/ConnectionBanner";
 import { LibrarySidebar } from "../features/library/LibrarySidebar";
 import { ReaderTab, useSidePanelOpen } from "./ReaderArea";
-import { ChatPane, NotesPane, SummaryPane } from "./lazyPanes";
+import { ChatPane, NotesPane, SummaryPane, ReferencesPane } from "./lazyPanes";
 import { StickyNotesTab } from "../features/reader/StickyNotesTab";
 import { StickyNoteDialog } from "../features/reader/StickyNoteDialog";
 import { DriveSyncHost } from "../features/settings/DriveSection";
@@ -41,7 +41,7 @@ import { isJobKind, SNAPSHOT_JOBS } from "@/features/jobs/jobKinds";
 import { registerAllJobHandlers } from "./jobHandlers";
 import { withShortcutLabels } from "@/lib/platform";
 
-const TABS = ["reader", "summary", "chat", "notes", "sticky-notes"];
+const TABS = ["reader", "summary", "chat", "notes", "sticky-notes", "references"];
 
 // Split from the initial bundle like the panes in ./lazyPanes; loaded when first opened, or once the app is idle.
 const SettingsDialog = lazyComponent(() => import("../features/settings/SettingsDialog").then((m) => m.SettingsDialog), {
@@ -375,7 +375,7 @@ export function AppShell() {
     () => changeZoom(1), hotkeyOptions);
   useHotkeys("ctrl+minus, meta+minus, ctrl+subtract, meta+subtract", () => changeZoom(-1), hotkeyOptions);
   useHotkeys("ctrl+0, meta+0", () => useStore.getState().setZoom(1), hotkeyOptions);
-  useHotkeys("ctrl+1, ctrl+2, ctrl+3, ctrl+4, ctrl+5, meta+1, meta+2, meta+3, meta+4, meta+5", (_e, handler) => {
+  useHotkeys("ctrl+1, ctrl+2, ctrl+3, ctrl+4, ctrl+5, ctrl+6, meta+1, meta+2, meta+3, meta+4, meta+5, meta+6", (_e, handler) => {
     // The digit alone: handler.keys holds no modifier.
     const tab = TABS[Number(handler.keys?.join("")) - 1];
     if (!tab) return;
@@ -460,6 +460,7 @@ export function AppShell() {
                 </TabsTrigger>
                 <TabsTrigger value="notes" title={withShortcutLabels("Ctrl+4")}>メモ・整理</TabsTrigger>
                 <TabsTrigger value="sticky-notes" title={withShortcutLabels("Ctrl+5")}>付箋</TabsTrigger>
+                <TabsTrigger value="references" title={withShortcutLabels("Ctrl+6")}>参考文献</TabsTrigger>
               </TabsList>
             </div>
 
@@ -481,6 +482,9 @@ export function AppShell() {
                   </TabsContent>
                   <TabsContent value="sticky-notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
                     {activeTab === "sticky-notes" && <StickyNotesTab />}
+                  </TabsContent>
+                  <TabsContent value="references" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                    {activeTab === "references" && <ReferencesPane />}
                   </TabsContent>
                 </>
               )}

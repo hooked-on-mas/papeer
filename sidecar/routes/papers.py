@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from papeer.core import ocr, reading_state, search
 from papeer.core.bibtex import bibtex, export_bibtex
+from papeer.core.citations import citation_graph
 from papeer.core.errors import Invalid, NotFound
 from papeer.core.library_list import LibrarySort, library_rows, paper_row
 from papeer.core.opened_papers import mark_opened
@@ -43,11 +44,17 @@ from sidecar.schemas.papers import (
     UpdatePaperRequest,
 )
 from sidecar.ui_state import load_ui_state
+from sidecar.schemas.citations import CitationGraph
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
 
 # --- Papers ---
+
+
+@router.get("/api/citations", response_model=CitationGraph)
+def citations() -> dict[str, Any]:
+    return citation_graph(deps.get_library())
 
 
 # The rows keep exactly the keys they were given (see PaperRow).

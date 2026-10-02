@@ -286,6 +286,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/citations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Citations */
+        get: operations["citations_api_citations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/papers": {
         parameters: {
             query?: never;
@@ -1939,6 +1956,44 @@ export interface components {
             /** Raw */
             raw?: string;
         };
+        /** CitationEdge */
+        CitationEdge: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+        };
+        /** CitationGraph */
+        CitationGraph: {
+            /** Nodes */
+            nodes: components["schemas"]["CitationNode"][];
+            /** Edges */
+            edges: components["schemas"]["CitationEdge"][];
+            /** References */
+            references: components["schemas"]["Reference"][];
+            /** Warnings */
+            warnings: components["schemas"]["CitationWarning"][];
+        };
+        /** CitationNode */
+        CitationNode: {
+            /** Id */
+            id: string;
+            /** Paper Id */
+            paper_id: string | null;
+            /** Title */
+            title: string;
+            /** Year */
+            year: string;
+            /** Url */
+            url: string;
+        };
+        /** CitationWarning */
+        CitationWarning: {
+            /** Paper Id */
+            paper_id: string;
+            /** Message */
+            message: string;
+        };
         /** CreateCollectionRequest */
         CreateCollectionRequest: {
             /** Name */
@@ -2903,6 +2958,36 @@ export interface components {
             original_mtime: number;
             /** Outline */
             outline?: components["schemas"]["PdfOutlineEntry"][] | null;
+        };
+        /** Reference */
+        Reference: {
+            /** Id */
+            id: string;
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Raw */
+            raw: string;
+            /** Label */
+            label: string;
+            /** Page */
+            page: number;
+            /** Title */
+            title: string;
+            /** Doi */
+            doi: string;
+            /** Arxiv Id */
+            arxiv_id: string;
+            /** Year */
+            year: string;
+            /**
+             * Match
+             * @enum {string}
+             */
+            match: "identifier" | "title" | "unresolved";
+            /** Url */
+            url: string;
         };
         /** RenameCollectionRequest */
         RenameCollectionRequest: {
@@ -4152,6 +4237,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UsageLimits"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    citations_api_citations_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationGraph"];
                 };
             };
             /** @description Validation Error */

@@ -44,6 +44,7 @@ test("choosing a tab in focus mode opens it beside the reader; 付箋 leaves foc
   assert.deepEqual(tabChange(state, "notes"), { activeTab: "reader", sidePanel: "notes" });
   assert.deepEqual(tabChange(state, "reader"), { activeTab: "reader" });
   assert.deepEqual(tabChange(state, "sticky-notes"), { activeTab: "sticky-notes", focusMode: false });
+  assert.deepEqual(tabChange(state, "references"), { activeTab: "references", focusMode: false });
   // Anything else stays as it is rather than hiding the reader in focus mode.
   assert.deepEqual(tabChange(state, "settings"), {});
 });

@@ -6,3 +6,4 @@ import { lazyComponent, paneStates } from "@/components/LazyPanel";
 export const SummaryPane = lazyComponent(() => import("../features/summary/SummaryPane").then((m) => m.SummaryPane), paneStates);
 export const ChatPane = lazyComponent(() => import("../features/chat/ChatPane").then((m) => m.ChatPane), paneStates);
 export const NotesPane = lazyComponent(() => import("../features/notes/NotesPane").then((m) => m.NotesPane), paneStates);
+export const ReferencesPane = lazyComponent(() => import("../features/references/ReferencesPane").then((m) => m.ReferencesPane), paneStates);

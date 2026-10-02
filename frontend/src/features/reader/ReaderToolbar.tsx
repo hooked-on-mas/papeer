@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, ListTree, Maximize2, MessageSquare, Minimize2, MoreHorizontal, NotebookPen, PanelRight,
-  ScrollText, Search, StickyNote, Undo2, ZoomIn, ZoomOut,
+  ScrollText, Search, StickyNote, Undo2, ZoomIn, ZoomOut, Network,
 } from "lucide-react";
 import { useStore, ZOOM_LEVELS } from "@/store";
 import { useUiScale } from "@/app/uiScale";
@@ -276,6 +276,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             <MoreHorizontal className="w-4 h-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-auto min-w-56 max-w-[calc(100vw-2rem)]">
+            <DropdownMenuItem onClick={() => useStore.getState().setActiveTab("references")}><Network /> 参考文献・引用ネットワーク</DropdownMenuItem>
             <DropdownMenuGroup>
               <DropdownMenuLabel className="tabular-nums">{pageLabel}</DropdownMenuLabel>
               {version && (

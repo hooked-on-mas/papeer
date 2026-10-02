@@ -1330,6 +1330,68 @@
         }
       }
     },
+    "/api/citations": {
+      "get": {
+        "summary": "Citations",
+        "operationId": "citations_api_citations_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationGraph"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/papers": {
       "get": {
         "summary": "List Papers",
@@ -8836,6 +8898,122 @@
         "title": "ChatPassage",
         "description": "A passage as a question stored it (an AskAttachment, its text shortened: PaperService.ask). Messages\nsaved before the offsets into the text layer were sent lack start, end and raw."
       },
+      "CitationEdge": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "target"
+        ],
+        "title": "CitationEdge"
+      },
+      "CitationGraph": {
+        "properties": {
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/CitationNode"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/CitationEdge"
+            },
+            "type": "array",
+            "title": "Edges"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/Reference"
+            },
+            "type": "array",
+            "title": "References"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/CitationWarning"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nodes",
+          "edges",
+          "references",
+          "warnings"
+        ],
+        "title": "CitationGraph"
+      },
+      "CitationNode": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "year": {
+            "type": "string",
+            "title": "Year"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "paper_id",
+          "title",
+          "year",
+          "url"
+        ],
+        "title": "CitationNode"
+      },
+      "CitationWarning": {
+        "properties": {
+          "paper_id": {
+            "type": "string",
+            "title": "Paper Id"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "paper_id",
+          "message"
+        ],
+        "title": "CitationWarning"
+      },
       "CreateCollectionRequest": {
         "properties": {
           "name": {
@@ -11282,6 +11460,79 @@
         ],
         "title": "ReadingState",
         "description": "Everything the reader needs to show the original and the translation page by page (reading_state.reading_state)."
+      },
+      "Reference": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "raw": {
+            "type": "string",
+            "title": "Raw"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "doi": {
+            "type": "string",
+            "title": "Doi"
+          },
+          "arxiv_id": {
+            "type": "string",
+            "title": "Arxiv Id"
+          },
+          "year": {
+            "type": "string",
+            "title": "Year"
+          },
+          "match": {
+            "type": "string",
+            "enum": [
+              "identifier",
+              "title",
+              "unresolved"
+            ],
+            "title": "Match"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "target",
+          "raw",
+          "label",
+          "page",
+          "title",
+          "doi",
+          "arxiv_id",
+          "year",
+          "match",
+          "url"
+        ],
+        "title": "Reference"
       },
       "RenameCollectionRequest": {
         "properties": {

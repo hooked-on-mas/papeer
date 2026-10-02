@@ -114,7 +114,7 @@ export const ocrJobHandlers: JobHandlers = {
     // The paper's text changed: its reading state, paragraphs, search and what translating it would send.
     refresh: event => [
       ...(event.paper_id ? [[QK.reading, event.paper_id], [QK.paragraphs, event.paper_id], [QK.paperSearch, event.paper_id],
-        [QK.librarySearch], [QK.translationPlan, event.paper_id]] : []),
+        [QK.librarySearch], [QK.translationPlan, event.paper_id], [QK.citations]] : []),
       // Also after a failure, which may have hit the plan's limit.
       ...(aiJobs.delete(event.job_id) ? [[QK.usageLimits]] : []),
     ],
