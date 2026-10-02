@@ -91,6 +91,7 @@ class CodexProvider(CliBackend, ProviderBackend):
         kind="cli",
         needs_login=True,
         login_service="ChatGPT",
+        web_search=True,
         fields=(OptionField("cli_path", "Codex のパス", cli_path_hint("codex.cmd", "/opt/homebrew/bin/codex")),),
     )
     executable = "codex"
@@ -104,6 +105,9 @@ class CodexProvider(CliBackend, ProviderBackend):
     def _generate(self, instruction: str, data: str, schema: dict | None) -> str:
         return self._run(wrap_document_prompt(instruction, data), schema)
 
+    def search_web(self, instruction: str, data: str, schema: dict | None = None) -> str:
+        return self._send(lambda: self._run(wrap_document_prompt(instruction, data), schema, web_search=True))
+
     def image_support(self) -> str | None:
         return None
 
@@ -112,7 +116,7 @@ class CodexProvider(CliBackend, ProviderBackend):
         relative to it: the run's working folder)."""
         return self._run(wrap_document_prompt(instruction, "The document data is the attached images."), schema, images)
 
-    def _run(self, prompt: str, schema: dict | None, images: list[bytes] | None = None) -> str:
+    def _run(self, prompt: str, schema: dict | None, images: list[bytes] | None = None, *, web_search: bool = False) -> str:
         with tempfile.TemporaryDirectory(prefix="papeer-") as directory:
             root = Path(directory)
             output = root / "answer.txt"
@@ -126,7 +130,7 @@ class CodexProvider(CliBackend, ProviderBackend):
                 "--ask-for-approval", "never", "exec", *attached, "--skip-git-repo-check",
                 "--ephemeral", "--sandbox", "read-only",
                 "-c", "features.shell_tool=false", "-c", "features.unified_exec=false",
-                "-c", "web_search=\"disabled\"",
+                "-c", 'web_search="live"' if web_search else 'web_search="disabled"',
                 *no_mcp_overrides(),
                 "--output-last-message", str(output),
                 "--json",

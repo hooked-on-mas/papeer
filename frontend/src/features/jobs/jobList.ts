@@ -24,6 +24,8 @@ const KIND_LABELS: Record<string, string> = {
   "drive-sync": "同期",
   ocr: "OCR",
   "ocr-data": "OCRの言語データのダウンロード",
+  "reference-research": "参考文献のWeb調査",
+  "reference-import": "参考文献のPDF取り込み・サマリー作成",
 };
 
 export function jobKindLabel(kind: string | undefined): string {

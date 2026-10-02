@@ -82,6 +82,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
         kind="cli",
         needs_login=True,
         login_service="Claude",
+        web_search=True,
         fields=(OptionField("cli_path", "Claude Code のパス", cli_path_hint("claude.cmd", "~/.local/bin/claude")),),
     )
     executable = "claude"
@@ -101,6 +102,10 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
     def _generate(self, instruction: str, data: str, schema: dict | None) -> str:
         return self._run(wrap_document_prompt(instruction, data).encode("utf-8"), schema)
 
+    def search_web(self, instruction: str, data: str, schema: dict | None = None) -> str:
+        return self._send(lambda: self._run(wrap_document_prompt(instruction, data).encode("utf-8"),
+                                          schema, web_search=True))
+
     def image_support(self) -> str | None:
         return None
 
@@ -113,14 +118,14 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
         message = {"type": "user", "message": {"role": "user", "content": content}}
         return self._run((json.dumps(message) + "\n").encode("utf-8"), schema, stream_input=True)
 
-    def _run(self, prompt: bytes, schema: dict | None, stream_input: bool = False) -> str:
+    def _run(self, prompt: bytes, schema: dict | None, stream_input: bool = False, *, web_search: bool = False) -> str:
         with tempfile.TemporaryDirectory(prefix="papeer-claude-") as directory:
             root = Path(directory)
             command = self.command() + [
                 "-p",
-                # The document is untrusted: no built-in tools, no MCP servers (--tools only covers the
-                # built-in set), no project or local settings, no skills.
-                "--tools", "",
+                # Only explicit research exposes web tools; file/shell tools stay unavailable.
+                # MCP servers (--tools only covers the built-in set), project/local settings and skills stay off.
+                "--tools", "WebSearch,WebFetch" if web_search else "",
                 "--strict-mcp-config", "--mcp-config", _NO_MCP_SERVERS,
                 "--setting-sources", "user",
                 "--disable-slash-commands",
@@ -128,6 +133,8 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                 # stream-json (which needs --verbose) is the only format that also reports plan usage.
                 "--output-format", "stream-json", "--verbose",
             ]
+            if web_search:
+                command += ["--allowedTools", "WebSearch,WebFetch", "--permission-mode", "dontAsk"]
             if stream_input:
                 command += ["--input-format", "stream-json"]
             if self.settings.model.strip():
@@ -152,7 +159,9 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                     remember_limits(self.spec.id, claude_limit_windows(event["rate_limit_info"]))
             if result is None:
                 return output  # an older CLI that printed plain text
-            if result.get("is_error") or not isinstance(result.get("result"), str):
+            structured = result.get("structured_output") if schema is not None else None
+            if result.get("is_error") or (not isinstance(structured, (dict, list))
+                                          and not isinstance(result.get("result"), str)):
                 raise claude_failure(result)
             usage = result["usage"] if isinstance(result.get("usage"), dict) else {}
             cache_read = to_int(usage.get("cache_read_input_tokens"))
@@ -162,7 +171,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
                 output_tokens=to_int(usage.get("output_tokens")),
                 reasoning_tokens=to_int((usage.get("output_tokens_details") or {}).get("thinking_tokens")),
                 cost_usd=result.get("total_cost_usd"))
-            answer = result["result"].strip()
+            answer = json.dumps(structured, ensure_ascii=False) if isinstance(structured, (dict, list)) else result["result"].strip()
             if not answer:
                 raise AnswerRejected("Claude Codeの回答が空でした。")
             return answer

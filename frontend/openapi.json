@@ -8308,6 +8308,316 @@
         }
       }
     },
+    "/api/research-capabilities": {
+      "get": {
+        "summary": "Capabilities",
+        "operationId": "capabilities_api_research_capabilities_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Capabilities Api Research Capabilities Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/papers/{paper_id}/reference-research": {
+      "get": {
+        "summary": "Get Research",
+        "operationId": "get_research_api_papers__paper_id__reference_research_get",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ResearchRecord"
+                  },
+                  "title": "Response Get Research Api Papers  Paper Id  Reference Research Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Start Research",
+        "operationId": "start_research_api_papers__paper_id__reference_research_post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/papers/{paper_id}/reference-import/{key}": {
+      "post": {
+        "summary": "Start Import",
+        "operationId": "start_import_api_papers__paper_id__reference_import__key__post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResearchImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health",
@@ -8522,6 +8832,19 @@
             "minimum": 1.0,
             "title": "Max Pages",
             "default": 10
+          },
+          "web_search": {
+            "type": "boolean",
+            "title": "Web Search",
+            "default": false
+          },
+          "research_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Research Keys"
           }
         },
         "type": "object",
@@ -8828,6 +9151,44 @@
             },
             "type": "array",
             "title": "Attachments"
+          },
+          "research": {
+            "properties": {
+              "web_search": {
+                "type": "boolean",
+                "title": "Web Search",
+                "default": false
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/components/schemas/WebSource"
+                },
+                "type": "array",
+                "title": "Sources"
+              },
+              "records": {
+                "items": {
+                  "$ref": "#/components/schemas/ResearchRecord"
+                },
+                "type": "array",
+                "title": "Records"
+              },
+              "attached_keys": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "title": "Attached Keys"
+              }
+            },
+            "type": "object",
+            "required": [
+              "web_search",
+              "sources",
+              "records",
+              "attached_keys"
+            ],
+            "title": "ChatResearch"
           }
         },
         "type": "object",
@@ -10040,6 +10401,12 @@
                 "type": "string"
               },
               {
+                "$ref": "#/components/schemas/ResearchRecord"
+              },
+              {
+                "$ref": "#/components/schemas/ReferenceImportResult"
+              },
+              {
                 "type": "null"
               }
             ],
@@ -10093,7 +10460,9 @@
           "restore",
           "drive-sync",
           "ocr",
-          "ocr-data"
+          "ocr-data",
+          "reference-research",
+          "reference-import"
         ],
         "title": "JobKind",
         "description": "The kinds of background jobs; the names are what the frontend receives (jobKinds.ts)."
@@ -11067,6 +11436,29 @@
         "title": "PaperRow",
         "description": "A paper as GET /api/papers lists it: its papers row (Library._paper) and what library_list.paper_row adds.\n\nAnswered with response_model_exclude_unset, so a row keeps exactly the keys it was given: the fields\nwith defaults are the ones a row may lack. What paper_row adds is missing from the row of a paper whose\nID is not a folder's name (a hand-edited database), except last_opened_at: library_rows gives every row\nthat one, None when the paper was never opened on this PC (papeer/core/opened_papers.py).\nThe row's columns have no default, so a column added to the papers table fails the tests until named here."
       },
+      "PdfCandidate": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "url",
+          "version"
+        ],
+        "title": "PdfCandidate"
+      },
       "PdfOutlineEntry": {
         "properties": {
           "title": {
@@ -11249,6 +11641,11 @@
             },
             "type": "array",
             "title": "Fields"
+          },
+          "web_search": {
+            "type": "boolean",
+            "title": "Web Search",
+            "default": false
           }
         },
         "type": "object",
@@ -11515,13 +11912,18 @@
             "enum": [
               "identifier",
               "title",
-              "unresolved"
+              "unresolved",
+              "manual"
             ],
             "title": "Match"
           },
           "url": {
             "type": "string",
             "title": "Url"
+          },
+          "research_key": {
+            "type": "string",
+            "title": "Research Key"
           }
         },
         "type": "object",
@@ -11537,9 +11939,27 @@
           "arxiv_id",
           "year",
           "match",
-          "url"
+          "url",
+          "research_key"
         ],
         "title": "Reference"
+      },
+      "ReferenceImportResult": {
+        "properties": {
+          "record": {
+            "$ref": "#/components/schemas/ResearchRecord"
+          },
+          "added": {
+            "type": "boolean",
+            "title": "Added",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "record"
+        ],
+        "title": "ReferenceImportResult"
       },
       "RenameCollectionRequest": {
         "properties": {
@@ -11571,6 +11991,171 @@
           "new_title"
         ],
         "title": "RenamePaperRequest"
+      },
+      "ResearchImportRequest": {
+        "properties": {
+          "pdf_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 19.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdf Index"
+          },
+          "local_path": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Local Path",
+            "default": ""
+          },
+          "collection": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Collection",
+            "default": ""
+          },
+          "create_summary": {
+            "type": "boolean",
+            "title": "Create Summary",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ResearchImportRequest"
+      },
+      "ResearchRecord": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "raw": {
+            "type": "string",
+            "title": "Raw"
+          },
+          "doi": {
+            "type": "string",
+            "title": "Doi",
+            "default": ""
+          },
+          "arxiv_id": {
+            "type": "string",
+            "title": "Arxiv Id",
+            "default": ""
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "default": ""
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "abstract",
+              "full_text",
+              "metadata",
+              "unresolved"
+            ],
+            "title": "Basis",
+            "default": "metadata"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/WebSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "pdfs": {
+            "items": {
+              "$ref": "#/components/schemas/PdfCandidate"
+            },
+            "type": "array",
+            "title": "Pdfs"
+          },
+          "checked_at": {
+            "type": "string",
+            "title": "Checked At",
+            "default": ""
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "has_summary": {
+            "type": "boolean",
+            "title": "Has Summary",
+            "default": false
+          },
+          "needs_ocr": {
+            "type": "boolean",
+            "title": "Needs Ocr",
+            "default": false
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": ""
+          },
+          "summary_error": {
+            "type": "string",
+            "title": "Summary Error",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "title",
+          "raw",
+          "doi",
+          "arxiv_id",
+          "summary",
+          "basis",
+          "sources",
+          "pdfs",
+          "checked_at",
+          "paper_id",
+          "has_summary",
+          "needs_ocr",
+          "version",
+          "summary_error"
+        ],
+        "title": "ResearchRecord"
+      },
+      "ResearchRequest": {
+        "properties": {
+          "reference_id": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Reference Id",
+            "default": ""
+          },
+          "research_key": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Research Key",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "ResearchRequest"
       },
       "RestoreRequest": {
         "properties": {
@@ -12402,6 +12987,13 @@
             },
             "type": "array",
             "title": "Expanded Collections"
+          },
+          "chat_web_search": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Chat Web Search"
           }
         },
         "type": "object",
@@ -12656,6 +13248,24 @@
         ],
         "title": "ValidationError"
       },
+      "WebSource": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "url"
+        ],
+        "title": "WebSource"
+      },
       "ImportItemEvent": {
         "description": "One PDF has been added (or was in the library already).",
         "properties": {
@@ -12834,6 +13444,12 @@
               },
               {
                 "type": "string"
+              },
+              {
+                "$ref": "#/components/schemas/ResearchRecord"
+              },
+              {
+                "$ref": "#/components/schemas/ReferenceImportResult"
               },
               {
                 "type": "null"

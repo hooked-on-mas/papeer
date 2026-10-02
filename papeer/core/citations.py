@@ -6,6 +6,8 @@ This is derived data: import, metadata edits, OCR, deletion and restore need no 
 """
 from __future__ import annotations
 
+import json
+
 from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
@@ -121,6 +123,8 @@ def _match(entry: dict, papers: list[dict], titles: dict[str, str], identifiers:
 
 
 def citation_graph(lib: Library) -> dict:
+    from papeer.core.web_research import reference_key
+
     papers = [{**p, "doi": clean_doi(p.get("doi", "")).casefold(),
                "arxiv_id": clean_arxiv_id(p.get("arxiv_id", "") or p.get("doi", "")).casefold()} for p in lib.papers()]
     identifiers: dict[tuple[str, str], set[str]] = {}
@@ -134,6 +138,9 @@ def citation_graph(lib: Library) -> dict:
     references, edges, warnings = [], {}, []
     for paper in papers:
         source = paper["id"]
+        with lib.connection() as db:
+            saved = {row["key"]: json.loads(row["data"]).get("paper_id") for row in
+                     db.execute("SELECT key,data FROM reference_research WHERE source=?", (source,))}
         try:
             path = PaperFiles(lib.folder(source)).document_json
             entries = _cached_references(path, signature(path))
@@ -142,6 +149,10 @@ def citation_graph(lib: Library) -> dict:
             continue
         for index, entry in enumerate(entries):
             target, match = _match(entry, papers, titles, identifiers)
+            research_key = reference_key(entry["raw"])
+            linked = saved.get(research_key)
+            if linked in nodes and nodes[linked]["paper_id"]:
+                target, match = linked, "manual"
             url = ("https://doi.org/" + quote(entry["doi"], safe="/") if entry["doi"] else
                    "https://arxiv.org/abs/" + quote(entry["arxiv_id"], safe="/") if entry["arxiv_id"] else
                    "https://scholar.google.com/scholar?q=" + quote(entry["title"] or entry["raw"]))
@@ -153,7 +164,8 @@ def citation_graph(lib: Library) -> dict:
                 nodes.setdefault(target, {"id": target, "paper_id": None, "title": entry["title"] or entry["raw"],
                                           "year": entry["year"], "url": url})
             ref_id = f"{source}:{index}"
-            references.append({**entry, "id": ref_id, "source": source, "target": target, "match": match, "url": url})
+            references.append({**entry, "id": ref_id, "source": source, "target": target, "match": match, "url": url,
+                               "research_key": research_key})
             # A self-citation still appears in the list, but a self-loop adds no navigation to the graph.
             if source != target:
                 edges.setdefault((source, target), {"source": source, "target": target})

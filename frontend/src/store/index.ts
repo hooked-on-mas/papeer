@@ -43,6 +43,8 @@ export interface PaperHandoff {
   send?: boolean;
   /** Chat only: passages sent with this message, apart from those waiting in the input. */
   attachments?: PassageAttachment[];
+  researchKeys?: string[];
+  paperIds?: string[];
 }
 
 /** Where a passage selected in the PDF sits, as the ask API takes and returns it. */
@@ -117,6 +119,8 @@ interface UiState {
   chatAttachments: PassageAttachment[];
   /** Unsent chat text by paper, kept while the reader is used to attach passages. */
   chatInputs: Record<string, string>;
+  chatWebSearch: Record<string, boolean>;
+  chatResearchKeys: Record<string, string[]>;
   readerJump: ReaderJump | null;
   /** Places to go back to in the open paper (Alt+←); cleared when another paper opens. */
   readerHistory: ReaderHistory;
@@ -189,6 +193,8 @@ export const useStore = create<UiState>()(
       noteInsert: null,
       chatAttachments: [],
       chatInputs: {},
+      chatWebSearch: {},
+      chatResearchKeys: {},
       readerJump: null,
       readerHistory: EMPTY_HISTORY,
 

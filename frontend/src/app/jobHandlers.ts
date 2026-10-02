@@ -5,6 +5,7 @@ import { settingsJobHandlers } from "@/features/settings/settingsJobs";
 import { summaryJobHandlers } from "@/features/summary/summaryJobs";
 import { ocrJobHandlers } from "@/features/ocr/ocrActions";
 import { libraryJobHandlers } from "./libraryJobs";
+import { researchJobHandlers } from "@/features/references/researchJobs";
 
 /** Each feature's reaction to its finished jobs; called once when the app starts. */
 export function registerAllJobHandlers(): void {
@@ -14,6 +15,7 @@ export function registerAllJobHandlers(): void {
     ...chatJobHandlers,
     ...settingsJobHandlers,
     ...libraryJobHandlers,
+    ...researchJobHandlers,
     ...ocrJobHandlers,
   });
 }

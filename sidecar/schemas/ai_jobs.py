@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from sidecar.job_types import Usage
 from sidecar.schemas.common import Stored
+from sidecar.schemas.research import ChatResearch
 
 
 class TranslateRequest(BaseModel):
@@ -37,6 +38,8 @@ class AskRequest(BaseModel):
     reference_pages: str = Field(default="", max_length=500)
     retrieval_query: str = Field(default="", max_length=2000)
     max_pages: int = Field(default=10, ge=1, le=30)
+    web_search: bool = False
+    research_keys: list[str] = Field(default_factory=list, max_length=10)
 
 
 class ExportRequest(BaseModel):
@@ -63,3 +66,4 @@ class ChatMessage(BaseModel):
     content: str
     usage: Stored[Usage | None]  # An answer's; None for a question, or when the connection did not tell.
     attachments: Stored[list[ChatPassage]] = None  # Never answered: a message without passages has no key.
+    research: Stored[ChatResearch] = None

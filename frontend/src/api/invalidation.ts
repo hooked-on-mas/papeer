@@ -60,20 +60,20 @@ const roots = (...keys: string[]): StaleQuery[] => keys.map((key) => ({ queryKey
 export function invalidationsFor(change: DataChange): StaleQuery[] {
   switch (change.kind) {
     case "folders":
-      return roots(QK.papers, QK.collections, QK.citations);
+      return roots(QK.papers, QK.collections, QK.citations, QK.research);
     case "library":
-      return roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations);
+      return roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research);
     case "reconnected":
-      return roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.reading);
+      return roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.reading);
     case "imported":
-      return roots(QK.papers, QK.citations);
+      return roots(QK.papers, QK.citations, QK.research);
     case "papersChanged":
       return [...(change.all ? roots(QK.papers) : []), ...(change.collections ? roots(QK.collections) : []),
-        ...(change.tags ? roots(QK.tags) : []), ...roots(QK.librarySearch, QK.citations)];
+        ...(change.tags ? roots(QK.tags) : []), ...roots(QK.librarySearch, QK.citations, QK.research)];
     case "pageTranslated":
       return [{ queryKey: [QK.reading, change.paperId] }, { queryKey: [QK.paperSearch, change.paperId] }];
     case "paper":
-      return [{ queryKey: [QK.papers, change.paperId], exact: true }, ...(change.collection ? roots(QK.collections) : []), ...roots(QK.citations)];
+      return [{ queryKey: [QK.papers, change.paperId], exact: true }, ...(change.collection ? roots(QK.collections) : []), ...roots(QK.citations, QK.research)];
     case "paperTags":
       return roots(QK.tags);
     case "note":

@@ -28,8 +28,9 @@ class Reference(BaseModel):
     doi: str
     arxiv_id: str
     year: str
-    match: Literal["identifier", "title", "unresolved"]
+    match: Literal["identifier", "title", "unresolved", "manual"]
     url: str
+    research_key: str
 
 
 class CitationWarning(BaseModel):

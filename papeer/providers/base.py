@@ -40,6 +40,7 @@ class ProviderSpec:
     needs_api_key: bool = False
     login_service: str = ""  # Named in the login hint, e.g. "ChatGPT".
     fields: tuple[OptionField, ...] = ()
+    web_search: bool = False
 
 
 class ProviderBackend(ABC):
@@ -76,6 +77,10 @@ class ProviderBackend(ABC):
         too (generate() on other threads, and later calls), without counting toward their own limits.
         """
         return self._send(lambda: self._generate(instruction, data, schema))
+
+    def search_web(self, instruction: str, data: str, schema: dict | None = None) -> str:
+        """Explicit research only; ordinary generation never enables external tools."""
+        raise ValueError(f"{self.spec.label} はWeb検索に対応していません。設定で対応するAI接続を選んでください。")
 
     def read_images(self, instruction: str, images: list[bytes], schema: dict | None = None) -> str:
         """The answer to one request that shows the model PNG images (OCR by the AI, papeer.core.ai_ocr),

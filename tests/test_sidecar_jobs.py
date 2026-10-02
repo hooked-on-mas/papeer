@@ -3,7 +3,9 @@ from __future__ import annotations
 import threading
 import time
 
-from sidecar.jobs import TurnQueue
+import pytest
+
+from sidecar.jobs import ConcurrencyConflict, JobManager, TurnQueue
 
 
 def _run(queue: TurnQueue, ticket: int, cancel: threading.Event, log: list[str], name: str) -> threading.Thread:
@@ -60,3 +62,45 @@ def test_cancelled_waiter_does_not_hold_up_later_jobs():
         thread.join(5)
     assert waiting == ["second"]
     assert log == ["second gave up", "first", "third"]
+
+
+def test_reference_research_runs_five_at_once_and_keeps_other_mutations_exclusive():
+    manager = JobManager()
+    gates = [threading.Event() for _ in range(6)]
+    entered = [threading.Event() for _ in range(6)]
+
+    def action(index):
+        def run(cancel, progress, page_ready):
+            entered[index].set()
+            assert gates[index].wait(5)
+            return {"key": str(index), "title": "Reference", "raw": "Reference"}
+        return run
+
+    try:
+        jobs = [manager.submit_job("reference-research", action(i), paper_id="paper") for i in range(5)]
+        assert all(event.wait(2) for event in entered[:5])
+        with pytest.raises(ConcurrencyConflict):
+            manager.submit_job("reference-research", action(5), paper_id="paper")
+        for kind in ("reference-import", "article", "translate", "backup"):
+            with pytest.raises(ConcurrencyConflict):
+                manager.submit_job(kind, lambda *_: {}, paper_id=None if kind == "backup" else "paper")
+        gates[0].set()
+        deadline = time.monotonic() + 2
+        while manager.get_job(jobs[0].job_id).running and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert manager.get_job(jobs[0].job_id).status == "succeeded"
+        manager.submit_job("reference-research", action(5), paper_id="paper")
+        assert entered[5].wait(2)
+    finally:
+        for gate in gates:
+            gate.set()
+        assert manager.wait_idle(5)
+
+    gate = threading.Event()
+    try:
+        manager.submit_job("article", lambda *_: gate.wait(5), paper_id="paper")
+        with pytest.raises(ConcurrencyConflict):
+            manager.submit_job("reference-research", action(0), paper_id="paper")
+    finally:
+        gate.set()
+        assert manager.wait_idle(5)

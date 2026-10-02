@@ -206,10 +206,14 @@ class PaperService:
     def ask(self, paper_id: str, question: str, entire_library: bool = False,
             paper_ids: set[str] | None = None, collection: str | None = None,
             attachments: list[dict] | None = None, reference_pages: set[int] | None = None,
-            retrieval_query: str = "", max_pages: int = 10) -> str:
+            retrieval_query: str = "", max_pages: int = 10, web_search: bool = False,
+            research_keys: list[str] | None = None) -> str:
+        from papeer.core import web_research
+
         question = question.strip()
         if not question:
             raise ValueError("メッセージを入力してください。")
+        research_records = [web_research.get_record(self.library, paper_id, key) for key in (research_keys or [])[:10]]
         document = self.library.document(paper_id)
         attachments = [dict(item, text=item["text"].strip()[:4000]) for item in (attachments or [])[:20]
                        if item.get("text", "").strip()]
@@ -271,8 +275,25 @@ class PaperService:
                    "retrieval_scope": selection_note, "evidence": context}
         if passages:
             request["attached_passages"] = passages
-        answer = self.provider.generate(prompts.load("chat_answer"), json.dumps(request, ensure_ascii=False))
+        if research_records:
+            request["attached_research"] = research_records
+        research = None
+        if web_search:
+            self.progress("Webを検索し、出典を確認しています…")
+            answer, research = web_research.search_answer(self.library, paper_id, request, self.provider)
+            research["attached_keys"] = research_keys or []
+            # Keep the evidence that was attached at send time as well as newly discovered papers.
+            fresh_keys = {record["key"] for record in research["records"]}
+            research["records"] += [record for record in research_records if record["key"] not in fresh_keys]
+        elif research_records:
+            instruction = (prompts.load("chat_answer") + "\nThe attached_research is also evidence. Identify it as "
+                           "an attached research result, cite [添付N], and state its basis (abstract or full text). "
+                           "Never treat an abstract as full text. No new web search is available.")
+            answer = self.provider.generate(instruction, json.dumps(request, ensure_ascii=False))
+            research = {"web_search": False, "sources": [], "records": research_records, "attached_keys": research_keys or []}
+        else:
+            answer = self.provider.generate(prompts.load("chat_answer"), json.dumps(request, ensure_ascii=False))
         answer = link_citations(answer, allowed) + "\n\n---\n*" + selection_note + "*"
         self.library.add_exchange(paper_id, question, answer, self.usage(), scope=scope_key,
-                                  attachments=attachments)
+                                  attachments=attachments, research=research)
         return answer

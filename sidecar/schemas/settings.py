@@ -64,6 +64,7 @@ class ProviderSpecModel(BaseModel):
     needs_api_key: bool
     login_service: str
     fields: list[ProviderField]
+    web_search: bool = False
 
 
 class ProviderOption(BaseModel):

@@ -13,6 +13,7 @@ from papeer.core.paths import PaperFiles
 from papeer.core.service import PaperService
 from papeer.core.translation_plan import translation_plan as plan_translation
 from papeer.layout.page_selection import parse_page_selection
+from papeer.providers import spec_for
 from sidecar import deps
 from sidecar.job_types import JobKind, JobStarted
 from sidecar.schemas.ai_jobs import AskRequest, ChatMessage, ExportRequest, TranslateRequest
@@ -77,6 +78,8 @@ def ask_paper(paper_id: str, body: AskRequest) -> JobStarted:
     lib = deps.get_library()
     lib.paper_folder(paper_id)
     settings = deps.get_settings()
+    if body.web_search and not spec_for(settings.provider).web_search:
+        raise ValueError("この接続先はWeb検索に対応していません。設定で対応するAI接続を選んでください。")
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict:
         service = PaperService(lib, deps.provider_for(settings, cancel), cancel, progress=progress)
@@ -89,7 +92,8 @@ def ask_paper(paper_id: str, body: AskRequest) -> JobStarted:
                              collection=body.collection if body.scope == "collection" else None,
                              reference_pages=parse_page_selection(body.reference_pages, lib.paper(paper_id)["pages"])
                              if body.reference_pages.strip() else None,
-                             retrieval_query=body.retrieval_query, max_pages=body.max_pages)
+                             retrieval_query=body.retrieval_query, max_pages=body.max_pages,
+                             web_search=body.web_search, research_keys=body.research_keys)
         return {"answer": answer, "usage": service.usage()}
 
     return deps.submit_job(JobKind.ASK, action, paper_id)

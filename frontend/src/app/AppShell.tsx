@@ -39,6 +39,7 @@ import { isAppClosing, setAppClosing } from "./appClosing";
 import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
 import { isJobKind, SNAPSHOT_JOBS } from "@/features/jobs/jobKinds";
 import { registerAllJobHandlers } from "./jobHandlers";
+import { ReferenceReturnBar } from "@/features/references/researchNavigation";
 import { withShortcutLabels } from "@/lib/platform";
 
 const TABS = ["reader", "summary", "chat", "notes", "sticky-notes", "references"];
@@ -444,6 +445,7 @@ export function AppShell() {
         {/* Room for the reader and the side panel within it (320px each) when the panel is open. */}
         <ResizablePanel id="main" minSize={focusMode ? "320px" : sidePanelOpen ? "644px" : "480px"} className="flex flex-col min-w-0 bg-background">
           {!focusMode && <Header />}
+          <ReferenceReturnBar />
 
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(String(value))} className="flex-1 flex flex-col min-h-0 gap-0">
             <div hidden={focusMode} className="border-b px-4 shrink-0 bg-background/50">

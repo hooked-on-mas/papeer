@@ -10,7 +10,7 @@ import zipfile
 
 import pytest
 
-from _legacy_library import LATER_COLUMNS, STAGES, legacy_backup, legacy_library, mark_unversioned
+from _legacy_library import LATER_COLUMNS, LATER_TABLES, STAGES, legacy_backup, legacy_library, mark_unversioned
 from papeer import __version__
 from papeer.core import storage
 from papeer.core.drive_sync import fingerprint
@@ -35,7 +35,12 @@ def dump(root: Path) -> list[str]:
 
 def set_version(root: Path, version: int) -> None:
     with closing(sqlite3.connect(root / "library.sqlite3")) as db:
+        if version < 6:
+            if "research" in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
+                db.execute("ALTER TABLE messages DROP COLUMN research")
+            db.execute("DROP TABLE IF EXISTS reference_research")
         db.execute(f"PRAGMA user_version={version:d}")
+        db.commit()
 
 
 def test_new_library_starts_at_the_current_version(tmp_path):
@@ -139,6 +144,7 @@ def test_later_columns_lists_what_the_steps_after_the_baseline_add(tmp_path, mon
     first = columns(Library(tmp_path / "first").root)
     added = {table: names - first.get(table, set()) for table, names in latest.items()}
     expected = {table: set(names) for table, names in LATER_COLUMNS.items()}
+    expected.update(LATER_TABLES)
     assert {table: names for table, names in added.items() if names} == expected
 
 

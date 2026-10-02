@@ -12,6 +12,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from sidecar.schemas.research import ResearchRecord, ReferenceImportResult
 
 
 class JobKind(StrEnum):
@@ -33,6 +34,8 @@ class JobKind(StrEnum):
     DRIVE_SYNC = "drive-sync"
     OCR = "ocr"  # A paper's pages read by OCR (or one page by the AI) and its extraction written again.
     OCR_DATA = "ocr-data"  # Tesseract's language data downloaded to this PC.
+    REFERENCE_RESEARCH = "reference-research"
+    REFERENCE_IMPORT = "reference-import"
 
 
 # The jobs that copy or replace the whole library: nothing else runs beside them (JobManager), and the
@@ -203,6 +206,8 @@ RESULT_TYPES: dict[JobKind, Any] = {
     JobKind.DRIVE_SYNC: DriveSyncResult,
     JobKind.OCR: OcrResult,
     JobKind.OCR_DATA: OcrDataResult,
+    JobKind.REFERENCE_RESEARCH: ResearchRecord,
+    JobKind.REFERENCE_IMPORT: ReferenceImportResult,
 }
 
 # Which one belongs to which kind is RESULT_TYPES (and the frontend's JobResults); the union is only
@@ -210,7 +215,7 @@ RESULT_TYPES: dict[JobKind, Any] = {
 JobResult = Union[
     TranslateResult, RevisionDraftResult, GlossaryDraftResult, GlossaryDomainsResult, GlossarySplitResult, ArticleResult, AskResult, ImportResult,
     ExportResult, InterleavedResult, BackupResult, RestoreResult, DriveSyncResult, OcrResult, OcrDataResult,
-    CheckResult,
+    CheckResult, ResearchRecord, ReferenceImportResult,
 ]
 
 _RESULT_ADAPTERS = {kind: TypeAdapter(result_type) for kind, result_type in RESULT_TYPES.items()}

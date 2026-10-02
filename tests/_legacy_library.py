@@ -105,7 +105,9 @@ def legacy_backup(root: Path, destination: Path) -> None:
 # Columns that schema versions after the baseline add (storage.MIGRATIONS[1:]), by table. A database
 # saved before schema versioning never had them; add a later step's columns here (test_schema_migration
 # checks that this list is complete).
-LATER_COLUMNS = {"bookmarks": ("kind", "color", "rects"), "papers": ("doi", "arxiv_id", "venue")}
+LATER_COLUMNS = {"bookmarks": ("kind", "color", "rects"), "papers": ("doi", "arxiv_id", "venue"),
+                 "messages": ("research",)}
+LATER_TABLES = {"reference_research": {"source", "key", "data"}}
 
 
 def mark_unversioned(db: sqlite3.Connection) -> None:
@@ -114,4 +116,6 @@ def mark_unversioned(db: sqlite3.Connection) -> None:
     for table, names in LATER_COLUMNS.items():
         for name in names:
             db.execute(f"ALTER TABLE {table} DROP COLUMN {name}")
+    for table in LATER_TABLES:
+        db.execute(f"DROP TABLE {table}")
     db.execute("PRAGMA user_version=0")

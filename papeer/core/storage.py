@@ -13,7 +13,7 @@ from papeer.core.paths import sync_state_path
 from papeer.core.collection_paths import collection_ancestors as collection_ancestors
 from papeer.core.collection_paths import in_collection as in_collection
 from papeer.core.collection_paths import normalize_collection_name as normalize_collection_name
-from papeer.core.library_schema import _baseline, _bibliographic_ids, _highlights, _paper_titles, _status_codes
+from papeer.core.library_schema import _baseline, _bibliographic_ids, _highlights, _paper_titles, _status_codes, _web_research
 # The methods of Library, one mixin per group (see Library). Names other modules take from here stay here.
 from papeer.core.library_annotations import Annotations
 from papeer.core.library_annotations import HIGHLIGHT_COLORS as HIGHLIGHT_COLORS
@@ -78,7 +78,7 @@ def missing_library_message(root: Path) -> str:
 # step that touches them must check whether they exist first (sqlite_master), unlike other tables.
 # Add a test in tests/test_schema_migration.py, and list any new columns in LATER_COLUMNS in
 # tests/_legacy_library.py (tests that make a current database look unversioned drop them).
-MIGRATIONS = [_baseline, _highlights, _bibliographic_ids, _status_codes, _paper_titles]
+MIGRATIONS = [_baseline, _highlights, _bibliographic_ids, _status_codes, _paper_titles, _web_research]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 # The sidecar opens a Library per request; concurrent first requests after an upgrade wait here

@@ -11,6 +11,7 @@ type UiStateFile = {
   last_paper: string;
   sort: number;
   expanded_collections: string[];
+  chat_web_search?: Record<string, boolean>;
 };
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -32,6 +33,7 @@ function snapshot(): UiStateFile {
     last_paper: s.activePaperId || "",
     sort: s.sortOrder,
     expanded_collections: s.expandedCollections ?? [],
+    chat_web_search: s.chatWebSearch,
   };
 }
 
@@ -67,6 +69,7 @@ function applyUiState(state: UiStateFile): void {
     sortOrder: librarySortOrder(state.sort),
     // An empty list from a fresh install means nothing was ever collapsed.
     expandedCollections: expanded.length ? expanded : null,
+    chatWebSearch: { ...Object.fromEntries(Object.entries(state.chat_web_search ?? {}).filter(([, value]) => typeof value === "boolean")), ...s.chatWebSearch },
   });
   if (state.last_paper && !s.activePaperId) {
     useStore.getState().setActivePaperId(state.last_paper);
@@ -118,7 +121,8 @@ export function initUiStateSync(): () => void {
     applyUiState(state);
     unsubscribe = useStore.subscribe((s, prev) => {
       if (s.paperPages === prev.paperPages && s.paperAnchors === prev.paperAnchors && s.activePaperId === prev.activePaperId
-          && s.sortOrder === prev.sortOrder && s.expandedCollections === prev.expandedCollections) return;
+          && s.sortOrder === prev.sortOrder && s.expandedCollections === prev.expandedCollections
+          && s.chatWebSearch === prev.chatWebSearch) return;
       clearTimeout(saveTimer);
       saveTimer = setTimeout(flushUiState, 800);
     });

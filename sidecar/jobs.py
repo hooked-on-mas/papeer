@@ -22,6 +22,7 @@ COUNTER = re.compile(r"(\d+)\s*/\s*(\d+)")
 # How many finished jobs GET /api/jobs/{job_id} still answers for, the oldest forgotten first: a window
 # that reconnects to the event stream asks how the jobs it waited on ended (jobEvents.ts).
 FINISHED_JOBS_KEPT = 50
+REFERENCE_RESEARCH_CONCURRENCY = 5
 
 
 class JobManager:
@@ -150,7 +151,13 @@ class JobManager:
             if kind in SNAPSHOT_KINDS and any(j.running for j in self._jobs.values()):
                 raise ConcurrencyConflict("すべての処理が終わってからバックアップ・復元してください。")
             if paper_id is not None:
-                if any(j.running and j.paper_id == paper_id for j in self._jobs.values()):
+                paper_jobs = [j for j in self._jobs.values() if j.running and j.paper_id == paper_id]
+                # Independent reference records may be researched together. Other paper mutations
+                # remain exclusive, including PDF imports and summaries.
+                if kind == JobKind.REFERENCE_RESEARCH and all(j.kind == kind for j in paper_jobs):
+                    if len(paper_jobs) >= REFERENCE_RESEARCH_CONCURRENCY:
+                        raise ConcurrencyConflict("参考文献は同時に5件まで収集できます。完了後にやり直してください。")
+                elif paper_jobs:
                     raise ConcurrencyConflict(f"この論文（{paper_id}）の処理がすでに実行中です。")
             else:
                 if kind != JobKind.IMPORT and any(j.running and j.paper_id is None for j in self._jobs.values()):

@@ -18,3 +18,4 @@ class UIStateModel(BaseModel):
     last_paper: str = ""
     sort: int = 0
     expanded_collections: list[str] = Field(default_factory=list)
+    chat_web_search: dict[str, bool] = Field(default_factory=dict)

@@ -13,7 +13,7 @@ class Conversations(LibraryBase):
         with self.connection() as db:
             condition = " WHERE paper_id=?" + (" AND scope=?" if scope is not None else "")
             values = (paper_id, scope) if scope is not None else (paper_id,)
-            rows = db.execute("SELECT role,content,usage,attachments FROM messages" + condition + " ORDER BY id", values)
+            rows = db.execute("SELECT role,content,usage,attachments,research FROM messages" + condition + " ORDER BY id", values)
             result = []
             for row in rows:
                 item = {"role": row["role"], "content": row["content"]}
@@ -21,13 +21,17 @@ class Conversations(LibraryBase):
                     item["attachments"] = json.loads(row["attachments"])
                 if with_usage:
                     item["usage"] = json.loads(row["usage"]) if row["usage"] else None
+                    if row["research"]:
+                        item["research"] = json.loads(row["research"])
                 result.append(item)
             return result
 
     def add_exchange(self, paper_id: str, question: str, answer: str, usage: dict | None = None,
-                     scope: str = "paper", attachments: list[dict] | None = None) -> None:
+                     scope: str = "paper", attachments: list[dict] | None = None, research: dict | None = None) -> None:
         with self.connection() as db:
-            db.executemany("INSERT INTO messages(paper_id,role,content,usage,scope,attachments) VALUES(?,?,?,?,?,?)",
+            db.executemany("INSERT INTO messages(paper_id,role,content,usage,scope,attachments,research) VALUES(?,?,?,?,?,?,?)",
                            [(paper_id, "user", question, None, scope,
-                             json.dumps(attachments, ensure_ascii=False) if attachments else None),
-                            (paper_id, "assistant", answer, json.dumps(usage) if usage else None, scope, None)])
+                             json.dumps(attachments, ensure_ascii=False) if attachments else None,
+                             json.dumps(research, ensure_ascii=False) if research else None),
+                            (paper_id, "assistant", answer, json.dumps(usage) if usage else None, scope, None,
+                             json.dumps(research, ensure_ascii=False) if research else None)])
