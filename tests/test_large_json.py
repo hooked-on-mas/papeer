@@ -313,11 +313,14 @@ def test_document_is_parsed_once_until_the_file_is_replaced(tmp_path):
 
 def test_a_document_of_an_older_layout_is_extracted_again_written_compactly_and_kept(tmp_path):
     library, identity = make_paper(tmp_path, [["Original content on page one."]])
+    library.update(identity, title="Kept title")
     path = PaperFiles(library.folder(identity)).document_json
-    older = dict(library.document(identity), layout_version=LAYOUT_VERSION - 1, title="Kept title")
+    older = dict(library.document(identity), layout_version=LAYOUT_VERSION - 1, title="Old extracted title")
     path.write_text(json.dumps(older, indent=2), "utf-8")
     refreshed = library.document(identity)
-    assert refreshed["layout_version"] == LAYOUT_VERSION and refreshed["title"] == "Kept title"
+    assert refreshed["layout_version"] == LAYOUT_VERSION
+    assert refreshed["title"] == (refreshed["extracted_title"] or "source")
+    assert library.paper(identity)["title"] == "Kept title"
     assert "\n" not in path.read_text("utf-8")
     assert library.document(identity) is refreshed
 
