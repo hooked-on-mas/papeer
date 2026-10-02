@@ -58,6 +58,9 @@ before(async () => {
     useStore: (await load("/src/store/index.ts")).useStore,
     useInkPanes: (await load("/src/features/reader/useInkEditor.ts")).useInkPanes,
     SelectionToolbarView: (await load("/src/features/reader/SelectionToolbar.tsx")).SelectionToolbarView,
+    highlightPassage: (await load("/src/features/reader/readerPassage.ts")).highlightPassage,
+    useStickyNotes: (await load("/src/features/reader/stickyNotesStore.ts")).useStickyNotes,
+    api: (await load("/src/api/client.ts")).api,
     StickyNotesTab: (await load("/src/features/reader/StickyNotesTab.tsx")).StickyNotesTab,
     glossaryEditor: await load("/src/features/reader/GlossaryEditor.tsx"),
     LibrarySidebar: (await load("/src/features/library/LibrarySidebar.tsx")).LibrarySidebar,
@@ -238,8 +241,40 @@ test("the toolbar over a selection offers the highlight colours, 説明, メモ�
   // Over a highlight: its colour is shown pressed, and it can be deleted.
   const over = render(React.createElement(SelectionToolbarView, { mode: "highlight", color: "blue", onDelete() {}, ...handlers }));
   assert.match(over, /aria-label="ハイライト"/);
-  assert.match(over, /aria-label="色を青にする"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*aria-label="色を青にする"/);
+  assert.match(over, /aria-label="ハイライトを削除"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*aria-label="ハイライトを削除"/);
   assert.match(over, /aria-label="ハイライトを削除"/);
+});
+
+test("reselecting the same highlight deletes the same colour with undo, recolours another colour, and adds a new range", async () => {
+  const { api, highlightPassage, useStickyNotes, query: { QueryClient } } = modules;
+  const original = { GET: api.GET, POST: api.POST, PATCH: api.PATCH, DELETE: api.DELETE };
+  const state = useStickyNotes.getState();
+  const rects = [[0.1, 0.2, 0.3, 0.02]];
+  const item = { id: 11, paper_id: "p1", page: 1, side: "original", kind: "highlight", color: "yellow", rects, quote: "text", label: "", note: "memo" };
+  const calls = [];
+  const reply = data => Promise.resolve({ data, response: new Response(null, { status: 200 }) });
+  api.GET = () => reply([item]);
+  api.DELETE = (_path, options) => { calls.push(["delete", options.params.path.bookmark_id]); return reply({}); };
+  api.PATCH = (_path, options) => { calls.push(["patch", options.body]); return reply({ ...item, ...options.body }); };
+  api.POST = (_path, options) => { calls.push(["post", options.body]); return reply({ ...item, id: 12, ...options.body }); };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const passage = { paperId: "p1", page: 1, side: "original", rects, text: Promise.resolve("text") };
+  try {
+    useStickyNotes.setState({ busy: false, deleted: [], selectedId: item.id });
+    assert.equal(await highlightPassage(passage, "yellow", client), true);
+    assert.deepEqual(calls.shift(), ["delete", item.id]);
+    assert.deepEqual(useStickyNotes.getState().deleted, [item]);
+    assert.equal(useStickyNotes.getState().selectedId, null);
+    assert.equal(await highlightPassage(passage, "blue", client), true);
+    assert.deepEqual(calls.shift(), ["patch", { color: "blue" }]);
+    assert.equal(await highlightPassage({ ...passage, rects: [[0.1, 0.4, 0.3, 0.02]] }, "yellow", client), true);
+    assert.equal(calls.shift()[0], "post");
+    assert.deepEqual(calls, []);
+  } finally {
+    Object.assign(api, original);
+    useStickyNotes.setState(state, true);
+    client.clear();
+  }
 });
 
 test("the sticky-notes tab lists a highlight by its colour and offers to write the paper's notes to its memo", () => {

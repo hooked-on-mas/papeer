@@ -38,7 +38,8 @@ export function SelectionToolbarView({ mode, color, busy, style, toolbarRef, onC
     onMouseDown={keep}>
     <div role="group" aria-label={mode === "selection" ? "ハイライトする色" : "ハイライトの色"} className="flex items-center gap-0.5 px-0.5">
       {HIGHLIGHT_COLORS.map(({ id, label, rgb }) => <button key={id} type="button" disabled={busy}
-        aria-label={mode === "selection" ? `ハイライト：${label}` : `色を${label}にする`} title={mode === "selection" ? `${label}でハイライト` : `${label}に変える`}
+        aria-label={mode === "selection" ? `ハイライト：${label}` : id === color ? "ハイライトを削除" : `色を${label}にする`}
+        title={mode === "selection" ? `${label}でハイライト（同じ範囲・色なら削除）` : id === color ? "同じ色を押してハイライトを削除" : `${label}に変える`}
         aria-pressed={mode === "highlight" ? id === color : undefined}
         className={`size-6 rounded-full border-2 p-0.5 disabled:opacity-40 ${id === color ? "border-foreground/70" : "border-transparent"}`}
         onClick={() => onColor(id)}><span className="block size-full rounded-full" style={{ backgroundColor: `rgb(${rgb})` }} /></button>)}
@@ -186,18 +187,25 @@ export function SelectionToolbar({ container, frame, translated, highlights, ink
     if (current) void run(() => action(current));
   };
   const color = highlight ? highlightColor(highlight.color).id : lastColor;
+  const removeHighlight = async () => {
+    if (highlight && await deleteStickyNote(highlight, client)) {
+      useStore.getState().setStatus("ハイライトを削除しました。付箋タブの「削除を取り消す」で戻せます。");
+    }
+  };
   return <SelectionToolbarView mode={target.mode} color={color} busy={busy} toolbarRef={toolbarRef}
     // Measured while hidden, then placed.
     style={placement ? { left: placement.left, top: placement.top } : { left: 0, top: 0, visibility: "hidden" }}
     onColor={next => {
-      if (highlight) { if (next !== color) void run(() => recolorHighlight(highlight, next, client), false); return; }
+      if (highlight) {
+        if (next === color) void run(removeHighlight);
+        else void run(() => recolorHighlight(highlight, next, client), false);
+        return;
+      }
       const current = capturePassage(container, translated);
       if (current) void run(async () => { if (await highlightPassage(current, next, client)) window.getSelection()?.removeAllRanges(); });
     }}
     onExplain={withPassage(explainPassage)}
     onQuote={withPassage(quotePassageInNote)}
     onSticky={highlight ? () => { setTarget(null); void openStickyNote(noteDraft(highlight)); } : withPassage(stickyNoteForPassage)}
-    onDelete={highlight ? () => void run(async () => {
-      if (await deleteStickyNote(highlight, client)) useStore.getState().setStatus("ハイライトを削除しました。付箋タブの「削除を取り消す」で戻せます。");
-    }) : undefined} />;
+    onDelete={highlight ? () => void run(removeHighlight) : undefined} />;
 }

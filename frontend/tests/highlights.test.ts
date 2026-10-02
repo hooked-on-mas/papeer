@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   HIGHLIGHT_COLORS, MAX_HIGHLIGHT_RECTS, highlightAt, highlightColor, highlightFill, highlightRects, rectsBounds,
-  selectionToolbarAllowed, toolbarPlacement, type Box, type PageRect,
+  sameHighlightRects, selectionToolbarAllowed, toolbarPlacement, type Box, type PageRect,
 } from "../src/features/reader/highlights.ts";
 
 const page: Box = { left: 100, top: 50, width: 400, height: 600 };
@@ -11,6 +11,17 @@ const near = (actual: PageRect[], expected: PageRect[]) => {
   assert.equal(actual.length, expected.length, JSON.stringify(actual));
   actual.forEach((rect, i) => rect.forEach((value, k) => assert.ok(Math.abs(value - expected[i][k]) < 1e-4, JSON.stringify(actual))));
 };
+
+test("reselecting a highlight matches its range despite rounding, but not a partial or nearby selection", () => {
+  const rects: PageRect[] = [[0.1, 0.2, 0.3, 0.02], [0.1, 0.23, 0.2, 0.02]];
+  assert.equal(sameHighlightRects(rects, rects), true);
+  assert.equal(sameHighlightRects(rects, [[0.10001, 0.2, 0.29999, 0.02], rects[1]]), true);
+  assert.equal(sameHighlightRects(rects, [rects[0]]), false);
+  assert.equal(sameHighlightRects(rects, [[0.1, 0.2, 0.15, 0.02], rects[1]]), false);
+  assert.equal(sameHighlightRects(rects, [[0.1, 0.3, 0.3, 0.02], rects[1]]), false);
+  assert.equal(sameHighlightRects(undefined, rects), false);
+  assert.equal(sameHighlightRects([], []), false);
+});
 
 test("a selection's text boxes become one rectangle per run of text on a line, as fractions of the page", () => {
   // Two lines; pdf.js spans overlap, split words and come out of order.

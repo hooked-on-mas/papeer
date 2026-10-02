@@ -30,6 +30,12 @@ export function highlightFill(id: string | undefined): string {
 /** [x, y, width, height] as fractions of the displayed page. */
 export type PageRect = [number, number, number, number];
 
+/** The same selected range, allowing for stored rounding and zoom-dependent layout rounding. */
+export function sameHighlightRects(a: readonly PageRect[] | undefined, b: readonly PageRect[]): boolean {
+  if (!a?.length || a.length !== b.length) return false;
+  return a.every((rect, i) => rect.every((value, k) => Math.abs(value - b[i][k]) <= 0.0001));
+}
+
 /** A rectangle in CSS pixels, as getBoundingClientRect gives it. */
 export interface Box {
   left: number;

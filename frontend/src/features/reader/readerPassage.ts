@@ -9,8 +9,10 @@ import { showError } from "@/components/errorDialog";
 import { citationLink } from "@/lib/markdownUrl";
 import { cleanPdfSelection, quoteForNote, restoreFormulas } from "@/lib/pdfSelection";
 import { useStore, type PassageAttachment } from "@/store";
-import { highlightColor, highlightRects, type Box, type HighlightColor, type PageRect } from "./highlights";
-import { addHighlight, openStickyNote } from "./stickyNotesStore";
+import { QK } from "@/lib/queryKeys";
+import { highlightColor, highlightRects, sameHighlightRects, type Box, type HighlightColor, type PageRect } from "./highlights";
+import { isHighlight, type StickyNote } from "./stickyNotes";
+import { addHighlight, deleteStickyNote, openStickyNote, recolorHighlight } from "./stickyNotesStore";
 import { textLayerOffsets } from "./textLayerRange";
 
 export interface Passage {
@@ -141,7 +143,7 @@ export async function stickyNoteForPassage(passage: Passage): Promise<void> {
   void openStickyNote({ paperId: passage.paperId, page: passage.page, side: passage.side, quote, anchorY: passage.anchorY });
 }
 
-/** Highlights the passage in `color` right away. Resolves true once it is saved. */
+/** Same range and colour removes the highlight; another colour recolours it. */
 export async function highlightPassage(passage: Passage, color: HighlightColor, client: QueryClient): Promise<boolean> {
   const store = useStore.getState();
   if (!passage.rects.length) {
@@ -149,6 +151,24 @@ export async function highlightPassage(passage: Passage, color: HighlightColor, 
     return false;
   }
   try {
+    const notes = await client.fetchQuery({
+      queryKey: [QK.stickyNotes, passage.paperId],
+      queryFn: async () => await unwrap(api.GET("/api/papers/{paper_id}/sticky-notes", {
+        params: { path: { paper_id: passage.paperId } },
+      })) as StickyNote[],
+    });
+    const existing = [...notes].reverse().find(item => isHighlight(item) && item.page === passage.page && item.side === passage.side
+      && sameHighlightRects(item.rects, passage.rects));
+    if (existing) {
+      if (highlightColor(existing.color).id === color) {
+        if (!await deleteStickyNote(existing, client)) return false;
+        useStore.getState().setStatus("ハイライトを削除しました。付箋タブの「削除を取り消す」で戻せます。");
+      } else {
+        await recolorHighlight(existing, color, client);
+        useStore.getState().setStatus(`ハイライトの色を変更しました（${highlightColor(color).label}）。`);
+      }
+      return true;
+    }
     await addHighlight({ ...passage, text: await passage.text }, color, client);
     useStore.getState().setStatus(`ハイライトしました（${highlightColor(color).label}）。クリックすると色の変更・メモ・削除ができます。`);
     return true;
