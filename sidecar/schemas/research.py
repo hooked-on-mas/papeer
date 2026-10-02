@@ -13,6 +13,19 @@ class PdfCandidate(WebSource):
     version: str
 
 
+class ResearchFailure(BaseModel):
+    kind: Literal["identity_mismatch"]
+    title: str
+    returned_title: str
+    expected_doi: str
+    returned_doi: str
+    expected_arxiv_id: str
+    returned_arxiv_id: str
+    sources: list[WebSource]
+    checked_at: str
+    message: str
+
+
 class ResearchRecord(BaseModel):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
     key: str
@@ -20,6 +33,12 @@ class ResearchRecord(BaseModel):
     raw: str
     doi: str = ""
     arxiv_id: str = ""
+    first_author: str = ""
+    publication_year: str = ""
+    venue: str = ""
+    abstract: str = ""
+    diagnostics: list[str] = Field(default_factory=list)
+    lookup_version: int = 0
     summary: str = ""
     basis: Literal["abstract", "full_text", "metadata", "unresolved"] = "metadata"
     sources: list[WebSource] = Field(default_factory=list)
@@ -30,6 +49,7 @@ class ResearchRecord(BaseModel):
     needs_ocr: bool = False
     version: str = ""
     summary_error: str = ""
+    last_failure: ResearchFailure | None = None
 
 
 class ChatResearch(BaseModel):

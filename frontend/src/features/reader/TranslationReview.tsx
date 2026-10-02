@@ -9,6 +9,7 @@ import { askConfirm } from "@/components/AppDialogs";
 import { startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { paperBusy, useStore } from "@/store";
+import { paperBusyFor } from "@/features/jobs/jobSelectors";
 import { jumpToPage } from "./navigation";
 import { onAppEvent, type AppEvents } from "@/lib/appEvents";
 import { paragraphOfSelection } from "@/lib/pdfSelection";
@@ -30,7 +31,7 @@ function PaperReview({ paperId }: { paperId: string }) {
   const client = useQueryClient();
   const { data: reading } = useReading(paperId);
   const currentPage = useStore(s => s.currentPage);
-  const busy = useStore(s => paperBusy(s.activeJobs, paperId));
+  const busy = useStore(s => paperBusyFor(s.activeJobs, paperId, "revision"));
   // Reading pages by OCR may take minutes and goes on without the dialog: it may be closed meanwhile
   // (the editing buttons stay disabled while it runs).
   const busyBesidesOcr = useStore(s => paperBusy(s.activeJobs, paperId, ["ocr"]));

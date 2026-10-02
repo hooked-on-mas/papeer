@@ -558,6 +558,21 @@ def test_translation_concurrency_setting_round_trips(test_env):
     assert client.get("/api/settings").json()["translation_concurrency"] == 2
 
 
+def test_semantic_scholar_key_is_session_only_and_partial_updates_keep_it(test_env, monkeypatch):
+    from papeer.core import scholarly_lookup
+    client, root = test_env
+    monkeypatch.setattr(scholarly_lookup, "_SEMANTIC_KEY", "")
+    assert client.put("/api/settings", json={"semantic_scholar_api_key": "test-scholar-key"}).status_code == 200
+    assert client.get("/api/settings").json()["semantic_scholar_api_key"] == "test-scholar-key"
+    saved = (root / "settings.json").read_text(encoding="utf-8")
+    assert "test-scholar-key" not in saved and "semantic_scholar_api_key" not in saved
+    assert client.put("/api/settings", json={"translation_concurrency": 2}).status_code == 200
+    assert client.get("/api/settings").json()["semantic_scholar_api_key"] == "test-scholar-key"
+    assert client.put("/api/settings", json={"semantic_scholar_api_key": "bad\nheader"}).status_code == 422
+    assert client.put("/api/settings", json={"semantic_scholar_api_key": ""}).status_code == 200
+    assert client.get("/api/settings").json()["semantic_scholar_api_key"] == ""
+
+
 def test_providers_are_listed_for_the_settings_dialog(test_env):
     client, _ = test_env
     providers = client.get("/api/providers").json()

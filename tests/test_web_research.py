@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 import pymupdf as fitz
 import pytest
 
-from papeer.core import reference_pdf, web_research
+from papeer.core import reference_pdf, scholarly_lookup, web_research
 from papeer.core.backup import create_backup, restore_backup
 from papeer.core.citations import citation_graph, extract_references
 from papeer.core.config import Settings
@@ -37,6 +37,7 @@ def pdf(path, text):
 
 def evidence(**updates):
     return {"title": "Robust control of systems", "doi": "10.1234/abc", "arxiv_id": "",
+            "first_author": "A. Smith", "publication_year": "2020", "venue": "Control Journal", "abstract": "",
             "summary": "抄録で検証条件を確認しました [Web 1]。", "basis": "abstract",
             "sources": [{"title": "Publisher", "url": "https://publisher.example/paper"}],
             "pdfs": [{"title": "Author manuscript", "url": "https://repository.example/paper.pdf",
@@ -66,22 +67,31 @@ class ResearchProvider(ProviderBackend):
         return json.dumps(self.result, ensure_ascii=False)
 
 
+@pytest.fixture(autouse=True)
+def no_live_bibliographic_requests(monkeypatch):
+    monkeypatch.setattr(scholarly_lookup, "_request", lambda url, cancel: {})
+
+
 @pytest.fixture
 def library(tmp_path, monkeypatch):
     monkeypatch.setattr("papeer.core.ocr.import_reads", lambda: False)
     lib = Library(tmp_path / "library")
     source, _ = lib.import_pdf(pdf(tmp_path / "source.pdf", 'The source research\n\nReferences\n[1] A. Smith, "Robust control of systems", 2020. doi:10.1234/abc.'))
     entry = extract_references(lib.document(source))[0]
+    candidate = pdf(tmp_path / "verified-reference.pdf", "Robust control of systems\nA. Smith\nOriginal text")
+    monkeypatch.setattr(reference_pdf, "download_pdf", lambda url, path, cancel, progress, **kwargs: shutil.copyfile(candidate, path))
     return lib, source, entry
 
 
 def test_codex_web_is_per_request_and_local_tools_stay_disabled(monkeypatch):
     commands = []
+    prompts = []
     monkeypatch.setattr(CodexProvider, "command", lambda self: ["codex"])
     monkeypatch.setattr("papeer.providers.codex.no_mcp_overrides", lambda: ["-c", "mcp_servers.test.enabled=false"])
 
     def execute(**kwargs):
         commands.append(kwargs["command"])
+        prompts.append(kwargs["prompt_bytes"].decode("utf-8"))
         return "answer", b""
 
     monkeypatch.setattr("papeer.providers.codex.run_cli_process", execute)
@@ -90,6 +100,8 @@ def test_codex_web_is_per_request_and_local_tools_stay_disabled(monkeypatch):
     provider.search_web("research", "document")
     provider.generate("summarize", "document")
     assert ['web_search="live"' in command for command in commands] == [False, True, False]
+    assert ["Do not invoke tools" in prompt for prompt in prompts] == [True, False, True]
+    assert "Use web search and read public web pages" in prompts[1]
     for command in commands:
         for option in ("--ephemeral", "read-only", "features.shell_tool=false", "features.unified_exec=false", "mcp_servers.test.enabled=false"):
             assert option in command
@@ -97,9 +109,11 @@ def test_codex_web_is_per_request_and_local_tools_stay_disabled(monkeypatch):
 
 def test_claude_search_only_exposes_web_tools_and_reads_structured_result(monkeypatch):
     commands = []
+    prompts = []
     monkeypatch.setattr(ClaudeCodeProvider, "command", lambda self: ["claude"])
     def execute(**kwargs):
         commands.append(kwargs["command"])
+        prompts.append(kwargs["prompt_bytes"].decode("utf-8"))
         result = {"type": "result", "is_error": False, "result": "unstructured explanation",
                   "usage": {"input_tokens": 10, "output_tokens": 5}}
         if "--json-schema" in kwargs["command"]:
@@ -112,6 +126,8 @@ def test_claude_search_only_exposes_web_tools_and_reads_structured_result(monkey
     assert json.loads(provider.search_web("research", "document", web_research._RECORD_SCHEMA)) == evidence()
     provider.generate("summarize", "document")
     assert [c[c.index("--tools") + 1] for c in commands] == ["", "WebSearch,WebFetch", ""]
+    assert ["Do not invoke tools" in prompt for prompt in prompts] == [True, False, True]
+    assert "Use web search and read public web pages" in prompts[1]
     search = commands[1]
     assert search[search.index("--allowedTools") + 1] == "WebSearch,WebFetch"
     assert search[search.index("--permission-mode") + 1] == "dontAsk"
@@ -149,7 +165,9 @@ def test_antigravity_search_profile_and_off_requests_are_isolated(monkeypatch):
         assert "--sandbox" in command and "--disable-slash-commands" in command
         assert command[command.index("--model") + 1] == "gemini-test"
         assert json.loads(prompt)["event"] == "user"
+        assert ("Do not invoke tools" in json.loads(prompt)["message"]["content"]) == (i != 1)
         if i == 1:
+            assert "Use web search and read public web pages" in json.loads(prompt)["message"]["content"]
             assert "文献" * 40000 in json.loads(prompt)["message"]["content"]
             assert "sources" in json.loads(prompt)["message"]["content"]
     assert provider.usage.output_tokens == 15
@@ -181,19 +199,203 @@ def test_reference_research_is_persisted_and_refresh_keeps_imported_pdf(library,
     assert web_research.get_record(lib, source, record["key"])["paper_id"] is None
 
 
-def test_research_rejects_wrong_identity_and_invalid_numbering(library):
+@pytest.mark.parametrize("value,error", [
+    (evidence(doi="10.1234/other"), "別の文献"),
+    (evidence(summary="出典 [Web 2]"), "出典番号"),
+    (evidence(sources=[{"title": "Bad", "url": "file:///secret"}]), "出典"),
+])
+def test_research_rejects_wrong_identity_and_invalid_numbering(library, value, error):
     lib, source, _ = library
     provider = ResearchProvider()
-    for value, error in ((evidence(doi="10.1234/other"), "別の文献"),
-                         (evidence(summary="出典 [Web 2]"), "出典番号"),
-                         (evidence(sources=[{"title": "Bad", "url": "file:///secret"}]), "出典")):
-        provider.result = value
-        with pytest.raises(ValueError, match=error):
-            web_research.research_reference(lib, source, f"{source}:0", provider)
+    provider.result = value
+    with pytest.raises(ValueError, match=error):
+        web_research.research_reference(lib, source, f"{source}:0", provider)
+    if value["doi"] != "10.1234/abc":
+        record = web_research.records(lib, source)[0]
+        assert record["doi"] == "10.1234/abc" and record["last_failure"]["returned_doi"] == value["doi"]
+        assert not record["summary"] and not record["sources"] and not record["pdfs"]
+    else:
         assert web_research.records(lib, source) == []
     provider.result = evidence(basis="unresolved", summary="文献を特定できません。", sources=[])
     record = web_research.research_reference(lib, source, f"{source}:0", provider)
-    assert record["pdfs"] == []
+    assert record["pdfs"] == [] and record["last_failure"] is None
+
+
+@pytest.mark.parametrize("field,expected,returned", [
+    ("doi", "10.1234/abc", "10.1234/other"),
+    ("arxiv_id", "2308.11478", "2401.12345"),
+])
+def test_identity_failure_retains_original_identity_and_survives_reopening(library, monkeypatch, field, expected, returned):
+    lib, source, entry = library
+    entry = {**entry, field: expected}
+    provider = ResearchProvider()
+    provider.result = evidence(**{field: returned}, title="An unrelated result", abstract="Wrong abstract")
+    monkeypatch.setattr(web_research, "_check_pdf_candidates", lambda *args: pytest.fail("Rejected PDFs must not be downloaded"))
+    key = web_research.reference_key(entry["raw"])
+    with pytest.raises(web_research.ResearchIdentityMismatch) as caught:
+        web_research._research(lib, source, entry, key, provider)
+    assert entry["title"] in str(caught.value) and expected in str(caught.value) and returned in str(caught.value)
+    record = web_research.get_record(Library(lib.root), source, key)
+    assert record[field] == expected and record["title"] == entry["title"]
+    assert not record["sources"] and not record["pdfs"] and not record["summary"] and not record["abstract"]
+    failure = record["last_failure"]
+    assert failure[f"expected_{field}"] == expected and failure[f"returned_{field}"] == returned
+    assert failure["returned_title"] == "An unrelated result" and failure["checked_at"]
+    assert failure["sources"] == evidence()["sources"]
+
+
+def test_failed_retry_preserves_confirmed_record_and_success_clears_failure(library, tmp_path):
+    lib, source, _ = library
+    provider = ResearchProvider()
+    record = web_research.research_reference(lib, source, f"{source}:0", provider)
+    target, _ = lib.import_pdf(pdf(tmp_path / "target.pdf", "A different registered PDF."))
+    record.update(paper_id=target, version="著者最終稿")
+    web_research.save_record(lib, source, record)
+    provider.result = evidence(doi="10.1234/other", title="Wrong result")
+    with pytest.raises(web_research.ResearchIdentityMismatch):
+        web_research.research_saved(lib, source, record["key"], provider)
+    saved = web_research.get_record(lib, source, record["key"])
+    assert saved["last_failure"]["returned_doi"] == "10.1234/other"
+    assert {k: v for k, v in saved.items() if k != "last_failure"} == {k: v for k, v in record.items() if k != "last_failure"}
+    provider.result = evidence(summary="再確認 [Web 1]。")
+    refreshed = web_research.research_saved(lib, source, record["key"], provider)
+    assert refreshed["last_failure"] is None and refreshed["paper_id"] == target
+    assert refreshed["version"] == "著者最終稿" and "再確認" in refreshed["summary"]
+
+
+def test_retry_uses_previous_verified_identifier_when_reference_lacks_one(library):
+    lib, source, entry = library
+    provider = ResearchProvider()
+    record = web_research.research_reference(lib, source, f"{source}:0", provider)
+    provider.result = evidence(doi="10.1234/other")
+    with pytest.raises(web_research.ResearchIdentityMismatch):
+        web_research._research(lib, source, {**entry, "doi": ""}, record["key"], provider)
+    assert provider.web[-1][1]["doi"] == record["doi"]
+    assert web_research.get_record(lib, source, record["key"])["doi"] == record["doi"]
+
+
+def test_complete_databases_do_not_use_llm_and_save_metadata(library, monkeypatch):
+    lib, source, _ = library
+    found = {**evidence(), "abstract": "A verified abstract.", "warnings": []}
+    monkeypatch.setattr(scholarly_lookup, "lookup", lambda entry, cancel: found)
+    provider = ResearchProvider()
+    record = web_research.research_reference(lib, source, f"{source}:0", provider)
+    assert not provider.web and not provider.normal
+    assert record["first_author"] == "A. Smith" and record["publication_year"] == "2020"
+    assert record["abstract"] == "A verified abstract." and record["pdfs"]
+
+
+def test_existing_retrieval_logs_are_separated_from_paper_content(library):
+    lib, source, _ = library
+    record = web_research.normalized_record(evidence(), "Reference", "legacy")
+    record["summary"] = ("書誌情報を確認しました。 [Web 1](https://publisher.example/paper)\n\n"
+        "PDF候補は確認できませんでした：HTTP 403\n[確認できなかったPDF候補のURL](https://repository.example/paper.pdf)\n\n"
+        "LLMで補完した情報：\n\n目的はロバスト入力整形器の設計です。 [Web 2](https://author.example/paper.pdf)\n\n"
+        "Semantic Scholarの情報を取得できませんでした：利用制限中")
+    # Simulate a record saved by the previous version, bypassing the new writer.
+    with lib.connection() as db:
+        db.execute("INSERT INTO reference_research(source,key,data) VALUES(?,?,?)",
+                   (source, "legacy", json.dumps(record, ensure_ascii=False)))
+    result = web_research.get_record(lib, source, "legacy")
+    assert result["summary"] == "目的はロバスト入力整形器の設計です。 [Web 2](https://author.example/paper.pdf)"
+    assert len(result["diagnostics"]) == 2
+    assert "https://repository.example/paper.pdf" in result["diagnostics"][0]
+    assert web_research.presentation_record(result) == result
+
+
+def test_retrieval_warning_never_becomes_a_paper_summary(library, monkeypatch):
+    lib, source, _ = library
+    found = {**evidence(), "abstract": "Database abstract", "warnings": ["Semantic Scholarの情報を取得できませんでした：429"]}
+    monkeypatch.setattr(scholarly_lookup, "lookup", lambda entry, cancel: found)
+    result = web_research.research_reference(lib, source, f"{source}:0", ResearchProvider())
+    assert result["summary"] == ""
+    assert result["abstract"] == "Database abstract"
+    assert result["diagnostics"] == found["warnings"]
+
+
+def test_llm_only_supplements_missing_fields_and_keeps_database_values(library, monkeypatch):
+    lib, source, _ = library
+    found = {**evidence(), "abstract": "Database abstract", "venue": "", "pdfs": [], "warnings": []}
+    monkeypatch.setattr(scholarly_lookup, "lookup", lambda entry, cancel: found)
+    provider = ResearchProvider()
+    provider.result = evidence(first_author="Different author", abstract="LLM abstract")
+    record = web_research.research_reference(lib, source, f"{source}:0", provider)
+    assert provider.web[0][1]["missing_fields"] == ["venue", "pdfs"]
+    assert record["abstract"] == "Database abstract" and record["first_author"] == "A. Smith"
+    assert record["venue"] == "Control Journal" and record["pdfs"]
+    assert "LLMで補完" not in record["summary"]
+    assert "[Web 2](https://publisher.example/paper)" in record["summary"]
+
+
+def test_database_evidence_survives_llm_failure_or_conflicting_doi(library, monkeypatch):
+    lib, source, _ = library
+    found = {**evidence(), "abstract": "Database abstract", "pdfs": [], "warnings": []}
+    monkeypatch.setattr(scholarly_lookup, "lookup", lambda entry, cancel: found)
+    provider = ResearchProvider()
+    provider.result = evidence(doi="10.1234/other")
+    record = web_research.research_reference(lib, source, f"{source}:0", provider)
+    assert record["doi"] == "10.1234/abc" and record["sources"] == found["sources"]
+    assert record["pdfs"] == [] and "補完は完了できませんでした" in "\n".join(record["diagnostics"])
+    assert record["last_failure"]["expected_doi"] == "10.1234/abc"
+    assert record["last_failure"]["returned_doi"] == "10.1234/other" and not record["summary"]
+
+
+def test_database_title_mismatch_is_recorded_without_adopting_supplement(library, monkeypatch):
+    lib, source, _ = library
+    found = {**evidence(), "abstract": "Database abstract", "pdfs": [], "warnings": []}
+    monkeypatch.setattr(scholarly_lookup, "lookup", lambda entry, cancel: found)
+    provider = ResearchProvider()
+    provider.result = evidence(title="An unrelated result")
+    record = web_research.research_reference(lib, source, f"{source}:0", provider)
+    assert record["title"] == found["title"] and record["abstract"] == found["abstract"]
+    assert record["last_failure"]["returned_title"] == "An unrelated result"
+    assert "タイトル" in record["last_failure"]["message"] and not record["pdfs"] and not record["summary"]
+
+
+def test_rejected_supplement_keeps_previous_confirmed_content(library, monkeypatch):
+    lib, source, _ = library
+    provider = ResearchProvider()
+    previous = web_research.research_reference(lib, source, f"{source}:0", provider)
+    previous["abstract"] = "Previously checked abstract"
+    web_research.save_record(lib, source, previous)
+    found = {**evidence(), "sources": [{"title": "Semantic Scholar", "url": "https://semanticscholar.org/paper/checked"}],
+             "abstract": "", "venue": "", "pdfs": [], "warnings": []}
+    monkeypatch.setattr(scholarly_lookup, "lookup", lambda entry, cancel: found)
+    provider.result = evidence(doi="10.1234/other", abstract="Unrelated abstract")
+    record = web_research.research_saved(lib, source, previous["key"], provider)
+    for field in ("abstract", "summary", "pdfs", "basis", "venue"):
+        assert record[field] == previous[field]
+    assert record["sources"] == [*previous["sources"], *found["sources"]]
+    assert record["last_failure"]["returned_doi"] == "10.1234/other"
+
+
+def test_unresolved_llm_values_do_not_fill_missing_database_information(library, monkeypatch):
+    lib, source, _ = library
+    found = {**evidence(), "abstract": "", "venue": "", "pdfs": [], "warnings": []}
+    monkeypatch.setattr(scholarly_lookup, "lookup", lambda entry, cancel: found)
+    provider = ResearchProvider()
+    provider.result = evidence(basis="unresolved", abstract="Unsupported abstract", venue="Unverified venue", sources=[])
+    record = web_research.research_reference(lib, source, f"{source}:0", provider)
+    assert not record["abstract"] and not record["venue"]
+    assert record["sources"] == found["sources"]
+
+
+@pytest.mark.parametrize("failure", ["404", "wrong-paper"])
+def test_research_filters_unavailable_or_wrong_pdf_and_keeps_sources_and_url(library, tmp_path, monkeypatch, failure):
+    lib, source, _ = library
+    unrelated = pdf(tmp_path / "unrelated.pdf", "A different technical report\nOther authors\nUnrelated text")
+
+    def download(url, path, cancel, progress, **kwargs):
+        assert kwargs == {"max_bytes": 15 * 1024 * 1024, "timeout_seconds": 30}
+        if failure == "404":
+            raise ValueError("HTTP 404")
+        shutil.copyfile(unrelated, path)
+
+    monkeypatch.setattr(reference_pdf, "download_pdf", download)
+    record = web_research.research_reference(lib, source, f"{source}:0", ResearchProvider())
+    assert record["pdfs"] == [] and record["sources"] == evidence()["sources"]
+    assert record["basis"] == "abstract" and "PDF候補は確認できませんでした" in "\n".join(record["diagnostics"])
+    assert "https://repository.example/paper.pdf" in "\n".join(record["diagnostics"])
 
 
 def test_chat_history_keeps_web_state_and_off_uses_only_attached_evidence(library):
@@ -309,7 +511,7 @@ def api_env(library, tmp_path, monkeypatch):
     monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     monkeypatch.setenv("PAPEER_TOKEN", "")
     monkeypatch.setattr(deps, "get_library", lambda: lib)
-    monkeypatch.setattr(deps, "get_settings", lambda: Settings(provider="codex"))
+    monkeypatch.setattr(deps, "get_settings", lambda: Settings(provider="codex", paper_metadata_ai_enabled=True))
     provider = ResearchProvider()
     def provider_for(settings, cancel):
         provider.cancel = cancel
@@ -326,6 +528,76 @@ def research(client, source):
     job = wait(response.json()["job_id"])
     assert job.status == "succeeded", job.error
     return job.result["key"]
+
+
+def test_failed_job_exposes_reference_identity_and_persisted_diagnostic(api_env):
+    client, lib, source, entry, provider, _ = api_env
+    provider.result = evidence(doi="10.1234/other", title="Unrelated paper")
+    response = client.post(f"/api/papers/{source}/reference-research", json={"reference_id": f"{source}:0"})
+    assert response.status_code == 200
+    job = wait(response.json()["job_id"])
+    assert job.status == "failed" and job.result is None
+    assert entry["title"] in job.error and "10.1234/abc" in job.error and "10.1234/other" in job.error
+    response = client.get(f"/api/papers/{source}/reference-research")
+    assert response.status_code == 200
+    record = response.json()[0]
+    assert record["last_failure"]["message"] == job.error
+    assert record["doi"] == entry["doi"] and record["title"] == entry["title"]
+    assert not record["pdfs"] and not record["sources"] and not record["summary"]
+    assert web_research.get_record(Library(lib.root), source, record["key"])["last_failure"] == record["last_failure"]
+    provider.result = evidence()
+    assert research(client, source) == record["key"]
+    assert client.get(f"/api/papers/{source}/reference-research").json()[0]["last_failure"] is None
+
+
+def test_cancelled_identity_failure_does_not_persist_a_rejection(library, monkeypatch):
+    lib, source, _ = library
+    provider = ResearchProvider()
+    def rejected(*args):
+        provider.cancel.set()
+        raise web_research.ResearchIdentityMismatch({"title": "Reference", "doi": "10.1234/abc"}, evidence(doi="10.1234/other"))
+    monkeypatch.setattr(web_research, "_research_verified", rejected)
+    with pytest.raises(Cancelled):
+        web_research.research_reference(lib, source, f"{source}:0", provider)
+    assert not web_research.records(lib, source)
+
+
+def test_lookup_does_not_block_summary_chat_or_translation_dictionary_saves(api_env, monkeypatch):
+    client, lib, source, _, _, _ = api_env
+    entered, release = threading.Event(), threading.Event()
+
+    def lookup(*_):
+        entered.set()
+        assert release.wait(15)
+        return {"title": "", "doi": "", "arxiv_id": "", "first_author": "", "publication_year": "",
+                "venue": "", "abstract": "", "sources": [], "pdfs": [], "warnings": []}
+
+    monkeypatch.setattr(scholarly_lookup, "lookup", lookup)
+    monkeypatch.setattr(deps, "provider_for", lambda settings, cancel: ResearchProvider(cancel))
+    response = client.post(f"/api/papers/{source}/reference-research", json={"reference_id": f"{source}:0"})
+    assert response.status_code == 200, response.text
+    lookup_id = response.json()["job_id"]
+    try:
+        assert entered.wait(2)
+        # Translation saves both dictionaries before submitting its AI work.
+        shared = client.get("/api/glossary").json()
+        saved = client.put("/api/glossary", json={"terms": shared, "expected_terms": shared})
+        assert saved.status_code == 200, saved.text
+        local = client.get(f"/api/papers/{source}/glossary").json()
+        saved = client.put(f"/api/papers/{source}/glossary", json={**local, "expected": local})
+        assert saved.status_code == 200, saved.text
+        for endpoint, body in (("article", None), ("ask", {"question": "Explain the method"})):
+            started = client.post(f"/api/papers/{source}/{endpoint}", json=body)
+            assert started.status_code == 200, started.text
+            result = wait(started.json()["job_id"])
+            assert result.status == "succeeded", result.error
+            assert deps.job_manager.get_job(lookup_id).running
+        assert "PDFの本文に基づく回答" in (lib.paper_folder(source) / "article.md").read_text("utf-8")
+        assert len(lib.messages(source)) == 2
+        assert client.delete(f"/api/papers/{source}").status_code == 409
+    finally:
+        release.set()
+        assert wait(lookup_id).status == "succeeded"
 
 
 def import_reference(client, source, key, **body):
@@ -412,14 +684,72 @@ def test_scan_pdf_is_kept_with_an_ocr_explanation(api_env, tmp_path):
     assert len(lib.papers()) == 2
 
 
-def test_api_rejects_unsupported_search_and_wrong_reference_before_starting(api_env, monkeypatch):
-    client, _, source, _, _, _ = api_env
-    monkeypatch.setattr(deps, "get_settings", lambda: Settings(provider="api"))
-    assert client.get("/api/research-capabilities").json() == {"web_search": False}
+def test_api_allows_database_lookup_without_llm_web_and_rejects_wrong_reference(api_env, monkeypatch):
+    client, _, source, _, provider, _ = api_env
+    monkeypatch.setattr(deps, "get_settings", lambda: Settings(provider="api", paper_metadata_ai_enabled=True))
+    monkeypatch.setattr(provider, "spec", ProviderSpec("api", "API", "API", "http"))
+    assert client.get("/api/research-capabilities").json() == {
+        "paper_discovery_enabled": True, "web_search": False, "reference_research_enabled": True, "reference_lookup": True, "reference_web_search": False}
     response = client.post(f"/api/papers/{source}/reference-research", json={"reference_id": f"{source}:0"})
-    assert response.status_code == 400 and "対応していません" in response.text
+    assert response.status_code == 200 and wait(response.json()["job_id"]).status == "succeeded"
+    assert not provider.web
     assert client.post(f"/api/papers/{source}/ask", json={"question": "Search", "web_search": True}).status_code == 400
     assert client.post(f"/api/papers/{source}/reference-research", json={"reference_id": "other:0"}).status_code == 400
+
+
+def test_reference_lookup_uses_shared_opt_in_and_information_connection(api_env, monkeypatch):
+    client, _, source, _, provider, _ = api_env
+    settings = Settings(provider="api", model="translation-model", paper_metadata_provider="codex",
+                        paper_metadata_model="lookup-model")
+    monkeypatch.setattr(deps, "get_settings", lambda: settings)
+    calls = []
+
+    def factory(selected, cancel):
+        calls.append((selected.provider, selected.model))
+        provider.cancel = cancel
+        return provider
+
+    monkeypatch.setattr(deps, "provider_for", factory)
+    assert client.get("/api/research-capabilities").json() == {
+        "paper_discovery_enabled": True, "web_search": False, "reference_research_enabled": False, "reference_lookup": True, "reference_web_search": True}
+    response = client.post(f"/api/papers/{source}/reference-research", json={"reference_id": f"{source}:0"})
+    assert response.status_code == 400 and "論文情報の取得にAIを使う" in response.text
+    assert not calls
+    settings.paper_metadata_ai_enabled = True
+    research(client, source)
+    assert calls == [("codex", "lookup-model")]
+    # An information connection without web tools still permits bibliographic databases.
+    settings.provider, settings.paper_metadata_provider = "codex", "api"
+    monkeypatch.setattr(provider, "spec", ProviderSpec("api", "API", "API", "http"))
+    response = client.post(f"/api/papers/{source}/reference-research", json={"reference_id": f"{source}:0"})
+    assert response.status_code == 200 and wait(response.json()["job_id"]).status == "succeeded"
+    assert len(calls) == 2
+
+
+def test_saving_information_off_cancels_reference_lookup_without_a_frontend(api_env, tmp_path, monkeypatch):
+    client, lib, source, _, provider, _ = api_env
+    Settings(provider="codex", paper_metadata_ai_enabled=True).save(tmp_path)
+    monkeypatch.setattr(deps, "get_settings", lambda: Settings.load(tmp_path))
+    monkeypatch.setattr(deps, "get_settings_with_unknown_keys", lambda: (Settings.load(tmp_path), []))
+    started = threading.Event()
+
+    def search(*args):
+        started.set()
+        assert provider.cancel.wait(5), "settings OFF did not cancel the running lookup"
+        raise Cancelled("Stopped")
+
+    monkeypatch.setattr(provider, "search_web", search)
+    response = client.post(f"/api/papers/{source}/reference-research", json={"reference_id": f"{source}:0"})
+    assert response.status_code == 200 and started.wait(5)
+    try:
+        saved = client.put("/api/settings", json={"paper_metadata_ai_enabled": False})
+        assert saved.status_code == 200, saved.text
+        assert wait(response.json()["job_id"]).status == "cancelled"
+        assert not web_research.records(lib, source)
+        assert client.get("/api/research-capabilities").json()["reference_research_enabled"] is False
+        assert client.post(f"/api/papers/{source}/reference-research", json={"reference_id": f"{source}:0"}).status_code == 400
+    finally:
+        deps.job_manager.cancel_job(response.json()["job_id"])
 
 
 @pytest.mark.parametrize("cls,provider_id,module", [
@@ -428,7 +758,7 @@ def test_api_rejects_unsupported_search_and_wrong_reference_before_starting(api_
 ])
 def test_cli_research_chat_and_pdf_import_share_the_same_api(api_env, monkeypatch, cls, provider_id, module):
     client, lib, source, _, _, _ = api_env
-    monkeypatch.setattr(deps, "get_settings", lambda: Settings(provider=provider_id, model=""))
+    monkeypatch.setattr(deps, "get_settings", lambda: Settings(provider=provider_id, model="", paper_metadata_ai_enabled=True))
     monkeypatch.setattr(cls, "command", lambda self: [provider_id])
     monkeypatch.setattr(deps, "provider_for", lambda settings, cancel: cls(settings, cancel))
 
@@ -449,7 +779,8 @@ def test_cli_research_chat_and_pdf_import_share_the_same_api(api_env, monkeypatc
         return json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": json.dumps(result)}}), ""
 
     monkeypatch.setattr(f"{module}.run_cli_process", execute)
-    assert client.get("/api/research-capabilities").json() == {"web_search": True}
+    assert client.get("/api/research-capabilities").json() == {
+        "paper_discovery_enabled": True, "web_search": True, "reference_research_enabled": True, "reference_lookup": True, "reference_web_search": True}
     key = research(client, source)
     record = client.get(f"/api/papers/{source}/reference-research").json()[0]
     assert record["sources"] == evidence()["sources"]

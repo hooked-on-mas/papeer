@@ -189,7 +189,15 @@ export function useSaveSettings() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: async ({ settings, prompts }: { settings?: Schemas["SettingsModel"]; prompts?: Record<string, string> }) => {
-      if (settings) await unwrap(api.PUT("/api/settings", { body: settings }));
+      if (settings) {
+        await unwrap(api.PUT("/api/settings", { body: settings }));
+        if (settings.paper_metadata_ai_enabled !== undefined) {
+          // A lookup may still be running after its pane was closed.
+          const { setAutoResearch, useAutoResearch } = await import("@/features/references/autoResearch");
+          if (useAutoResearch.getState().enabled !== settings.paper_metadata_ai_enabled)
+            setAutoResearch(settings.paper_metadata_ai_enabled);
+        }
+      }
       if (prompts) await unwrap(api.PUT("/api/prompts", { body: prompts }));
     },
     onSuccess: () => invalidate({ kind: "settings" }, client),

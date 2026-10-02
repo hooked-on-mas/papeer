@@ -106,7 +106,7 @@ class CodexProvider(CliBackend, ProviderBackend):
         return self._run(wrap_document_prompt(instruction, data), schema)
 
     def search_web(self, instruction: str, data: str, schema: dict | None = None) -> str:
-        return self._send(lambda: self._run(wrap_document_prompt(instruction, data), schema, web_search=True))
+        return self._send(lambda: self._run(wrap_document_prompt(instruction, data, web_search=True), schema, web_search=True))
 
     def image_support(self) -> str | None:
         return None

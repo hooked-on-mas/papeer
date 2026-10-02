@@ -35,6 +35,8 @@ def dump(root: Path) -> list[str]:
 
 def set_version(root: Path, version: int) -> None:
     with closing(sqlite3.connect(root / "library.sqlite3")) as db:
+        if version < 7:
+            db.execute("DROP TABLE IF EXISTS paper_discovery")
         if version < 6:
             if "research" in {row[1] for row in db.execute("PRAGMA table_info(messages)")}:
                 db.execute("ALTER TABLE messages DROP COLUMN research")

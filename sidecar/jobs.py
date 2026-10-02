@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from papeer.core.errors import Conflict
 from sidecar.errors import job_error_message
 from sidecar.job_types import (
-    SNAPSHOT_KINDS, EventModel, JobFinishedEvent, JobInfo, JobKind, JobPageReadyEvent, JobProgressEvent,
+    REFERENCE_RESEARCH_COMPATIBLE_KINDS, SNAPSHOT_KINDS, EventModel, JobFinishedEvent, JobInfo, JobKind, JobPageReadyEvent, JobProgressEvent,
     JobStartedEvent, job_result,
 )
 
@@ -111,17 +111,19 @@ class JobManager:
         return not any(thread.is_alive() for thread in threads)
 
     @contextmanager
-    def idle(self, message: str, paper_id: str | None = None) -> Iterator[None]:
+    def idle(self, message: str, paper_id: str | None = None, *, ignore: frozenset[JobKind] = frozenset()) -> Iterator[None]:
         """Run a change that must not overlap a job: ConcurrencyConflict(message) if one is running.
 
         With `paper_id`, only that paper's jobs count. Checked under the lock, and until the change is
         over no job it waits on may start (submit_job refuses it), so none starts between the check and
         the change, as it could when a route looked at get_jobs() first. A sync, backup or restore still
         starts, and waits for the request making the change to finish before it touches the library.
+        `ignore` permits independent jobs already running; the hold still prevents new submissions.
         """
         hold = object()
         with self._lock:
-            if any(job.running and (paper_id is None or job.paper_id == paper_id) for job in self._jobs.values()):
+            if any(job.running and job.kind not in ignore and (paper_id is None or job.paper_id == paper_id)
+                   for job in self._jobs.values()):
                 raise ConcurrencyConflict(message)
             self._holds[hold] = paper_id
         try:
@@ -152,12 +154,21 @@ class JobManager:
                 raise ConcurrencyConflict("すべての処理が終わってからバックアップ・復元してください。")
             if paper_id is not None:
                 paper_jobs = [j for j in self._jobs.values() if j.running and j.paper_id == paper_id]
-                # Independent reference records may be researched together. Other paper mutations
-                # remain exclusive, including PDF imports and summaries.
-                if kind == JobKind.REFERENCE_RESEARCH and all(j.kind == kind for j in paper_jobs):
-                    if len(paper_jobs) >= REFERENCE_RESEARCH_CONCURRENCY:
+                # Discovery only writes its own cache. It may run beside reference research/read actions,
+                # but retains the snapshot and paper-deletion guards above.
+                if kind in {JobKind.PAPER_DISCOVERY, JobKind.MAP_GROUPS}:
+                    paper_jobs = [j for j in paper_jobs if j.kind == kind]
+                else:
+                    paper_jobs = [j for j in paper_jobs if j.kind not in {JobKind.PAPER_DISCOVERY, JobKind.MAP_GROUPS}]
+                # Lookup may overlap independent paper work in either submission order. Count only
+                # lookups toward its limit; regular jobs remain exclusive with each other.
+                if kind == JobKind.REFERENCE_RESEARCH:
+                    if any(j.kind != kind and j.kind not in REFERENCE_RESEARCH_COMPATIBLE_KINDS for j in paper_jobs):
+                        raise ConcurrencyConflict(f"この論文（{paper_id}）の処理がすでに実行中です。")
+                    if sum(j.kind == kind for j in paper_jobs) >= REFERENCE_RESEARCH_CONCURRENCY:
                         raise ConcurrencyConflict("参考文献は同時に5件まで収集できます。完了後にやり直してください。")
-                elif paper_jobs:
+                elif any(j.kind != JobKind.REFERENCE_RESEARCH or kind not in REFERENCE_RESEARCH_COMPATIBLE_KINDS
+                         for j in paper_jobs):
                     raise ConcurrencyConflict(f"この論文（{paper_id}）の処理がすでに実行中です。")
             else:
                 if kind != JobKind.IMPORT and any(j.running and j.paper_id is None for j in self._jobs.values()):

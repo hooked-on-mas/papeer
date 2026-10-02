@@ -53,6 +53,7 @@ class Settings:
     translation_concurrency: int = 0
     # Explicit opt-in for AI requests made to fill missing paper metadata.
     paper_metadata_ai_enabled: bool = False
+    paper_discovery_enabled: bool = True
     # Empty follows the regular connection; otherwise resolved by the same provider registry.
     paper_metadata_provider: str = ""
     # Empty uses the regular model; an override applies only to metadata completion.
@@ -64,6 +65,8 @@ class Settings:
     provider_options: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def __post_init__(self):
+        if type(self.paper_discovery_enabled) is not bool:
+            raise ValueError("論文マップの自動取得はONまたはOFFで指定してください。")
         if type(self.paper_metadata_ai_enabled) is not bool:
             raise ValueError("論文情報のAI取得はONまたはOFFで指定してください。")
         if self.reasoning_effort not in REASONING_EFFORTS:
@@ -164,6 +167,8 @@ class Settings:
         # A malformed or older settings file must never implicitly enable background AI work.
         if type(values.get("paper_metadata_ai_enabled")) is not bool:
             values["paper_metadata_ai_enabled"] = False
+        if "paper_discovery_enabled" in values and type(values["paper_discovery_enabled"]) is not bool:
+            values["paper_discovery_enabled"] = False
         # A hand-edited or synced settings.json with a bad model name must not lock the settings dialog out.
         # Fall back to the connection's own default, not Settings.model's (a Codex model).
         if not valid_model(values.get("model", "")):

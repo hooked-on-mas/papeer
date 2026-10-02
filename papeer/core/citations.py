@@ -19,11 +19,11 @@ from papeer.core.bibliography import clean_arxiv_id, clean_doi
 from papeer.core.paths import PaperFiles
 from papeer.core.shared_json import Signature, read_shared_json, signature
 from papeer.core.storage import Library
-from papeer.layout.reference_layout import reference_text_blocks
+from papeer.core import map_timing
+from papeer.layout.reference_layout import author_date_start, reference_text_blocks
 
 _NUMBER = re.compile(r"^\s*(?:\[([\w-]{1,20})\]|(\d{1,4})[.)])\s+")
 _BARE_NUMBER = re.compile(r"^\s*(\d{1,3})\s+(?=[A-Z])")
-_AUTHOR_START = re.compile(r"^(?:[A-Z][\w’'-]+,\s+[A-Z]|[A-Z]\.\s*[A-Z][\w’'-]+|[A-Z][\w’'-]+\s+[A-Z][\w’'-]+[,\s])")
 _YEAR = re.compile(r"\b((?:18|19|20)\d{2})[a-z]?\b")
 _DOI = re.compile(r"\b10\.\d{4,9}/[^\s\"<>{}]+", re.I)
 _ARXIV = re.compile(r"(?:arxiv\s*:\s*|arxiv\.org/(?:abs|pdf)/|10\.48550/arxiv\.)(\d{4}\.\d{4,5}|[a-z][\w.-]*/\d{7})(?:v\d+)?", re.I)
@@ -41,12 +41,12 @@ def _entry(text: str, page: int, label: str) -> dict:
     year = _YEAR.search(raw)
     quoted = re.search(r'[“「"]([^”」"]{8,})[”」"]', raw)
     # A display hint only. Matching uses the original entry, never this guessed title.
-    title = quoted[1] if quoted else ""
+    title = quoted[1].strip().rstrip(",.;:") if quoted else ""
     if not title:
         # Author-date styles put the title after (2020). Avoid treating a year at the end as a title.
         dated = re.search(r"\(?\b(?:18|19|20)\d{2}[a-z]?\)?[.,]\s+(.+)", raw)
         if dated:
-            candidate = re.split(r"\.\s+", dated[1])[0].strip()
+            candidate = re.split(r"\.\s+", dated[1])[0].strip().rstrip(".")
             if len(candidate) >= 15 and not candidate.lower().startswith(("doi", "http", "arxiv")):
                 title = candidate
     if not title:
@@ -61,6 +61,7 @@ def _entry(text: str, page: int, label: str) -> dict:
             "doi": doi, "arxiv_id": arxiv, "year": year[1] if year else ""}
 
 
+@map_timing.timed("pdf_references", "PDFの保存済み参考文献の読み取り・分割")
 def extract_references(document: dict) -> list[dict]:
     """Split numbered and author-date entries, keeping source text and source page.
 
@@ -70,6 +71,7 @@ def extract_references(document: dict) -> list[dict]:
     blocks = reference_text_blocks(document)
     numbered = any(_NUMBER.match(line) for _, text in blocks for line in text.splitlines())
     bare = not numbered and sum(bool(_BARE_NUMBER.match(line)) for _, text in blocks for line in text.splitlines()) >= 2
+    author_date = not numbered and not bare and any(author_date_start(line) for _, text in blocks for line in text.splitlines())
     result: list[dict] = []
     lines: list[str] = []
     page, label = 1, ""
@@ -85,8 +87,8 @@ def extract_references(document: dict) -> list[dict]:
             continue
         for index, line in enumerate(text.splitlines()):
             match = _NUMBER.match(line) if numbered else _BARE_NUMBER.match(line) if bare else None
-            author_start = not numbered and not bare and _AUTHOR_START.match(line)
-            if match or author_start or (not numbered and not bare and index == 0):
+            author_start = author_date and author_date_start(line)
+            if match or author_start or (not numbered and not bare and not author_date and index == 0):
                 flush()
             if not lines:
                 page, label = block_page, next((g for g in match.groups() if g), "") if match else ""
@@ -104,6 +106,10 @@ def _match(entry: dict, papers: list[dict], titles: dict[str, str], identifiers:
     doi, arxiv = entry["doi"].casefold(), entry["arxiv_id"].casefold()
     identified = identifiers.get(("doi", doi), set()) | identifiers.get(("arxiv_id", arxiv), set())
     if identified:
+        metadata = {p["id"]: p for p in papers}
+        identified = {key for key in identified if not any(
+            entry[k] and metadata[key].get(k) and entry[k].casefold() != metadata[key][k].casefold()
+            for k in ("doi", "arxiv_id"))}
         return (next(iter(identified)), "identifier") if len(identified) == 1 else (None, "unresolved")
     raw = f" {normalized(entry['raw'])} "
     candidates = []
@@ -122,8 +128,10 @@ def _match(entry: dict, papers: list[dict], titles: dict[str, str], identifiers:
     return (candidates[0], "title") if len(candidates) == 1 else (None, "unresolved")
 
 
+@map_timing.timed("library_citations", "ライブラリの引用情報の構築")
 def citation_graph(lib: Library) -> dict:
     from papeer.core.web_research import reference_key
+    from papeer.core.reference_catalog import merged
 
     papers = [{**p, "doi": clean_doi(p.get("doi", "")).casefold(),
                "arxiv_id": clean_arxiv_id(p.get("arxiv_id", "") or p.get("doi", "")).casefold()} for p in lib.papers()]
@@ -146,7 +154,9 @@ def citation_graph(lib: Library) -> dict:
             entries = _cached_references(path, signature(path))
         except (OSError, ValueError, KeyError, TypeError):
             warnings.append({"paper_id": source, "message": "保存済みの本文を読み取れませんでした。"})
-            continue
+            entries = []
+        entries, api_warnings = merged(lib, source, paper["doi"], entries)
+        warnings.extend({"paper_id": source, "message": message} for message in api_warnings)
         for index, entry in enumerate(entries):
             target, match = _match(entry, papers, titles, identifiers)
             research_key = reference_key(entry["raw"])
@@ -163,10 +173,10 @@ def citation_graph(lib: Library) -> dict:
                 target = "ref:" + sha256(identity.encode()).hexdigest()[:24]
                 nodes.setdefault(target, {"id": target, "paper_id": None, "title": entry["title"] or entry["raw"],
                                           "year": entry["year"], "url": url})
-            ref_id = f"{source}:{index}"
-            references.append({**entry, "id": ref_id, "source": source, "target": target, "match": match, "url": url,
+            ref_id = f"{source}:{entry['reference_suffix']}"
+            references.append({**{k: v for k, v in entry.items() if k != "reference_suffix"}, "id": ref_id, "source": source, "target": target, "match": match, "url": url,
                                "research_key": research_key})
             # A self-citation still appears in the list, but a self-loop adds no navigation to the graph.
-            if source != target:
+            if source != target and entry.get("citation_status") != "unverified":
                 edges.setdefault((source, target), {"source": source, "target": target})
     return {"nodes": list(nodes.values()), "edges": list(edges.values()), "references": references, "warnings": warnings}

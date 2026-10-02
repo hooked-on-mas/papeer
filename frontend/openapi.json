@@ -8618,6 +8618,409 @@
         }
       }
     },
+    "/api/papers/{paper_id}/discovery": {
+      "get": {
+        "summary": "Read",
+        "operationId": "read_api_papers__paper_id__discovery_get",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Origin"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoveryResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Start",
+        "operationId": "start_api_papers__paper_id__discovery_post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoveryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/papers/{paper_id}/discovery/selection": {
+      "post": {
+        "summary": "Select",
+        "operationId": "select_api_papers__paper_id__discovery_selection_post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverySelection"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/papers/{paper_id}/discovery/groups": {
+      "get": {
+        "summary": "Groups",
+        "operationId": "groups_api_papers__paper_id__discovery_groups_get",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Origin"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapGroupResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Describe Groups",
+        "operationId": "describe_groups_api_papers__paper_id__discovery_groups_post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MapGroupRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health",
@@ -9387,6 +9790,314 @@
           "name"
         ],
         "title": "CreateCollectionRequest"
+      },
+      "DiscoveryEdge": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "citation",
+              "similarity",
+              "recommendation",
+              "candidate"
+            ],
+            "title": "Kind"
+          },
+          "provenance": {
+            "type": "string",
+            "title": "Provenance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "target",
+          "kind",
+          "provenance"
+        ],
+        "title": "DiscoveryEdge"
+      },
+      "DiscoveryNode": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "year": {
+            "type": "string",
+            "title": "Year",
+            "default": ""
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "default": ""
+          },
+          "doi": {
+            "type": "string",
+            "title": "Doi",
+            "default": ""
+          },
+          "arxiv_id": {
+            "type": "string",
+            "title": "Arxiv Id",
+            "default": ""
+          },
+          "first_author": {
+            "type": "string",
+            "title": "First Author",
+            "default": ""
+          },
+          "abstract": {
+            "type": "string",
+            "title": "Abstract",
+            "default": ""
+          },
+          "external_id": {
+            "type": "string",
+            "title": "External Id",
+            "default": ""
+          },
+          "external_citations": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Citations"
+          },
+          "local_citations": {
+            "type": "integer",
+            "title": "Local Citations",
+            "default": 0
+          },
+          "roles": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "references",
+                "incoming",
+                "related",
+                "prior",
+                "following"
+              ]
+            },
+            "type": "array",
+            "title": "Roles"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "default": 0
+          },
+          "prior_count": {
+            "type": "integer",
+            "title": "Prior Count",
+            "default": 0
+          },
+          "following_count": {
+            "type": "integer",
+            "title": "Following Count",
+            "default": 0
+          },
+          "reference_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Id"
+          },
+          "research_key": {
+            "type": "string",
+            "title": "Research Key"
+          },
+          "provenance": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Provenance"
+          },
+          "acquired_at": {
+            "type": "string",
+            "title": "Acquired At",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "paper_id",
+          "title",
+          "year",
+          "url",
+          "doi",
+          "arxiv_id",
+          "first_author",
+          "abstract",
+          "external_id",
+          "external_citations",
+          "local_citations",
+          "roles",
+          "reasons",
+          "score",
+          "prior_count",
+          "following_count",
+          "reference_id",
+          "research_key",
+          "provenance",
+          "acquired_at"
+        ],
+        "title": "DiscoveryNode"
+      },
+      "DiscoveryRequest": {
+        "properties": {
+          "origin": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Origin",
+            "default": ""
+          },
+          "force": {
+            "type": "boolean",
+            "title": "Force",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "DiscoveryRequest"
+      },
+      "DiscoveryResult": {
+        "properties": {
+          "origin": {
+            "type": "string",
+            "title": "Origin"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryNode"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryEdge"
+            },
+            "type": "array",
+            "title": "Edges"
+          },
+          "checked_at": {
+            "type": "string",
+            "title": "Checked At"
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "coverage": {
+            "type": "string",
+            "title": "Coverage"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/Reference"
+            },
+            "type": "array",
+            "title": "References"
+          },
+          "timing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MapTiming"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "origin",
+          "nodes",
+          "edges",
+          "checked_at",
+          "stale",
+          "warnings",
+          "coverage",
+          "references"
+        ],
+        "title": "DiscoveryResult"
+      },
+      "DiscoverySelection": {
+        "properties": {
+          "origin": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Origin",
+            "default": ""
+          },
+          "force": {
+            "type": "boolean",
+            "title": "Force",
+            "default": false
+          },
+          "node_id": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Node Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "node_id"
+        ],
+        "title": "DiscoverySelection"
       },
       "DriveLegacyRemoveRequest": {
         "properties": {
@@ -10404,6 +11115,12 @@
                 "$ref": "#/components/schemas/ResearchRecord"
               },
               {
+                "$ref": "#/components/schemas/DiscoveryResult"
+              },
+              {
+                "$ref": "#/components/schemas/MapGroupResult"
+              },
+              {
                 "$ref": "#/components/schemas/ReferenceImportResult"
               },
               {
@@ -10462,6 +11179,8 @@
           "ocr",
           "ocr-data",
           "reference-research",
+          "paper-discovery",
+          "paper-map-groups",
           "reference-import"
         ],
         "title": "JobKind",
@@ -10698,6 +11417,236 @@
         ],
         "title": "LimitWindow",
         "description": "One window of the plan's usage, as the service reports it (resets_at: seconds since the epoch)."
+      },
+      "MapGroupDescription": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "members": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Members"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "elapsed_ms": {
+            "type": "number",
+            "title": "Elapsed Ms"
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "members",
+          "name",
+          "description",
+          "evidence",
+          "provider",
+          "model",
+          "created_at",
+          "elapsed_ms",
+          "stale"
+        ],
+        "title": "MapGroupDescription"
+      },
+      "MapGroupRequest": {
+        "properties": {
+          "origin": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Origin",
+            "default": ""
+          },
+          "force": {
+            "type": "boolean",
+            "title": "Force",
+            "default": false
+          },
+          "groups": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Groups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "groups"
+        ],
+        "title": "MapGroupRequest"
+      },
+      "MapGroupResult": {
+        "properties": {
+          "origin": {
+            "type": "string",
+            "title": "Origin"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/MapGroupDescription"
+            },
+            "type": "array",
+            "title": "Groups"
+          },
+          "connection": {
+            "type": "string",
+            "title": "Connection"
+          }
+        },
+        "type": "object",
+        "required": [
+          "origin",
+          "groups",
+          "connection"
+        ],
+        "title": "MapGroupResult"
+      },
+      "MapTiming": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At"
+          },
+          "finished_at": {
+            "type": "string",
+            "title": "Finished At"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "partial",
+              "canceled",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "total_ms": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Total Ms"
+          },
+          "other_ms": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Other Ms"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/MapTimingStep"
+            },
+            "type": "array",
+            "title": "Steps"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "started_at",
+          "finished_at",
+          "status",
+          "total_ms",
+          "other_ms",
+          "steps"
+        ],
+        "title": "MapTiming"
+      },
+      "MapTimingStep": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "parent": {
+            "type": "string",
+            "title": "Parent"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "elapsed_ms": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Elapsed Ms"
+          },
+          "total_ms": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Total Ms"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Count"
+          },
+          "errors": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Errors"
+          },
+          "canceled": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Canceled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "parent",
+          "label",
+          "elapsed_ms",
+          "total_ms",
+          "count",
+          "errors",
+          "canceled"
+        ],
+        "title": "MapTimingStep"
       },
       "OcrApplied": {
         "properties": {
@@ -11888,7 +12837,14 @@
             "title": "Label"
           },
           "page": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Page"
           },
           "title": {
@@ -11924,6 +12880,33 @@
           "research_key": {
             "type": "string",
             "title": "Research Key"
+          },
+          "first_author": {
+            "type": "string",
+            "title": "First Author",
+            "default": ""
+          },
+          "abstract": {
+            "type": "string",
+            "title": "Abstract",
+            "default": ""
+          },
+          "provenance": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceProvenance"
+            },
+            "type": "array",
+            "title": "Provenance",
+            "default": []
+          },
+          "citation_status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "unverified"
+            ],
+            "title": "Citation Status",
+            "default": "confirmed"
           }
         },
         "type": "object",
@@ -11961,6 +12944,45 @@
         ],
         "title": "ReferenceImportResult"
       },
+      "ReferenceProvenance": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "PDF",
+              "Semantic Scholar",
+              "Crossref"
+            ],
+            "title": "Provider"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "checked_at": {
+            "type": "string",
+            "title": "Checked At",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider"
+        ],
+        "title": "ReferenceProvenance"
+      },
       "RenameCollectionRequest": {
         "properties": {
           "old_name": {
@@ -11991,6 +13013,68 @@
           "new_title"
         ],
         "title": "RenamePaperRequest"
+      },
+      "ResearchFailure": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "identity_mismatch",
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "returned_title": {
+            "type": "string",
+            "title": "Returned Title"
+          },
+          "expected_doi": {
+            "type": "string",
+            "title": "Expected Doi"
+          },
+          "returned_doi": {
+            "type": "string",
+            "title": "Returned Doi"
+          },
+          "expected_arxiv_id": {
+            "type": "string",
+            "title": "Expected Arxiv Id"
+          },
+          "returned_arxiv_id": {
+            "type": "string",
+            "title": "Returned Arxiv Id"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/WebSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "checked_at": {
+            "type": "string",
+            "title": "Checked At"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "title",
+          "returned_title",
+          "expected_doi",
+          "returned_doi",
+          "expected_arxiv_id",
+          "returned_arxiv_id",
+          "sources",
+          "checked_at",
+          "message"
+        ],
+        "title": "ResearchFailure"
       },
       "ResearchImportRequest": {
         "properties": {
@@ -12051,6 +13135,38 @@
             "type": "string",
             "title": "Arxiv Id",
             "default": ""
+          },
+          "first_author": {
+            "type": "string",
+            "title": "First Author",
+            "default": ""
+          },
+          "publication_year": {
+            "type": "string",
+            "title": "Publication Year",
+            "default": ""
+          },
+          "venue": {
+            "type": "string",
+            "title": "Venue",
+            "default": ""
+          },
+          "abstract": {
+            "type": "string",
+            "title": "Abstract",
+            "default": ""
+          },
+          "diagnostics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Diagnostics"
+          },
+          "lookup_version": {
+            "type": "integer",
+            "title": "Lookup Version",
+            "default": 0
           },
           "summary": {
             "type": "string",
@@ -12117,6 +13233,16 @@
             "type": "string",
             "title": "Summary Error",
             "default": ""
+          },
+          "last_failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResearchFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -12126,6 +13252,12 @@
           "raw",
           "doi",
           "arxiv_id",
+          "first_author",
+          "publication_year",
+          "venue",
+          "abstract",
+          "diagnostics",
+          "lookup_version",
           "summary",
           "basis",
           "sources",
@@ -12135,7 +13267,8 @@
           "has_summary",
           "needs_ocr",
           "version",
-          "summary_error"
+          "summary_error",
+          "last_failure"
         ],
         "title": "ResearchRecord"
       },
@@ -12290,6 +13423,11 @@
             "title": "Paper Metadata Ai Enabled",
             "default": false
           },
+          "paper_discovery_enabled": {
+            "type": "boolean",
+            "title": "Paper Discovery Enabled",
+            "default": true
+          },
           "paper_metadata_provider": {
             "type": "string",
             "title": "Paper Metadata Provider",
@@ -12320,6 +13458,19 @@
               }
             ],
             "title": "Api Key"
+          },
+          "semantic_scholar_api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "pattern": "^[!-~]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic Scholar Api Key"
           }
         },
         "type": "object",
@@ -12358,6 +13509,11 @@
             "title": "Paper Metadata Ai Enabled",
             "default": false
           },
+          "paper_discovery_enabled": {
+            "type": "boolean",
+            "title": "Paper Discovery Enabled",
+            "default": true
+          },
           "paper_metadata_provider": {
             "type": "string",
             "title": "Paper Metadata Provider",
@@ -12389,6 +13545,19 @@
             ],
             "title": "Api Key"
           },
+          "semantic_scholar_api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "pattern": "^[!-~]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic Scholar Api Key"
+          },
           "unknown_keys": {
             "items": {
               "type": "string"
@@ -12405,10 +13574,12 @@
           "timeout_seconds",
           "translation_concurrency",
           "paper_metadata_ai_enabled",
+          "paper_discovery_enabled",
           "paper_metadata_provider",
           "paper_metadata_model",
           "provider_options",
           "api_key",
+          "semantic_scholar_api_key",
           "unknown_keys"
         ],
         "title": "SettingsResponse",
@@ -13447,6 +14618,12 @@
               },
               {
                 "$ref": "#/components/schemas/ResearchRecord"
+              },
+              {
+                "$ref": "#/components/schemas/DiscoveryResult"
+              },
+              {
+                "$ref": "#/components/schemas/MapGroupResult"
               },
               {
                 "$ref": "#/components/schemas/ReferenceImportResult"

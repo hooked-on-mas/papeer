@@ -1759,6 +1759,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/papers/{paper_id}/discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read */
+        get: operations["read_api_papers__paper_id__discovery_get"];
+        put?: never;
+        /** Start */
+        post: operations["start_api_papers__paper_id__discovery_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/discovery/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Select */
+        post: operations["select_api_papers__paper_id__discovery_selection_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/discovery/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Groups */
+        get: operations["groups_api_papers__paper_id__discovery_groups_get"];
+        put?: never;
+        /** Describe Groups */
+        post: operations["describe_groups_api_papers__paper_id__discovery_groups_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -2071,6 +2124,149 @@ export interface components {
         CreateCollectionRequest: {
             /** Name */
             name: string;
+        };
+        /** DiscoveryEdge */
+        DiscoveryEdge: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "citation" | "similarity" | "recommendation" | "candidate";
+            /** Provenance */
+            provenance: string;
+        };
+        /** DiscoveryNode */
+        DiscoveryNode: {
+            /** Id */
+            id: string;
+            /** Paper Id */
+            paper_id: string | null;
+            /** Title */
+            title: string;
+            /**
+             * Year
+             * @default
+             */
+            year: string;
+            /**
+             * Url
+             * @default
+             */
+            url: string;
+            /**
+             * Doi
+             * @default
+             */
+            doi: string;
+            /**
+             * Arxiv Id
+             * @default
+             */
+            arxiv_id: string;
+            /**
+             * First Author
+             * @default
+             */
+            first_author: string;
+            /**
+             * Abstract
+             * @default
+             */
+            abstract: string;
+            /**
+             * External Id
+             * @default
+             */
+            external_id: string;
+            /** External Citations */
+            external_citations: number | null;
+            /**
+             * Local Citations
+             * @default 0
+             */
+            local_citations: number;
+            /** Roles */
+            roles: ("references" | "incoming" | "related" | "prior" | "following")[];
+            /** Reasons */
+            reasons: string[];
+            /**
+             * Score
+             * @default 0
+             */
+            score: number;
+            /**
+             * Prior Count
+             * @default 0
+             */
+            prior_count: number;
+            /**
+             * Following Count
+             * @default 0
+             */
+            following_count: number;
+            /** Reference Id */
+            reference_id: string | null;
+            /** Research Key */
+            research_key: string;
+            /** Provenance */
+            provenance: string[];
+            /**
+             * Acquired At
+             * @default
+             */
+            acquired_at: string;
+        };
+        /** DiscoveryRequest */
+        DiscoveryRequest: {
+            /**
+             * Origin
+             * @default
+             */
+            origin?: string;
+            /**
+             * Force
+             * @default false
+             */
+            force?: boolean;
+        };
+        /** DiscoveryResult */
+        DiscoveryResult: {
+            /** Origin */
+            origin: string;
+            /** Nodes */
+            nodes: components["schemas"]["DiscoveryNode"][];
+            /** Edges */
+            edges: components["schemas"]["DiscoveryEdge"][];
+            /** Checked At */
+            checked_at: string;
+            /** Stale */
+            stale: boolean;
+            /** Warnings */
+            warnings: string[];
+            /** Coverage */
+            coverage: string;
+            /** References */
+            references: components["schemas"]["Reference"][];
+            timing?: components["schemas"]["MapTiming"] | null;
+        };
+        /** DiscoverySelection */
+        DiscoverySelection: {
+            /**
+             * Origin
+             * @default
+             */
+            origin?: string;
+            /**
+             * Force
+             * @default false
+             */
+            force?: boolean;
+            /** Node Id */
+            node_id: string;
         };
         /** DriveLegacyRemoveRequest */
         DriveLegacyRemoveRequest: {
@@ -2432,7 +2628,7 @@ export interface components {
              */
             cancelled: boolean;
             /** Result */
-            result: components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["GlossaryDomainsResult"] | components["schemas"]["GlossarySplitResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | components["schemas"]["ResearchRecord"] | components["schemas"]["ReferenceImportResult"] | null;
+            result: components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["GlossaryDomainsResult"] | components["schemas"]["GlossarySplitResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | components["schemas"]["ResearchRecord"] | components["schemas"]["DiscoveryResult"] | components["schemas"]["MapGroupResult"] | components["schemas"]["ReferenceImportResult"] | null;
             /** Error */
             error: string | null;
         };
@@ -2441,7 +2637,7 @@ export interface components {
          * @description The kinds of background jobs; the names are what the frontend receives (jobKinds.ts).
          * @enum {string}
          */
-        JobKind: "translate" | "revision" | "revision-draft" | "glossary-draft" | "glossary-select" | "glossary-split" | "article" | "ask" | "check" | "import" | "export" | "interleaved" | "backup" | "restore" | "drive-sync" | "ocr" | "ocr-data" | "reference-research" | "reference-import";
+        JobKind: "translate" | "revision" | "revision-draft" | "glossary-draft" | "glossary-select" | "glossary-split" | "article" | "ask" | "check" | "import" | "export" | "interleaved" | "backup" | "restore" | "drive-sync" | "ocr" | "ocr-data" | "reference-research" | "paper-discovery" | "paper-map-groups" | "reference-import";
         /**
          * JobStarted
          * @description The answer of a route that starts a job: follow it with GET /api/jobs/{job_id} or the events.
@@ -2536,6 +2732,92 @@ export interface components {
             used_percent: number;
             /** Resets At */
             resets_at: number | null;
+        };
+        /** MapGroupDescription */
+        MapGroupDescription: {
+            /** Key */
+            key: string;
+            /** Members */
+            members: string[];
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Evidence */
+            evidence: string[];
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /** Created At */
+            created_at: string;
+            /** Elapsed Ms */
+            elapsed_ms: number;
+            /** Stale */
+            stale: boolean;
+        };
+        /** MapGroupRequest */
+        MapGroupRequest: {
+            /**
+             * Origin
+             * @default
+             */
+            origin?: string;
+            /**
+             * Force
+             * @default false
+             */
+            force?: boolean;
+            /** Groups */
+            groups: string[][];
+        };
+        /** MapGroupResult */
+        MapGroupResult: {
+            /** Origin */
+            origin: string;
+            /** Groups */
+            groups: components["schemas"]["MapGroupDescription"][];
+            /** Connection */
+            connection: string;
+        };
+        /** MapTiming */
+        MapTiming: {
+            /** Id */
+            id: string;
+            /** Started At */
+            started_at: string;
+            /** Finished At */
+            finished_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "completed" | "partial" | "canceled" | "failed";
+            /** Total Ms */
+            total_ms: number;
+            /** Other Ms */
+            other_ms: number;
+            /** Steps */
+            steps: components["schemas"]["MapTimingStep"][];
+        };
+        /** MapTimingStep */
+        MapTimingStep: {
+            /** Key */
+            key: string;
+            /** Parent */
+            parent: string;
+            /** Label */
+            label: string;
+            /** Elapsed Ms */
+            elapsed_ms: number;
+            /** Total Ms */
+            total_ms: number;
+            /** Count */
+            count: number;
+            /** Errors */
+            errors: number;
+            /** Canceled */
+            canceled: number;
         };
         /**
          * OcrApplied
@@ -3061,7 +3343,7 @@ export interface components {
             /** Label */
             label: string;
             /** Page */
-            page: number;
+            page: number | null;
             /** Title */
             title: string;
             /** Doi */
@@ -3079,6 +3361,27 @@ export interface components {
             url: string;
             /** Research Key */
             research_key: string;
+            /**
+             * First Author
+             * @default
+             */
+            first_author?: string;
+            /**
+             * Abstract
+             * @default
+             */
+            abstract?: string;
+            /**
+             * Provenance
+             * @default []
+             */
+            provenance?: components["schemas"]["ReferenceProvenance"][];
+            /**
+             * Citation Status
+             * @default confirmed
+             * @enum {string}
+             */
+            citation_status?: "confirmed" | "unverified";
         };
         /** ReferenceImportResult */
         ReferenceImportResult: {
@@ -3088,6 +3391,26 @@ export interface components {
              * @default false
              */
             added?: boolean;
+        };
+        /** ReferenceProvenance */
+        ReferenceProvenance: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "PDF" | "Semantic Scholar" | "Crossref";
+            /** Page */
+            page?: number | null;
+            /**
+             * Label
+             * @default
+             */
+            label?: string;
+            /**
+             * Checked At
+             * @default
+             */
+            checked_at?: string;
         };
         /** RenameCollectionRequest */
         RenameCollectionRequest: {
@@ -3100,6 +3423,32 @@ export interface components {
         RenamePaperRequest: {
             /** New Title */
             new_title: string;
+        };
+        /** ResearchFailure */
+        ResearchFailure: {
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "identity_mismatch";
+            /** Title */
+            title: string;
+            /** Returned Title */
+            returned_title: string;
+            /** Expected Doi */
+            expected_doi: string;
+            /** Returned Doi */
+            returned_doi: string;
+            /** Expected Arxiv Id */
+            expected_arxiv_id: string;
+            /** Returned Arxiv Id */
+            returned_arxiv_id: string;
+            /** Sources */
+            sources: components["schemas"]["WebSource"][];
+            /** Checked At */
+            checked_at: string;
+            /** Message */
+            message: string;
         };
         /** ResearchImportRequest */
         ResearchImportRequest: {
@@ -3139,6 +3488,33 @@ export interface components {
              * @default
              */
             arxiv_id: string;
+            /**
+             * First Author
+             * @default
+             */
+            first_author: string;
+            /**
+             * Publication Year
+             * @default
+             */
+            publication_year: string;
+            /**
+             * Venue
+             * @default
+             */
+            venue: string;
+            /**
+             * Abstract
+             * @default
+             */
+            abstract: string;
+            /** Diagnostics */
+            diagnostics: string[];
+            /**
+             * Lookup Version
+             * @default 0
+             */
+            lookup_version: number;
             /**
              * Summary
              * @default
@@ -3181,6 +3557,7 @@ export interface components {
              * @default
              */
             summary_error: string;
+            last_failure: components["schemas"]["ResearchFailure"] | null;
         };
         /** ResearchRequest */
         ResearchRequest: {
@@ -3272,6 +3649,11 @@ export interface components {
              */
             paper_metadata_ai_enabled?: boolean;
             /**
+             * Paper Discovery Enabled
+             * @default true
+             */
+            paper_discovery_enabled?: boolean;
+            /**
              * Paper Metadata Provider
              * @default
              */
@@ -3289,6 +3671,8 @@ export interface components {
             };
             /** Api Key */
             api_key?: string | null;
+            /** Semantic Scholar Api Key */
+            semantic_scholar_api_key?: string | null;
         };
         /**
          * SettingsResponse
@@ -3326,6 +3710,11 @@ export interface components {
              */
             paper_metadata_ai_enabled: boolean;
             /**
+             * Paper Discovery Enabled
+             * @default true
+             */
+            paper_discovery_enabled: boolean;
+            /**
              * Paper Metadata Provider
              * @default
              */
@@ -3343,6 +3732,8 @@ export interface components {
             };
             /** Api Key */
             api_key: string | null;
+            /** Semantic Scholar Api Key */
+            semantic_scholar_api_key: string | null;
             /** Unknown Keys */
             unknown_keys: string[];
         };
@@ -3743,7 +4134,7 @@ export interface components {
              * Result
              * @default null
              */
-            result: components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["GlossaryDomainsResult"] | components["schemas"]["GlossarySplitResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | components["schemas"]["ResearchRecord"] | components["schemas"]["ReferenceImportResult"] | null;
+            result: components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["GlossaryDomainsResult"] | components["schemas"]["GlossarySplitResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | components["schemas"]["ResearchRecord"] | components["schemas"]["DiscoveryResult"] | components["schemas"]["MapGroupResult"] | components["schemas"]["ReferenceImportResult"] | null;
             /**
              * Error
              * @default null
@@ -8093,6 +8484,195 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ResearchImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_api_papers__paper_id__discovery_get: {
+        parameters: {
+            query?: {
+                origin?: string;
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_api_papers__paper_id__discovery_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoveryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    select_api_papers__paper_id__discovery_selection_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverySelection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    groups_api_papers__paper_id__discovery_groups_get: {
+        parameters: {
+            query?: {
+                origin?: string;
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapGroupResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    describe_groups_api_papers__paper_id__discovery_groups_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MapGroupRequest"];
             };
         };
         responses: {

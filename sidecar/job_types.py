@@ -13,6 +13,7 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from sidecar.schemas.research import ResearchRecord, ReferenceImportResult
+from sidecar.schemas.discovery import DiscoveryResult, MapGroupResult
 
 
 class JobKind(StrEnum):
@@ -35,12 +36,22 @@ class JobKind(StrEnum):
     OCR = "ocr"  # A paper's pages read by OCR (or one page by the AI) and its extraction written again.
     OCR_DATA = "ocr-data"  # Tesseract's language data downloaded to this PC.
     REFERENCE_RESEARCH = "reference-research"
+    PAPER_DISCOVERY = "paper-discovery"
+    MAP_GROUPS = "paper-map-groups"
     REFERENCE_IMPORT = "reference-import"
 
 
 # The jobs that copy or replace the whole library: nothing else runs beside them (JobManager), and the
 # requests that would touch the library wait or are refused meanwhile (deps.snapshot_running).
 SNAPSHOT_KINDS = frozenset({JobKind.BACKUP, JobKind.RESTORE, JobKind.DRIVE_SYNC})
+
+# Reference lookup reads the extracted PDF and writes separate research records. These jobs leave
+# that input intact; OCR, reference import and library snapshots must still wait for lookup to finish.
+REFERENCE_RESEARCH_COMPATIBLE_KINDS = frozenset({
+    JobKind.TRANSLATE, JobKind.REVISION, JobKind.REVISION_DRAFT,
+    JobKind.GLOSSARY_DRAFT, JobKind.GLOSSARY_SELECT, JobKind.GLOSSARY_SPLIT,
+    JobKind.ARTICLE, JobKind.ASK, JobKind.EXPORT, JobKind.INTERLEAVED,
+})
 
 JobStatus = Literal["running", "succeeded", "failed", "cancelled"]
 
@@ -207,6 +218,8 @@ RESULT_TYPES: dict[JobKind, Any] = {
     JobKind.OCR: OcrResult,
     JobKind.OCR_DATA: OcrDataResult,
     JobKind.REFERENCE_RESEARCH: ResearchRecord,
+    JobKind.PAPER_DISCOVERY: DiscoveryResult,
+    JobKind.MAP_GROUPS: MapGroupResult,
     JobKind.REFERENCE_IMPORT: ReferenceImportResult,
 }
 
@@ -215,7 +228,7 @@ RESULT_TYPES: dict[JobKind, Any] = {
 JobResult = Union[
     TranslateResult, RevisionDraftResult, GlossaryDraftResult, GlossaryDomainsResult, GlossarySplitResult, ArticleResult, AskResult, ImportResult,
     ExportResult, InterleavedResult, BackupResult, RestoreResult, DriveSyncResult, OcrResult, OcrDataResult,
-    CheckResult, ResearchRecord, ReferenceImportResult,
+    CheckResult, ResearchRecord, DiscoveryResult, MapGroupResult, ReferenceImportResult,
 ]
 
 _RESULT_ADAPTERS = {kind: TypeAdapter(result_type) for kind, result_type in RESULT_TYPES.items()}

@@ -24,6 +24,8 @@ const KIND_LABELS: Record<string, string> = {
   "drive-sync": "同期",
   ocr: "OCR",
   "ocr-data": "OCRの言語データのダウンロード",
+  "paper-discovery": "論文マップの取得",
+  "paper-map-groups": "論文グループの説明",
   "reference-research": "参考文献のWeb調査",
   "reference-import": "参考文献のPDF取り込み・サマリー作成",
 };

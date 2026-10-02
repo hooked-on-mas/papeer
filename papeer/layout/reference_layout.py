@@ -36,6 +36,14 @@ _DOI = re.compile(r"\b10\.\d{4,9}/\S+", re.I)
 _PROSE = re.compile(r"\b(?:we (?:show|prove|use|propose|consider)|this (?:paper|section|result)|is currently|received the|research interests)\b", re.I)
 _QUOTED = re.compile(r'"[^"\n]{2,}"|“[^”]{2,}”|「[^」]{2,}」')
 _INSTRUCTION = re.compile(r"^(?:set|run|let|compute|repeat|return|initialize|if|for each)\b", re.I)
+_AUTHOR_START = re.compile(r"^(?:[ˇ´]*[^\W\d_][\w’´'\-]+,\s+[A-Z]\.|[A-Z]\.\s*[^\W\d_][\w’'\-]+)")
+_CORPORATE_DATE = re.compile(r"^[^\W\d_][\w’'\-]*(?:\s+[\w’'\-]+){0,7}\s+\((?:18|19|20)\d{2}[a-z]?\)[.]")
+
+
+def author_date_start(line: str) -> bool:
+    """An author boundary, rather than any pair of capitalised title words."""
+    dated = re.match(r"^(.{2,180})\((?:18|19|20)\d{2}[a-z]?\)[.]", line)
+    return bool(_AUTHOR_START.match(line) or _CORPORATE_DATE.match(line) or dated and _AUTHOR.search(dated[1]))
 
 
 def reference_evidence(text: str) -> list[str]:
@@ -209,27 +217,61 @@ def reference_text_blocks(document: dict) -> list[tuple[int, str]]:
     """
     result = []
     active = False
+    numbered = False
+    author_date = False
+    pages = {page["number"]: page for page in document["pages"]}
     for block in _reading_sequence(document):
-        if block.get("kind") in {"formula", "table", "figure", "algorithm"}:
+        if block.get("kind") in {"table", "figure", "algorithm"}:
             continue
         lines = [line.strip() for line in block["text"].splitlines() if line.strip()]
+        text = "\n".join(lines)
+        page = pages[block["page"]]
+        gutter = (page.get("reading_order") or {}).get("gutter")
+        x0, y0, x1, _ = block["bbox"]
+        # Older extractions mark journal/page footers as references because they contain a year.
+        # They must not become part of the last entry or interrupt a cross-page continuation.
+        if (gutter is not None and x0 < gutter < x1 and page.get("height")
+                and y0 > page["height"] * .9 and not _ENTRY.search(text)):
+            continue
+        if text.isdecimal() and page.get("height") and y0 > page["height"] * .9:
+            continue
+        if block.get("kind") == "formula" and not (active and (numbered or author_date) and len(text) < 200 and _PAGES.search(text)):
+            continue
         rest = _split_heading(lines)
         if rest is not None:
             active = True
+            numbered = False
+            author_date = False
             result.append((block["page"], ""))
         elif lines and len(lines[0]) < 160 and _END.match(lines[0]):
             active = False
+            numbered = False
+            author_date = False
         if not active:
             continue
         text = rest if rest is not None else "\n".join(lines)
         if not text:
             continue
+        # A PDF block can contain the end of entry N and the start of N+1. Requiring each
+        # fragment to independently resemble a bibliography drops short titles, book venues
+        # and page ranges, then joins the surviving pieces to the wrong reference.
+        # Navigation retains this heading-gated numbered flow without altering translation marks.
+        entry = _ENTRY.search(text)
+        if (numbered or author_date and len(text) < 1200) and not _PROSE.search(text) and not _INSTRUCTION.match(text):
+            result.append((block["page"], text))
+            continue
         if block.get("kind") == "reference" or reference_evidence(text):
             result.append((block["page"], text))
+            numbered = entry is not None
+            author_date = any(author_date_start(line) for line in text.splitlines())
             continue
         # The translation deliberately leaves a mixed continuation/new-entry block translatable.
         # For navigation, keep it if both parts independently have bibliographic evidence.
-        entry = _ENTRY.search(text)
         if entry and text[:entry.start()].strip() and reference_evidence(text[:entry.start()]) and reference_evidence(text[entry.start():]):
             result.append((block["page"], text))
+            numbered = True
+        else:
+            numbered = False
+            author_date = False
+            result.append((block["page"], ""))
     return result

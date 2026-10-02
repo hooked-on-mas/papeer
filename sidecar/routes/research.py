@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 from papeer.core import ocr, web_research
 from papeer.core.collection_paths import normalize_collection_name
 from papeer.core.paths import PaperFiles
-from papeer.core.reference_pdf import download_pdf, validate_pdf
+from papeer.core.reference_pdf import download_pdf, validate_pdf, validate_reference_identity
 from papeer.core.service import PaperService
 from papeer.providers import Cancelled, check_cancel, spec_for
 from sidecar import deps
@@ -23,7 +23,12 @@ router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
 @router.get("/api/research-capabilities")
 def capabilities() -> dict[str, bool]:
-    return {"web_search": spec_for(deps.get_settings().provider).web_search}
+    settings = deps.get_settings()
+    return {"web_search": spec_for(settings.provider).web_search,
+            "paper_discovery_enabled": settings.paper_discovery_enabled,
+            "reference_research_enabled": settings.paper_metadata_ai_enabled,
+            "reference_lookup": True,
+            "reference_web_search": spec_for(settings.for_paper_metadata().provider).web_search}
 
 
 @router.get("/api/papers/{paper_id}/reference-research", response_model=list[ResearchRecord])
@@ -40,30 +45,36 @@ def start_research(paper_id: str, body: ResearchRequest) -> JobStarted:
         web_research.reference_entry(lib, paper_id, body.reference_id)
     else:
         web_research.get_record(lib, paper_id, body.research_key)
-    settings = deps.get_settings()
-    if not spec_for(settings.provider).web_search:
-        raise ValueError("この接続先はWeb検索に対応していません。設定で対応するAI接続を選んでください。")
+    settings = deps.get_settings().for_paper_metadata()
+    if not settings.paper_metadata_ai_enabled:
+        raise ValueError("設定の「論文情報の取得にAIを使う」をONにすると、参考文献の情報を取得できます。")
 
     def action(cancel, progress, _page_ready):
-        progress("参考文献の内容・入手先をWebで調べています…")
+        if not deps.get_settings().paper_metadata_ai_enabled:
+            raise Cancelled("論文情報のAI取得がOFFになったため、収集を中止しました。")
+        check_cancel(cancel)
+        progress("Semantic Scholarを優先して参考文献を取得し、Crossref・AIで不足情報を補完しています…")
         provider = deps.provider_for(settings, cancel)
-        record = (web_research.research_reference(lib, paper_id, body.reference_id, provider) if body.reference_id
-                  else web_research.research_saved(lib, paper_id, body.research_key, provider))
-        deps.paper_changed(paper_id)
+        try:
+            record = (web_research.research_reference(lib, paper_id, body.reference_id, provider) if body.reference_id
+                      else web_research.research_saved(lib, paper_id, body.research_key, provider))
+        finally:
+            # Failures can save diagnostic evidence while preserving the previous good record.
+            deps.paper_changed(paper_id)
         return record
 
     return deps.submit_job(JobKind.REFERENCE_RESEARCH, action, paper_id)
 
 
 def _record_for_import(lib, paper_id: str, key: str) -> dict:
-    from papeer.core.citations import citation_graph, extract_references
+    from papeer.core.citations import citation_graph
 
     existing = next((r for r in web_research.records(lib, paper_id) if r["key"] == key), None)
     # A user may already have a PDF, and should not have to search the web first.
     if existing:
         record = existing
     else:
-        entry = next((r for r in extract_references(lib.document(paper_id)) if web_research.reference_key(r["raw"]) == key), None)
+        entry = next((r for r in citation_graph(lib)["references"] if r["source"] == paper_id and r["research_key"] == key), None)
         if entry is None:
             raise ValueError("参考文献が見つかりません。")
         record = web_research.normalized_record({**entry, "basis": "metadata"}, entry["raw"], key)
@@ -117,6 +128,7 @@ def start_import(paper_id: str, key: str, body: ResearchImportRequest) -> JobSta
                         candidate = record["pdfs"][body.pdf_index]
                         progress("PDFを取得しています…")
                         download_pdf(candidate["url"], path, cancel, progress)
+                        validate_reference_identity(path, record["title"], record["doi"])
                         record["version"] = candidate["version"]
                     else:
                         record["version"] = "手元のPDF（版は原文で確認）"

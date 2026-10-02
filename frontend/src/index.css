@@ -1,4 +1,9 @@
 @import "tailwindcss";
+
+@media (prefers-reduced-motion: no-preference) {
+  .reference-node { animation: reference-appear 350ms ease-out; transition: opacity 180ms ease; }
+  @keyframes reference-appear { from { opacity: 0; } }
+}
 @import "@fontsource-variable/geist";
 
 /* dark: follows the theme setting (data-theme), not only the OS preference. */
@@ -49,6 +54,14 @@
 }
 
 :root {
+  --map-group-1: oklch(0.58 0.16 245);
+  --map-group-2: oklch(0.56 0.15 155);
+  --map-group-3: oklch(0.60 0.17 55);
+  --map-group-4: oklch(0.57 0.16 310);
+  --map-group-5: oklch(0.57 0.17 15);
+  --map-group-6: oklch(0.57 0.12 200);
+  --map-group-7: oklch(0.58 0.15 85);
+  --map-group-8: oklch(0.57 0.13 275);
   --background: oklch(0.985 0.004 80);
   --foreground: oklch(0.22 0.01 260);
   --card: oklch(1 0 0);

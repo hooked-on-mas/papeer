@@ -117,7 +117,8 @@ def import_glossary(body: GlossaryFileRequest):
 @router.put("/api/glossary")
 def put_global_glossary(body: GlobalGlossaryRequest):
     # A dictionary changed in another window since this one read it is a GlossaryConflict (409).
-    with deps.job_manager.idle("実行中の処理が終わってから共通辞書を保存してください。"):
+    with deps.job_manager.idle("実行中の処理が終わってから共通辞書を保存してください。",
+                               ignore=frozenset({JobKind.REFERENCE_RESEARCH})):
         terms = tools.validate_terms(body.terms)
         save_global_glossary(deps.get_library().root, terms, body.expected_terms)
     return {"count": len(terms)}
@@ -161,7 +162,8 @@ def put_local_glossary(paper_id: str, body: PaperGlossaryRequest):
     if any(not s.strip() or len(s) > 100 for s in body.dismissed):
         raise Invalid("確認しない語は1〜100文字で指定してください。")
     dismissed = list(dict.fromkeys(s.strip().casefold() for s in body.dismissed))
-    with deps.job_manager.idle("実行中の処理が終わってから訳語指定を保存してください。"):
+    with deps.job_manager.idle("実行中の処理が終わってから訳語指定を保存してください。",
+                               ignore=frozenset({JobKind.REFERENCE_RESEARCH})):
         save_paper_glossary(lib.root, paper_id, terms, dismissed, body.expected)
     return {"terms": terms, "dismissed": dismissed}
 
@@ -195,7 +197,8 @@ def put_paper_domains(paper_id: str, body: PaperDomainsRequest):
 def add_paper_term(paper_id: str, body: GlossaryTermRequest):
     lib = deps.get_library()
     lib.paper_folder(paper_id)
-    with deps.job_manager.idle("実行中の処理が終わってから辞書に登録してください。"):
+    with deps.job_manager.idle("実行中の処理が終わってから辞書に登録してください。",
+                               ignore=frozenset({JobKind.REFERENCE_RESEARCH})):
         term = tools.validate_terms([{"source": body.source, "target": body.target}])[0]
         return {"domain": add_glossary_term(lib.root, paper_id, term["source"], term["target"])}
 

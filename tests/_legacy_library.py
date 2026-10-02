@@ -107,7 +107,7 @@ def legacy_backup(root: Path, destination: Path) -> None:
 # checks that this list is complete).
 LATER_COLUMNS = {"bookmarks": ("kind", "color", "rects"), "papers": ("doi", "arxiv_id", "venue"),
                  "messages": ("research",)}
-LATER_TABLES = {"reference_research": {"source", "key", "data"}}
+LATER_TABLES = {"reference_research": {"source", "key", "data"}, "paper_discovery": {"source", "origin", "data"}}
 
 
 def mark_unversioned(db: sqlite3.Connection) -> None:

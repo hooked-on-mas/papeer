@@ -21,7 +21,7 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
       { keys: ["Ctrl", "B"], label: "ライブラリの表示を切り替え" },
       { keys: ["Ctrl", "1〜4"], label: "タブを切り替え（PDF を読む / サマリー / チャット / メモ・整理）。集中表示中は右パネルに開閉" },
       { keys: ["Ctrl", "5"], label: "付箋タブを開く（集中表示を終了）" },
-      { keys: ["Ctrl", "6"], label: "参考文献・引用ネットワークを開く（集中表示を終了）" },
+      { keys: ["Ctrl", "6"], label: "論文マップを開く（集中表示を終了）" },
       { keys: ["F11"], label: "集中表示" },
       { keys: ["Ctrl", ","], label: "接続・設定を開く" },
       { keys: ["Esc"], label: "集中表示を終了" },

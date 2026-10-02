@@ -43,8 +43,10 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
   // Per connection: its fields (cli_path, base_url) and the model/effort chosen for it.
   const [options, setOptions] = useState<ProviderOptions>({});
   const [apiKey, setApiKey] = useState("");
+  const [semanticKey, setSemanticKey] = useState("");
   const [concurrency, setConcurrency] = useState(0);
   const [metadataAi, setMetadataAi] = useState(false);
+  const [discoveryEnabled, setDiscoveryEnabled] = useState(true);
   const [metadataProvider, setMetadataProvider] = useState("");
   const [dirty, setDirty] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -67,8 +69,10 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
     initial[lookupProvider] = { ...initial[lookupProvider], paper_metadata_model: settings.paper_metadata_model || "" };
     setOptions(initial);
     setApiKey(settings.api_key || "");
+    setSemanticKey(settings.semantic_scholar_api_key || "");
     setConcurrency(settings.translation_concurrency ?? 0);
     setMetadataAi(settings.paper_metadata_ai_enabled === true);
+    setDiscoveryEnabled(settings.paper_discovery_enabled !== false);
     setMetadataProvider(settings.paper_metadata_provider || "");
     setDirty(false);
     setCheckResult(null);
@@ -120,11 +124,13 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
     timeout_seconds: settings?.timeout_seconds ?? 900,
     translation_concurrency: concurrency,
     paper_metadata_ai_enabled: metadataAi,
+    paper_discovery_enabled: discoveryEnabled,
     paper_metadata_provider: metadataProvider,
     paper_metadata_model: metadataModel.trim(),
     // Each connection's fields plus the model/effort chosen for it, so switching back restores them.
     provider_options: trimmed({ ...options, [provider]: { ...options[provider], model, reasoning_effort: hasEfforts ? effort : "" } }),
     api_key: apiKey.trim(),
+    semantic_scholar_api_key: semanticKey.trim(),
   });
 
   const metadataValues = () => ({ ...values(), provider: lookupProvider,
@@ -163,8 +169,10 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
     model, setModel: setOption("model"),
     effort, setEffort: setOption("reasoning_effort"),
     apiKey, setApiKey: edit(setApiKey),
+    semanticKey, setSemanticKey: edit(setSemanticKey),
     concurrency, setConcurrency: edit(setConcurrency),
     metadataAi, setMetadataAi: edit(setMetadataAi),
+    discoveryEnabled, setDiscoveryEnabled: edit(setDiscoveryEnabled),
     metadataProvider, setMetadataProvider: edit(setMetadataProvider), metadataSpec,
     metadataOption, setMetadataOption, metadataFallbackModel,
     metadataModel, setMetadataModel: setMetadataOption("paper_metadata_model"),
@@ -277,14 +285,25 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
         </Field>
         <div className="space-y-2 rounded-lg border p-3">
           <label className="flex items-center gap-2 font-medium">
+            <input type="checkbox" checked={form.discoveryEnabled} onChange={e => form.setDiscoveryEnabled(e.target.checked)} />
+            論文マップで外部の関連論文を自動取得する
+          </label>
+          <p className="text-xs text-muted-foreground">初期値はONです。タイトル・DOI・arXiv IDをSemantic Scholarに送り、参考文献・近い論文・先行研究・後続研究を探します。参考文献はCrossrefとPDFで補います。取得結果は7日間再利用します。</p>
+          <Field label="Semantic Scholar APIキー" hint="任意です。空欄でも取得できますが、混雑時は制限されることがあります。キーは保存されず、終了時に破棄されます。">
+            <Input aria-label="Semantic Scholar APIキー" type="password" autoComplete="off" value={form.semanticKey}
+              onChange={e => form.setSemanticKey(e.target.value)} />
+          </Field>
+        </div>
+        <div className="space-y-2 rounded-lg border p-3">
+          <label className="flex items-center gap-2 font-medium">
             <input type="checkbox" checked={form.metadataAi} onChange={e => form.setMetadataAi(e.target.checked)}
               aria-describedby="paper-metadata-ai-hint" />
             論文情報の取得にAIを使う
           </label>
           <p id="paper-metadata-ai-hint" className="text-[0.75rem] leading-relaxed text-muted-foreground">
-            初期値はOFFです。ONにすると、PDF追加時に不足している筆頭著者・出版年・掲載誌・DOIなどを調べます。
-            論文の冒頭のテキストを情報取得用のAIへ送り、利用枠・トークンを消費します。入力済みの情報は保持します。
-            タイトルやDOIなどは、外部の書誌情報サービスにも送信します。
+            初期値はOFFです。ONにすると、PDF追加時に不足している筆頭著者・出版年・掲載誌・DOIなどを調べます。論文マップを開くと、未取得の文献の概要・出典・PDF入手先も最大5件ずつ自動取得します。
+            参考文献はSemantic Scholarを優先し、Crossrefで補完します。不足する情報の補完と、論文マップのグループ名・共通点の説明に、下の情報取得用の接続先とモデルを使います。グループの説明には所属論文のタイトル・抄録・引用関係を送り、保存済みの説明は再利用します。
+            タイトルやDOIなどを外部の書誌情報サービスへ送信します。AIを使う場合は論文の冒頭のテキストや参考文献の書誌情報も送り、利用枠・トークンを消費します。入力済みの情報は保持します。
           </p>
           <div className="space-y-1">
             <label htmlFor={metadataProviderId} className="block">情報取得の接続先</label>

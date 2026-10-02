@@ -462,7 +462,7 @@ export function AppShell() {
                 </TabsTrigger>
                 <TabsTrigger value="notes" title={withShortcutLabels("Ctrl+4")}>メモ・整理</TabsTrigger>
                 <TabsTrigger value="sticky-notes" title={withShortcutLabels("Ctrl+5")}>付箋</TabsTrigger>
-                <TabsTrigger value="references" title={withShortcutLabels("Ctrl+6")}>参考文献</TabsTrigger>
+                <TabsTrigger value="references" title={withShortcutLabels("Ctrl+6")}>論文マップ</TabsTrigger>
               </TabsList>
             </div>
 
@@ -473,19 +473,19 @@ export function AppShell() {
                   <ReaderTab />
                   {/* The others unmount with their tab in the same update, never lingering beside the same
                       pane opened in the side panel (see features/reader/sidePanel.ts). */}
-                  <TabsContent value="summary" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                  <TabsContent value="summary" className="flex-1 p-0 m-0 overflow-hidden outline-none flex data-hidden:hidden min-h-0">
                     {activeTab === "summary" && <SummaryPane />}
                   </TabsContent>
-                  <TabsContent value="chat" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                  <TabsContent value="chat" className="flex-1 p-0 m-0 overflow-hidden outline-none flex data-hidden:hidden min-h-0">
                     {activeTab === "chat" && <ChatPane />}
                   </TabsContent>
-                  <TabsContent value="notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                  <TabsContent value="notes" className="flex-1 p-0 m-0 overflow-hidden outline-none flex data-hidden:hidden min-h-0">
                     {activeTab === "notes" && <NotesPane />}
                   </TabsContent>
-                  <TabsContent value="sticky-notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                  <TabsContent value="sticky-notes" className="flex-1 p-0 m-0 overflow-hidden outline-none flex data-hidden:hidden min-h-0">
                     {activeTab === "sticky-notes" && <StickyNotesTab />}
                   </TabsContent>
-                  <TabsContent value="references" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                  <TabsContent value="references" className="flex-1 p-0 m-0 overflow-hidden outline-none flex data-hidden:hidden min-h-0">
                     {activeTab === "references" && <ReferencesPane />}
                   </TabsContent>
                 </>

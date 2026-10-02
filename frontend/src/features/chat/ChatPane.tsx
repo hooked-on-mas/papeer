@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { FileText, Globe, Loader2, MessageSquare, Send, Square, X } from "lucide-react";
 import { create } from "zustand";
-import { paperBusy, useStore, type PassageAttachment, type PassageLocation } from "@/store";
-import { runningPaperJob } from "@/features/jobs/jobSelectors";
+import { useStore, type PassageAttachment, type PassageLocation } from "@/store";
+import { paperBusyFor, runningPaperJob } from "@/features/jobs/jobSelectors";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { UsageLine } from "@/components/UsageLine";
 import { useCollections, useMessages, usePaperList } from "@/api/hooks";
@@ -94,7 +94,7 @@ export function ChatPane() {
   const activePaperId = useStore((state) => state.activePaperId);
   // The same object until its own progress event, so that other jobs' events don't render the chat.
   const askJob = useStore((state) => runningPaperJob(state.activeJobs, state.activePaperId, ["ask"]));
-  const busy = useStore((state) => paperBusy(state.activeJobs, state.activePaperId));
+  const busy = useStore((state) => paperBusyFor(state.activeJobs, state.activePaperId, "ask"));
   const { data: messages = [] } = useMessages(activePaperId);
   // Kept in the store: attaching passages means leaving this tab for the reader and coming back.
   const input = useStore((state) => (activePaperId && state.chatInputs[activePaperId]) || "");

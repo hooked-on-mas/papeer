@@ -23,11 +23,13 @@ class SettingsModel(BaseModel):
     timeout_seconds: int = _DEFAULTS.timeout_seconds
     translation_concurrency: int = _DEFAULTS.translation_concurrency  # 0: automatic (1 for a local model, else 3)
     paper_metadata_ai_enabled: StrictBool = _DEFAULTS.paper_metadata_ai_enabled
+    paper_discovery_enabled: StrictBool = _DEFAULTS.paper_discovery_enabled
     paper_metadata_provider: str = _DEFAULTS.paper_metadata_provider
     paper_metadata_model: str = _DEFAULTS.paper_metadata_model
     # By provider id: that connection's own settings (cli_path, base_url, model, reasoning_effort).
     provider_options: dict[str, dict[str, str]] = Field(default_factory=dict)
     api_key: str | None = None
+    semantic_scholar_api_key: str | None = Field(default=None, max_length=512, pattern=r"^[!-~]*$")
 
 
 class SettingsResponse(SettingsModel):

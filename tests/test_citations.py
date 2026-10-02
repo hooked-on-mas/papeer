@@ -43,6 +43,27 @@ def test_author_date_and_heading_in_same_block():
     assert refs[1]["year"] == "2021"
 
 
+def test_author_date_entries_rejoin_pdf_blocks_without_splitting_title_words():
+    doc = document((30, "References"),
+        (30, "Egli, P., Gaschen, D., and Hutter, M. (2022). Soil-Adaptive Excavation Using Rein-"),
+        (30, "forcement Learning. IEEE Robotics and Automation Letters, 7(4):9778–9785."),
+        (30, "Jud, D., Kerscher, S., and Hutter, M."),
+        (31, "(2021b). HEAP - The autonomous walking excavator. Automation in Construction, 129:103783."),
+        (31, "Jud, D., Leemann, P., and Hutter, M. (2019). Autonomous Free-Form Trenching Using a"),
+        (31, "Walking Excavator. IEEE Robotics and Automation Letters, 4(4):3208–3215."),
+        (31, "Bureau of Labor Statistics, U. D. o. L. (2022). A look at workplace deaths and injuries."),
+        (31, "McKinsey (2022). Addressing the US construction labor shortage."),
+        (31, "Appendix A"), (31, "We show an unrelated experiment, 2023."))
+    before = json.dumps(doc)
+    refs = extract_references(doc)
+    assert [r["title"] for r in refs] == ["Soil-Adaptive Excavation Using Reinforcement Learning",
+        "HEAP - The autonomous walking excavator", "Autonomous Free-Form Trenching Using a Walking Excavator",
+        "A look at workplace deaths and injuries", "Addressing the US construction labor shortage"]
+    assert [r["page"] for r in refs] == [30, 30, 31, 31, 31]
+    assert "Jud, D." in refs[1]["raw"] and "129:103783" in refs[1]["raw"]
+    assert json.dumps(doc) == before
+
+
 def test_bare_numbers_do_not_split_wrapped_volume():
     refs = extract_references(document((1, "References"),
                                       (1, "1 A. Smith, Control of systems. Journal,\n59 (2014), 123-124."),
@@ -80,6 +101,31 @@ def test_real_two_column_pdf(tmp_path):
     refs = extract_references(extract_pdf(path))
     assert [r["label"] for r in refs] == ["1", "2"]
     assert refs[1]["arxiv_id"] == "2101.12345"
+
+
+def test_numbered_flow_keeps_short_fragments_formula_page_ranges_and_excludes_footer():
+    texts = ["References", '[1] Smith, A., 1993, “Robust Time-Delay Control,” ASME J.',
+             'Dyn. Syst. Meas. Control, 115(2), pp. 303–306.\n[2] Jones, B., 1990, “Preshaping Command Inputs to',
+             'Reduce System Vibrations,” ASME J. Dyn. Syst. Meas. Control, 112(1), pp.',
+             '76–82.', '[3] Brown, C., 1947, “The Orthogonal Development of',
+             'Non-Linear Functionals in Series,” Ann. Math.,', '48(2), pp. 385–392.',
+             '[4] Doe, D., 1966, Gaussian Quadrature Formulas, Vol. 39,',
+             'Prentice Hall, Englewood Cliffs, NJ.']
+    blocks = [{"id": str(i), "page": 1, "text": text, "bbox": [40, 60+i*20, 285, 75+i*20],
+               "kind": "formula" if i == 6 else "text", "font_size": 8, "flow_lane": 0}
+              for i, text in enumerate(texts)]
+    blocks.append({"id": "footer", "page": 1, "text": "Transactions of the ASME JULY 2018, Vol. 140 / 071009-11",
+                   "bbox": [40, 750, 570, 760], "kind": "reference", "font_size": 8})
+    doc = {"blocks": blocks, "pages": [{"number": 1, "width": 600, "height": 800,
+                                       "reading_order": {"columns": 2, "gutter": 300}}]}
+    before = json.dumps(doc)
+    refs = extract_references(doc)
+    assert [r["label"] for r in refs] == ["1", "2", "3", "4"]
+    assert refs[0]["title"] == "Robust Time-Delay Control" and "303–306" in refs[0]["raw"]
+    assert refs[1]["title"] == "Preshaping Command Inputs to Reduce System Vibrations"
+    assert "385–392" in refs[2]["raw"] and "Prentice Hall" in refs[3]["raw"]
+    assert all("071009-11" not in r["raw"] for r in refs)
+    assert json.dumps(doc) == before
 
 
 def add_paper(lib, number, title, refs="", **metadata):

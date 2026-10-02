@@ -15,7 +15,7 @@ import pytest
 from sidecar import deps, jobs
 from sidecar.app import app
 from sidecar.job_types import (
-    RESULT_TYPES, SNAPSHOT_KINDS, ArticleResult, BackupResult, GlossaryTerm, ImportResult, JobKind, ServerEvent,
+    REFERENCE_RESEARCH_COMPATIBLE_KINDS, RESULT_TYPES, SNAPSHOT_KINDS, ArticleResult, BackupResult, GlossaryTerm, ImportResult, JobKind, ServerEvent,
     TranslateResult, Usage, job_result,
 )
 from sidecar.jobs import JobManager
@@ -39,6 +39,12 @@ def test_the_frontend_names_the_same_kinds():
     block = re.search(r"export type JobResults = \{(.*?)\};", results, re.S)
     assert block
     assert set(re.findall(r'^\s*"?([a-z-]+)"?:', block[1], re.M)) == {kind.value for kind in JobKind}
+
+
+def test_frontend_reference_lookup_concurrency_matches_the_sidecar():
+    source = (FRONTEND / "features/jobs/jobKinds.ts").read_text("utf-8")
+    assert set(_ts_list(source, "REFERENCE_RESEARCH_COMPATIBLE_JOBS")) == {
+        kind.value for kind in REFERENCE_RESEARCH_COMPATIBLE_KINDS}
 
 
 def test_the_domain_jobs_have_results_of_their_shape():

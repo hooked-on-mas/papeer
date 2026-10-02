@@ -3,9 +3,11 @@ import { QK } from "@/lib/queryKeys";
 import { openReferencePaper } from "./researchNavigation";
 import { useAutoResearch } from "./autoResearch";
 
-const refresh = () => [[QK.research], [QK.citations], [QK.papers], [QK.collections], [QK.reading], [QK.article]];
+const refresh = () => [[QK.discovery], [QK.research], [QK.citations], [QK.papers], [QK.collections], [QK.reading], [QK.article]];
 
 export const researchJobHandlers: JobHandlers = {
+  "paper-discovery": { quiet: true, refresh: () => [[QK.discovery], [QK.citations]] },
+  "paper-map-groups": { quiet: true, refresh: () => [[QK.mapGroups]] },
   "reference-research": {
     refresh,
     succeeded: (event, { done, status }) => {

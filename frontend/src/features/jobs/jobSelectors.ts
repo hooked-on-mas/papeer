@@ -9,7 +9,7 @@
  * Kept apart from the store so that they can be tested.
  */
 import type { Job } from "../../store/index.ts";
-import { isJobKind, type JobKind } from "./jobKinds.ts";
+import { isJobKind, REFERENCE_RESEARCH_COMPATIBLE_JOBS, type JobKind } from "./jobKinds.ts";
 
 export function isRunning(job: Job): boolean {
   return (job.status ?? "running") === "running";
@@ -29,6 +29,12 @@ export function anyJobRunning(jobs: Job[]): boolean {
 /** Whether a job of `paperId` runs, leaving out the kinds in `ignore`. */
 export function paperBusy(jobs: Job[], paperId: string | null, ignore: readonly JobKind[] = []): boolean {
   return !!paperId && jobs.some((j) => isRunning(j) && j.paper_id === paperId && !isJobKind(j.kind, ignore));
+}
+
+/** Whether the requested work must wait. Destructive actions keep using paperBusy without exclusions. */
+export function paperBusyFor(jobs: Job[], paperId: string | null, kind: JobKind, ignore: readonly JobKind[] = []): boolean {
+  return paperBusy(jobs, paperId, isJobKind(kind, REFERENCE_RESEARCH_COMPATIBLE_JOBS)
+    ? [...ignore, "reference-research", "paper-discovery", "paper-map-groups"] : [...ignore, "paper-discovery", "paper-map-groups"]);
 }
 
 /** How far a job has got, as 「1/2」, or "" before it has counted anything. */

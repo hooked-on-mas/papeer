@@ -18,6 +18,13 @@ from papeer.core.translation_status import stored_status
 from papeer.pdf.pdf_engine import PDF_LOCK
 
 
+def _paper_discovery(db: sqlite3.Connection, _root: Path) -> None:
+    db.execute("""CREATE TABLE paper_discovery (
+        source TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+        origin TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(source,origin)
+    )""")
+
+
 def _web_research(db: sqlite3.Connection, _root: Path) -> None:
     """Version 6: research provenance belongs to the saved exchange, not today's switch."""
     db.execute("ALTER TABLE messages ADD COLUMN research TEXT")

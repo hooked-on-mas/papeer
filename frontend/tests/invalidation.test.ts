@@ -7,10 +7,10 @@ const keys = (change: DataChange): StaleQuery[] => invalidationsFor(change);
 const roots = (...names: string[]): StaleQuery[] => names.map((name) => ({ queryKey: [name] }));
 
 test("a change of one paper refreshes the paper itself, not the library lists (paper.changed updates its row)", () => {
-  assert.deepEqual(keys({ kind: "paper", paperId: "p1" }), [{ queryKey: [QK.papers, "p1"], exact: true }, { queryKey: [QK.citations] }, { queryKey: [QK.research] }]);
+  assert.deepEqual(keys({ kind: "paper", paperId: "p1" }), [{ queryKey: [QK.papers, "p1"], exact: true }, { queryKey: [QK.citations] }, { queryKey: [QK.research] }, { queryKey: [QK.discovery] }]);
   // Moved to another folder: the folder tree too.
   assert.deepEqual(keys({ kind: "paper", paperId: "p1", collection: true }),
-    [{ queryKey: [QK.papers, "p1"], exact: true }, { queryKey: [QK.collections] }, { queryKey: [QK.citations] }, { queryKey: [QK.research] }]);
+    [{ queryKey: [QK.papers, "p1"], exact: true }, { queryKey: [QK.collections] }, { queryKey: [QK.citations] }, { queryKey: [QK.research] }, { queryKey: [QK.discovery] }]);
   for (const change of [{ kind: "paper", paperId: "p1" }, { kind: "paper", paperId: "p1", collection: true }] as DataChange[]) {
     assert.ok(!keys(change).some((stale) => stale.queryKey.length === 1 && stale.queryKey[0] === QK.papers && !stale.exact),
       "no reload of every list");
@@ -18,17 +18,17 @@ test("a change of one paper refreshes the paper itself, not the library lists (p
 });
 
 test("the library as a whole: folder actions, library.changed and a reconnect", () => {
-  assert.deepEqual(keys({ kind: "folders" }), roots(QK.papers, QK.collections, QK.citations, QK.research));
+  assert.deepEqual(keys({ kind: "folders" }), roots(QK.papers, QK.collections, QK.citations, QK.research, QK.discovery));
   // An action on several papers reloads what library.changed would have (refreshAfterChanges).
-  assert.deepEqual(keys({ kind: "library" }), roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research));
+  assert.deepEqual(keys({ kind: "library" }), roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.discovery));
   assert.deepEqual(keys({ kind: "reconnected" }), [...keys({ kind: "library" }), { queryKey: [QK.reading] }]);
-  assert.deepEqual(keys({ kind: "imported" }), roots(QK.papers, QK.citations, QK.research));
+  assert.deepEqual(keys({ kind: "imported" }), roots(QK.papers, QK.citations, QK.research, QK.discovery));
 });
 
 test("papers changed as paper.changed said: the lists only when too many rows to replace", () => {
-  assert.deepEqual(keys({ kind: "papersChanged", all: false, collections: false, tags: false }), roots(QK.librarySearch, QK.citations, QK.research));
+  assert.deepEqual(keys({ kind: "papersChanged", all: false, collections: false, tags: false }), roots(QK.librarySearch, QK.citations, QK.research, QK.discovery));
   assert.deepEqual(keys({ kind: "papersChanged", all: true, collections: true, tags: true }),
-    roots(QK.papers, QK.collections, QK.tags, QK.librarySearch, QK.citations, QK.research));
+    roots(QK.papers, QK.collections, QK.tags, QK.librarySearch, QK.citations, QK.research, QK.discovery));
   assert.deepEqual(keys({ kind: "pageTranslated", paperId: "p1" }),
     [{ queryKey: [QK.reading, "p1"] }, { queryKey: [QK.paperSearch, "p1"] }]);
 });
@@ -63,7 +63,7 @@ test("the glossary, from the translation dialog and the PDF's context menu alike
 
 test("templates, settings and the sync folder go through QK too", () => {
   assert.deepEqual(keys({ kind: "noteTemplates" }), roots(QK.noteTemplates));
-  assert.deepEqual(keys({ kind: "settings" }), roots(QK.settings, QK.prompts, QK.models, QK.efforts, QK.usageLimits));
+  assert.deepEqual(keys({ kind: "settings" }), roots(QK.settings, QK.prompts, QK.models, QK.efforts, QK.usageLimits, QK.mapGroups));
   assert.deepEqual(keys({ kind: "drive" }), [{ queryKey: ["drive"] }]);
 });
 

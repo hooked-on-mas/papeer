@@ -60,20 +60,20 @@ const roots = (...keys: string[]): StaleQuery[] => keys.map((key) => ({ queryKey
 export function invalidationsFor(change: DataChange): StaleQuery[] {
   switch (change.kind) {
     case "folders":
-      return roots(QK.papers, QK.collections, QK.citations, QK.research);
+      return roots(QK.papers, QK.collections, QK.citations, QK.research, QK.discovery);
     case "library":
-      return roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research);
+      return roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.discovery);
     case "reconnected":
-      return roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.reading);
+      return roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.discovery, QK.reading);
     case "imported":
-      return roots(QK.papers, QK.citations, QK.research);
+      return roots(QK.papers, QK.citations, QK.research, QK.discovery);
     case "papersChanged":
       return [...(change.all ? roots(QK.papers) : []), ...(change.collections ? roots(QK.collections) : []),
-        ...(change.tags ? roots(QK.tags) : []), ...roots(QK.librarySearch, QK.citations, QK.research)];
+        ...(change.tags ? roots(QK.tags) : []), ...roots(QK.librarySearch, QK.citations, QK.research, QK.discovery)];
     case "pageTranslated":
       return [{ queryKey: [QK.reading, change.paperId] }, { queryKey: [QK.paperSearch, change.paperId] }];
     case "paper":
-      return [{ queryKey: [QK.papers, change.paperId], exact: true }, ...(change.collection ? roots(QK.collections) : []), ...roots(QK.citations, QK.research)];
+      return [{ queryKey: [QK.papers, change.paperId], exact: true }, ...(change.collection ? roots(QK.collections) : []), ...roots(QK.citations, QK.research, QK.discovery)];
     case "paperTags":
       return roots(QK.tags);
     case "note":
@@ -107,7 +107,7 @@ export function invalidationsFor(change: DataChange): StaleQuery[] {
       return roots(QK.noteTemplates);
     case "settings":
       // Model lists depend on the CLI path, and the plan usage on the connection.
-      return roots(QK.settings, QK.prompts, QK.models, QK.efforts, QK.usageLimits);
+      return roots(QK.settings, QK.prompts, QK.models, QK.efforts, QK.usageLimits, QK.mapGroups);
     case "drive":
       return roots(QK.drive);
   }

@@ -1,6 +1,6 @@
 import { FileDown, Loader2, RefreshCw, ScrollText, Square } from "lucide-react";
-import { paperBusy, useStore } from "../../store";
-import { runningPaperJob } from "@/features/jobs/jobSelectors";
+import { useStore } from "../../store";
+import { paperBusyFor, runningPaperJob } from "@/features/jobs/jobSelectors";
 import { useArticle } from "../../api/hooks";
 import { requestCancel } from "@/features/jobs/jobEvents";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
@@ -10,7 +10,7 @@ import { exportMarkdown, generateArticle } from "@/app/actions";
 export function SummaryPane() {
   const activePaperId = useStore((state) => state.activePaperId);
   const job = useStore((state) => runningPaperJob(state.activeJobs, state.activePaperId, ["article"]));
-  const busy = useStore((state) => paperBusy(state.activeJobs, state.activePaperId));
+  const busy = useStore((state) => paperBusyFor(state.activeJobs, state.activePaperId, "article"));
   const { data: article, isLoading, error } = useArticle(activePaperId);
 
   if (!activePaperId) {

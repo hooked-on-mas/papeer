@@ -102,7 +102,7 @@ class AntigravityProvider(CliBackend, ProviderBackend):
         with tempfile.TemporaryDirectory(prefix="papeer-agy-", ignore_cleanup_errors=True) as directory:
             root = Path(directory)
             agent = _write_agent(root, web_search)
-            prompt = wrap_document_prompt(instruction, data, schema, schema_in_prompt=True)
+            prompt = wrap_document_prompt(instruction, data, schema, schema_in_prompt=True, web_search=web_search)
             # The prompt goes through stdin as one stream-json message: as a -p argument the whole
             # document would sit on the command line, which Windows cuts off at 32,767 characters.
             # "--print=" (attached and empty) keeps print mode without a command-line prompt.

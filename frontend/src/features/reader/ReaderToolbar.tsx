@@ -276,7 +276,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             <MoreHorizontal className="w-4 h-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-auto min-w-56 max-w-[calc(100vw-2rem)]">
-            <DropdownMenuItem onClick={() => useStore.getState().setActiveTab("references")}><Network /> 参考文献・引用ネットワーク</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => useStore.getState().setActiveTab("references")}><Network /> 論文マップ</DropdownMenuItem>
             <DropdownMenuGroup>
               <DropdownMenuLabel className="tabular-nums">{pageLabel}</DropdownMenuLabel>
               {version && (

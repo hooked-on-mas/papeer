@@ -3,7 +3,7 @@ import {
   Download, ExternalLink, FileText, FolderOpen, Languages, MoreVertical, PanelLeft, Pencil, ScrollText, Square, Trash2,
 } from "lucide-react";
 import { useStore, paperBusy } from "../store";
-import { runningPaperJob } from "@/features/jobs/jobSelectors";
+import { paperBusyFor, runningPaperJob } from "@/features/jobs/jobSelectors";
 import { paperDisplayName, usePaper, useReading } from "../api/hooks";
 import { PaperStatusBadge } from "../components/ui/PaperStatusBadge";
 import { paperTranslationStatus } from "@/lib/paperStatus";
@@ -26,8 +26,9 @@ export function Header() {
   const uiStateLoaded = useStore((s) => s.uiStateLoaded);
   const translateJobId = useStore((s) => runningPaperJob(s.activeJobs, s.activePaperId, TRANSLATION_JOBS)?.job_id);
   const busy = useStore((s) => paperBusy(s.activeJobs, s.activePaperId));
+  const workBusy = useStore((s) => paperBusyFor(s.activeJobs, s.activePaperId, "article"));
   // The translation dialog opens while the AI checks the paper's terms, showing that check as it goes on.
-  const translateBlocked = useStore((s) => paperBusy(s.activeJobs, s.activePaperId, ["glossary-draft", "glossary-select", "glossary-split"]));
+  const translateBlocked = useStore((s) => paperBusyFor(s.activeJobs, s.activePaperId, "translate", ["glossary-draft", "glossary-select", "glossary-split"]));
   const sidebarCollapsed = useStore((s) => s.sidebarCollapsed);
   const rebuilding = useRebuilding(translateJobId);
 
@@ -121,11 +122,11 @@ export function Header() {
             <MoreVertical className="w-4 h-4" /> その他
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-64">
-            <DropdownMenuItem disabled={busy} onClick={() => generateArticle(activePaperId)}>
+            <DropdownMenuItem disabled={workBusy} onClick={() => generateArticle(activePaperId)}>
               <ScrollText className="w-4 h-4 mr-2" /> サマリー（解説）を作成
             </DropdownMenuItem>
             <DropdownMenuSub>
-              <DropdownMenuSubTrigger disabled={busy || exportBlocked}>
+              <DropdownMenuSubTrigger disabled={workBusy || exportBlocked}>
                 <Download className="w-4 h-4 mr-2" /> PDFを書き出す
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-60">
@@ -144,7 +145,7 @@ export function Header() {
             <DropdownMenuItem disabled={!reading?.has_translated} onClick={() => openPaperFile(activePaperId, "translated.pdf")}>
               <ExternalLink className="w-4 h-4 mr-2" /> 日本語訳を外部で開く
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={!reading?.has_translated || busy} onClick={() => openPaperFile(activePaperId, "interleaved.pdf")}>
+            <DropdownMenuItem disabled={!reading?.has_translated || workBusy} onClick={() => openPaperFile(activePaperId, "interleaved.pdf")}>
               <ExternalLink className="w-4 h-4 mr-2" /> 原文・日本語訳（交互）を外部で開く
             </DropdownMenuItem>
             <DropdownMenuSeparator />

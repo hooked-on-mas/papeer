@@ -8,7 +8,7 @@ import { api, unwrap } from "@/api/client";
 import { fetchPaperDomains, useSavePaperDomains } from "@/api/mutations";
 import { providerLabel, useProviderEfforts, useProviderModels, useProviders, useReading, useSettings, type ReadingData } from "@/api/hooks";
 import { requestCancel, startJob } from "@/features/jobs/jobEvents";
-import { jobCount, runningPaperJob } from "@/features/jobs/jobSelectors";
+import { jobCount, paperBusyFor, runningPaperJob } from "@/features/jobs/jobSelectors";
 import { useStore } from "@/store";
 import { showError } from "@/components/errorDialog";
 import { askConfirm } from "@/components/AppDialogs";
@@ -85,9 +85,8 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   const cancelDraftId = (draft?.status === "running" ? draft.jobId : null) ?? draftJobId ?? null;
   // How far the check has got (「1/2」, a request per part of the paper), from its progress events.
   const draftCount = useStore((s) => generating ? jobCount(runningPaperJob(s.activeJobs, paperId, ["glossary-draft"])) : "");
-  // Any job of the paper still running (a translation, a check that went on through a reload): the sidecar
-  // would refuse another with 409.
-  const paperJobRunning = useStore((s) => !!runningPaperJob(s.activeJobs, paperId));
+  // Independent reference lookup can continue while translating or checking the paper's terms.
+  const paperJobRunning = useStore((s) => paperBusyFor(s.activeJobs, paperId, "translate"));
   useEffect(() => {
     if (!open) return;
     setGlossaryDialogPaper(paperId);

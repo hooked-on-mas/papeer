@@ -8,6 +8,7 @@ import socket
 import ssl
 import threading
 import time
+import unicodedata
 from urllib.parse import urljoin, urlsplit
 
 import pymupdf as fitz
@@ -47,9 +48,10 @@ class _PinnedHTTP(http.client.HTTPConnection):
         self.sock = socket.create_connection((self.address, self.port), self.timeout)
 
 
-def download_pdf(url: str, destination: Path, cancel: threading.Event, progress) -> str:
+def download_pdf(url: str, destination: Path, cancel: threading.Event, progress, *,
+                 max_bytes: int = MAX_PDF_BYTES, timeout_seconds: float = 120) -> str:
     """Every redirect is checked too; no credentials, proxy or browser cookies are sent."""
-    deadline = time.monotonic() + 120
+    deadline = time.monotonic() + timeout_seconds
     for _ in range(6):
         check_cancel(cancel)
         if not public_url(url):
@@ -72,8 +74,8 @@ def download_pdf(url: str, destination: Path, cancel: threading.Event, progress)
             if response.status != 200:
                 raise ValueError(f"PDFを取得できませんでした（HTTP {response.status}）。公開元を開くか、手元のPDFを選んでください。")
             length = response.getheader("Content-Length")
-            if length and int(length) > MAX_PDF_BYTES:
-                raise ValueError("取り込めるPDFは100MBまでです。")
+            if length and int(length) > max_bytes:
+                raise ValueError(f"PDFのサイズが確認上限（{max_bytes // (1024 * 1024)}MB）を超えています。")
             size = 0
             with destination.open("wb") as stream:
                 while True:
@@ -84,8 +86,8 @@ def download_pdf(url: str, destination: Path, cancel: threading.Event, progress)
                     if not chunk:
                         break
                     size += len(chunk)
-                    if size > MAX_PDF_BYTES:
-                        raise ValueError("取り込めるPDFは100MBまでです。")
+                    if size > max_bytes:
+                        raise ValueError(f"PDFのサイズが確認上限（{max_bytes // (1024 * 1024)}MB）を超えています。")
                     stream.write(chunk)
                     progress(f"PDFを取得中… {size // 1024} KB")
         finally:
@@ -108,3 +110,18 @@ def validate_pdf(path: Path) -> None:
                 raise ValueError("空のPDFやパスワード付きPDFは取り込めません。")
     except (RuntimeError, fitz.FileDataError) as exc:
         raise ValueError("PDFを読み取れませんでした。公開元から取得し直してください。") from exc
+
+
+def validate_reference_identity(path: Path, title: str, doi: str = "") -> None:
+    """A downloadable PDF may still be a different paper or a whole report containing it."""
+    def normalized(value: str) -> str:
+        return "".join(c for c in unicodedata.normalize("NFKC", value).casefold() if c.isalnum())
+
+    with PDF_LOCK, fitz.open(path) as document:
+        # Covers sometimes precede the title page. Do not accept a citation buried later in a report.
+        opening = normalized("\n".join(str(document[i].get_text()) for i in range(min(2, len(document)))))
+    known_title, known_doi = normalized(title), normalized(doi)
+    if ((len(known_title) >= 15 and known_title in opening)
+            or (known_doi and known_doi in opening)):
+        return
+    raise ValueError("PDFの冒頭で、この文献のタイトル・DOIを確認できませんでした。別の資料の可能性があるため取り込み候補から外しました。")

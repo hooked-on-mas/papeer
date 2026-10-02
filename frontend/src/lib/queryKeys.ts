@@ -5,6 +5,8 @@
  */
 export const QK = {
   citations: "citations",
+  discovery: "discovery",
+  mapGroups: "map-groups",
   research: "research",
   researchCapabilities: "research-capabilities",
   papers: "papers",

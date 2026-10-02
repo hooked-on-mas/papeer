@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { shallow } from "zustand/shallow";
 import {
-  anyJobRunning, jobCount, paperBusy, paperJobState, runningPaperJob, statusJob, upsertJob,
+  anyJobRunning, jobCount, paperBusy, paperBusyFor, paperJobState, runningPaperJob, statusJob, upsertJob,
 } from "../src/features/jobs/jobSelectors.ts";
 import { TRANSLATION_JOBS } from "../src/features/jobs/jobKinds.ts";
 import type { Job } from "../src/store/index.ts";
@@ -122,4 +122,22 @@ test("a job's progress reads as done/total once it has counted", () => {
   assert.equal(jobCount({ job_id: "1", message: "準備中..." }), "");
   assert.equal(jobCount({ job_id: "1", done: null, total: null }), "");
   assert.equal(jobCount(undefined), "");
+});
+
+test("lookup leaves summary, chat and translation available while destructive work and duplicate jobs wait", () => {
+  const research: Job[] = Array.from({ length: 5 }, (_, index) => ({
+    job_id: `r${index}`, paper_id: "a", kind: "reference-research", status: "running",
+  }));
+  for (const kind of ["article", "ask", "translate", "glossary-draft", "export", "interleaved"] as const) {
+    assert.equal(paperBusyFor(research, "a", kind), false);
+    assert.equal(paperBusyFor([...research, { job_id: "work", paper_id: "a", kind }], "a", kind), true);
+    assert.equal(paperBusyFor([...research, { job_id: "ocr", paper_id: "a", kind: "ocr" }], "a", kind), true);
+  }
+  assert.equal(paperBusy(research, "a"), true); // Delete must still wait.
+  assert.equal(paperBusyFor(research, "a", "ocr"), true);
+  assert.equal(paperBusyFor(research, "a", "reference-import"), true);
+  assert.equal(paperBusyFor(research, "b", "article"), false);
+  assert.equal(paperBusyFor(research, null, "article"), false);
+  assert.equal(paperBusyFor([...research, { job_id: "terms", paper_id: "a", kind: "glossary-select" }],
+    "a", "translate", ["glossary-select"]), false);
 });

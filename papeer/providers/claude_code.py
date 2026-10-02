@@ -103,7 +103,7 @@ class ClaudeCodeProvider(CliBackend, ProviderBackend):
         return self._run(wrap_document_prompt(instruction, data).encode("utf-8"), schema)
 
     def search_web(self, instruction: str, data: str, schema: dict | None = None) -> str:
-        return self._send(lambda: self._run(wrap_document_prompt(instruction, data).encode("utf-8"),
+        return self._send(lambda: self._run(wrap_document_prompt(instruction, data, web_search=True).encode("utf-8"),
                                           schema, web_search=True))
 
     def image_support(self) -> str | None:

@@ -232,8 +232,10 @@ def test_the_cores_own_value_errors_are_400_and_others_bugs(caplog):
 
     names = {cls.__name__ for cls in _core_value_errors()}
     assert {"InsufficientSpaceError", "NewerSchemaError", "LibraryMissingError", "RetryLimitExceeded", "Invalid"} <= names
+    # Errors that carry more than a message are made from what they describe.
+    made = {"ResearchIdentityMismatch": lambda cls: cls({"title": "文献"}, {"title": "別の文献", "doi": "", "arxiv_id": "", "sources": []})}
     for cls in _core_value_errors():
-        response = expected_response(cls("日本語の説明"))
+        response = expected_response(made.get(cls.__name__, lambda cls: cls("日本語の説明"))(cls))
         assert response is not None and response.status_code == 400, cls
     assert expected_response(ValueError("日本語の説明")).status_code == 400
 

@@ -64,7 +64,7 @@ def test_cancelled_waiter_does_not_hold_up_later_jobs():
     assert log == ["second gave up", "first", "third"]
 
 
-def test_reference_research_runs_five_at_once_and_keeps_other_mutations_exclusive():
+def test_reference_research_runs_five_at_once_and_keeps_conflicting_mutations_exclusive():
     manager = JobManager()
     gates = [threading.Event() for _ in range(6)]
     entered = [threading.Event() for _ in range(6)]
@@ -81,9 +81,9 @@ def test_reference_research_runs_five_at_once_and_keeps_other_mutations_exclusiv
         assert all(event.wait(2) for event in entered[:5])
         with pytest.raises(ConcurrencyConflict):
             manager.submit_job("reference-research", action(5), paper_id="paper")
-        for kind in ("reference-import", "article", "translate", "backup"):
+        for kind in ("reference-import", "ocr", "backup", "restore", "drive-sync"):
             with pytest.raises(ConcurrencyConflict):
-                manager.submit_job(kind, lambda *_: {}, paper_id=None if kind == "backup" else "paper")
+                manager.submit_job(kind, lambda *_: {}, paper_id=None if kind in ("backup", "restore", "drive-sync") else "paper")
         gates[0].set()
         deadline = time.monotonic() + 2
         while manager.get_job(jobs[0].job_id).running and time.monotonic() < deadline:
@@ -98,9 +98,71 @@ def test_reference_research_runs_five_at_once_and_keeps_other_mutations_exclusiv
 
     gate = threading.Event()
     try:
-        manager.submit_job("article", lambda *_: gate.wait(5), paper_id="paper")
+        manager.submit_job("ocr", lambda *_: gate.wait(5), paper_id="paper")
         with pytest.raises(ConcurrencyConflict):
             manager.submit_job("reference-research", action(0), paper_id="paper")
+    finally:
+        gate.set()
+        assert manager.wait_idle(5)
+
+
+@pytest.mark.parametrize("kind", ["article", "ask", "translate", "glossary-draft", "glossary-select",
+                                 "glossary-split", "revision", "revision-draft", "export", "interleaved"])
+@pytest.mark.parametrize("research_first", [True, False])
+def test_reference_research_overlaps_independent_work_in_either_order(kind, research_first):
+    manager = JobManager()
+    gate = threading.Event()
+    entered = [threading.Event() for _ in range(6)]
+    translation = {"pages": 1, "requested_pages": [1], "selected_pages": [1], "already_translated_pages": [],
+                   "preserved_pages": [], "translated_pages": [1], "untranslated_pages": [], "skipped_pages": [],
+                   "skipped_blocks": [], "skipped_block_pages": [], "page_errors": {}, "model": "test"}
+    results = {"article": {"content": "Summary"}, "ask": {"answer": "Answer"}, "translate": translation,
+               "revision": translation, "revision-draft": {"text": "Translation", "unit_id": "u1"},
+               "glossary-draft": {"terms": []}, "glossary-select": {"domains": []},
+               "glossary-split": {"moved": 0, "domains": []},
+               "export": {"kind": "interleaved", "destination": "out.pdf"},
+               "interleaved": {"kind": "interleaved", "path": "out.pdf"}}
+
+    def action(index):
+        def run(*_):
+            entered[index].set()
+            assert gate.wait(5)
+            return {"key": str(index), "title": "Reference", "raw": "Reference"} if index else results[kind]
+        return run
+
+    try:
+        if not research_first:
+            manager.submit_job(kind, action(0), paper_id="paper")
+        for i in range(1, 6):
+            manager.submit_job("reference-research", action(i), paper_id="paper")
+        if research_first:
+            manager.submit_job(kind, action(0), paper_id="paper")
+        assert all(event.wait(2) for event in entered)
+        # The independent job consumes no lookup slot, and no second ordinary job can overlap it.
+        for blocked in ("reference-research", kind, "article", "reference-import", "ocr", "backup"):
+            with pytest.raises(ConcurrencyConflict):
+                manager.submit_job(blocked, lambda *_: {}, paper_id=None if blocked == "backup" else "paper")
+    finally:
+        gate.set()
+        assert manager.wait_idle(5)
+    assert all(job.status == "succeeded" for job in manager.get_jobs())
+
+
+def test_dictionary_save_can_ignore_lookup_but_delete_and_other_jobs_still_wait():
+    from sidecar.job_types import JobKind
+
+    manager = JobManager()
+    gate = threading.Event()
+    try:
+        manager.submit_job("reference-research", lambda *_: gate.wait(5), paper_id="paper")
+        with pytest.raises(ConcurrencyConflict), manager.idle("delete", "paper"):
+            pass
+        with manager.idle("dictionary", ignore=frozenset({JobKind.REFERENCE_RESEARCH})):
+            with pytest.raises(ConcurrencyConflict):
+                manager.submit_job("article", lambda *_: {}, paper_id="paper")
+        manager.submit_job("article", lambda *_: gate.wait(5), paper_id="paper")
+        with pytest.raises(ConcurrencyConflict), manager.idle("dictionary", ignore=frozenset({JobKind.REFERENCE_RESEARCH})):
+            pass
     finally:
         gate.set()
         assert manager.wait_idle(5)

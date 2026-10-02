@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from papeer.core import prompts
+from papeer.core import prompts, scholarly_lookup
 from papeer.core.errors import Invalid
 from papeer.providers import ProviderBackend, spec_for, specs
 from sidecar import deps
@@ -35,24 +35,35 @@ def get_settings() -> SettingsResponse:
     settings, unknown = deps.get_settings_with_unknown_keys()
     values = asdict(settings)
     values["api_key"] = deps.runtime_api_key()
-    return SettingsResponse(**values, unknown_keys=unknown)
+    return SettingsResponse(**values, semantic_scholar_api_key=scholarly_lookup.semantic_api_key(), unknown_keys=unknown)
 
 
 @router.put("/api/settings")
 def update_settings(body: SettingsModel) -> dict[str, str]:
     """Apply the fields the client sent; anything omitted keeps its saved value."""
     current, unknown = deps.get_settings_with_unknown_keys()
-    settings = current.updated(body.model_dump(exclude={"api_key"}, exclude_unset=True))
+    settings = current.updated(body.model_dump(exclude={"api_key", "semantic_scholar_api_key"}, exclude_unset=True))
     spec_for(settings.provider)
     if settings.paper_metadata_provider:
         spec_for(settings.paper_metadata_provider)
     deps.require_library_folder()
     settings.save(deps.get_data_dir())
+    if not settings.paper_discovery_enabled:
+        for job in deps.job_manager.get_jobs():
+            if job.running and job.kind == JobKind.PAPER_DISCOVERY:
+                deps.job_manager.cancel_job(job.job_id)
+    if not settings.paper_metadata_ai_enabled:
+        # Stop reference lookups even when their pane has been closed.
+        for job in deps.job_manager.get_jobs():
+            if job.running and job.kind in {JobKind.REFERENCE_RESEARCH, JobKind.MAP_GROUPS}:
+                deps.job_manager.cancel_job(job.job_id)
     if unknown:
         # The frontend told the user beforehand (settingsVersionNotice.ts); the log keeps what was lost.
         log.warning("settings.json の、この版が知らない項目を保存で削除しました: %s", ", ".join(unknown))
     if body.api_key is not None:
         deps.set_runtime_api_key(body.api_key)
+    if body.semantic_scholar_api_key is not None:
+        scholarly_lookup.set_semantic_api_key(body.semantic_scholar_api_key)
     return {"status": "saved"}
 
 

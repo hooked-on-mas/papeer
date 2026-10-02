@@ -42,6 +42,8 @@ export type OcrResult = Schemas["OcrResult"];
 /** ocr-data: the languages whose Tesseract data is now on this PC. */
 export type OcrDataResult = Schemas["OcrDataResult"];
 export type ResearchRecord = Schemas["ResearchRecord"];
+export type DiscoveryResult = Schemas["DiscoveryResult"];
+export type MapGroupResult = Schemas["MapGroupResult"];
 export type ReferenceImportResult = Schemas["ReferenceImportResult"];
 /** check: the connection's answer as one line of text. */
 export type CheckResult = string;
@@ -65,6 +67,8 @@ export type JobResults = {
   "drive-sync": DriveSyncResult;
   ocr: OcrResult;
   "ocr-data": OcrDataResult;
+  "paper-discovery": DiscoveryResult;
+  "paper-map-groups": MapGroupResult;
   "reference-research": ResearchRecord;
   "reference-import": ReferenceImportResult;
 };
