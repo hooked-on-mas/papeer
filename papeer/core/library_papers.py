@@ -22,6 +22,7 @@ from papeer.core.translation_review import cached_review_pages
 from papeer.core.translation_status import TranslationStatus
 from papeer.layout.math_layout import LAYOUT_VERSION
 from papeer.pdf.pdf_engine import OcrRun, extract_pdf
+from papeer.translation.translation_context import paper_title
 
 
 def write_document(path: Path, document: dict) -> None:
@@ -212,10 +213,21 @@ class PaperRecords(LibraryBase):
             raise ValueError("どのPCでも使えるファイル名を入力してください（\\ / : * ? \" < > | と、"
                              "末尾の空白・ピリオド、CON・NUL などの名前は使えません）。")
         with self.connection() as db:
-            if not db.execute("SELECT id FROM papers WHERE id=?", (paper_id,)).fetchone():
+            paper = db.execute("SELECT title,original_name FROM papers WHERE id=?", (paper_id,)).fetchone()
+            if paper is None:
                 raise NotFound("論文が見つかりません。")
-            db.execute("UPDATE papers SET original_name=?,title=? WHERE id=?", (name, stem, paper_id))
+            title = stem if paper["title"] == Path(paper["original_name"]).stem else paper["title"]
+            db.execute("UPDATE papers SET original_name=?,title=? WHERE id=?", (name, title, paper_id))
         return name
+
+    @staticmethod
+    def _adopt_extracted_title(db: sqlite3.Connection, paper_id: str, previous: str, title: str) -> None:
+        """Update an automatic library title, leaving a manually edited one alone."""
+        paper = db.execute("SELECT title,original_name FROM papers WHERE id=?", (paper_id,)).fetchone()
+        if paper is not None and paper["title"] in {previous, Path(paper["original_name"]).stem}:
+            title = nfc(title)
+            if title != paper["title"]:
+                db.execute("UPDATE papers SET title=? WHERE id=?", (title, paper_id))
 
     def reading_info(self, paper_id: str) -> dict:
         """Read display metadata without migrating the extraction cache."""
@@ -245,11 +257,12 @@ class PaperRecords(LibraryBase):
         folder = self.folder(paper_id)
         path = PaperFiles(folder).document_json
         document = read_shared_json(path)
+        previous_title = document["title"]
         if document.get("layout_version") != LAYOUT_VERSION:
             saved = load_readings(folder)
             run = OcrRun(saved=saved)
             refreshed = extract_pdf(PaperFiles(folder).original_pdf, run=run)
-            refreshed["title"] = document["title"]
+            refreshed["title"] = refreshed["extracted_title"] or Path(self.paper(paper_id)["original_name"]).stem
             # Readings this extraction did not use (a page no longer found to need OCR by the new code)
             # are kept: a later version may use them again, and nothing is read twice.
             kept = {**saved, **run.readings}
@@ -257,6 +270,15 @@ class PaperRecords(LibraryBase):
                 save_readings(folder, kept)
             write_document(path, refreshed)
             document = refreshed
+        elif "extracted_title" not in document:
+            # Upgrade just the title from cached layout, without re-extracting the PDF.
+            title = paper_title(document)
+            document = dict(document, extracted_title=title,
+                            title=title or Path(self.paper(paper_id)["original_name"]).stem)
+            write_document(path, document)
+        if document["title"] != previous_title:
+            with self.connection() as db:
+                self._adopt_extracted_title(db, paper_id, previous_title, document["title"])
         return document
 
     def replace_extraction(self, paper_id: str, document: dict, readings: dict[str, dict]) -> None:
@@ -266,9 +288,11 @@ class PaperRecords(LibraryBase):
         next extraction, while a reading without its document is only unused.
         """
         folder = self.folder(paper_id)
+        previous = read_shared_json(PaperFiles(folder).document_json)
         save_readings(folder, readings)
         write_document(PaperFiles(folder).document_json, document)
         with self.connection() as db:
+            self._adopt_extracted_title(db, paper_id, previous["title"], document["title"])
             db.executemany("UPDATE pages SET text=? WHERE paper_id=? AND number=?",
                            [(page["text"], paper_id, page["number"]) for page in document["pages"]])
 

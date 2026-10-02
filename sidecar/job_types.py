@@ -127,6 +127,8 @@ class ImportResult(BaseModel):
     added: int  # How many were new.
     # The new papers with pages still needing OCR (scans not read when added): the frontend offers to read them.
     needs_ocr: list[str] = Field(default_factory=list)
+    # Optional opt-in metadata lookup can fail while the PDF itself is safely imported.
+    metadata_failures: list[str] = Field(default_factory=list)
 
 
 class OcrResult(BaseModel):

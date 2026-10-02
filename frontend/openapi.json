@@ -9695,6 +9695,13 @@
             },
             "type": "array",
             "title": "Needs Ocr"
+          },
+          "metadata_failures": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Metadata Failures"
           }
         },
         "type": "object",
@@ -11693,6 +11700,21 @@
             "title": "Translation Concurrency",
             "default": 0
           },
+          "paper_metadata_ai_enabled": {
+            "type": "boolean",
+            "title": "Paper Metadata Ai Enabled",
+            "default": false
+          },
+          "paper_metadata_provider": {
+            "type": "string",
+            "title": "Paper Metadata Provider",
+            "default": ""
+          },
+          "paper_metadata_model": {
+            "type": "string",
+            "title": "Paper Metadata Model",
+            "default": ""
+          },
           "provider_options": {
             "additionalProperties": {
               "additionalProperties": {
@@ -11746,6 +11768,21 @@
             "title": "Translation Concurrency",
             "default": 0
           },
+          "paper_metadata_ai_enabled": {
+            "type": "boolean",
+            "title": "Paper Metadata Ai Enabled",
+            "default": false
+          },
+          "paper_metadata_provider": {
+            "type": "string",
+            "title": "Paper Metadata Provider",
+            "default": ""
+          },
+          "paper_metadata_model": {
+            "type": "string",
+            "title": "Paper Metadata Model",
+            "default": ""
+          },
           "provider_options": {
             "additionalProperties": {
               "additionalProperties": {
@@ -11782,6 +11819,9 @@
           "reasoning_effort",
           "timeout_seconds",
           "translation_concurrency",
+          "paper_metadata_ai_enabled",
+          "paper_metadata_provider",
+          "paper_metadata_model",
           "provider_options",
           "api_key",
           "unknown_keys"

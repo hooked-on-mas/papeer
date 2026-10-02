@@ -2,6 +2,7 @@ import { notifyIfAway, shell } from "@/shell";
 import { useStore } from "@/store";
 import type { JobHandlers } from "@/features/jobs/jobHandlers";
 import { offerOcrAfterImport } from "@/features/ocr/ocrActions";
+import { showToast } from "@/components/toast";
 
 /** Jobs started by the library actions in ./actions: adding PDFs and writing paired PDFs. */
 export const libraryJobHandlers: JobHandlers = {
@@ -13,6 +14,10 @@ export const libraryJobHandlers: JobHandlers = {
       if (ids.length) store.setActivePaperId(ids[ids.length - 1]);
       store.setStatus(message);
       notifyIfAway("PDFを追加しました", message);
+      if (event.result.metadata_failures?.length) showToast({
+        title: "PDFは追加しましたが、一部の論文情報を取得できませんでした",
+        description: event.result.metadata_failures.join("\n"), tone: "error", timeout: 0,
+      });
       // Scans that were not read while being added: offer to read them now (unless OCR is 使わない).
       void offerOcrAfterImport(event.result.needs_ocr ?? []);
     },

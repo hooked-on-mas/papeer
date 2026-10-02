@@ -24,7 +24,7 @@ from papeer.layout.ocr_pages import ocr_check
 from papeer.layout.reading_flow import (order_page, continuation_groups, footnote_ids, translation_blocks, materialize_flows,
                                         resolve_unit_joins, source_body_size)
 from papeer.pdf.pdf_ocr import OcrPage, document_language, ocr_image, ocr_page_blocks, render_page
-from papeer.translation.translation_context import request_text
+from papeer.translation.translation_context import paper_title, request_text
 from papeer.pdf.pdf_typography import (FONT_CSS, LIGHT_TEXT_COLOR, TEXT_COLOR, TIGHT_LEADING, TextStyle, body_font_size,
                                        character_budget, first_line_indented, font_subsets, merge_wrapped_headings,
                                        readable_size, reading_space, running_headers, searchable_text, text_html,
@@ -186,8 +186,6 @@ def extract_pdf(path: Path, ocr: OcrOptions | None = None, run: OcrRun | None = 
             ocr_pages = [{"page": number + 1, **needed} for number, needed in needing if number not in read_pages]
             blocks = [block for page_blocks in page_lists for block in page_blocks]
             title = (document.metadata or {}).get("title", "").strip()
-            if not title or len(title) > 240:
-                title = path.stem
             result = {**extract_bibliography(document), "layout_version": LAYOUT_VERSION, "title": title, "pages": pages,
                       "blocks": blocks, "empty_pages": empty_pages, "ocr_pages": ocr_pages, "page_count": len(pages)}
     finally:
@@ -203,6 +201,8 @@ def extract_pdf(path: Path, ocr: OcrOptions | None = None, run: OcrRun | None = 
         ordered.extend(page_blocks)
         info['text'] = '\n\n'.join(b['text'] for b in page_blocks)
     result['blocks'] = ordered
+    result['extracted_title'] = paper_title(result)
+    result['title'] = result['extracted_title'] or path.stem
     mark_references(result)
     result['continuations'], result['continuation_decisions'] = continuation_groups(result)
     return result

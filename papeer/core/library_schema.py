@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sqlite3
+import unicodedata
 
 import pymupdf as fitz
 
@@ -151,3 +152,31 @@ def _status_codes(db: sqlite3.Connection, _root: Path) -> None:
     for (value,) in db.execute("SELECT DISTINCT status FROM papers").fetchall():
         if (code := stored_status(value).value) != value:
             db.execute("UPDATE papers SET status=? WHERE status=?", (code, value))
+
+
+def _paper_titles(db: sqlite3.Connection, root: Path) -> None:
+    """Version 5: titles from cached layouts, preserving manually changed titles.
+
+    No PDF or OCR work inside the migration. Missing or unreadable caches leave their rows alone.
+    document.json is upgraded separately on its next read, after this transaction commits.
+    """
+    from papeer.translation.translation_context import paper_title
+
+    for paper_id, current, filename in db.execute("SELECT id,title,original_name FROM papers").fetchall():
+        try:
+            document = json.loads(PaperFiles(root / "papers" / paper_id).document_json.read_text("utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (not isinstance(document, dict) or not isinstance(document.get("blocks"), list)
+                or not isinstance(document.get("title", ""), str)):
+            continue
+        fallback = Path(filename).stem
+        if current not in {document.get("title"), fallback}:
+            continue
+        try:
+            title = paper_title(document) or fallback
+        except (TypeError, KeyError, IndexError, AttributeError):
+            # A malformed cached block must not prevent the library from opening.
+            continue
+        if title != current:
+            db.execute("UPDATE papers SET title=? WHERE id=?", (unicodedata.normalize("NFC", title), paper_id))

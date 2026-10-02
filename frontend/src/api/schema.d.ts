@@ -2248,6 +2248,8 @@ export interface components {
             added: number;
             /** Needs Ocr */
             needs_ocr?: string[];
+            /** Metadata Failures */
+            metadata_failures?: string[];
         };
         /** InkCaptureRequest */
         InkCaptureRequest: {
@@ -3072,6 +3074,21 @@ export interface components {
              * @default 0
              */
             translation_concurrency?: number;
+            /**
+             * Paper Metadata Ai Enabled
+             * @default false
+             */
+            paper_metadata_ai_enabled?: boolean;
+            /**
+             * Paper Metadata Provider
+             * @default
+             */
+            paper_metadata_provider?: string;
+            /**
+             * Paper Metadata Model
+             * @default
+             */
+            paper_metadata_model?: string;
             /** Provider Options */
             provider_options?: {
                 [key: string]: {
@@ -3111,6 +3128,21 @@ export interface components {
              * @default 0
              */
             translation_concurrency: number;
+            /**
+             * Paper Metadata Ai Enabled
+             * @default false
+             */
+            paper_metadata_ai_enabled: boolean;
+            /**
+             * Paper Metadata Provider
+             * @default
+             */
+            paper_metadata_provider: string;
+            /**
+             * Paper Metadata Model
+             * @default
+             */
+            paper_metadata_model: string;
             /** Provider Options */
             provider_options: {
                 [key: string]: {

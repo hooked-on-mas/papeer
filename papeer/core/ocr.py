@@ -151,7 +151,8 @@ def changed_pages(before: dict, after: dict) -> list[int]:
 def read_again(lib, paper_id: str, run: OcrRun) -> dict[str, Any]:
     """Extract a paper again, reading the pages run asks for (run.engines, run.pages) by OCR, and keep it.
 
-    The document's title (possibly edited) stays. Returns what was read and what changed:
+    A newly readable title is adopted, while a manually edited library title stays.
+    Returns what was read and what changed:
     read_pages, failed_pages ({page: reason}), ocr_pages (still needing OCR), changed_pages and,
     among them, retranslate_pages (pages that had a saved translation).
     """
@@ -160,7 +161,7 @@ def read_again(lib, paper_id: str, run: OcrRun) -> dict[str, Any]:
     previous = lib.document(paper_id)
     run.saved = load_readings(folder)
     document = extract_pdf(files.original_pdf, run=run)
-    document["title"] = previous["title"]
+    document["title"] = document["extracted_title"] or Path(lib.paper(paper_id)["original_name"]).stem
     changed = changed_pages(previous, document)
     cache = files.read_json(files.translation_cache, {})
     translated = {int(n) for n in (cache.get("completed_pages") or {}) if str(n).isdigit()} if isinstance(cache, dict) else set()

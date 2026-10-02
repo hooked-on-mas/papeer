@@ -83,7 +83,7 @@ export function PaperMetadataForm({ paper, collections }: { paper: PaperData; co
           </div>
         ))}
         <p className="col-span-2 text-[0.75rem] text-muted-foreground">
-          掲載誌・DOI・arXiv ID は、追加時に PDF から読み取った値が初期値です（インターネットでは調べません）。BibTeX に使います。
+          論文情報は追加時にPDFから読み取ります。設定の「論文情報の取得にAIを使う」がONの場合は、不足情報をAIと外部の書誌情報サービスで補完します。BibTeXに使います。
         </p>
         <label htmlFor={`${id}-collection`}>フォルダー</label>
         {input("collection", { placeholder: "例：制御工学 / 読書会", list: `${id}-collections` })}

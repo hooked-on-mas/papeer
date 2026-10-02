@@ -304,11 +304,13 @@ CLI は PATH と既定のインストール先から自動検出します（macO
 
 PDF の本文は信頼できない入力として扱い、CLI にはツールを使わせない指定で渡します。Claude Code はツール・MCP サーバー・プロジェクト設定・スキルを無効にし、Codex は読み取り専用サンドボックスでシェル・Web 検索・プラグイン・アプリと `config.toml` の MCP サーバーを無効にします。Antigravity は `--sandbox` で起動し、本文はコマンドラインではなく標準入力で渡します（Windows のコマンドライン長の上限を超える長いチャットも送れます）。CLI には Papeer 自身の環境変数（`PAPEER_*`、sidecar の認証トークンなど）を引き継ぎません。
 
-翻訳・解説・チャットを実行したときだけ、必要なテキストが選択した AI へ送られます。PDF を追加しただけでは送信しません。
+通常は翻訳・解説・チャットを実行したときだけ、必要なテキストが選択した AI へ送られます。「論文情報の取得にAIを使う」は初期値OFFです。ONにすると、PDF追加時に不足している筆頭著者・出版年・掲載誌・DOIなどを補います。論文冒頭のテキストをAIへ送り、タイトル・識別子でCrossrefやarXivの書誌情報を照合します。入力済みの情報は保持します。
+
+情報取得の接続先・モデルは翻訳とは別に指定できます。たとえば翻訳はCodex、情報取得は「API / ローカルモデル（OpenAI互換）」でOllamaを使えます。ローカルOllamaのAPI URLは `http://localhost:11434/v1`、モデルにはインストール済みの名前（例: `qwen3:8b`）を入力し、APIキーは空欄にします（[OllamaのOpenAI互換API](https://docs.ollama.com/api/openai-compatibility)）。接続先を「翻訳などと同じ接続先」にすると通常の接続先を使い、情報取得モデルが空欄ならその接続先の通常モデルを使います。URL・CLIパス・APIキーは接続先の通常設定と共通です。ローカルAIを使う場合も、書誌情報の照合ではCrossrefやarXivへ通信します。
 
 ### 接続先の追加・変更（開発者向け）
 
-接続先ごとの処理は `papeer/providers/` に 1 モジュールずつ置いています。CLI のフラグや出力形式が変わったときは、その接続のモジュールだけを直します。
+接続先ごとの処理は `papeer/providers/` に 1 モジュールずつ置いています。翻訳・論文情報の取得は共通の `ProviderBackend.generate()` を使い、接続先は同じレジストリから生成します。情報取得専用の設定は `Settings.for_paper_metadata()` で解決し、翻訳の設定を変更しません。CLI のフラグや出力形式が変わったときは、その接続のモジュールだけを直します。
 
 1. `papeer/providers/base.py` の `ProviderBackend` を継承し、`spec`（表示名・説明・設定項目）と `_generate()` を実装する。CLI なら `common.CliBackend` も継承すると、パス検出・ログイン・接続確認が付く。
 2. `papeer/providers/registry.py` の `BACKENDS` に 1 行追加する。

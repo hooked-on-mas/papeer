@@ -67,12 +67,53 @@ before(async () => {
     usePaperSelection: (await load("/src/features/library/selectionStore.ts")).usePaperSelection,
     useBulkProgress: (await load("/src/app/bulkState.ts")).useBulkProgress,
     OcrSettingsView: (await load("/src/features/settings/OcrSection.tsx")).OcrSettingsView,
+    ConnectionSection: (await load("/src/features/settings/ConnectionSection.tsx")).ConnectionSection,
     OcrPanel: (await load("/src/features/reader/OcrPanel.tsx")).OcrPanel,
   };
 });
 
 after(async () => {
   await server?.close();
+});
+
+test("paper metadata AI is a separate opt-in checkbox with an explanation of automatic work", () => {
+  const { React, ConnectionSection } = modules;
+  const form = {
+    providers: [], provider: "api", spec: undefined,
+    option: () => "", setOption: () => () => undefined,
+    model: "example", setModel: () => undefined,
+    apiKey: "", setApiKey: () => undefined,
+    modelOptions: [], effortOptions: [], hasEfforts: false,
+    concurrency: 0, setConcurrency: () => undefined,
+    loadingModels: false, refetchModels: () => undefined,
+    checking: false, checkResult: null, check: () => undefined,
+    metadataAi: false, setMetadataAi: () => undefined,
+    metadataModel: "", setMetadataModel: () => undefined,
+    metadataProvider: "", setMetadataProvider: () => undefined,
+    metadataModelOptions: [], metadataFallbackModel: "",
+  };
+  const off = render(React.createElement(ConnectionSection, { form }));
+  assert.match(off, /論文情報の取得にAIを使う/);
+  assert.match(off, /初期値はOFF/);
+  assert.match(off, /PDF追加時/);
+  assert.match(off, /利用枠・トークンを消費/);
+  assert.doesNotMatch(off, /type="checkbox"[^>]*checked/);
+  assert.match(off, /情報取得モデル/);
+  assert.match(off, /情報取得の接続先/);
+  assert.match(off, /空欄なら、その接続先の通常モデル/);
+  const on = render(React.createElement(ConnectionSection, { form: { ...form, metadataAi: true, metadataModel: "lookup-model",
+    metadataModelOptions: [{ id: "lookup-model", name: "Lookup Model" }] } }));
+  assert.match(on, /type="checkbox"[^>]*checked=""/);
+  assert.match(on, /aria-label="情報取得モデル"[^>]*value="lookup-model"/);
+  assert.match(on, /<option value="lookup-model">Lookup Model<\/option>/);
+  const local = render(React.createElement(ConnectionSection, { form: { ...form, metadataAi: true,
+    provider: "codex", metadataProvider: "api", metadataModel: "qwen3:8b",
+    metadataSpec: { fields: [{ key: "base_url", label: "API URL", placeholder: "", hint: "Ollama" }], needs_api_key: true },
+    metadataOption: () => "http://localhost:11434/v1", setMetadataOption: () => () => undefined,
+  } }));
+  assert.match(local, /aria-label="情報取得のAPI URL"[^>]*value="http:\/\/localhost:11434\/v1"/);
+  assert.match(local, /aria-label="情報取得モデル"[^>]*value="qwen3:8b"/);
+  assert.match(local, /Ollamaをローカルで使う場合は空欄/);
 });
 
 const reading = {

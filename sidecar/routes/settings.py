@@ -44,6 +44,8 @@ def update_settings(body: SettingsModel) -> dict[str, str]:
     current, unknown = deps.get_settings_with_unknown_keys()
     settings = current.updated(body.model_dump(exclude={"api_key"}, exclude_unset=True))
     spec_for(settings.provider)
+    if settings.paper_metadata_provider:
+        spec_for(settings.paper_metadata_provider)
     deps.require_library_folder()
     settings.save(deps.get_data_dir())
     if unknown:

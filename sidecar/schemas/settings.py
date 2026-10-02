@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from papeer.core.config import Settings
 from sidecar.schemas.common import Stored
@@ -22,6 +22,9 @@ class SettingsModel(BaseModel):
     reasoning_effort: str = _DEFAULTS.reasoning_effort
     timeout_seconds: int = _DEFAULTS.timeout_seconds
     translation_concurrency: int = _DEFAULTS.translation_concurrency  # 0: automatic (1 for a local model, else 3)
+    paper_metadata_ai_enabled: StrictBool = _DEFAULTS.paper_metadata_ai_enabled
+    paper_metadata_provider: str = _DEFAULTS.paper_metadata_provider
+    paper_metadata_model: str = _DEFAULTS.paper_metadata_model
     # By provider id: that connection's own settings (cli_path, base_url, model, reasoning_effort).
     provider_options: dict[str, dict[str, str]] = Field(default_factory=dict)
     api_key: str | None = None

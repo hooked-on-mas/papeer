@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import json
 import os
 from pathlib import Path
@@ -51,6 +51,12 @@ class Settings:
     timeout_seconds: int = 900
     # Translation requests in flight at once; 0 lets translation_requests() decide.
     translation_concurrency: int = 0
+    # Explicit opt-in for AI requests made to fill missing paper metadata.
+    paper_metadata_ai_enabled: bool = False
+    # Empty follows the regular connection; otherwise resolved by the same provider registry.
+    paper_metadata_provider: str = ""
+    # Empty uses the regular model; an override applies only to metadata completion.
+    paper_metadata_model: str = ""
     # Session-only; never saved.
     api_key: str = ""
     # Settings that belong to one connection, by provider id: CLI paths, the API URL,
@@ -58,6 +64,8 @@ class Settings:
     provider_options: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def __post_init__(self):
+        if type(self.paper_metadata_ai_enabled) is not bool:
+            raise ValueError("論文情報のAI取得はONまたはOFFで指定してください。")
         if self.reasoning_effort not in REASONING_EFFORTS:
             raise ValueError("effortは既定値・low・medium・high・xhigh・maxから選んでください。")
         if (type(self.translation_concurrency) is not int
@@ -67,9 +75,14 @@ class Settings:
                 isinstance(v, dict) for v in self.provider_options.values()):
             raise ValueError("接続先ごとの設定の形式が不正です。")
         self.model = self.model.strip() if isinstance(self.model, str) else self.model
-        if not all(valid_model(m) for m in (self.model, *(v.get("model", "") for v in self.provider_options.values()))):
+        self.paper_metadata_model = (self.paper_metadata_model.strip() if isinstance(self.paper_metadata_model, str)
+                                     else self.paper_metadata_model)
+        if not all(valid_model(m) for m in (self.model, self.paper_metadata_model,
+                   *(v.get(key, "") for v in self.provider_options.values() for key in ("model", "paper_metadata_model")))):
             raise ValueError(MODEL_NAME_ERROR)
         self.provider = _RENAMED_PROVIDERS.get(self.provider, self.provider)
+        self.paper_metadata_provider = self.paper_metadata_provider.strip()
+        self.paper_metadata_provider = _RENAMED_PROVIDERS.get(self.paper_metadata_provider, self.paper_metadata_provider)
 
     def options(self, provider: str | None = None) -> dict[str, str]:
         """Settings of one connection (the chosen one by default)."""
@@ -93,6 +106,18 @@ class Settings:
             return self.translation_concurrency
         local = self.provider == "api" and urlparse(self.base_url.strip()).hostname in {"127.0.0.1", "localhost", "::1"}
         return 1 if local else 3
+
+    def for_paper_metadata(self) -> "Settings":
+        """Settings of the information lookup, without changing the translation configuration.
+
+        The selected backend receives the same contract as translation. A different connection
+        or model uses its default reasoning effort, since the regular effort may not be supported.
+        """
+        provider = self.paper_metadata_provider or self.provider
+        if provider == self.provider and not self.paper_metadata_model:
+            return replace(self)
+        model = self.paper_metadata_model or self.options(provider).get("model", "")
+        return replace(self, provider=provider, model=model, reasoning_effort="")
 
     @classmethod
     def from_values(cls, values: dict) -> "Settings":
@@ -136,13 +161,19 @@ class Settings:
         library = _split_device_options(values["provider_options"])[0]
         values["provider_options"] = _merge_options(library, device)
         values["api_key"] = api_key_from_env()
+        # A malformed or older settings file must never implicitly enable background AI work.
+        if type(values.get("paper_metadata_ai_enabled")) is not bool:
+            values["paper_metadata_ai_enabled"] = False
         # A hand-edited or synced settings.json with a bad model name must not lock the settings dialog out.
         # Fall back to the connection's own default, not Settings.model's (a Codex model).
         if not valid_model(values.get("model", "")):
             values["model"] = ""
+        if not valid_model(values.get("paper_metadata_model", "")):
+            values["paper_metadata_model"] = ""
         for options in values["provider_options"].values():
-            if not valid_model(options.get("model", "")):
-                options.pop("model")
+            for key in ("model", "paper_metadata_model"):
+                if not valid_model(options.get(key, "")):
+                    options.pop(key)
         return cls.from_values(values), unknown_keys(stored)
 
     def save(self, root: Path) -> None:

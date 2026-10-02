@@ -44,6 +44,7 @@ def contextual_units(document: dict, units: list[dict], limit: int = 700) -> lis
 # The title and abstract sent with every translation request, in characters (paper_context).
 PAPER_CONTEXT_LIMIT = 800
 _TITLE_LIMIT = 200
+_EXTRACTED_TITLE_LIMIT = 600
 # "Abstract", "ABSTRACT", Elsevier's spaced "a b s t r a c t", or "Summary", with the text after it
 # in the same block ("Abstract—We ...", "Abstract. We ...") or alone as a heading.
 _ABSTRACT = re.compile(r"\s*(?:a ?b ?s ?t ?r ?a ?c ?t|summary)\b\s*(?:[.:\-–—]\s*)?", re.I)
@@ -84,13 +85,14 @@ def _title(document: dict, first_page: list[dict]) -> str:
     shown = _plain(" ".join(block["text"] for block in first_page)).casefold()
     metadata = _plain(document.get("title") or "")
     # A title not on the page is often a file name or a word processor's placeholder.
-    if len(metadata.split()) >= 2 and metadata.casefold() in shown:
+    if _title_text(metadata) and metadata.casefold() in shown:
         return metadata
     sized = [block for block in first_page if isinstance(block.get("font_size"), (int, float))]
     if not sized:
         return ""
     body = median(block["font_size"] for block in sized for _ in range(max(1, len(block["text"]) // 100)))
-    candidates = [block for block in sized if 2 <= len(_plain(block["text"]).split()) and len(block["text"]) <= 300
+    candidates = [block for block in sized if _title_text(_plain(block["text"]))
+                  and len(block["text"]) <= _EXTRACTED_TITLE_LIMIT
                   and not _vertical(block) and not _ARXIV_STAMP.match(block["text"])
                   and block["font_size"] >= body * 1.2]
     if not candidates:
@@ -101,17 +103,47 @@ def _title(document: dict, first_page: list[dict]) -> str:
     parts, previous = [_plain(best["text"])], best.get("bbox")
     if not previous:
         return parts[0]
+    # The longest line can be the last line of a wrapped title. Keep its preceding lines too.
+    first = previous
+    positioned = [b for b in first_page if b.get("bbox") and b is not best]
+    for block in sorted(positioned, key=lambda b: b["bbox"][1], reverse=True):
+        box = block["bbox"]
+        if box[1] >= first[1] or not (box[0] < first[2] and box[2] > first[0]):
+            continue
+        if (abs((block.get("font_size") or 0) - best["font_size"]) > 0.5
+                or first[1] - box[3] > best["font_size"] or _vertical(block)
+                or _ARXIV_STAMP.match(block["text"])
+                or sum(map(len, parts)) + len(block["text"]) > _EXTRACTED_TITLE_LIMIT):
+            break
+        parts.insert(0, _plain(block["text"]))
+        first = box
     for block in sorted((b for b in first_page if b.get("bbox") and b is not best), key=lambda b: b["bbox"][1]):
         box = block["bbox"]
         # Only blocks below the title and overlapping its width; the first other one ends it.
         if box[1] < previous[1] + 1 or not (box[0] < previous[2] and box[2] > previous[0]):
             continue
         if (abs((block.get("font_size") or 0) - best["font_size"]) > 0.5 or box[1] - previous[3] > best["font_size"]
-                or sum(map(len, parts)) + len(block["text"]) > _TITLE_LIMIT):
+                or sum(map(len, parts)) + len(block["text"]) > _EXTRACTED_TITLE_LIMIT):
             break
         parts.append(_plain(block["text"]))
         previous = box
     return " ".join(parts)
+
+
+def _title_text(text: str) -> bool:
+    # Japanese titles need not contain spaces between words.
+    return len(text.split()) >= 2 or bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]{4,}", text))
+
+
+def paper_title(document: dict) -> str:
+    """The full title visible on page one, or empty when the layout gives no title.
+
+    Shared by imports, existing-library upgrades and translation context; only the context is clipped.
+    A later page's heading must not become the title when the first page is a scan.
+    """
+    first_page = [dict(block, text=restore_formula_text(block["text"], block))
+                  for block in document.get("blocks", []) if _prose(block) and block.get("page") == 1]
+    return _title(document, first_page) if first_page else ""
 
 
 def _vertical(block: dict) -> bool:
@@ -160,7 +192,7 @@ def paper_context(document: dict) -> dict | None:
     blocks = [block for block in document.get("blocks", []) if _prose(block)]
     if not blocks:
         return None
-    title = _clip(_title(document, [b for b in blocks if b["page"] == blocks[0]["page"]]), _TITLE_LIMIT)
+    title = _clip(paper_title(document), _TITLE_LIMIT)
     abstract = _clip(_abstract(blocks), PAPER_CONTEXT_LIMIT - len(title))
     context = {key: value for key, value in (("title", title), ("abstract", abstract)) if value}
     return context or None

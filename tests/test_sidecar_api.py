@@ -437,7 +437,7 @@ def test_collection_rules_match_old_library(test_env):
 
     # Importing the same PDF again opens the existing paper instead of adding one.
     again = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
-    assert again.result.model_dump() == {"paper_ids": [paper_id], "added": 0, "needs_ocr": []}
+    assert again.result.model_dump() == {"paper_ids": [paper_id], "added": 0, "needs_ocr": [], "metadata_failures": []}
 
 
 def test_import_announces_page_counts_before_each_paper(test_env):
@@ -463,7 +463,7 @@ def test_imports_requested_together_run_in_turn(test_env):
     first, second = _wait(first), _wait(second)
     assert (first.status, second.status) == ("succeeded", "succeeded")
     assert first.result.added == 1
-    assert second.result.model_dump() == {"paper_ids": first.result.paper_ids, "added": 0, "needs_ocr": []}
+    assert second.result.model_dump() == {"paper_ids": first.result.paper_ids, "added": 0, "needs_ocr": [], "metadata_failures": []}
 
 
 def test_paper_metadata_reading_and_export_guards(test_env, tmp_path):

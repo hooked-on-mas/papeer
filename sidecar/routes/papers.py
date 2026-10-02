@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from pathlib import Path
+import logging
 import re
 import threading
 import uuid
@@ -18,6 +19,7 @@ from papeer.core.errors import Invalid, NotFound
 from papeer.core.library_list import LibrarySort, library_rows, paper_row
 from papeer.core.opened_papers import mark_opened
 from papeer.core.paths import PaperFiles
+from papeer.core.paper_metadata import complete_metadata
 from papeer.core.storage import normalize_collection_name
 from papeer.pdf.pdf_viewer import pdf_page_count
 from papeer.providers import Cancelled
@@ -47,6 +49,7 @@ from sidecar.ui_state import load_ui_state
 from sidecar.schemas.citations import CitationGraph
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
+logger = logging.getLogger(__name__)
 
 
 # --- Papers ---
@@ -112,6 +115,7 @@ def import_papers(body: ImportRequest) -> JobStarted:
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, Any]:
         imported_ids: list[str] = []
         needs_ocr: list[str] = []
+        metadata_failures: list[str] = []
         added = 0
         # This PC's OCR setting "auto": pages needing OCR are read while the paper is added.
         reads = ocr.import_reads()
@@ -136,7 +140,23 @@ def import_papers(body: ImportRequest) -> JobStarted:
                 needs_ocr.append(paper_id)
             # Also a library change: the client refreshes the list, then drops the placeholder row.
             deps.job_manager.broadcast(ImportItemEvent(path=source, paper_id=paper_id))
-        return {"paper_ids": imported_ids, "added": added, "needs_ocr": needs_ocr}
+            settings = deps.get_settings()
+            if is_new and settings.paper_metadata_ai_enabled:
+                progress(f"{label}（不足している論文情報を調べています）")
+                try:
+                    changed = complete_metadata(lib, paper_id, settings,
+                                                lambda settings=settings: deps.provider_for(settings.for_paper_metadata(), cancel),
+                                                enabled_now=lambda: deps.get_settings().paper_metadata_ai_enabled,
+                                                on_warning=lambda message, name=path.name: metadata_failures.append(f"{name}: {message}"))
+                    if changed:
+                        deps.paper_changed(paper_id, changed)
+                except Cancelled:
+                    raise Cancelled("追加を中止しました。追加済みの論文は保存されています。") from None
+                except Exception as error:  # noqa: BLE001 - optional metadata failure must not lose an imported PDF
+                    logger.warning("Paper metadata completion failed for %s", paper_id, exc_info=True)
+                    metadata_failures.append(f"{path.name}: {error}")
+        return {"paper_ids": imported_ids, "added": added, "needs_ocr": needs_ocr,
+                "metadata_failures": metadata_failures}
 
     return JobStarted(job_id=submit_import(action, announce_pages))
 

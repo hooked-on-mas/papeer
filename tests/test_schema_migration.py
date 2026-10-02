@@ -45,6 +45,39 @@ def test_new_library_starts_at_the_current_version(tmp_path):
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
 
+@pytest.mark.parametrize("manual", [False, True])
+def test_cached_layout_titles_upgrade_existing_papers_and_keep_manual_edits(tmp_path, manual):
+    lib = Library(tmp_path / "library")
+    identity, _ = lib.import_pdf(SAMPLE_PDF)
+    cache = lib.folder(identity) / "document.json"
+    document = json.loads(cache.read_text("utf-8"))
+    extracted = document.pop("extracted_title")
+    document["title"] = "sample"
+    cache.write_text(json.dumps(document), "utf-8")
+    lib.update(identity, title="My own title" if manual else "sample")
+    step = storage.MIGRATIONS.index(storage._paper_titles)
+    set_version(lib.root, step)
+    lib = Library(lib.root)
+    assert lib.paper(identity)["title"] == ("My own title" if manual else extracted)
+    before = dump(lib.root)
+    Library(lib.root)
+    assert dump(lib.root) == before
+
+
+@pytest.mark.parametrize("cache", [None, "{broken", "null", '{"title":"sample","blocks":[null]}'])
+def test_title_upgrade_tolerates_missing_or_unreadable_layouts(tmp_path, cache):
+    lib = Library(tmp_path / "library")
+    identity, _ = lib.import_pdf(SAMPLE_PDF)
+    lib.update(identity, title="sample")
+    path = lib.folder(identity) / "document.json"
+    if cache is None:
+        path.unlink()
+    else:
+        path.write_text(cache, "utf-8")
+    set_version(lib.root, storage.MIGRATIONS.index(storage._paper_titles))
+    assert Library(lib.root).paper(identity)["title"] == "sample"
+
+
 @pytest.mark.parametrize("stage", sorted(STAGES))
 def test_libraries_from_before_versioning_reach_the_current_schema(tmp_path, stage):
     expected = columns(Library(tmp_path / "fresh").root)

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { CheckCircle2, Globe, Loader2, LogIn, PlugZap, RefreshCw, SquareTerminal, XCircle } from "lucide-react";
 import { cn } from "cn";
 import { api, unwrap } from "../../api/client";
@@ -19,6 +19,8 @@ const CONCURRENCY_OPTIONS: { value: number; label: string }[] = [
   { value: 1, label: "1（1件ずつ）" },
   ...[2, 3, 4, 6, 8].map((value) => ({ value, label: String(value) })),
 ];
+
+type CheckResult = { ok: boolean; text: string } | null;
 
 function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -42,25 +44,35 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
   const [options, setOptions] = useState<ProviderOptions>({});
   const [apiKey, setApiKey] = useState("");
   const [concurrency, setConcurrency] = useState(0);
+  const [metadataAi, setMetadataAi] = useState(false);
+  const [metadataProvider, setMetadataProvider] = useState("");
   const [dirty, setDirty] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [checkResult, setCheckResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [checkResult, setCheckResult] = useState<CheckResult>(null);
+  const [metadataChecking, setMetadataChecking] = useState(false);
+  const [metadataCheckResult, setMetadataCheckResult] = useState<CheckResult>(null);
 
   useEffect(() => {
     if (!open || !settings) return;
     setProvider(settings.provider || "codex");
-    setOptions({
+    const initial = {
       ...settings.provider_options,
       [settings.provider]: {
         ...settings.provider_options?.[settings.provider],
         model: settings.model || "",
         reasoning_effort: settings.reasoning_effort || "",
       },
-    });
+    };
+    const lookupProvider = settings.paper_metadata_provider || settings.provider;
+    initial[lookupProvider] = { ...initial[lookupProvider], paper_metadata_model: settings.paper_metadata_model || "" };
+    setOptions(initial);
     setApiKey(settings.api_key || "");
     setConcurrency(settings.translation_concurrency ?? 0);
+    setMetadataAi(settings.paper_metadata_ai_enabled === true);
+    setMetadataProvider(settings.paper_metadata_provider || "");
     setDirty(false);
     setCheckResult(null);
+    setMetadataCheckResult(null);
   }, [open, settings]);
 
   const spec: ProviderSpec | undefined = providers.find((p) => p.id === provider);
@@ -76,6 +88,14 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
   const { data: effortOptions = [] } = useProviderEfforts(provider, debouncedModel,
     { cliPath: queryPath, enabled: open && !!settings });
   const chosenEffort = option("reasoning_effort");
+  const lookupProvider = metadataProvider || provider;
+  const metadataSpec = providers.find(p => p.id === lookupProvider);
+  const metadataOption = (key: string) => options[lookupProvider]?.[key] ?? "";
+  const metadataModel = metadataOption("paper_metadata_model");
+  const metadataPath = useDebounced(metadataSpec?.kind === "cli" ? metadataOption("cli_path") : undefined, 600);
+  const metadataModelsQuery = useProviderModels(lookupProvider,
+    { cliPath: metadataPath, enabled: open && !!settings && metadataAi });
+  const metadataFallbackModel = lookupProvider === provider ? model : metadataOption("model");
   // Fall back to the first choice when the model does not offer the saved value.
   const effort = effortOptions.some((o) => o.id === chosenEffort) ? chosenEffort : (effortOptions[0]?.id ?? "");
   const hasEfforts = effortOptions.length > 1;
@@ -85,10 +105,13 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
       setter(value);
       setDirty(true);
       setCheckResult(null);
+      setMetadataCheckResult(null);
     };
   }
-  const setOption = (key: string) => edit((value: string) =>
-    setOptions((prev) => ({ ...prev, [provider]: { ...prev[provider], [key]: value } })));
+  const setProviderOption = (id: string, key: string) => edit((value: string) =>
+    setOptions((prev) => ({ ...prev, [id]: { ...prev[id], [key]: value } })));
+  const setOption = (key: string) => setProviderOption(provider, key);
+  const setMetadataOption = (key: string) => setProviderOption(lookupProvider, key);
 
   const values = () => ({
     provider,
@@ -96,32 +119,41 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
     reasoning_effort: hasEfforts ? effort : "",
     timeout_seconds: settings?.timeout_seconds ?? 900,
     translation_concurrency: concurrency,
+    paper_metadata_ai_enabled: metadataAi,
+    paper_metadata_provider: metadataProvider,
+    paper_metadata_model: metadataModel.trim(),
     // Each connection's fields plus the model/effort chosen for it, so switching back restores them.
     provider_options: trimmed({ ...options, [provider]: { ...options[provider], model, reasoning_effort: hasEfforts ? effort : "" } }),
     api_key: apiKey.trim(),
   });
 
-  const login = async () => {
+  const metadataValues = () => ({ ...values(), provider: lookupProvider,
+    model: metadataModel.trim() || metadataFallbackModel.trim(),
+    reasoning_effort: lookupProvider === provider && !metadataModel.trim() ? values().reasoning_effort : "" });
+
+  const login = async (information = false) => {
     try {
-      const result = await unwrap(api.POST("/api/providers/login", { body: values() })) as { message: string; already?: boolean };
+      const result = await unwrap(api.POST("/api/providers/login", { body: information ? metadataValues() : values() })) as { message: string; already?: boolean };
       await showMessage(result.already ? "ログイン状態" : "ログイン", result.message);
     } catch (error) {
       showError(error, "CLIの準備エラー");
     }
   };
 
-  const check = async () => {
-    setChecking(true);
-    setCheckResult(null);
+  const check = async (information = false) => {
+    const setBusy = information ? setMetadataChecking : setChecking;
+    const setResult = information ? setMetadataCheckResult : setCheckResult;
+    setBusy(true);
+    setResult(null);
     try {
-      await startJob("/api/providers/check", values(), { kind: "check", paperId: null }, (event) => {
-        setChecking(false);
-        if (event.status === "succeeded") setCheckResult({ ok: true, text: event.result });
-        else setCheckResult({ ok: false, text: event.error || "接続を確認できませんでした。" });
+      await startJob("/api/providers/check", information ? metadataValues() : values(), { kind: "check", paperId: null }, (event) => {
+        setBusy(false);
+        if (event.status === "succeeded") setResult({ ok: true, text: event.result });
+        else setResult({ ok: false, text: event.error || "接続を確認できませんでした。" });
       });
     } catch (error) {
-      setChecking(false);
-      setCheckResult({ ok: false, text: (error as Error).message });
+      setBusy(false);
+      setResult({ ok: false, text: (error as Error).message });
     }
   };
 
@@ -132,9 +164,15 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
     effort, setEffort: setOption("reasoning_effort"),
     apiKey, setApiKey: edit(setApiKey),
     concurrency, setConcurrency: edit(setConcurrency),
+    metadataAi, setMetadataAi: edit(setMetadataAi),
+    metadataProvider, setMetadataProvider: edit(setMetadataProvider), metadataSpec,
+    metadataOption, setMetadataOption, metadataFallbackModel,
+    metadataModel, setMetadataModel: setMetadataOption("paper_metadata_model"),
+    metadataModelOptions: metadataModelsQuery.data ?? [],
     hasEfforts, effortOptions, modelOptions,
     loadingModels: modelsQuery.isFetching, refetchModels: modelsQuery.refetch,
-    dirty, values, login, check, checking, checkResult,
+    dirty, values, login: () => login(), check: () => check(), checking, checkResult,
+    metadataLogin: () => login(true), metadataCheck: () => check(true), metadataChecking, metadataCheckResult,
   };
 }
 
@@ -153,6 +191,8 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 export function ConnectionSection({ form }: { form: ConnectionForm }) {
+  const metadataModelId = useId();
+  const metadataProviderId = useId();
   const spec = form.spec;
   const isCli = spec?.kind === "cli";
   return (
@@ -235,6 +275,72 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
             {CONCURRENCY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </NativeSelect>
         </Field>
+        <div className="space-y-2 rounded-lg border p-3">
+          <label className="flex items-center gap-2 font-medium">
+            <input type="checkbox" checked={form.metadataAi} onChange={e => form.setMetadataAi(e.target.checked)}
+              aria-describedby="paper-metadata-ai-hint" />
+            論文情報の取得にAIを使う
+          </label>
+          <p id="paper-metadata-ai-hint" className="text-[0.75rem] leading-relaxed text-muted-foreground">
+            初期値はOFFです。ONにすると、PDF追加時に不足している筆頭著者・出版年・掲載誌・DOIなどを調べます。
+            論文の冒頭のテキストを情報取得用のAIへ送り、利用枠・トークンを消費します。入力済みの情報は保持します。
+            タイトルやDOIなどは、外部の書誌情報サービスにも送信します。
+          </p>
+          <div className="space-y-1">
+            <label htmlFor={metadataProviderId} className="block">情報取得の接続先</label>
+            <NativeSelect id={metadataProviderId} aria-label="情報取得の接続先" value={form.metadataProvider}
+              onChange={e => form.setMetadataProvider(e.target.value)} disabled={!form.metadataAi}>
+              <option value="">翻訳などと同じ接続先</option>
+              {form.providers.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </NativeSelect>
+          </div>
+          {form.metadataProvider && form.metadataProvider !== form.provider && (
+            <div className="space-y-3">
+              {form.metadataSpec?.fields.map(field => (
+                <Field key={field.key} label={field.label} hint={field.hint || undefined}>
+                  <Input aria-label={`情報取得の${field.label}`} value={form.metadataOption(field.key)}
+                    onChange={e => form.setMetadataOption(field.key)(e.target.value)}
+                    placeholder={field.placeholder} disabled={!form.metadataAi} />
+                </Field>
+              ))}
+              {form.metadataSpec?.needs_api_key && !spec?.needs_api_key && (
+                <Field label="API キー" hint="Ollamaをローカルで使う場合は空欄で使えます。キーは保存されず、終了時に破棄されます。">
+                  <Input aria-label="情報取得のAPI キー" type="password" value={form.apiKey}
+                    onChange={e => form.setApiKey(e.target.value)} autoComplete="off" disabled={!form.metadataAi} />
+                </Field>
+              )}
+              <p className="text-[0.75rem] text-muted-foreground">接続先ごとのURL・CLIの設定とAPIキーは、上の接続設定と共通です。</p>
+            </div>
+          )}
+          <div className="space-y-1">
+            <label htmlFor={metadataModelId} className="block">情報取得モデル</label>
+            <Input id={metadataModelId} aria-label="情報取得モデル" list={`${metadataModelId}-choices`}
+              value={form.metadataModel} onChange={e => form.setMetadataModel(e.target.value)}
+              disabled={!form.metadataAi} placeholder={form.metadataFallbackModel || "モデル名（空欄なら接続先の既定値）"}
+              aria-describedby={`${metadataModelId}-hint`} />
+            <datalist id={`${metadataModelId}-choices`}>
+              {form.metadataModelOptions.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
+            </datalist>
+            <p id={`${metadataModelId}-hint`} className="text-[0.75rem] text-muted-foreground">
+              情報取得の接続先のモデルを選ぶか直接入力できます。空欄なら、その接続先の通常モデルを使います。
+              Ollamaではインストール済みのモデル名を入力してください。
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {form.metadataSpec?.needs_login && form.metadataProvider && form.metadataProvider !== form.provider && (
+              <Button variant="outline" onClick={form.metadataLogin} disabled={!form.metadataAi}><LogIn /> ログイン</Button>
+            )}
+            <Button variant="outline" onClick={form.metadataCheck} disabled={!form.metadataAi || form.metadataChecking}>
+              {form.metadataChecking ? <Loader2 className="animate-spin" /> : <PlugZap />}
+              情報取得の接続を確認
+            </Button>
+          </div>
+          {form.metadataCheckResult && (
+            <p className={cn("text-[0.75rem] whitespace-pre-wrap", form.metadataCheckResult.ok ? "text-success" : "text-destructive")}>
+              {form.metadataCheckResult.text}
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
