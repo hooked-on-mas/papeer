@@ -189,7 +189,7 @@ export function LibrarySidebar() {
   const [tagFilter, setTagFilter] = useState("");
   const [readFilter, setReadFilter] = useState("");
   const filtered = !!librarySearch.trim() || !!tagFilter || !!readFilter;
-  const { data: paperList, isSuccess: papersLoaded } = usePaperList("", sortOrder);
+  const { data: paperList, isSuccess: papersLoaded, isError: papersFailed, refetch: reloadPapers } = usePaperList("", sortOrder);
   const allPapers = paperList ?? NO_PAPERS;
   useEffect(() => {
     if (papersLoaded && tagFilter && !allPapers.some(paper => paper.tags?.includes(tagFilter))) setTagFilter("");
@@ -210,7 +210,11 @@ export function LibrarySidebar() {
     const shown = new Set(papers.map(p => p.id));
     return searchResults?.results.filter(hit => shown.has(hit.paper_id)) ?? [];
   }, [papers, searchResults]);
-  const { data: collections = NO_COLLECTIONS } = useCollections();
+  const { data: collectionList, isError: collectionsFailed, refetch: reloadCollections } = useCollections();
+  const collections = collectionList ?? NO_COLLECTIONS;
+  // Cached data remains usable during refetches. Missing data is never an empty library.
+  const libraryLoading = paperList === undefined || collectionList === undefined;
+  const libraryFailed = (paperList === undefined && papersFailed) || (collectionList === undefined && collectionsFailed);
   const pending = usePendingImports((s) => s.items);
   const tree = useMemo(() => buildTree(collections, papers, pending, filtered), [collections, papers, pending, filtered]);
 
@@ -524,7 +528,29 @@ export function LibrarySidebar() {
           tabIndex={-1}
           title={withShortcutLabels("右クリックで名前変更・子フォルダー作成。論文をドラッグしてフォルダーへ移動。Ctrl・Shift+クリックで複数選択（F2：名前変更、Delete：削除）")}
         >
-          {librarySearch.trim() && <div className="px-2 pt-1 text-xs">
+          {libraryLoading && (
+            <div className="px-4 py-4" aria-busy={!libraryFailed}>
+              {libraryFailed ? (
+                <div className="text-[0.75rem] text-muted-foreground">
+                  <p role="status">ライブラリを読み込めませんでした。</p>
+                  <button className="mt-2 rounded-md border px-3 py-1 hover:bg-muted text-foreground" onClick={() => {
+                    void reloadPapers();
+                    void reloadCollections();
+                  }}>再試行</button>
+                </div>
+              ) : (
+                <>
+                  <p role="status" className="text-[0.75rem] text-muted-foreground mb-4">ライブラリを読み込んでいます…</p>
+                  <div aria-hidden="true" className="space-y-3">
+                    {["w-4/5", "w-3/5", "w-5/6", "w-2/3"].map((width) => (
+                      <div key={width} className={`h-4 rounded bg-muted ${width}`} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {!libraryLoading && librarySearch.trim() && <div className="px-2 pt-1 text-xs">
             {searching && <p className="p-2 text-muted-foreground">検索中…</p>}
             {searchError && <p className="p-2 text-destructive">検索できませんでした。</p>}
             {hits.map((hit, index) => <button key={index} className="w-full border-b text-left p-2 hover:bg-muted" onClick={() => {
@@ -538,12 +564,12 @@ export function LibrarySidebar() {
               <span className="block text-muted-foreground line-clamp-2">{hit.snippet}</span></button>)}
             {searchResults?.limited && <p className="p-2 text-muted-foreground">先頭200件を表示しています。検索語を追加して絞り込めます。</p>}
           </div>}
-          {!librarySearch.trim() && (
+          {!libraryLoading && !librarySearch.trim() && (
             <TreeList ref={treeList} lines={lines} scrollRef={scrollRef} treeRef={treeRef}
               onKeyDownCapture={(e) => onTreeKeyDown(e, true)} onKeyDown={(e) => onTreeKeyDown(e, false)}
               rowProps={{ papers: paperList ?? null, collections, filtered, setExpanded, onTagSelect: setTagFilter }} />
           )}
-          {papers.length === 0 && pending.length === 0 && (
+          {!libraryLoading && (!librarySearch.trim() || (!searching && !searchError)) && papers.length === 0 && pending.length === 0 && (
             <div className="px-4 py-6 text-center text-muted-foreground text-[0.75rem] leading-relaxed">
               {filtered
                 ? "見つかりませんでした。検索語や絞り込みを変更してください。"
@@ -571,7 +597,7 @@ export function LibrarySidebar() {
       </DndContext>
 
       <div className="px-3 py-1.5 text-[0.75rem] text-muted-foreground border-t shrink-0 tabular-nums flex items-center gap-2">
-        <span>{papers.length} 件の論文</span>
+        <span>{libraryLoading ? libraryFailed ? "読み込みできませんでした" : "読み込み中…" : `${papers.length} 件の論文`}</span>
         <SelectionStatus />
       </div>
     </div>

@@ -8,6 +8,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::utils::config::{Csp, CspDirectiveSources};
 use tauri::Emitter;
 use tauri::Manager;
+use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 #[cfg(any(test, not(debug_assertions)))]
 mod job;
@@ -308,9 +309,25 @@ pub fn run() {
     #[cfg(not(debug_assertions))]
     let remember_window = true;
 
+    // Keep the initial dimensions off screen until the saved size and maximization are restored.
+    // E2E windows have no window-state plugin and keep their configured visibility.
+    if remember_window {
+        for window in &mut context.config_mut().app.windows {
+            if window.label == "main" {
+                window.visible = false;
+            }
+        }
+    }
+    // Visibility is a startup decision, not saved state: even an app quit from the tray must open.
+    let window_state_flags = StateFlags::all() & !StateFlags::VISIBLE;
     let mut builder = tauri::Builder::default();
     if remember_window {
-        builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
+        builder = builder.plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags)
+                .skip_initial_state("main")
+                .build(),
+        );
     }
     let app = builder
         .plugin(tauri_plugin_notification::init())
@@ -325,6 +342,17 @@ pub fn run() {
                     tauri::WebviewWindowBuilder::from_config(app, &config)?
                         .data_directory(dir.clone())
                         .build()?;
+                }
+            }
+
+            if remember_window {
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Err(error) = window.restore_state(window_state_flags) {
+                        eprintln!("ウィンドウの状態を復元できませんでした: {error}");
+                    }
+                    // Show the default size on first launch or if restoration failed, too.
+                    window.show()?;
+                    window.set_focus()?;
                 }
             }
 

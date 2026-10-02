@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query";
 import { FilePlus2, Languages, Loader2 } from "lucide-react";
 import { useStore } from "@/store";
+import { StartupReader } from "@/app/StartupReader";
 import { runningPaperJob } from "@/features/jobs/jobSelectors";
 import { useReading, type ReadingData } from "@/api/hooks";
 import { backendUrl } from "@/api/client";
@@ -58,6 +59,7 @@ function translatedCaption(reading: ReadingData | null | undefined, page: number
 
 export function Reader() {
   const activePaperId = useStore((s) => s.activePaperId);
+  const uiStateLoaded = useStore((s) => s.uiStateLoaded);
   const currentPage = useStore((s) => s.currentPage);
   const zoom = useStore((s) => s.zoom);
   const readerSplit = useStore((s) => s.readerSplit);
@@ -101,14 +103,19 @@ export function Reader() {
   const [inkToolbarSlot, setInkToolbarSlot] = useState<HTMLDivElement | null>(null);
 
   // The original's table of contents, for the 目次 menu.
-  const [outline, setOutline] = useState<OutlineEntry[] | null>(null);
+  const [loadedOutline, setLoadedOutline] = useState<{ paperId: string | null; entries: OutlineEntry[] } | null>(null);
+  // Switching papers must not expose the previous paper's menu before the resetting effect runs.
+  const outline = loadedOutline?.paperId === activePaperId ? loadedOutline.entries : null;
   const outlineDoc = useRef<PDFDocumentProxy | null>(null);
   const onOriginalLoad = useCallback((doc: PDFDocumentProxy) => {
+    // The sidecar resolves the outline before the PDF is downloaded. Older sidecars (or an
+    // unreadable original there) still use pdf.js as a fallback.
+    if (reading?.outline != null) return;
     if (outlineDoc.current === doc) return;
     outlineDoc.current = doc;
-    void loadOutline(doc).then((entries) => { if (outlineDoc.current === doc) setOutline(entries); });
-  }, []);
-  useEffect(() => { outlineDoc.current = null; setOutline(null); }, [activePaperId]);
+    void loadOutline(doc).then((entries) => { if (outlineDoc.current === doc) setLoadedOutline({ paperId: activePaperId, entries }); });
+  }, [activePaperId, reading?.outline]);
+  useEffect(() => { outlineDoc.current = null; setLoadedOutline(null); }, [activePaperId]);
 
   const pageCount = reading?.page_count ?? 0;
   const completed = reading?.completed_pages ?? NO_PAGES;
@@ -307,6 +314,8 @@ export function Reader() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [ownsKey]);
 
+  if (!activePaperId && !uiStateLoaded) return <StartupReader />;
+
   if (!activePaperId) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8 overflow-y-auto">
@@ -352,7 +361,7 @@ export function Reader() {
 
   return (
     <div ref={readerRef} className="flex flex-col h-full w-full bg-reader-bg">
-      <ReaderToolbar paperId={activePaperId} search={search} setSearch={setSearch} outline={outline} ownsKey={ownsKey} />
+      <ReaderToolbar paperId={activePaperId} search={search} setSearch={setSearch} outline={reading?.outline ?? outline} ownsKey={ownsKey} />
       <span role="status" className="sr-only">{rebuilding ? "PDFを作り直しています" : translating ? "翻訳中" : ""}</span>
       {/* data-ink-toolbar-slot: INK_TOOLBAR_SLOT, which lets the toolbar's keys through to its pane. */}
       <div id="reader-ink-tools" ref={setInkToolbarSlot} data-ink-toolbar-slot="" className="flex flex-col shrink-0 max-h-[40%]" />

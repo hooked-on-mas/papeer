@@ -23,11 +23,14 @@ export function lazyComponent<P extends object>(load: () => Promise<ComponentTyp
   const loader = createLoader(load);
 
   function Loaded(props: P) {
-    const Target = loader.loaded() ?? use(loader.load());
+    // A suspended render must consume the same promise when it resumes, even once loaded.
+    const Target = use(loader.load());
     return <Target {...props} />;
   }
 
   function Lazy(props: P) {
+    // Capture the fast path before mounting Suspense; never switch paths as a load completes.
+    const [Preloaded] = useState(() => loader.loaded());
     const [attempt, setAttempt] = useState(0);
     const retry = () => {
       loader.reset();
@@ -36,7 +39,7 @@ export function lazyComponent<P extends object>(load: () => Promise<ComponentTyp
     return (
       <LoadBoundary key={attempt} fallback={() => options.failed(props, retry)}>
         <Suspense fallback={options.loading(props)}>
-          <Loaded {...props} />
+          {Preloaded ? <Preloaded {...props} /> : <Loaded {...props} />}
         </Suspense>
       </LoadBoundary>
     );

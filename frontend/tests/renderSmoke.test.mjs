@@ -49,6 +49,7 @@ before(async () => {
     server: await import("react-dom/server"),
     query: await import("@tanstack/react-query"),
     Reader: (await load("/src/features/reader/Reader.tsx")).Reader,
+    Header: (await load("/src/app/Header.tsx")).Header,
     ReaderArea: (await load("/src/app/ReaderArea.tsx")).ReaderArea,
     ReaderTab: (await load("/src/app/ReaderArea.tsx")).ReaderTab,
     Tabs: (await load("/src/components/ui/tabs.tsx")).Tabs,
@@ -266,6 +267,38 @@ const libraryQueries = [
   [["collections"], ["ML", "ML / NLP", "Empty"]],
 ];
 const libraryState = { selectedFolder: null, expandedCollections: null, librarySearch: "", sortOrder: 0 };
+
+test("startup waits for the reading place without flashing the first-use screen", () => {
+  const state = { activePaperId: null, uiStateLoaded: false, readerSplit: 0.6 };
+  const reader = render(modules.React.createElement(modules.Reader), state);
+  assert.match(reader, /読書画面を準備しています/);
+  assert.match(reader, /role="region" aria-label="原文"/);
+  assert.match(reader, /role="region" aria-label="日本語訳"/);
+  assert.match(reader, /grid-template-columns:minmax\(0, 0.6fr\) 4px minmax\(0, 0.4fr\)/);
+  assert.doesNotMatch(reader, /論文を追加して|PDF を追加|続きから読む/);
+  const header = render(modules.React.createElement(modules.Header), state);
+  assert.doesNotMatch(header, /論文を追加して|AI接続を設定/);
+  const ready = render(modules.React.createElement(modules.Reader), { ...state, uiStateLoaded: true });
+  assert.match(ready, /論文を追加して/);
+  assert.doesNotMatch(ready, /読書画面を準備しています/);
+  // A paper chosen by the user while restoration is pending remains usable.
+  const chosen = render(modules.React.createElement(modules.Reader), { activePaperId: "p1", uiStateLoaded: false });
+  assert.match(chosen, /id="page-input"/);
+});
+
+test("missing library data is loading, and only a loaded empty library invites adding PDFs", () => {
+  const sidebar = modules.React.createElement(modules.LibrarySidebar);
+  for (const queries of [[], [[["papers", "list", "", 0], []]], [[["collections"], []]]]) {
+    const pending = render(sidebar, libraryState, {}, queries);
+    assert.match(pending, /ライブラリを読み込んでいます/);
+    assert.doesNotMatch(pending, /0 件の論文|読み始めましょう|見つかりませんでした/);
+  }
+  const ready = render(sidebar, libraryState, {}, [
+    [["papers", "list", "", 0], []], [["collections"], []],
+  ]);
+  assert.match(ready, /0 件の論文/);
+  assert.match(ready, /読み始めましょう/);
+});
 
 test("the library renders its folder tree, with the open paper and its translation's progress", () => {
   const html = render(modules.React.createElement(modules.LibrarySidebar), {

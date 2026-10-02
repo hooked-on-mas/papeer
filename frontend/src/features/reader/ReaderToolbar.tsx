@@ -41,7 +41,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   paperId: string;
   search: Search;
   setSearch: (value: Search) => void;
-  /** The original's table of contents; null or empty hides the 目次 menu. */
+  /** The original's table of contents; null is loading, empty means no outline. */
   outline: OutlineEntry[] | null;
   /** Whether a key press is the reader's, as the paging keys decide it. */
   ownsKey: (e: KeyboardEvent) => boolean;
@@ -102,7 +102,8 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   }, []);
   // The widths in readerBars.ts are at 100%, less the row's padding (px-3); the UI size (lib/uiScale.ts)
   // scales everything drawn in the row.
-  const fit = fitReaderToolbar(Math.max(0, rowWidth / uiScale - 24), { focusMode, hasOutline: !!outline?.length });
+  // Reserve the outline's space before the PDF loads, so other controls never move when it arrives.
+  const fit = fitReaderToolbar(Math.max(0, rowWidth / uiScale - 24), { focusMode, hasOutline: true });
   const shown = (id: string) => (fit[id] ?? -1) >= 0;
   const full = (id: string) => (fit[id] ?? -1) >= 1;
   const panelTitle = (label: string, key: string) => `${label}を右に表示${focusMode ? `（${withShortcutLabels(key)}）` : ""}`;
@@ -123,6 +124,9 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
     </DropdownMenuItem>
   ));
   const outlineMenuClass = "w-96 max-w-[calc(100vw-2rem)] max-h-[min(60vh,var(--available-height))]";
+  const outlineTitle = outline === null ? "目次を読み込んでいます…"
+    : !outline.length ? "このPDFに目次はありません。"
+    : withShortcutLabels("PDF の目次から移動（Alt+← で戻る）");
 
   const button = "p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:pointer-events-none shrink-0";
   // An icon with a label beside it when there is room (see readerToolbarItems for the widths).
@@ -175,7 +179,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
         <ReaderInkButton />
         {shown("outline") && (
           <DropdownMenu>
-            <DropdownMenuTrigger className={labeled} aria-label="目次" title={withShortcutLabels("PDF の目次から移動（Alt+← で戻る）")}>
+            <DropdownMenuTrigger className={`${labeled} disabled:opacity-40`} aria-label="目次" title={outlineTitle} disabled={!outline?.length}>
               <ListTree className="size-3.5" />{full("outline") && "目次"}
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className={outlineMenuClass}>{outlineItems}</DropdownMenuContent>
@@ -287,9 +291,9 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             {!shown("back") && (
               <DropdownMenuItem disabled={!canGoBack} onClick={historyBack}><Undo2 /> {withShortcutLabels("移動する前の場所に戻る（Alt+←）")}</DropdownMenuItem>
             )}
-            {!shown("outline") && !!outline?.length && (
+            {!shown("outline") && (
               <DropdownMenuSub>
-                <DropdownMenuSubTrigger><ListTree /> 目次</DropdownMenuSubTrigger>
+                <DropdownMenuSubTrigger disabled={!outline?.length} title={outlineTitle}><ListTree /> 目次</DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className={outlineMenuClass}>{outlineItems}</DropdownMenuSubContent>
               </DropdownMenuSub>
             )}

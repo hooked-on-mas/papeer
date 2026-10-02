@@ -16,6 +16,7 @@ import { isRunning, useStore } from "../store";
 import { anyJobRunning } from "@/features/jobs/jobSelectors";
 import { Header, TranslationDialogHost } from "./Header";
 import { StatusBar } from "./StatusBar";
+import { StartupReader } from "./StartupReader";
 import { ConnectionBanner } from "@/features/jobs/ConnectionBanner";
 import { LibrarySidebar } from "../features/library/LibrarySidebar";
 import { ReaderTab, useSidePanelOpen } from "./ReaderArea";
@@ -253,6 +254,7 @@ export function AppShell() {
   const focusMode = useStore((s) => s.focusMode);
   const sidePanelOpen = useSidePanelOpen();
   const activePaperId = useStore((s) => s.activePaperId);
+  const uiStateLoaded = useStore((s) => s.uiStateLoaded);
   const anyRunning = useStore((s) => anyJobRunning(s.activeJobs));
   // Passages attached from the reader, waiting to be sent.
   const attachmentCount = useStore((s) => s.chatAttachments.filter((item) => item.paperId === s.activePaperId).length);
@@ -462,22 +464,26 @@ export function AppShell() {
             </div>
 
             <div className="relative flex-1 flex flex-col min-h-0">
-              {/* Kept at the same tree position so that focus mode reuses the loaded PDFs. */}
-              <ReaderTab />
-              {/* The others unmount with their tab in the same update, never lingering beside the same
-                  pane opened in the side panel (see features/reader/sidePanel.ts). */}
-              <TabsContent value="summary" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
-                {activeTab === "summary" && <SummaryPane />}
-              </TabsContent>
-              <TabsContent value="chat" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
-                {activeTab === "chat" && <ChatPane />}
-              </TabsContent>
-              <TabsContent value="notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
-                {activeTab === "notes" && <NotesPane />}
-              </TabsContent>
-              <TabsContent value="sticky-notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
-                {activeTab === "sticky-notes" && <StickyNotesTab />}
-              </TabsContent>
+              {!activePaperId && !uiStateLoaded ? <StartupReader /> : (
+                <>
+                  {/* Kept at the same tree position so that focus mode reuses the loaded PDFs. */}
+                  <ReaderTab />
+                  {/* The others unmount with their tab in the same update, never lingering beside the same
+                      pane opened in the side panel (see features/reader/sidePanel.ts). */}
+                  <TabsContent value="summary" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                    {activeTab === "summary" && <SummaryPane />}
+                  </TabsContent>
+                  <TabsContent value="chat" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                    {activeTab === "chat" && <ChatPane />}
+                  </TabsContent>
+                  <TabsContent value="notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                    {activeTab === "notes" && <NotesPane />}
+                  </TabsContent>
+                  <TabsContent value="sticky-notes" className="flex-1 p-0 m-0 overflow-hidden outline-none data-[state=active]:flex min-h-0">
+                    {activeTab === "sticky-notes" && <StickyNotesTab />}
+                  </TabsContent>
+                </>
+              )}
             </div>
           </Tabs>
         </ResizablePanel>

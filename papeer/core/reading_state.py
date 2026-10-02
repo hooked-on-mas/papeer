@@ -6,6 +6,7 @@ import stat
 from typing import Any
 
 from papeer.core.paths import PaperFiles
+from papeer.core.pdf_outline import original_outline
 from papeer.core.service import page_translation_text
 from papeer.core.storage import Library
 from papeer.translation.translation_preview import read_preview, translated_page, translated_page_numbers
@@ -76,6 +77,7 @@ def reading_state(lib: Library, paper_id: str, last_page: int = 0) -> dict[str, 
         "has_article": files.article_md.is_file(),
         "has_interleaved": files.interleaved_pdf.is_file(),
         "original_mtime": int(files.original_pdf.stat().st_mtime) if files.original_pdf.is_file() else 0,
+        "outline": original_outline(files.original_pdf),
     }
 
 

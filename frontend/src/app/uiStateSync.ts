@@ -67,7 +67,6 @@ function applyUiState(state: UiStateFile): void {
     sortOrder: librarySortOrder(state.sort),
     // An empty list from a fresh install means nothing was ever collapsed.
     expandedCollections: expanded.length ? expanded : null,
-    uiStateLoaded: true,
   });
   if (state.last_paper && !s.activePaperId) {
     useStore.getState().setActivePaperId(state.last_paper);
@@ -76,6 +75,11 @@ function applyUiState(state: UiStateFile): void {
   } else if (useStore.getState().statusMessage === WAITING) {
     useStore.getState().setStatus(statusBeforeWaiting);
   }
+  if (useStore.getState().statusMessage === "起動しています…") {
+    useStore.getState().setStatus("準備できました。PDFの追加・閲覧・メモ保存にはAI接続は不要です。");
+  }
+  // Only reveal the empty reader after last_paper has been restored (or there is none).
+  useStore.setState({ uiStateLoaded: true });
   if (touched) {
     // A paper opened while waiting is not in the file yet: save it, as any later change would be.
     lastSaved = "";

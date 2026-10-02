@@ -10882,6 +10882,32 @@
         "title": "PaperRow",
         "description": "A paper as GET /api/papers lists it: its papers row (Library._paper) and what library_list.paper_row adds.\n\nAnswered with response_model_exclude_unset, so a row keeps exactly the keys it was given: the fields\nwith defaults are the ones a row may lack. What paper_row adds is missing from the row of a paper whose\nID is not a folder's name (a hand-edited database), except last_opened_at: library_rows gives every row\nthat one, None when the paper was never opened on this PC (papeer/core/opened_papers.py).\nThe row's columns have no default, so a column added to the papers table fails the tests until named here."
       },
+      "PdfOutlineEntry": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "depth": {
+            "type": "integer",
+            "title": "Depth"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "anchor_y": {
+            "type": "number",
+            "title": "Anchor Y"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "depth"
+        ],
+        "title": "PdfOutlineEntry"
+      },
       "ProviderActionRequest": {
         "properties": {
           "provider": {
@@ -11218,6 +11244,20 @@
           "original_mtime": {
             "type": "integer",
             "title": "Original Mtime"
+          },
+          "outline": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PdfOutlineEntry"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outline"
           }
         },
         "type": "object",

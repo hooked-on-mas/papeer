@@ -2753,6 +2753,17 @@ export interface components {
              */
             translation_in_progress?: boolean;
         };
+        /** PdfOutlineEntry */
+        PdfOutlineEntry: {
+            /** Title */
+            title: string;
+            /** Depth */
+            depth: number;
+            /** Page */
+            page?: number;
+            /** Anchor Y */
+            anchor_y?: number;
+        };
         /**
          * ProviderActionRequest
          * @description Optional unsaved settings from the dialog; omitted fields use the saved settings.
@@ -2890,6 +2901,8 @@ export interface components {
             has_interleaved: boolean;
             /** Original Mtime */
             original_mtime: number;
+            /** Outline */
+            outline?: components["schemas"]["PdfOutlineEntry"][] | null;
         };
         /** RenameCollectionRequest */
         RenameCollectionRequest: {

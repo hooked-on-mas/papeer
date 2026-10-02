@@ -23,6 +23,7 @@ import { withShortcutLabels } from "@/lib/platform";
 
 export function Header() {
   const activePaperId = useStore((s) => s.activePaperId);
+  const uiStateLoaded = useStore((s) => s.uiStateLoaded);
   const translateJobId = useStore((s) => runningPaperJob(s.activeJobs, s.activePaperId, TRANSLATION_JOBS)?.job_id);
   const busy = useStore((s) => paperBusy(s.activeJobs, s.activePaperId));
   // The translation dialog opens while the AI checks the paper's terms, showing that check as it goes on.
@@ -48,10 +49,17 @@ export function Header() {
     return (
       <header className="h-13 border-b flex items-center px-3 shrink-0 bg-background/50">
         {toggleSidebar}
-        <div className="flex flex-col">
-          <h1 className="text-[0.9375rem] font-semibold">論文を追加して、読み始めよう</h1>
-          <span className="text-[0.75rem] text-muted-foreground">PDFを追加 → AI接続を設定 → 翻訳・解説・チャット</span>
-        </div>
+        {!uiStateLoaded ? (
+          <div aria-hidden="true" className="flex flex-col gap-1.5">
+            <div className="h-4 w-48 rounded bg-muted" />
+            <div className="h-3 w-64 max-w-full rounded bg-muted/60" />
+          </div>
+        ) : (
+          <div className="flex flex-col">
+            <h1 className="text-[0.9375rem] font-semibold">論文を追加して、読み始めよう</h1>
+            <span className="text-[0.75rem] text-muted-foreground">PDFを追加 → AI接続を設定 → 翻訳・解説・チャット</span>
+          </div>
+        )}
       </header>
     );
   }

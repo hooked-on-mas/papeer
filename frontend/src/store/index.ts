@@ -177,7 +177,7 @@ export const useStore = create<UiState>()(
       sidePanelWidth: 420,
       inkBarOpen: false,
       inkBarStart: "closed",
-      statusMessage: "準備できました。PDFの追加・閲覧・メモ保存にはAI接続は不要です。",
+      statusMessage: "起動しています…",
       currentCollection: "",
       selectedFolder: null,
       librarySearch: "",

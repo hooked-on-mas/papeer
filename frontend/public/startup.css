@@ -1,0 +1,27 @@
+/* The page has the same colours while the main bundle and backend config are loading. */
+:root {
+  --startup-background: oklch(0.985 0.004 80);
+  --startup-foreground: oklch(0.50 0.01 260);
+  background: var(--startup-background);
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --startup-background: oklch(0.17 0.006 260);
+  --startup-foreground: oklch(0.68 0.008 260);
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] {
+    --startup-background: oklch(0.17 0.006 260);
+    --startup-foreground: oklch(0.68 0.008 260);
+    color-scheme: dark;
+  }
+}
+body { margin: 0; background: var(--startup-background); }
+.startup-loading {
+  display: grid;
+  place-items: center;
+  height: 100vh;
+  color: var(--startup-foreground);
+  font: 13px "Yu Gothic UI", "Hiragino Sans", sans-serif;
+}

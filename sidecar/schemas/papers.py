@@ -6,6 +6,7 @@ from typing import Annotated, Literal, NotRequired, TypedDict
 from pydantic import BaseModel, ConfigDict, Field, with_config
 
 from papeer.core.translation_status import TranslationStatus
+from papeer.core.pdf_outline import PdfOutlineEntry
 from sidecar.job_types import GlossaryTerm, Usage
 from sidecar.schemas.common import Stored
 
@@ -246,6 +247,8 @@ class ReadingState(BaseModel):
     has_article: bool
     has_interleaved: bool
     original_mtime: int
+    # Known before downloading the PDF: [] means no outline; None leaves it to the browser.
+    outline: list[PdfOutlineEntry] | None = None
 
 
 class Article(BaseModel):
