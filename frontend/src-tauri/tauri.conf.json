@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Papeer — 日本語で論文を読む",
+        "title": "Papeer",
         "width": 1380,
         "height": 880,
         "minWidth": 1000,
@@ -52,6 +52,7 @@
     },
     "windows": {
       "nsis": {
+        "languages": ["Japanese", "English"],
         "installerHooks": "windows/hooks.nsh"
       }
     }
