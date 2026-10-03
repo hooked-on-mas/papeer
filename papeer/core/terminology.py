@@ -158,7 +158,7 @@ def term_identity(term: dict) -> tuple[str, str, str]:
 def glossary_scope_key(terms: list[dict], source: str = "") -> str:
     """Refresh the semantic selection even when a dictionary changes without changing its size."""
     value = sorted(term_identity(t) for t in terms if t.get("domain"))
-    return hashlib.sha256((json.dumps(value, ensure_ascii=False) + "\0" + source).encode()).hexdigest()
+    return hashlib.sha256(("narrow-context-v2\0" + json.dumps(value, ensure_ascii=False) + "\0" + source).encode()).hexdigest()
 
 
 def paper_glossary(root: Path, paper_id: str) -> dict:

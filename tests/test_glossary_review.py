@@ -11,7 +11,7 @@ from papeer.core.glossary_domains import select_domains, split_domain
 from papeer.core.glossary_draft import draft_glossary
 from papeer.core.terminology import (
     GlossaryConflict, effective_glossary, global_glossary, glossary_scope_key, paper_domains, paper_glossary,
-    save_global_glossary, save_paper_domains, save_paper_glossary, term_contexts)
+    apply_glossary, save_global_glossary, save_paper_domains, save_paper_glossary, term_contexts)
 
 
 @pytest.fixture
@@ -65,6 +65,71 @@ def test_manual_domain_choices_stay_fixed_and_are_still_filtered(library):
     assert select_domains(lib, paper, provider, threading.Event()) == {"domains": ["土工"], "new_domain": None}
     assert provider.sent[0]["fixed_domains"] == ["土工"]
     assert paper_domains(lib.root, paper)["chosen_by"] == "user"
+    assert effective_glossary(lib, paper) == []
+
+
+def test_driving_uses_narrow_translations_without_construction_terms(library):
+    lib, paper = library
+    terms = [{"source": "slope", "target": "法面", "domain": "ロボティクス・建設機械"},
+             {"source": "work", "target": "土工", "domain": "土工"},
+             {"source": "slope", "target": "勾配", "domain": "自動車の自動運転"},
+             {"source": "trajectory optimization", "target": "軌道最適化", "domain": "自動車の自動運転"}]
+    save_global_glossary(lib.root, terms)
+    provider = Provider({"domains": ["自動車の自動運転"], "new_domain": None, "allowed_terms": [2, 3]})
+    select_domains(lib, paper, provider, threading.Event())
+    units = [{"text": text} for _, text in lib.page_texts(paper)]
+    apply_glossary(units, effective_glossary(lib, paper))
+    assert units[0]["glossary"] == [{"source": "slope", "target": "勾配"},
+                                    {"source": "trajectory optimization", "target": "軌道最適化"}]
+    assert all(term["target"] not in {"法面", "土工"} for unit in units for term in unit["glossary"])
+
+
+def test_manual_driving_choice_does_not_send_unselected_earthworks_terms(library):
+    lib, paper = library
+    terms = [{"source": "slope", "target": "法面", "domain": "土工"},
+             {"source": "slope", "target": "勾配", "domain": "自動車の自動運転"}]
+    save_global_glossary(lib.root, terms)
+    save_paper_domains(lib.root, paper, ["自動車の自動運転"], None, "user", ["土工", "自動車の自動運転"])
+    provider = Provider({"domains": ["土工"], "new_domain": None, "allowed_terms": [0]})
+    select_domains(lib, paper, provider, threading.Event())
+    assert [term["target"] for term in provider.sent[0]["candidate_terms"]] == ["勾配"]
+    assert effective_glossary(lib, paper) == [{"source": "slope", "target": "勾配"}]
+
+
+def test_conflicting_meanings_approved_across_batches_are_not_applied(library, monkeypatch):
+    lib, paper = library
+    monkeypatch.setattr("papeer.core.glossary_domains.SELECT_CHUNK", 1)
+    terms = [{"source": "slope", "target": "法面", "domain": "法面工学"},
+             {"source": "Slope", "target": "勾配", "domain": "自動車の自動運転"}]
+    save_global_glossary(lib.root, terms)
+
+    class Conflicting(Provider):
+        def generate(self, instruction, data, schema):
+            self.sent.append(json.loads(data))
+            entry = self.sent[-1]["candidate_terms"][0]
+            return json.dumps({"domains": [entry["domain"]], "new_domain": None, "allowed_terms": [entry["id"]]})
+
+    provider = Conflicting(None)
+    select_domains(lib, paper, provider, threading.Event())
+    assert len(provider.sent) == 2
+    assert effective_glossary(lib, paper) == []
+    assert paper_glossary(lib.root, paper)["scope"]["terms"] == []
+
+
+def test_selection_includes_distinct_contexts_throughout_the_paper(library):
+    lib, paper = library
+    save_global_glossary(lib.root, [{"source": "slope", "target": "法面", "domain": "法面工学"}])
+    with lib.connection() as db:
+        db.execute("UPDATE pages SET text='' WHERE paper_id=?", (paper,))
+        db.execute("UPDATE pages SET text=? WHERE paper_id=? AND number=1", (
+            "The excavator grades a slope. " + "Introduction. " * 100
+            + "The slope of the objective is computed. " + "Discussion. " * 100
+            + "The road slope affects vehicle braking.", paper))
+    provider = Provider({"domains": [], "new_domain": "自動車の自動運転", "allowed_terms": []})
+    select_domains(lib, paper, provider, threading.Event())
+    contexts = provider.sent[0]["candidate_terms"][0]["contexts"]
+    assert len(contexts) == 3
+    assert "excavator" in contexts[0] and "objective" in contexts[1] and "braking" in contexts[2]
     assert effective_glossary(lib, paper) == []
 
 
@@ -132,6 +197,29 @@ def test_split_preview_can_separate_single_specialist_terms_without_saving(libra
     assert preview["moved"] == 2
     assert [t["domain"] for t in preview["terms"]] == ["法面工学", "自動車の自動運転"]
     assert preview["original"] == terms and global_glossary(lib.root) == terms
+
+
+def test_split_uses_translation_samples_from_existing_and_new_narrow_domains(library, monkeypatch):
+    lib, _ = library
+    monkeypatch.setattr("papeer.core.glossary_domains.SPLIT_CHUNK", 1)
+    terms = [{"source": "slope", "target": "法面", "domain": "ロボティクス・建設機械"},
+             {"source": "embankment", "target": "盛土", "domain": "ロボティクス・建設機械"},
+             {"source": "trajectory", "target": "軌道", "domain": "自動車の自動運転"}]
+    save_global_glossary(lib.root, terms)
+
+    class Splitting(Provider):
+        def generate(self, instruction, data, schema):
+            self.sent.append(json.loads(data))
+            source = self.sent[-1]["terms"][0]["source"]
+            return json.dumps({"domains": [{"name": "法面工学", "sources": [source]}]})
+
+    provider = Splitting(None)
+    preview = split_domain(lib.root, provider, threading.Event(), lambda _: None, "ロボティクス・建設機械", preview=True)
+    assert provider.sent[0]["existing_domain_details"] == [{"name": "自動車の自動運転", "count": 1,
+        "sample_terms": [{"source": "trajectory", "target": "軌道"}]}]
+    assert provider.sent[1]["existing_domain_details"][-1] == {"name": "法面工学", "count": 1,
+        "sample_terms": [{"source": "slope", "target": "法面"}]}
+    assert preview["moved"] == 2 and global_glossary(lib.root) == terms
 
 
 def test_draft_excludes_routine_paper_specific_and_declined_terms_and_caps_entire_paper(library):

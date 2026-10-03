@@ -47,6 +47,12 @@ test("glossary review is opt-in, paper-only, and dictionary management supports 
 
   // Management is tucked away; a bulk move can be reviewed and undone before any write occurs.
   await page.getByText("共用辞書を管理（2件）", { exact: true }).click();
+  assert.equal(await page.getByText("ロボティクス・建設機械（登録2語・適用1語）", { exact: true }).isVisible(), true);
+  const appliedTerms = page.getByText("この論文に適用する分野の訳語（1件）", { exact: true });
+  await appliedTerms.click();
+  const appliedList = appliedTerms.locator("..");
+  assert.match(await appliedList.innerText(), /trajectory → 軌道/);
+  assert.doesNotMatch(await appliedList.innerText(), /法面/);
   await page.getByRole("checkbox", { name: "slopeを移動対象に選択", exact: true }).check();
   await page.getByLabel("まとめて移動する分野").selectOption("共通");
   await page.getByRole("button", { name: "移動", exact: true }).click();

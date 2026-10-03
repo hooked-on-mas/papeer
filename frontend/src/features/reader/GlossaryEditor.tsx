@@ -132,19 +132,30 @@ function DomainChoice({ record, counts, onChoose }: { record: PaperDomains; coun
   const checked = checkedDomains(record);
   const missing = checked.filter((name) => !record.available.includes(name));
   const newDomain = record.new_domain && !record.available.includes(record.new_domain) ? record.new_domain : null;
+  const applied = (record.scope_stale ? [] : record.scope_terms ?? []).filter((term) => checked.includes(domainNameOf(term)));
+  const appliedCounts = countDomainTerms(applied);
   return <div className="border rounded p-2 my-2 space-y-1">
     <p className="font-medium">この論文に使う分野辞書</p>
     <label className="flex items-center gap-2"><input type="checkbox" checked disabled />共通（常に適用・{counts[GENERAL_DOMAIN] ?? 0}語）</label>
     {[...record.available, ...missing].map((name) => <label key={name} className="flex items-center gap-2">
       <input type="checkbox" checked={checked.includes(name)}
         onChange={(e) => { const next = toggledChoice(record, name, e.target.checked); onChoose(next.domains, next.newDomain); }} />
-      <span>{name}（{missing.includes(name) ? "辞書にない" : `${counts[name] ?? 0}語`}）</span>
+      <span>{name}（{missing.includes(name) ? "辞書にない" : `登録${counts[name] ?? 0}語`}
+        {checked.includes(name) && !missing.includes(name) && (record.scope_stale ? "・適用を確認中" : `・適用${appliedCounts[name] ?? 0}語`)}）</span>
     </label>)}
     {newDomain && <label className="flex items-center gap-2">
       <input type="checkbox" checked onChange={() => onChoose(checked.filter((name) => record.available.includes(name)), null)} />
       <span>新しい分野「{newDomain}」をこの論文の用語に使う</span>
     </label>}
     <p className="text-muted-foreground">{choiceNote(record)} 選択した辞書の中でも、この論文の文脈に合う訳語だけを適用します。</p>
+    {!record.scope_stale && <details className="pt-1">
+      <summary className="cursor-pointer">この論文に適用する分野の訳語（{applied.length}件）</summary>
+      {applied.length ? <ul className="max-h-40 overflow-auto mt-1 space-y-1">
+        {applied.map((term) => <li key={`${term.domain}:${term.source}`}>
+          {term.source} → {term.target}<span className="text-muted-foreground">（{term.domain}）</span>
+        </li>)}
+      </ul> : <p className="text-muted-foreground mt-1">この論文に適用する分野の訳語はありません。共通の語と論文限定の指定を使って翻訳します。</p>}
+    </details>}
   </div>;
 }
 

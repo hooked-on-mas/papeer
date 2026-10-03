@@ -47,7 +47,10 @@ def select_domains(lib, paper_id: str, provider, cancel) -> dict:
     if paper is None:
         paper = {"title": lib.paper(paper_id)["title"], "abstract": lib.page_text(paper_id, 1)[:CONTEXT_PAGE_CHARS]}
     text = "\n\n".join(text for _, text in lib.page_texts(paper_id))
-    candidates = matching_terms(text, [t for t in terms if t.get("domain")])
+    fixed_domains = (set(original_record["domains"]) | ({original_record["new_domain"]} if original_record["new_domain"] else set())
+                     if original_record and original_record["chosen_by"] == "user" else None)
+    candidates = matching_terms(text, [t for t in terms if t.get("domain")
+                                      and (fixed_domains is None or t["domain"] in fixed_domains)])
     listing = [{"name": name, "count": len(members), "sample_terms": [t["source"] for t in members[:SAMPLE_TERMS]]}
                for name in available for members in [[t for t in terms if t.get("domain") == name]]]
     check_cancel(cancel)
@@ -58,7 +61,8 @@ def select_domains(lib, paper_id: str, provider, cancel) -> dict:
         members = candidates[start:start + SELECT_CHUNK]
         entries = []
         for index, term in enumerate(members, start):
-            entries.append({"id": index, **term, "context": "\n…\n".join(term_contexts(text, term))})
+            contexts = term_contexts(text, term)
+            entries.append({"id": index, **term, "context": "\n…\n".join(contexts), "contexts": contexts})
         check_cancel(cancel)
         answer = provider.generate(
             prompts.load("glossary_select"),
@@ -79,6 +83,10 @@ def select_domains(lib, paper_id: str, provider, cancel) -> dict:
     if (not isinstance(value.get("domains"), list) or any(not isinstance(name, str) for name in value["domains"])
             or not isinstance(value.get("new_domain"), (str, type(None)))):
         raise ValueError("AIから有効な分野辞書の選択を取得できませんでした。再試行してください。")
+    renderings: dict[str, set[str]] = {}
+    for term in allowed:
+        renderings.setdefault(term["source"].casefold(), set()).add(term["target"])
+    allowed = [term for term in allowed if len(renderings[term["source"].casefold()]) == 1]
     by_folded = {name.casefold(): name for name in available}
     domains: list[str] = []
     for name in value["domains"]:
@@ -175,11 +183,19 @@ def split_domain(root: Path, provider, cancel, progress, domain: str, *, preview
         check_cancel(cancel)
         progress(f"辞書を分野ごとに分けています… {number}/{len(chunks)}")
         members = [terms[i] for i in chunk]
+        domain_details = []
+        for existing_name in names.values():
+            existing_terms = [term for index, term in enumerate(terms)
+                              if assigned.get(index, term.get("domain", "")) == existing_name]
+            domain_details.append({"name": existing_name, "count": len(existing_terms),
+                                   "sample_terms": [{"source": term["source"], "target": term["target"]}
+                                                    for term in existing_terms[:SAMPLE_TERMS]]})
         answer = provider.generate(
             prompts.load("glossary_split"),
             json.dumps({"domain": name or GENERAL_DOMAIN,
                         "terms": [{"source": t["source"], "target": t["target"]} for t in members],
-                        "existing_domains": list(names.values())}, ensure_ascii=False), _SPLIT_SCHEMA)
+                        "existing_domains": list(names.values()), "existing_domain_details": domain_details},
+                       ensure_ascii=False), _SPLIT_SCHEMA)
         try:
             value = parse_json_answer(answer, _SPLIT_SCHEMA)
         except ValueError:
