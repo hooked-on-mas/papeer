@@ -29,6 +29,6 @@ export function LibraryTags({ papers, selected, onSelect }: {
       {visible.map(([name, count]) => <TagChip key={name} name={name} count={count} selected={selected === name} onClick={() => onSelect(selected === name ? "" : name)} />)}
       {(expanded || tags.length > visible.length) && <button className="px-1 text-[0.75rem] text-muted-foreground hover:text-foreground" onClick={() => setExpanded(!expanded)}>
         {expanded ? "折りたたむ" : `ほか${tags.length - visible.length}件を表示`}</button>}
-    </div> : <p className="text-[0.75rem] text-muted-foreground leading-relaxed">論文の右クリックか「メモ・整理」でタグ名を入力すると、タグを付けられます。</p>}
+    </div> : <p className="text-[0.75rem] text-muted-foreground leading-relaxed">論文の右クリックか「論文情報・整理」でタグ名を入力すると、タグを付けられます。</p>}
   </section>;
 }

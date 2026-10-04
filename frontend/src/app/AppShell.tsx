@@ -23,6 +23,7 @@ import { ReaderTab, useSidePanelOpen } from "./ReaderArea";
 import { ChatPane, NotesPane, SummaryPane, ReferencesPane } from "./lazyPanes";
 import { StickyNotesTab } from "../features/reader/StickyNotesTab";
 import { StickyNoteDialog } from "../features/reader/StickyNoteDialog";
+import { PaperDetailsPanel } from "../features/notes/PaperDetailsPanel";
 import { DriveSyncHost } from "../features/settings/DriveSection";
 import { SettingsVersionNotice } from "../features/settings/VersionNoticeHost";
 import { syncDrive } from "../features/settings/driveSync";
@@ -112,7 +113,7 @@ function useCloseHandling(): void {
       // Values that cannot be saved as they are (論文情報): the library keeps what was saved before.
       const held = heldDraftDescriptions();
       if (held.length && !await askConfirm("保存できない入力があります",
-        `次の入力は保存できないため、保存済みの内容のままです。\n\n${held.join("\n\n")}\n\n直す場合は「キャンセル」を押し、メモ・整理タブで直すか元に戻してください。`,
+        `次の入力は保存できないため、保存済みの内容のままです。\n\n${held.join("\n\n")}\n\n直す場合は「キャンセル」を押し、「論文情報・整理」で直すか元に戻してください。`,
         "入力を破棄して終了", true, CLOSE_QUESTION)) return;
       const running = useStore.getState().activeJobs.filter(isRunning);
       const snapshot = running.some(job => isJobKind(job.kind, SNAPSHOT_JOBS));
@@ -329,8 +330,8 @@ export function AppShell() {
   // F11 on Windows and Linux; ⌃⌘F on macOS, where F11 shows the desktop (lib/platform.ts).
   useHotkeys("f11, ctrl+meta+f", () => useStore.getState().setFocusMode(!useStore.getState().focusMode), { preventDefault: true });
   useHotkeys("esc", () => {
-    // Esc on an enlarged image only closes the image.
-    if (!document.querySelector("[data-lightbox]")) useStore.getState().setFocusMode(false);
+    // Esc in a dialog or enlarged image closes it without leaving focus mode.
+    if (!document.querySelector("[data-lightbox], [role='dialog']")) useStore.getState().setFocusMode(false);
   }, { enabled: focusMode });
   useHotkeys("ctrl+o, meta+o", () => importPdfs(), { preventDefault: true, enableOnFormTags: true });
   useHotkeys("ctrl+f, meta+f", () => {
@@ -460,7 +461,7 @@ export function AppShell() {
                     </span>
                   )}
                 </TabsTrigger>
-                <TabsTrigger value="notes" title={withShortcutLabels("Ctrl+4")}>メモ・整理</TabsTrigger>
+                <TabsTrigger value="notes" title={withShortcutLabels("Ctrl+4")}>メモ</TabsTrigger>
                 <TabsTrigger value="sticky-notes" title={withShortcutLabels("Ctrl+5")}>付箋</TabsTrigger>
                 <TabsTrigger value="references" title={withShortcutLabels("Ctrl+6")}>論文マップ</TabsTrigger>
               </TabsList>
@@ -500,6 +501,7 @@ export function AppShell() {
       <DriveSyncHost />
       <SettingsVersionNotice />
       <StickyNoteDialog />
+      <PaperDetailsPanel />
       <AppDialogs />
       <Lightbox />
       <TranslationDialogHost />

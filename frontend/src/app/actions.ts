@@ -199,7 +199,7 @@ async function showInPaper(paperId: string, change: (paper: PaperData) => PaperD
 }
 
 /**
- * Puts the tag on one paper or takes it off (メモ・整理, its context menu). `quiet` leaves the status
+ * Puts the tag on one paper or takes it off (論文情報・整理, its context menu). `quiet` leaves the status
  * line alone, for the tag field, which says it itself. The library's row follows from paper.changed.
  */
 export async function tagPaper(paperId: string, tag: string, add: boolean, { quiet = false } = {}): Promise<void> {
@@ -230,7 +230,7 @@ export function shownStatus(paperId: string, status: string): string {
   return waitingStatuses.get(paperId)?.status ?? status;
 }
 
-/** Sets one paper's reading status (メモ・整理, its context menu); `quiet` as for tagPaper. Whether it was saved. */
+/** Sets one paper's reading status (論文情報・整理, its context menu); `quiet` as for tagPaper. Whether it was saved. */
 export async function setPaperReadStatus(paperId: string, status: string, { quiet = false } = {}): Promise<boolean> {
   const task = (statusTurns.get(paperId) ?? Promise.resolve()).catch(() => undefined)
     .then(() => patchPaper(paperId, { read_status: status }));

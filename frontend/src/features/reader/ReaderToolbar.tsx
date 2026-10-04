@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, ListTree, Maximize2, MessageSquare, Minimize2, MoreHorizontal, NotebookPen, PanelRight,
-  ScrollText, Search, StickyNote, Undo2, ZoomIn, ZoomOut, Network,
+  ScrollText, Search, StickyNote, Undo2, ZoomIn, ZoomOut, Network, FileText,
 } from "lucide-react";
 import { useStore, ZOOM_LEVELS } from "@/store";
 import { useUiScale } from "@/app/uiScale";
@@ -301,6 +301,9 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             <DropdownMenuItem title={reviewLabel} onClick={() => emitAppEvent("open-translation-review")}>
               <ClipboardCheck /> 翻訳の確認・修正{reviewCount ? `（${reviewCount}）` : ""}
             </DropdownMenuItem>
+            {focusMode && <DropdownMenuItem onClick={() => emitAppEvent("open-paper-details", { paperId })}>
+              <FileText /> 論文情報・整理
+            </DropdownMenuItem>}
             {!shown("panels") && SIDE_PANEL_BUTTONS.map(({ tab, label, icon: Icon, key }) => (
               <DropdownMenuCheckboxItem key={tab} checked={sidePanel === tab} closeOnClick onCheckedChange={() => setSidePanel(sidePanel === tab ? null : tab)}>
                 <Icon /> {panelTitle(label, key)}

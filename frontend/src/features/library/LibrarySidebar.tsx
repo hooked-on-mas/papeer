@@ -58,7 +58,7 @@ import { TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
 import { paperJobState, runningPaperJob } from "@/features/jobs/jobSelectors";
 import { useRebuilding } from "@/features/reader/rebuildJobs";
 import { showJobFailure, useJobFailures } from "@/features/jobs/jobFailures";
-import { onAppEvent } from "@/lib/appEvents";
+import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 import { SORT_LABELS } from "@/lib/librarySort";
 import { withShortcutLabels } from "@/lib/platform";
@@ -1095,6 +1095,10 @@ function PaperMenu({ paper, collection, collections }: { paper: PaperData; colle
   if (ids.length > 1) return <SelectionMenu ids={ids} paperId={paper.id} collections={collections} />;
   return (
     <>
+      <ContextMenuItem onClick={() => emitAppEvent("open-paper-details", { paperId: paper.id })}>
+        <FileText className="w-4 h-4 mr-2" /> 論文情報・整理
+      </ContextMenuItem>
+      <ContextMenuSeparator />
       <ContextMenuSub>
         <ContextMenuSubTrigger>
           <Folder className="w-4 h-4 mr-2" /> 分類を変更

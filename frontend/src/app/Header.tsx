@@ -87,9 +87,8 @@ export function Header() {
       {toggleSidebar}
       <div className="flex flex-col min-w-0 flex-1 pr-4">
         <h1
-          className="text-[0.9375rem] font-semibold truncate cursor-pointer hover:underline"
-          title={paper ? `${paperDisplayName(paper)}\nクリックで論文情報・メモを開く` : ""}
-          onClick={() => useStore.getState().setActiveTab("notes")}
+          className="text-[0.9375rem] font-semibold truncate"
+          title={paper ? paperDisplayName(paper) : ""}
         >
           {paper ? paperDisplayName(paper) : "読み込み中…"}
         </h1>
@@ -101,6 +100,12 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
+        <button
+          onClick={() => emitAppEvent("open-paper-details", { paperId: activePaperId })}
+          className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[0.8125rem] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          <FileText className="w-4 h-4" /> 論文情報・整理
+        </button>
         {translateJobId ? (
           <button onClick={handleCancel} className="flex items-center gap-1.5 bg-destructive text-white px-3 py-1.5 rounded-md text-[0.8125rem] font-medium hover:opacity-90 transition-opacity">
             <Square className="w-3.5 h-3.5" /> 中止

@@ -5,6 +5,8 @@
  */
 export type AppEvents = {
   "open-translate-dialog": void;
+  /** Edit a paper's information and organization without changing the open PDF or tab. */
+  "open-paper-details": { paperId: string };
   "open-reader-search": void;
   /** Opens the translation editor on the page's paragraph containing the selected text (or on `unit`, a paragraph id). */
   "open-paragraph-editor": { page: number; side: "original" | "translated"; text: string; unit?: string };

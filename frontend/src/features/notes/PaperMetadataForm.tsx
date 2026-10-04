@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { flushDraft, hideDraft, revertField, showDraft, typeField, useMetadataDraft } from "./metadataAutosave";
 import { metaValues, unsavedFields, type MetaField } from "./paperMetadata";
 import { isImeKey } from "@/lib/imeKeys";
+import { ReadingOrganization } from "./ReadingOrganization";
 
 const FIELDS: { field: MetaField; label: string; placeholder: string; maxLength?: number; spellCheck?: boolean }[] = [
   { field: "title", label: "タイトル", placeholder: "" },
@@ -74,39 +75,47 @@ export function PaperMetadataForm({ paper, collections }: { paper: PaperData; co
   };
 
   return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-[72px_1fr] items-center gap-x-2 gap-y-2 text-[0.8125rem]">
-        {FIELDS.map(({ field, label, ...props }) => (
-          <div key={field} className="contents">
-            <label htmlFor={`${id}-${field}`}>{label}</label>
-            {input(field, props)}
-          </div>
-        ))}
-        <p className="col-span-2 text-[0.75rem] text-muted-foreground">
-          論文情報は追加時にPDFから読み取ります。設定の「論文情報の取得にAIを使う」がONの場合は、不足情報をAIと外部の書誌情報サービスで補完します。BibTeXに使います。
-        </p>
-        <label htmlFor={`${id}-collection`}>フォルダー</label>
-        {input("collection", { placeholder: "例：制御工学 / 読書会", list: `${id}-collections` })}
-        <datalist id={`${id}-collections`}>
-          {collections.map((c) => <option key={c} value={c} />)}
-        </datalist>
-        <p className="col-span-2 text-[0.75rem] text-muted-foreground">
-          「/」で区切るとサブフォルダーになります。フォルダーは欄を離れるか Enter で移動します。
-        </p>
-      </div>
-      <div className="flex items-center justify-between gap-2">
-        <span className={`text-[0.75rem] ${hasProblem || draft?.failure ? "text-destructive" : "text-muted-foreground"}`}
-          title={draft?.failure || undefined}>{state}</span>
-        <button
-          type="button"
-          onClick={() => void copyBibtex([paperId], flushDraft(paperId))}
-          disabled={hasProblem}
-          title={hasProblem ? "保存できない項目を直すか元に戻すとコピーできます" : undefined}
-          className="flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border hover:bg-muted disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-ring"
-        >
-          <Copy className="w-4 h-4" aria-hidden="true" /> BibTeX をコピー
-        </button>
-      </div>
+    <div className="space-y-5">
+      <section className="space-y-3">
+        <ReadingOrganization paper={paper} />
+        <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-x-2 gap-y-2 text-[0.8125rem]">
+          <label htmlFor={`${id}-collection`}>フォルダー</label>
+          {input("collection", { placeholder: "例：制御工学 / 読書会", list: `${id}-collections` })}
+          <datalist id={`${id}-collections`}>
+            {collections.map((c) => <option key={c} value={c} />)}
+          </datalist>
+          <p className="col-span-2 text-[0.75rem] text-muted-foreground">
+            「/」で区切るとサブフォルダーになります。フォルダーは欄を離れるか Enter で移動します。
+          </p>
+        </div>
+      </section>
+      <section className="space-y-3 border-t pt-4">
+        <h3 className="text-[0.8125rem] font-semibold">論文情報 <span className="font-normal text-muted-foreground text-[0.75rem]">入力後に自動保存します。</span></h3>
+        <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-x-2 gap-y-2 text-[0.8125rem]">
+          {FIELDS.map(({ field, label, ...props }) => (
+            <div key={field} className="contents">
+              <label htmlFor={`${id}-${field}`}>{label}</label>
+              {input(field, props)}
+            </div>
+          ))}
+          <p className="col-span-2 text-[0.75rem] text-muted-foreground">
+            論文情報は追加時にPDFから読み取ります。設定の「論文情報の取得にAIを使う」がONの場合は、不足情報をAIと外部の書誌情報サービスで補完します。BibTeXに使います。
+          </p>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className={`text-[0.75rem] ${hasProblem || draft?.failure ? "text-destructive" : "text-muted-foreground"}`}
+            title={draft?.failure || undefined}>{state}</span>
+          <button
+            type="button"
+            onClick={() => void copyBibtex([paperId], flushDraft(paperId))}
+            disabled={hasProblem}
+            title={hasProblem ? "保存できない項目を直すか元に戻すとコピーできます" : undefined}
+            className="flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border hover:bg-muted disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            <Copy className="w-4 h-4" aria-hidden="true" /> BibTeX をコピー
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
