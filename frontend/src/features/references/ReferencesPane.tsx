@@ -44,12 +44,14 @@ export function ReferencesView({ graph, activePaperId }: { graph: CitationGraph;
   const [mapMinimumHeight, setMapMinimumHeight] = useState(608);
   const [legendHeight, setLegendHeight] = useState(64);
   const list = useRef<HTMLDivElement>(null), details = useRef<HTMLDivElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   const legend = useRef<HTMLDivElement>(null);
   const scroll = useRef(view.listScroll);
   const pane = useRef<HTMLElement>(null), paneScroll = useRef(view.paneScroll ?? 0);
   const client = useQueryClient();
   const discovery = useDiscovery(activePaperId, view.origin);
   const data = discovery.data ?? localMap(graph, view.origin);
+  const emptyMap = data.nodes.length <= 1;
   const diagnostics = discoveryDiagnostics(data.warnings);
   const fetchErrors = [discovery.error || (discovery.isError ? discovery.failureReason?.message || "外部情報を取得できませんでした。" : ""),
     ...diagnostics.errors].filter(Boolean);
@@ -97,6 +99,9 @@ export function ReferencesView({ graph, activePaperId }: { graph: CitationGraph;
     }
   }, [positions, view.positions, view.layoutKey, data.origin, layout, discovery.data, discovery.isError, paneWidth]);
   const current = data.nodes.find(n => n.id === data.origin);
+  useLayoutEffect(() => {
+    if (view.details && details.current) { details.current.scrollTop = 0; details.current.focus({ preventScroll: true }); }
+  }, [selected?.id, view.details]);
   const reference = data.references.find(r => r.id === selected?.reference_id)
     ?? data.references.find(r => r.target === selected?.id);
   const source = reference?.source ?? activePaperId;
@@ -113,6 +118,10 @@ export function ReferencesView({ graph, activePaperId }: { graph: CitationGraph;
     if (pane.current) pane.current.scrollTop = view.paneScroll ?? 0;
   }, [view.origin, view.details, view.listScroll, view.paneScroll]);
   const update = (changes: Partial<SavedMapView>) => setView(old => ({ ...old, ...changes }));
+  const closeDetails = () => {
+    update({ details: false });
+    requestAnimationFrame(() => list.current?.querySelector<HTMLButtonElement>("button[aria-current=true]")?.focus({ preventScroll: true }));
+  };
   const snapshot = () => ({ ...view, positions, layoutKey: layout.key, listScroll: view.details ? view.listScroll : scroll.current, paneScroll: paneScroll.current });
   const resetPositions = () => {
     const start = performance.now();
@@ -153,15 +162,14 @@ export function ReferencesView({ graph, activePaperId }: { graph: CitationGraph;
   }}>
     <div className="px-4 py-3 border-b space-y-2 shrink-0">
       <div className="flex flex-wrap gap-2 items-center"><Network className="size-5 text-primary" /><h2 className="font-semibold">論文マップ</h2>
-        <Button size="sm" variant="outline" disabled={!trail.length} onClick={() => restore(trail[trail.length - 1], trail.slice(0, -1))}><ArrowLeft />戻る</Button>
+        {trail.length > 0 && <Button size="sm" variant="outline" onClick={() => restore(trail[trail.length - 1], trail.slice(0, -1))}><ArrowLeft />戻る</Button>}
         {trail.length > 0 && <Button size="sm" variant="ghost" onClick={() => restore(trail[0], [])}>元の論文に戻る</Button>}
         <Button size="sm" variant="ghost" className="ml-auto" disabled={discovery.running} onClick={discovery.refresh}><RefreshCw className={`size-3.5 ${discovery.running ? "animate-spin" : ""}`} />再取得</Button>
       </div>
       <p className="text-sm font-medium break-words line-clamp-2" title={current?.title}>起点：{current?.title ?? "論文を確認しています…"}</p>
       <div className="flex flex-wrap gap-2 text-xs text-muted-foreground" role="status">
         <span>{discovery.running ? "外部情報を取得中 · 保存済みの結果を表示" : discovery.enabled ? data.checked_at ? `取得済み ${new Date(data.checked_at).toLocaleDateString()}${data.stale ? " · 更新待ち" : ""}` : "保存済みの引用情報を表示" : "外部情報の自動取得はOFF"}</span>
-      <MapTimings timing={data.timing} layout={layoutTiming?.origin === data.origin ? layoutTiming : null} />
-        <details><summary className="cursor-pointer">取得範囲</summary><p className="mt-1 max-w-xl">{data.coverage}</p></details>
+        <details><summary className="cursor-pointer">取得範囲</summary><p className="mt-1 max-w-xl">{data.coverage}</p><MapTimings timing={data.timing} layout={layoutTiming?.origin === data.origin ? layoutTiming : null} /></details>
       </div>
       {diagnostics.notices.length > 0 && <details className="text-xs text-muted-foreground"><summary>探索範囲・照合結果 · 詳細</summary><p className="break-words whitespace-pre-line">{diagnostics.notices.join("\n")}</p></details>}
       {fetchErrors.length > 0 && <details className="text-xs text-amber-600"><summary>一部の情報を取得できませんでした · 詳細</summary><p className="break-words whitespace-pre-line">{fetchErrors.join("\n")}</p><Button size="sm" variant="ghost" disabled={discovery.running} onClick={discovery.refresh}>再試行</Button></details>}
@@ -172,15 +180,17 @@ export function ReferencesView({ graph, activePaperId }: { graph: CitationGraph;
           onChange={e => update({ diagramLimit: e.target.value as SavedMapView["diagramLimit"], positions: {}, camera: { x: 0, y: 0, zoom: 1 } })}>
           <option value="auto">図：自動（{paneWidth < 900 ? 20 : 30}件）</option><option value="20">図：20件</option><option value="40">図：40件</option><option value="60">図：60件</option>
         </select>
-        <Input className="flex-1 min-w-40" aria-label="論文を検索" placeholder="タイトル・著者・DOIで検索" value={view.search} onChange={e => update({ search: e.target.value, listScroll: 0 })} />
+        <Input ref={searchInput} className="flex-1 min-w-40" aria-label="論文を検索" placeholder="タイトル・著者・DOIで検索" value={view.search} onChange={e => update({ search: e.target.value, listScroll: 0 })}
+          onKeyDown={e => { if (e.key === "Escape" && !e.nativeEvent.isComposing && view.search) { e.preventDefault(); e.stopPropagation(); update({ search: "", listScroll: 0 }); } }} />
+        {view.search && <Button size="sm" variant="ghost" aria-label="論文マップの検索語を消す" onClick={() => { update({ search: "", listScroll: 0 }); searchInput.current?.focus(); }}>解除</Button>}
       </div>
     </div>
     <AutoResearchControl state={automation} selectFailed={key => {
       const node = data.nodes.find(n => n.research_key === key);
       if (node) void select(node);
     }} />
-    <div className="flex-1 min-h-[28rem] @[900px]:min-h-[38rem] overflow-hidden flex flex-col @[900px]:flex-row" style={paneWidth >= 900 ? { minHeight: mapMinimumHeight + legendHeight } : undefined}>
-      <div className="flex flex-col h-[26rem] shrink-0 min-h-0 @[900px]:h-auto @[900px]:w-[65%] border-b @[900px]:border-b-0 @[900px]:border-r">
+    <div className="flex-1 min-h-[28rem] @[900px]:min-h-[38rem] overflow-hidden flex flex-col @[900px]:flex-row" style={emptyMap ? { minHeight: 0 } : paneWidth >= 900 ? { minHeight: mapMinimumHeight + legendHeight } : undefined}>
+      <div className="flex flex-col h-[26rem] shrink-0 min-h-0 @[900px]:h-auto @[900px]:w-[65%] border-b @[900px]:border-b-0 @[900px]:border-r" style={emptyMap && paneWidth < 900 ? { height: "min(16rem, 40vh)" } : undefined}>
         {paneWidth > 0 && <MapNetwork nodes={window.nodes} edges={window.edges} allNodes={data.nodes} allEdges={data.edges} groups={groups} explanations={groupDescriptions} positions={positions} origin={data.origin} selected={effective.selected} hover={hover} setHover={setHover}
           camera={view.camera} setCamera={camera => update({ camera })} setPosition={(id, point) => update({ positions: { ...positions, [id]: point }, camera: { ...view.camera, manual: true } })}
           setLayout={(positions, camera, elapsedMs) => {
@@ -191,8 +201,10 @@ export function ReferencesView({ graph, activePaperId }: { graph: CitationGraph;
           setMinimumHeight={setMapMinimumHeight}
           select={id => { const node = data.nodes.find(n => n.id === id); if (node) void select(node); }} reset={resetPositions} />}
         <div ref={legend} className="border-t px-3 py-2 text-[0.75rem] text-muted-foreground shrink-0 flex flex-wrap gap-x-3 gap-y-1" aria-label="関係図の凡例">
+          <details><summary className="cursor-pointer">図の見方</summary><div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
           <span title="引用する論文 → 引用される文献">実線 →：引用</span><span>起点の実線：直接引用</span><span>点線：類似・推薦・未照合の候補</span><span>▣：PDFあり</span><span>外周：選択中</span>
           <span>色・輪郭：引用のまとまり</span><span>円の大きさ：被引用数（{citationScope(window.nodes) === "external" ? `${externalCitationSources(window.nodes)}・未取得は最小の白抜き` : "ライブラリ内"}）</span>
+          </div></details>
           <span>{window.nodes.length}件表示{window.omitted > 0 && ` · ${window.omitted}件省略（一覧から選択可能）`}</span>
           {window.context > 0 && <span>つながりを示す参考文献 {window.context}件を含む</span>}
         </div>
@@ -206,18 +218,21 @@ export function ReferencesView({ graph, activePaperId }: { graph: CitationGraph;
           scroll.current = e.currentTarget.scrollTop;
           const saved = mapViews.get(activePaperId); if (saved && !view.details) saved.view.listScroll = scroll.current;
         }}>
-          {!rows.length && <p className="p-4 text-sm text-muted-foreground">{view.search ? "一致する文献はありません。" : "この表示の候補はまだありません。取得済みの引用情報と外部探索の範囲で表示します。"}</p>}
+          {!rows.length && <div className="p-3 space-y-2 text-sm text-muted-foreground"><p role="status">{view.search || view.filter !== "all" || view.mode !== "nearby" ? "条件に一致する文献はありません。検索語や表示条件を変えてください。" : "この表示の候補はまだありません。取得済みの引用情報と外部探索の範囲で表示します。"}</p>
+            {(view.search || view.filter !== "all" || view.mode !== "nearby") && <Button size="sm" variant="outline" onClick={() => { update({ search: "", filter: "all", mode: "nearby", listScroll: 0 }); searchInput.current?.focus(); }}>表示条件をリセット</Button>}
+          </div>}
           {rows.map(n => <article key={n.id} className="border-b"><button aria-label={n.title} aria-current={n.id === selected?.id ? "true" : undefined}
             onMouseEnter={() => setHover(n.id)} onMouseLeave={() => setHover(null)} onFocus={() => setHover(n.id)} onBlur={() => setHover(null)}
-            className={`w-full p-3 text-left space-y-2 hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-primary focus-visible:-outline-offset-2 ${n.id === selected?.id || hover === n.id ? "bg-primary/5" : ""}`} onClick={() => void select(n)}>
+            className={`w-full px-3 py-2 text-left space-y-1 hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-primary focus-visible:-outline-offset-2 ${n.id === selected?.id || hover === n.id ? "bg-primary/5" : ""}`} onClick={() => void select(n)}>
             <span className="block text-sm font-medium leading-relaxed break-words">{n.title}</span>
             <span className="block text-xs text-muted-foreground">{[n.year, n.first_author, n.paper_id ? "PDFあり" : "未登録"].filter(Boolean).join(" · ")}</span>
             <span className="block text-[0.75rem] text-muted-foreground">{n.reasons.join(" · ")}</span>
             <span className="block text-[0.75rem] text-muted-foreground">被引用 {n.local_citations}件（ライブラリ内）{n.external_citations !== null && ` · ${n.external_citations}件（${externalCitationSource(n)}）`}</span>
           </button></article>)}
         </div>
-        {view.details && selected && <div ref={details} tabIndex={-1} className="flex-1 @[900px]:flex-[1_1_60%] border-t min-h-0 overflow-auto overscroll-contain p-4 space-y-4 outline-none" aria-label="選択した文献の詳細">
-          <Button size="sm" variant="ghost" onClick={() => { update({ details: false }); requestAnimationFrame(() => list.current?.querySelector<HTMLButtonElement>("button[aria-current=true]")?.focus({ preventScroll: true })); }}><ArrowLeft />一覧に戻る</Button>
+        {view.details && selected && <div ref={details} tabIndex={-1} className="flex-1 @[900px]:flex-[1_1_60%] border-t min-h-0 overflow-auto overscroll-contain p-3 space-y-2 outline-none" aria-label="選択した文献の詳細"
+          onKeyDown={e => { if (e.key === "Escape" && !e.defaultPrevented && !e.nativeEvent.isComposing && !(e.target as HTMLElement).closest("input, textarea, select, [role=dialog], [role=menu]")) { e.preventDefault(); e.stopPropagation(); closeDetails(); } }}>
+          <Button size="sm" variant="ghost" onClick={closeDetails}><ArrowLeft />一覧に戻る</Button>
           <h3 className="font-semibold break-words leading-relaxed">{selected.title}</h3>
           <p className="text-xs text-muted-foreground">{[selected.year, selected.first_author, selected.paper_id ? "PDFあり" : "未登録"].filter(Boolean).join(" · ")}</p>
           <p className="text-xs text-muted-foreground">被引用 {selected.local_citations}件（ライブラリ内）{selected.external_citations !== null && ` · ${selected.external_citations}件（${externalCitationSource(selected)}）`}</p>
@@ -225,7 +240,7 @@ export function ReferencesView({ graph, activePaperId }: { graph: CitationGraph;
           <Button size="sm" variant="outline" onClick={() => explore(selected)} disabled={selected.id === data.origin}><Network />この論文を中心に見る</Button>
           {selected.abstract && !records.find(r => r.key === recordKey)?.abstract && <details className="text-xs"><summary className="cursor-pointer">取得した抄録（原文）</summary><p className="mt-2 break-words whitespace-pre-wrap leading-relaxed">{selected.abstract}</p><p className="mt-2 text-muted-foreground">取得元：{selected.provenance.filter(p => p !== "library").join(" · ")}{selected.acquired_at && ` · ${new Date(selected.acquired_at).toLocaleDateString()}`}</p></details>}
           {error && <p role="alert" className="text-xs text-destructive break-words">{error}</p>}
-          {preparing === selected.id ? <p role="status" className="text-xs">文献の詳細を準備しています…</p> : source && <ResearchDetails key={recordKey ?? selected.id} sourcePaperId={source} reference={reference} recordKey={reference ? undefined : recordKey} registeredPaperId={selected.paper_id} />}
+          {preparing === selected.id ? <p role="status" className="text-xs">文献の詳細を準備しています…</p> : source && <ResearchDetails key={recordKey ?? selected.id} sourcePaperId={source} reference={reference} recordKey={reference ? undefined : recordKey} registeredPaperId={selected.paper_id} showInformationSettings={false} />}
           {reference && <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">書誌情報・取得元・引用元</summary><div className="pt-3 space-y-3">
             <p className="break-words leading-relaxed">{reference.raw}</p>
             <p>取得元：{[...new Set((reference.provenance ?? []).map(p => p.provider))].join(" · ") || "PDF"}</p>

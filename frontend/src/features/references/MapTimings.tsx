@@ -5,6 +5,7 @@ const duration = (ms: number) => ms < 1000 ? `${ms.toFixed(1)} ms` : `${(ms / 10
 const states = { running: "取得中", completed: "完了", partial: "一部取得", canceled: "中止", failed: "失敗" };
 
 export function MapTimings({ timing, layout }: { timing?: components["schemas"]["MapTiming"] | null; layout: LayoutTiming | null }) {
+  if (!timing && !layout) return null;
   return <details className="text-xs text-muted-foreground" aria-label="論文マップの構築時間">
     <summary className="cursor-pointer">構築時間の内訳{timing && ` · ${duration(timing.total_ms)}（${states[timing.status]}）`}</summary>
     <div className="mt-2 space-y-2 max-h-64 overflow-auto">

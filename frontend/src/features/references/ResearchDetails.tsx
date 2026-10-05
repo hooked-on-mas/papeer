@@ -18,8 +18,8 @@ import { ResearchFailureNotice } from "./ResearchFailureNotice";
 
 const BASIS = { abstract: "抄録に基づく概要 · 本文は未確認", full_text: "公開本文に基づく概要", metadata: "書誌情報のみ確認", unresolved: "文献を特定できませんでした。候補は原文で確認してください。" };
 
-export function ResearchDetails({ sourcePaperId, reference, recordKey, registeredPaperId }: {
-  sourcePaperId: string; reference?: Reference; recordKey?: string; registeredPaperId?: string | null;
+export function ResearchDetails({ sourcePaperId, reference, recordKey, registeredPaperId, showInformationSettings = true }: {
+  sourcePaperId: string; reference?: Reference; recordKey?: string; registeredPaperId?: string | null; showInformationSettings?: boolean;
 }) {
   const key = recordKey ?? reference?.research_key ?? "";
   const { data: records = [], error: loadError } = useResearch(sourcePaperId);
@@ -90,7 +90,7 @@ export function ResearchDetails({ sourcePaperId, reference, recordKey, registere
       researchKeys: record ? [key] : [], paperIds: targetId ? [...new Set([sourcePaperId, targetId])] : undefined });
     store.openSidePanel("chat");
   };
-  const researchButton = (reference || record) && <Button size="sm" variant={!researched && !targetId ? "default" : "ghost"}
+  const researchButton = (reference || record) && (canResearch || showInformationSettings) && <Button size="sm" variant={!researched && !targetId ? "default" : "ghost"}
     className="h-auto min-h-9 whitespace-normal text-left" disabled={disabled || !canResearch}
     onClick={() => void run(`/api/papers/${sourcePaperId}/reference-research`, reference ? { reference_id: reference.id } : { research_key: key }, "reference-research")}>
     <Globe /> {researched || record?.last_failure ? "情報を再取得" : "内容・入手先を取得"}
@@ -113,7 +113,7 @@ export function ResearchDetails({ sourcePaperId, reference, recordKey, registere
       <p className="text-sm leading-relaxed">{canResearch ? "概要と公開PDFの入手先を調べます。" : "文献リンクから内容やPDFを確認できます。"}</p>
       {researchButton}
     </div>}
-    {(reference || record) && capability && !canResearch && <p className="text-xs text-muted-foreground leading-relaxed">
+    {showInformationSettings && (reference || record) && capability && !canResearch && <p className="text-xs text-muted-foreground leading-relaxed">
       {!informationEnabled ? "設定の「論文情報の取得にAIを使う」をONにすると、自動取得と情報の再取得を利用できます。"
         : "情報取得の接続を確認できません。接続後に再度お試しください。"}
       <button className="ml-1 text-primary underline" onClick={() => openSettings("connection")}>設定を開く</button>
@@ -143,7 +143,7 @@ export function ResearchDetails({ sourcePaperId, reference, recordKey, registere
         <ul className="space-y-2 mt-2">{record.sources.map((item, i) => <li key={`${item.url}:${i}`}><button className="text-primary hover:underline text-left break-all" onClick={() => void shell.openUrl(item.url).catch(e => showError(e, "出典を開けませんでした"))}>［Web {i + 1}］{item.title} ↗</button></li>)}</ul>
       </details>
     </>}
-    {(researched || targetId) && <div className="flex flex-wrap gap-2 border-t pt-3">
+    {(researched || targetId) && (researchButton || record && !targetId) && <div className="flex flex-wrap gap-2 border-t pt-3">
       {researchButton}
       {record && !targetId && <Button size="sm" variant="ghost" onClick={chat}><MessageSquare />この文献についてチャット</Button>}
     </div>}

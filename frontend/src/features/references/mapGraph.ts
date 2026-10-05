@@ -54,7 +54,7 @@ export function localMap(graph: CitationGraph, origin: string): MapResult {
 }
 
 export function mapRows(data: MapResult, view: SavedMapView) {
-  const query = view.search.toLocaleLowerCase();
+  const query = view.search.trim().toLocaleLowerCase();
   return data.nodes.filter(n => n.id !== data.origin && (view.mode === "nearby" ?
     n.roles.some(r => ["references", "incoming", "related"].includes(r)) : n.roles.includes(view.mode)))
     .filter(n => view.filter === "all" || (view.filter === "registered" ? !!n.paper_id : !n.paper_id))

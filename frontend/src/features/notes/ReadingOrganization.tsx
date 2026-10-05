@@ -19,7 +19,7 @@ export function ReadingOrganization({ paper }: { paper: PaperData }) {
   const { data: tags = [], isError } = useTagChoices("paper");
   const { data: statuses = [], isError: statusError, isSuccess: statusesLoaded } = useTagChoices("status");
   const { tags: selectedTags, status: currentStatus } = useShownOrganization(paper.id, paper.tags, paper.read_status ?? "未読");
-  return <section className="space-y-3">
+  return <section className="space-y-2">
     <div className="flex items-center justify-between gap-2">
       <h3 className="text-[0.8125rem] font-semibold">読書状態・タグ</h3>
       <button type="button" onClick={() => openSettings("tags")}
@@ -28,7 +28,7 @@ export function ReadingOrganization({ paper }: { paper: PaperData }) {
       </button>
     </div>
     <div className="grid grid-cols-[64px_minmax(0,1fr)] items-start gap-2 text-[0.8125rem]">
-      <span id="reading-status-label" className="py-1.5">読書状態</span>
+      <span id="reading-status-label" className="py-1.5" title="論文を開くと「未読」は「読書中」になります。">読書状態</span>
       <DropdownMenu>
         <DropdownMenuTrigger aria-labelledby="reading-status-label reading-status-value"
           className="flex w-full min-w-0 items-center gap-2 border rounded bg-background px-2 py-1.5 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">
@@ -54,7 +54,6 @@ export function ReadingOrganization({ paper }: { paper: PaperData }) {
       <TagCombobox choices={tags} selected={selectedTags} labelledBy="paper-tags-label"
         onToggle={(name, add) => void tagPaper(paper.id, name, add, { quiet: true })} />
     </div>
-    <p className="text-[0.75rem] text-muted-foreground">論文を開くと「未読」は「読書中」になります。</p>
     {(isError || statusError) && <p role="alert" className="text-xs text-destructive">読書状態・タグを読み込めませんでした。</p>}
   </section>;
 }

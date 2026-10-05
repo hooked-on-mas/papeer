@@ -34,9 +34,9 @@ export function PaperDetailsPanel() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent overlayClassName="supports-backdrop-filter:backdrop-blur-none"
         className="left-auto right-0 top-0 h-dvh max-w-full translate-x-0 translate-y-0 rounded-none flex flex-col gap-0 p-0 sm:max-w-[28rem]">
-        <DialogHeader className="shrink-0 border-b px-4 py-4 pr-12">
+        <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12">
           <DialogTitle>論文情報・整理</DialogTitle>
-          <DialogDescription>読書状態・タグ・フォルダーと書誌情報を確認・編集できます。</DialogDescription>
+          <DialogDescription className="sr-only">読書状態・タグ・フォルダーと書誌情報を確認・編集できます。</DialogDescription>
         </DialogHeader>
         {paperId && <PaperDetails key={paperId} paperId={paperId} />}
         <div className="shrink-0 flex justify-end border-t p-3">
@@ -53,7 +53,7 @@ function PaperDetails({ paperId }: { paperId: string }) {
   const { data: collections = [] } = useCollections();
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-5">
+    <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">
       {isError ? <div role="alert" className="space-y-3">
         <p>論文情報を読み込めませんでした。</p>
         <Button variant="outline" onClick={() => void refetch()}>再試行</Button>

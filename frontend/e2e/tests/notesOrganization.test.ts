@@ -34,7 +34,8 @@ scenario("メモと整理を別に開き、整理の保存先と読書位置を�
   // The library's other paper can be organized without replacing the open memo or PDF.
   await libraryRow(page, "Robust Observer").click({ button: "right" });
   await page.getByRole("menuitem", { name: "論文情報・整理", exact: true }).click();
-  await panel.getByText("Robust Observer", { exact: false }).waitFor();
+  await waitFor(async () => (await panel.getByLabel("タイトル", { exact: true }).inputValue()).includes("Robust Observer"),
+    "整理パネルが選んだ論文のタイトルを示すこと");
   await panel.getByLabel("筆頭著者", { exact: true }).fill("Other Author");
   await panel.getByLabel("フォルダー", { exact: true }).fill("整理済み");
   await panel.getByLabel("フォルダー", { exact: true }).press("Tab");

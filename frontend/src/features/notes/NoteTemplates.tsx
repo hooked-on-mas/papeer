@@ -148,17 +148,18 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
             {isPending && <p className="p-2 text-xs text-muted-foreground">テンプレートを読み込み中…</p>}
             {isError && <div className="space-y-2 p-2 text-xs"><p className="text-destructive">テンプレートを読み込めませんでした。</p><Button size="sm" variant="outline" onClick={() => void refetch()}>再読み込み</Button></div>}
             {!isError && templates.map(template => <button key={template.name} disabled={busy} aria-pressed={selected === template.name}
+              title={`${template.name}（${template.builtin ? "標準テンプレート" : "自分のテンプレート"}）`}
               className={`mb-1 flex w-full items-start gap-2 rounded-md px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected === template.name ? "bg-accent text-accent-foreground" : "hover:bg-muted"}`}
               onClick={() => { setSelected(template.name); setNotice(""); }}>
               <FileText className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1"><span className="block break-words font-medium">{template.name}</span><span className="mt-0.5 block text-[0.75rem] text-muted-foreground">{template.builtin ? "標準テンプレート" : "自分のテンプレート"}</span></span>
+              <span className="min-w-0 flex-1"><span className="block break-words font-medium">{template.name}</span>{mode === "manage" && <span className="mt-0.5 block text-[0.75rem] text-muted-foreground">{template.builtin ? "標準テンプレート" : "自分のテンプレート"}</span>}</span>
               {selected === template.name && <Check className="mt-0.5 size-4 shrink-0 text-primary" />}
             </button>)}
           </nav>
-          <section aria-label="テンプレートのプレビュー" className="flex min-h-0 min-w-0 flex-1 flex-col p-5">
+          <section aria-label="テンプレートのプレビュー" className="flex min-h-0 min-w-0 flex-1 flex-col p-3">
             {current && !isError ? <>
-              <div className="mb-3 shrink-0"><h3 className="break-words text-sm font-semibold">{current.name}</h3><p className="mt-1 text-xs text-muted-foreground">メモに追加される内容</p></div>
-              <div className="min-h-0 flex-1 overflow-auto rounded-md border bg-background p-4"><MarkdownRenderer content={current.content} /></div>
+              <div className="mb-2 shrink-0"><h3 className="break-words text-sm font-semibold">{current.name}</h3></div>
+              <div className="min-h-0 flex-1 overflow-auto rounded-md border bg-background p-3"><MarkdownRenderer content={current.content} /></div>
               {mode === "manage" && <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2">
                 {current.builtin ? <Button variant="outline" size="sm" disabled={busy} onClick={() => beginDraft("copy")}><Copy /> コピーして自分用に編集</Button> : <>
                   <Button variant="outline" size="sm" disabled={busy} onClick={() => beginDraft("edit")}><Pencil /> 編集</Button>
@@ -187,10 +188,10 @@ export function NoteTemplates({ note, onInsert, embedded = false, leaveRef }: { 
   return <>
     <div className="shrink-0 border-b px-4 py-2 text-xs">
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" onClick={() => open("use")}><LayoutTemplate /> テンプレートを使う</Button>
+        <Button variant="outline" size="sm" title="見出しのひな形を選んで、読書メモに追加します" onClick={() => open("use")}><LayoutTemplate /> テンプレートを使う</Button>
         <Button variant="ghost" size="sm" onClick={() => openSettings("note-templates", note)}><Settings2 /> テンプレートを管理</Button>
       </div>
-      <p className="mt-1.5 text-muted-foreground" role="status">{inserted || "見出しのひな形を選んで、読書メモに追加できます。"}</p>
+      {inserted && <p className="mt-1.5 text-muted-foreground" role="status">{inserted}</p>}
     </div>
 
     <Dialog open={mode !== null} onOpenChange={async next => {

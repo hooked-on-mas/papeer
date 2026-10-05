@@ -222,14 +222,17 @@ export function ChatPane() {
   return (
     <div className="flex flex-col w-full h-full bg-background overflow-hidden">
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
+        <div className="max-w-3xl mx-auto px-4 py-3 space-y-4">
           {messages.length === 0 && !waiting && (
-            <div className="flex flex-col items-center justify-center text-center py-12">
-              <MessageSquare className="w-12 h-12 text-muted-foreground/30 mb-4" />
+            <div className="flex flex-col items-center justify-center text-center py-6">
+              <MessageSquare className="w-8 h-8 text-muted-foreground/30 mb-3" />
               <p className="text-[0.9375rem] font-medium mb-1">{webSearch ? "論文とWebの情報を使って、チャットする" : "本文を根拠に、チャットする"}</p>
               <p className="text-[0.8125rem] text-muted-foreground">手法の違い、実験条件、限界などを聞いてみてください。</p>
-              <p className="text-[0.8125rem] text-muted-foreground">PDF で文章を選び、右クリック →「この箇所をチャットに添付」で箇所を添えられます。</p>
-              <div className="flex flex-wrap justify-center gap-2 mt-5">
+              <details className="mt-2 text-[0.75rem] text-muted-foreground">
+                <summary className="cursor-pointer">PDFの箇所を添えるには</summary>
+                <p className="mt-1">PDFで文章を選び、右クリックの「この箇所をチャットに添付」を選びます。</p>
+              </details>
+              <div className="flex flex-wrap justify-center gap-2 mt-3">
                 {EXAMPLE_QUESTIONS.map((q) => (
                   <button
                     key={q}
@@ -308,6 +311,7 @@ export function ChatPane() {
           <div className="flex items-end gap-2">
             <textarea
               ref={inputRef}
+              aria-label="論文への質問"
               className="flex-1 min-h-10 rounded-lg border border-input bg-background px-3 py-2.5 text-[0.8125rem] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none leading-relaxed disabled:opacity-60"
               placeholder={attachments.length
                 ? "添付した箇所について入力（空欄のまま送ると説明を求めます）"
@@ -329,25 +333,30 @@ export function ChatPane() {
           <div className="flex flex-wrap items-center justify-between gap-x-3 mt-1.5 text-[0.75rem] text-muted-foreground">
             <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-1.5">参照範囲
-              <select className="border rounded bg-background px-1" value={scope} onChange={e => setScope(e.target.value as typeof scope)}>
+              <select disabled={waiting} className="border rounded bg-background px-1 disabled:opacity-60" value={scope} onChange={e => setScope(e.target.value as typeof scope)}>
                 <option value="paper">この論文</option><option value="selected">選んだ論文</option><option value="collection">フォルダー内</option>
               </select>
             </label>
             <button type="button" role="switch" aria-checked={webSearch} aria-label="Web検索" disabled={waiting || !capability?.web_search}
+              title={capability === undefined ? "Web検索への対応を確認中です" : capability.web_search ? "論文に加えてWebの情報を参照します" : "この接続先はWeb検索に対応していません。設定のAI接続を変更してください。"}
               className={`inline-flex items-center gap-1.5 border rounded px-2 py-1 disabled:opacity-50 ${webSearch ? "bg-primary/10 text-primary border-primary/40" : "hover:bg-muted"}`}
               onClick={() => useStore.setState(s => ({ chatWebSearch: { ...s.chatWebSearch, [activePaperId]: !webSearch } }))}>
-              <Globe className="size-3.5" />Web検索 {webSearch ? "ON" : "OFF"}
+              <Globe className="size-3.5" />Web検索 {capability === undefined ? "確認中" : !capability.web_search ? "非対応" : webSearch ? "ON" : "OFF"}
             </button>
             </div>
             <span>Enter: 送信 / Shift+Enter: 改行</span>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">{!capability?.web_search ? "この接続先はWeb検索に対応していません。設定のAI接続を変更してください。" : webSearch
+          {(webSearch || researchKeys.length > 0 || (webWanted && capability && !capability.web_search)) && <p role="status" className="mt-1 text-xs text-muted-foreground">{!capability?.web_search ? "この接続先はWeb検索に対応していません。設定のAI接続を変更してください。" : webSearch
             ? "論文に加えてWebを検索し、出典付きで回答します。" : researchKeys.length
-              ? "新たなWeb検索はせず、論文と添付した調査結果を参照します。" : "新たなWeb検索はせず、論文を根拠に回答します。"}</p>
+              ? "新たなWeb検索はせず、論文と添付した調査結果を参照します。" : "新たなWeb検索はせず、論文を根拠に回答します。"}</p>}
+          {scope === "selected" && <p role="status" className="mt-2 text-xs text-muted-foreground">
+            {selectedIds.length ? `${selectedIds.length}件の論文を参照します。`
+              : "参照する論文を1件以上選ぶと送信できます。"}
+          </p>}
           {scope === "selected" && <div className="mt-2 max-h-28 overflow-auto border rounded p-2 grid grid-cols-2 gap-1 text-xs">
-            {papers.map(paper => <label key={paper.id} className="flex gap-1 items-center truncate"><input type="checkbox" checked={selectedIds.includes(paper.id)} onChange={e => setSelectedIds(ids => e.target.checked ? [...ids, paper.id] : ids.filter(id => id !== paper.id))} /><span className="truncate" title={paper.title}>{paper.title}</span></label>)}
+            {papers.map(paper => <label key={paper.id} className="flex gap-1 items-center truncate"><input type="checkbox" disabled={waiting} checked={selectedIds.includes(paper.id)} onChange={e => setSelectedIds(ids => e.target.checked ? [...ids, paper.id] : ids.filter(id => id !== paper.id))} /><span className="truncate" title={paper.title}>{paper.title}</span></label>)}
           </div>}
-          {scope === "collection" && <select className="mt-2 w-full border rounded bg-background px-2 py-1 text-xs" value={collection} onChange={e => setCollection(e.target.value)}>
+          {scope === "collection" && <select disabled={waiting} aria-label="参照するフォルダー" className="mt-2 w-full border rounded bg-background px-2 py-1 text-xs disabled:opacity-60" value={collection} onChange={e => setCollection(e.target.value)}>
             <option value="">未分類</option>{collections.filter(Boolean).map(name => <option key={name} value={name}>{name}</option>)}
           </select>}
           <details className="mt-2 text-xs text-muted-foreground">

@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { LocateFixed, Minus, Plus } from "lucide-react";
+import { LocateFixed, Minus, Plus, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { externalCitationSource, type Camera, type MapNode, type MapEdge, type Point } from "./mapGraph";
 import { citationScope, citationCount, nodeRadius, frameMap, groupOutline, type MapGroup } from "./mapLayout";
@@ -33,6 +33,9 @@ export function MapNetwork({ nodes, edges, allNodes = nodes, allEdges = edges, g
   const groupName = (group: MapGroup) => explanations.descriptions[group.id]?.name || group.label;
   const relationMetadata = new Map(allNodes.map(n => [n.id, n]));
   const rootReferences = new Set(allEdges.filter(e => e.kind === "citation" && e.source === origin).map(e => e.target));
+  const previewCitations = preview ? citationCount(preview, scope) : null;
+  const previewMetadata = preview ? [preview.year, preview.first_author, rootReferences.has(preview.id) ? "直接引用" : "",
+    `被引用 ${previewCitations ?? "未取得"}${previewCitations !== null ? "件" : ""}（${scope === "external" ? externalCitationSource(preview) : "ライブラリ内"}）`].filter(Boolean).join(" · ") : "";
   const groupRelation = (group: MapGroup) => {
     const members = new Set(group.members);
     const direct = group.members.filter(id => rootReferences.has(id)).length;
@@ -81,7 +84,8 @@ export function MapNetwork({ nodes, edges, allNodes = nodes, allEdges = edges, g
   });
   const labelText = (n: MapNode) => {
     const author = n.first_author.trim().split(/\s+/).slice(-1)[0];
-    const text = n.id !== origin && author ? `${author}${n.year ? ` · ${n.year}` : ""}` : n.title;
+    const duplicate = author && nodes.some(other => other.id !== n.id && other.id !== origin && other.year === n.year && other.first_author.trim().split(/\s+/).slice(-1)[0] === author);
+    const text = n.id !== origin && author && !duplicate ? `${author}${n.year ? ` · ${n.year}` : ""}` : n.title;
     return text.length > 24 ? text.slice(0, 23) + "…" : text;
   };
   const neighbors = new Set(edges.filter(e => e.source === active || e.target === active).flatMap(e => [e.source, e.target]));
@@ -117,7 +121,7 @@ export function MapNetwork({ nodes, edges, allNodes = nodes, allEdges = edges, g
   }
   useEffect(() => {
     if (!footer.current) return;
-    const observer = new ResizeObserver(entries => setMinimumHeight(400 + Math.ceil(entries[0].contentRect.height)));
+    const observer = new ResizeObserver(entries => setMinimumHeight(360 + Math.ceil(entries[0].contentRect.height)));
     observer.observe(footer.current);
     return () => observer.disconnect();
   }, [setMinimumHeight]);
@@ -147,7 +151,8 @@ export function MapNetwork({ nodes, edges, allNodes = nodes, allEdges = edges, g
     element.addEventListener("wheel", wheel, { passive: false });
     return () => element.removeEventListener("wheel", wheel);
   }, [camera, setCamera]);
-  const fit = () => {
+  const fit = () => setCamera({ ...frameMap(nodes, positions, size.width, size.height), manual: true });
+  const arrange = () => {
     packedGeometry.current = "";
     const fresh = reset();
     setCamera(frameMap(nodes, fresh, size.width, size.height));
@@ -237,16 +242,18 @@ export function MapNetwork({ nodes, edges, allNodes = nodes, allEdges = edges, g
     </svg>
     </div>
     <div ref={footer} className="shrink-0">
-    <div aria-label="論文の下見" className="border-t px-3 py-2 h-[3.5rem] shrink-0 text-xs flex items-center gap-3 min-w-0">
+    <div aria-label="論文の下見" className="border-t px-3 py-2 min-h-[3.5rem] shrink-0 text-xs flex items-center gap-3 min-w-0">
       <div className="flex-1 min-w-0 space-y-1">
-      {preview ? <><p className="font-medium truncate">{preview.title}</p>
-        <p className="truncate text-muted-foreground">{[preview.year, preview.first_author, rootReferences.has(preview.id) ? "直接引用" : "", `被引用 ${citationCount(preview, scope) ?? "未取得"}${citationCount(preview, scope) !== null ? "件" : ""}（${scope === "external" ? externalCitationSource(preview) : "ライブラリ内"}）`].filter(Boolean).join(" · ")}</p></>
+      {preview ? <><p className="font-medium line-clamp-2 break-words" title={preview.title}>{preview.title}</p>
+        <p className="truncate text-muted-foreground" title={previewMetadata}>{previewMetadata}</p></>
         : <p className="text-muted-foreground">ノードにカーソルを合わせると文献を下見できます。クリックで詳細を開きます。</p>}
       </div>
       <div className="flex gap-1 shrink-0 bg-background rounded-lg border p-1">
-        <Button variant="ghost" size="icon-sm" aria-label="縮小" onClick={() => zoom(1 / 1.2)}><Minus /></Button>
-        <Button variant="ghost" size="icon-sm" aria-label="拡大" onClick={() => zoom(1.2)}><Plus /></Button>
+        <output aria-label="関係図の倍率" className="self-center min-w-10 text-center tabular-nums">{Math.round(camera.zoom * 100)}%</output>
+        <Button variant="ghost" size="icon-sm" aria-label="関係図を縮小" title="関係図を縮小" disabled={camera.zoom <= .01} onClick={() => zoom(1 / 1.2)}><Minus /></Button>
+        <Button variant="ghost" size="icon-sm" aria-label="関係図を拡大" title="関係図を拡大" disabled={camera.zoom >= 3} onClick={() => zoom(1.2)}><Plus /></Button>
         <Button variant="ghost" size="sm" onClick={fit}><LocateFixed />全体を表示</Button>
+        <Button variant="ghost" size="icon-sm" aria-label="関係図の配置を整える" title="関係図の配置を整える" onClick={arrange}><RotateCcw /></Button>
       </div>
     </div>
     {groups.length > 0 && <div aria-label="グループの一覧" className="border-t px-3 py-2 flex flex-wrap gap-2 max-h-24 overflow-auto shrink-0">
@@ -255,7 +262,7 @@ export function MapNetwork({ nodes, edges, allNodes = nodes, allEdges = edges, g
         <span className="shrink-0 font-medium" style={{ color: group.color }}>{index + 1}</span><span className="truncate">{groupName(group)}</span><span className="shrink-0 text-muted-foreground">{group.members.length}論文</span>
       </button>)}
     </div>}
-    <details className="border-t bg-background text-xs shrink-0" aria-label="論文のまとまり">
+    {groups.length > 0 && <details className="border-t bg-background text-xs shrink-0" aria-label="論文のまとまり">
       <summary className="cursor-pointer px-2 py-1.5">つながりのまとまり · {groups.length ? `${groups.length}グループ` : "まだ確認できません"}</summary>
       <div className="p-3 space-y-3 max-h-[min(13rem,20vh)] overflow-auto"><p className="text-muted-foreground pb-1">図の名前と番号は引用のまとまりに対応します。下のグループ名を選ぶと、その周辺を拡大します。</p>
         {explanations.running && <p role="status">情報取得用のモデルで説明しています…</p>}
@@ -280,7 +287,7 @@ export function MapNetwork({ nodes, edges, allNodes = nodes, allEdges = edges, g
         </div>; })}
         {explanations.enabled && groups.length > 0 && <Button variant="outline" size="sm" disabled={explanations.running} onClick={explanations.retry}>{explanations.error ? "説明を再試行" : "説明を更新"}</Button>}
       </div>
-    </details>
+    </details>}
     </div>
   </div>;
 }

@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -170,6 +171,8 @@ export function GlossaryEditor({ editor, transferKey, busy, onPending, domains }
   domains: GlossaryDomainsControl;
 }) {
   const { terms, newSources, view, search, domainFilter } = editor;
+  const searchRef = useRef<HTMLInputElement>(null);
+  const rowsRef = useRef<HTMLDivElement>(null);
   const [management, setManagement] = useSessionState(transferKey, () => ({
     splitChoice: GENERAL_DOMAIN, selected: new Set<number>(), destination: GENERAL_DOMAIN,
   }));
@@ -181,7 +184,7 @@ export function GlossaryEditor({ editor, transferKey, busy, onPending, domains }
   const splitTarget = splitNames.includes(splitChoice) ? splitChoice : GENERAL_DOMAIN;
   const shown = terms.map((item, index) => ({ item, index })).filter(({ item }) =>
     (view === "all" || newSources.has(item.source) === (view === "new")) && inDomainFilter(item, domainFilter) &&
-    `${item.source} ${item.target}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+    `${item.source} ${item.target}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   const save = async () => {
     onPending(true);
     try { await editor.save(); } catch (error) { showError(error, "辞書を保存できませんでした"); } finally { onPending(false); }
@@ -207,7 +210,8 @@ export function GlossaryEditor({ editor, transferKey, busy, onPending, domains }
     <summary className="cursor-pointer font-medium">
       {`共用辞書を管理（${terms.length}件）`}
     </summary>
-    <p className="text-muted-foreground my-2">今後も使いたい訳語を管理します。分野の語は論文の文脈に合うものだけを適用し、「共通」の語は全論文に適用します。変更は次の翻訳から反映されます。</p>
+    <p className="text-muted-foreground my-2">今後も使う訳語を登録します。変更は次の翻訳から反映されます。</p>
+    <details className="text-muted-foreground mb-2"><summary className="cursor-pointer">分野辞書と共通辞書の違い</summary><p className="mt-1">分野の語は論文の文脈に合うものだけを適用し、「共通」の語は全論文に適用します。</p></details>
     <fieldset disabled={busy} className="min-w-0">
     {domains.record && domains.record.available.length > 0 &&
       <DomainChoice record={domains.record} counts={counts} onChoose={domains.onChoose} />}
@@ -215,7 +219,8 @@ export function GlossaryEditor({ editor, transferKey, busy, onPending, domains }
       <option value="all">すべて</option><option value="new">今回の追加</option><option value="existing">登録済み</option>
     </NativeSelect>
     <div className="flex gap-1 mb-2">
-      <Input aria-label="辞書を検索" placeholder="原語・日本語訳を検索" value={search} onChange={e => editor.setSearch(e.target.value)} />
+      <Input ref={searchRef} aria-label="辞書を検索" placeholder="原語・日本語訳を検索" value={search} onChange={e => editor.setSearch(e.target.value)} />
+      {search && <Button variant="ghost" aria-label="辞書の検索語を消す" onClick={() => { editor.setSearch(""); searchRef.current?.focus(); }}>解除</Button>}
       <NativeSelect aria-label="分野で絞り込み" className="w-40 shrink-0" value={domainFilter ?? ""} onChange={e => editor.setDomainFilter(e.target.value || null)}>
         <option value="">すべての分野</option>
         <option value={GENERAL_DOMAIN}>{GENERAL_DOMAIN}</option>
@@ -226,7 +231,8 @@ export function GlossaryEditor({ editor, transferKey, busy, onPending, domains }
     <label className="flex items-center gap-2 mb-2"><input type="checkbox" disabled={!shown.length}
       checked={shown.length > 0 && shown.every(({ index }) => selected.has(index))}
       onChange={(e) => setManagement({ selected: e.target.checked ? new Set(shown.map(({ index }) => index)) : new Set() })} />表示中の語を選択</label>
-    <div className="max-h-60 overflow-auto space-y-1">
+    <div ref={rowsRef} className="max-h-60 overflow-auto space-y-1">
+      {!shown.length && <p role="status" className="py-2 text-muted-foreground">{terms.length ? "条件に一致する用語はありません。検索語や絞り込みを変えてください。" : "共用辞書は空です。「手動で用語を追加」から登録できます。"}</p>}
       {shown.map(({ item, index }) => <div key={index} className="flex items-center gap-1">
         <input type="checkbox" aria-label={`${item.source || index + 1}を移動対象に選択`} checked={selected.has(index)} onChange={(e) => {
           const next = new Set(selected); if (e.target.checked) next.add(index); else next.delete(index); setManagement({ selected: next });
@@ -240,7 +246,7 @@ export function GlossaryEditor({ editor, transferKey, busy, onPending, domains }
           {domainNames.map((name) => <option key={name} value={name}>{name}</option>)}
           <option value={NEW_DOMAIN}>新しい分野…</option>
         </NativeSelect>
-        <Button variant="outline" onClick={() => { editor.removeTerm(index); setManagement({ selected: new Set() }); }}>削除</Button>
+        <Button variant="outline" aria-label={`${item.source || `用語 ${index + 1}`}を辞書から削除`} onClick={() => { editor.removeTerm(index); setManagement({ selected: new Set() }); }}>削除</Button>
       </div>)}
     </div>
     {selected.size > 0 && <div className="flex items-center gap-1 mt-2">
@@ -252,7 +258,7 @@ export function GlossaryEditor({ editor, transferKey, busy, onPending, domains }
       }}>移動</Button>
     </div>}
     <div className="flex gap-2 mt-2">
-      <Button variant="outline" onClick={editor.addRow}>手動で用語を追加</Button>
+      <Button variant="outline" onClick={() => { editor.addRow(); requestAnimationFrame(() => { const inputs = rowsRef.current?.querySelectorAll<HTMLInputElement>('input[aria-label^="原語 "]'); inputs?.[inputs.length - 1]?.focus(); }); }}>手動で用語を追加</Button>
       <Button variant="outline" disabled={!editor.dirty || busy} onClick={() => void save()}>辞書を保存</Button>
       {editor.canUndo && <Button variant="outline" onClick={() => { editor.undo(); setManagement({ selected: new Set() }); }}>直前の編集を戻す</Button>}
     </div>

@@ -351,11 +351,11 @@ test("startup waits for the reading place without flashing the first-use screen"
   assert.match(reader, /role="region" aria-label="原文"/);
   assert.match(reader, /role="region" aria-label="日本語訳"/);
   assert.match(reader, /grid-template-columns:minmax\(0, 0.6fr\) 4px minmax\(0, 0.4fr\)/);
-  assert.doesNotMatch(reader, /論文を追加して|PDF を追加|続きから読む/);
+  assert.doesNotMatch(reader, /論文を選んで|PDF を追加|続きから読む/);
   const header = render(modules.React.createElement(modules.Header), state);
-  assert.doesNotMatch(header, /論文を追加して|AI接続を設定/);
+  assert.doesNotMatch(header, /論文を選んで|AI接続を設定/);
   const ready = render(modules.React.createElement(modules.Reader), { ...state, uiStateLoaded: true });
-  assert.match(ready, /論文を追加して/);
+  assert.match(ready, /論文を選んで/);
   assert.doesNotMatch(ready, /読書画面を準備しています/);
   // A paper chosen by the user while restoration is pending remains usable.
   const chosen = render(modules.React.createElement(modules.Reader), { activePaperId: "p1", uiStateLoaded: false });
@@ -627,7 +627,7 @@ test("the OCR settings render the modes as radio buttons, labelled selects, the 
   assert.equal((html.match(/type="radio"/g) ?? []).length, 3);
   assert.match(html, /<label for="[^"]+"[^>]*>エンジン<\/label>/);
   assert.match(html, /aria-label="英語の言語データをダウンロード"/);
-  assert.match(html, /jpn\.traineddata<!-- -->、<!-- -->2\.5 MB<!-- -->）<\/span><span[^>]*>入っています/);
+  assert.match(html, /title="ファイル名：jpn\.traineddata">日本語<!-- -->（<!-- -->2\.5 MB<!-- -->）<\/span><span[^>]*>入っています/);
   assert.match(html, /読めるエンジンがありません/);
   assert.match(html, /Claude Code CLI で使えます/);
 });

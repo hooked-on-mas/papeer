@@ -64,6 +64,9 @@ import { SORT_LABELS } from "@/lib/librarySort";
 import { withShortcutLabels } from "@/lib/platform";
 import { isImeKey } from "@/lib/imeKeys";
 
+// Keep the title visible in narrow rows; author and file name remain in the full tooltip.
+const libraryPaperTitle = (paper: PaperData) => paper.title || paperDisplayName(paper);
+
 type LibraryHit = { paper_id: string; title: string; side: "metadata" | "note" | "original" | "translated"; page: number | null; snippet: string };
 
 // Defaults that keep their identity from one render to the next, so that the memoized list and tree hold while loading.
@@ -232,7 +235,7 @@ export function LibrarySidebar() {
   const rows = useMemo(() => {
     if (librarySearch.trim()) return [];
     const open = expandedCollections && new Set(expandedCollections);
-    return visibleRows(tree, (path) => filtered || !open || open.has(path), paperDisplayName);
+    return visibleRows(tree, (path) => filtered || !open || open.has(path), libraryPaperTitle);
   }, [tree, expandedCollections, filtered, librarySearch]);
   // The same rows as the tree lays them out, with the PDFs being added (see treeLines.ts).
   const lines = useMemo(() => {
@@ -429,9 +432,13 @@ export function LibrarySidebar() {
     return () => { offReveal(); offFocus(); };
   }, [papers, setExpandedCollections]);
 
-  const clearFilters = () => {
+  const clearSearch = () => {
     setSearchText("");
     setLibrarySearch("");
+    document.getElementById("library-search")?.focus();
+  };
+  const clearFilters = () => {
+    clearSearch();
     setTagFilter(""); setReadFilter("");
   };
 
@@ -456,10 +463,10 @@ export function LibrarySidebar() {
         <div className="text-[0.75rem] text-muted-foreground truncate px-0.5" title={currentCollection || "未分類"}>
           追加先：{currentCollection || "未分類"}
         </div>
-        <button onClick={undoMove} disabled={!lastUndo} title={withShortcutLabels(`${undoText}（ライブラリ内で Ctrl+Z）`)}
+        {lastUndo && <button onClick={undoMove} title={withShortcutLabels(`${undoText}（ライブラリ内で Ctrl+Z）`)}
           className="w-full flex items-center justify-center gap-2 h-7 border rounded-md hover:bg-muted disabled:opacity-40 disabled:cursor-default">
           <Undo2 className="w-3.5 h-3.5" /> 元に戻す
-        </button>
+        </button>}
         <div className="flex gap-1.5">
           <div className="relative flex-1">
             <Search className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -467,16 +474,17 @@ export function LibrarySidebar() {
               id="library-search"
               type="text"
               placeholder="タイトル・本文・メモを検索"
-              title={withShortcutLabels("タイトル・ファイル名・本文・メモ・フォルダー名を検索（Ctrl+F）")}
+              aria-label="ライブラリを検索"
+              title={withShortcutLabels("タイトル・ファイル名・本文・メモ・フォルダー名を検索（Ctrl+Shift+F）")}
               className="w-full h-8 pl-8 pr-7 rounded-md bg-background border text-[0.8125rem] focus:outline-none focus:ring-2 focus:ring-ring"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Escape") clearFilters(); }}
+              onKeyDown={(e) => { if (e.key === "Escape" && !isImeKey(e.nativeEvent)) clearSearch(); }}
             />
             {searchText && (
               <button
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                onClick={clearFilters}
+                onClick={clearSearch}
                 aria-label="検索を解除"
               >
                 <X className="w-3.5 h-3.5" />
@@ -1049,7 +1057,7 @@ const PaperRow = memo(function PaperRow({ paper, level, setSize, posInSet, colle
         >
           <FileText className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" />
           <div className="flex-1 min-w-0">
-            <div className="truncate leading-5">{paperDisplayName(paper)}</div>
+            <div className="truncate leading-5">{libraryPaperTitle(paper)}</div>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.75rem] leading-4 text-muted-foreground tabular-nums">
               <PaperStatusBadge status={translation.status} text={translation.text} description={translation.description}
                 hasSummary={!!paper.has_article} className="gap-1 [&>span:first-child]:py-0" />

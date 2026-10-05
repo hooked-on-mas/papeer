@@ -122,18 +122,18 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </nav>
 
           <div className="flex min-w-0 flex-1 flex-col">
-            <header className="shrink-0 px-6 pt-5 pb-4 pr-12">
+            <header className="shrink-0 px-4 py-3 pr-12">
               <h2 className="text-[0.9375rem] font-semibold">{current.label}</h2>
               <DialogDescription className="text-[0.75rem]">{current.description}</DialogDescription>
             </header>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
               {isError ? (
                 <p className="text-destructive">設定を読み込めませんでした。バックエンドが起動しているか確認してください。</p>
               ) : (
                 <>
                   {section === "connection" && <ConnectionSection form={connection} />}
-                  {section === "appearance" && <div className="space-y-6"><UiScaleSection /><AppearanceSection /></div>}
+                  {section === "appearance" && <div className="space-y-4"><UiScaleSection /><AppearanceSection /></div>}
                   {section === "prompts" && <PromptsSection form={prompts} />}
                   {section === "shortcuts" && <ShortcutsSection />}
                   {section === "reading-status" && <TagManager key="status" kind="status" />}
@@ -147,7 +147,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               )}
             </div>
 
-            <footer className="flex shrink-0 items-center gap-2 border-t bg-muted/20 px-6 py-3">
+            <footer className="flex shrink-0 items-center gap-2 border-t bg-muted/20 px-4 py-2">
               {dirty && <span className="text-[0.75rem] text-muted-foreground">未保存の変更があります</span>}
               <Button variant="outline" className="ml-auto" onClick={() => void requestClose()}>{dirty ? "キャンセル" : "閉じる"}</Button>
               {(dirty || section === "connection" || section === "prompts") && <Button onClick={handleSave} disabled={saving || !settings || !dirty}>

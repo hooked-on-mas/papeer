@@ -37,6 +37,7 @@ test("external discovery starts once in StrictMode, preserves partial results, c
   await page.getByText("外部情報を取得中 · 保存済みの結果を表示", { exact: true }).waitFor();
   assert.equal(posts.length, 1);
   const timings = page.getByLabel("論文マップの構築時間");
+  await page.locator("summary", { hasText: "取得範囲" }).click();
   await timings.locator("summary").click();
   await timings.locator('[data-layout-count="1"]').waitFor(); // StrictMode must not double-count one committed layout.
   await timings.locator("summary").click();
@@ -66,6 +67,7 @@ test("external discovery starts once in StrictMode, preserves partial results, c
   await page.getByText("一部の情報を取得できませんでした · 詳細", { exact: true }).waitFor();
   assert.equal(await page.locator("article").count(), 2);
   assert.equal(await camera.getAttribute("data-camera"), transform);
+  await page.locator("summary", { hasText: "取得範囲" }).click();
   await timings.getByText("構築時間の内訳 · 34.00 秒（一部取得）", { exact: true }).waitFor();
   await timings.locator("summary").click();
   await timings.getByText("Semantic Scholar：通信・応答受信", { exact: true }).waitFor();

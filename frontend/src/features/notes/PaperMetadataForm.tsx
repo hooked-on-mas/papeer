@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { Copy, Undo2 } from "lucide-react";
 import type { PaperData } from "@/api/hooks";
 import { copyBibtex } from "@/app/actions";
@@ -44,26 +44,28 @@ export function PaperMetadataForm({ paper, collections }: { paper: PaperData; co
     // Why it was not saved, once the field is left; said once by screen readers as it appears.
     const problem = unsaved.includes(field) && focused !== field ? problems[field] : undefined;
     const problemId = `${id}-${field}-problem`;
+    const control = {
+      id: `${id}-${field}`,
+      value: values[field],
+      placeholder: props.placeholder,
+      maxLength: props.maxLength,
+      spellCheck: props.spellCheck,
+      "aria-invalid": problem ? true as const : undefined,
+      "aria-describedby": problem ? problemId : undefined,
+      onChange: (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => typeField(paperId, field, e.target.value),
+      onFocus: () => setFocused(field),
+      onBlur: () => { setFocused(null); void flushDraft(paperId); },
+      onKeyDown: (e: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+        if (e.key === "Enter" && !isImeKey(e.nativeEvent)) {
+          e.preventDefault();
+          void flushDraft(paperId);
+        }
+      },
+    };
     return <>
-      <Input
-        id={`${id}-${field}`}
-        value={values[field]}
-        placeholder={props.placeholder}
-        maxLength={props.maxLength}
-        spellCheck={props.spellCheck}
-        list={props.list}
-        aria-invalid={problem ? true : undefined}
-        aria-describedby={problem ? problemId : undefined}
-        onChange={(e) => typeField(paperId, field, e.target.value)}
-        onFocus={() => setFocused(field)}
-        onBlur={() => { setFocused(null); void flushDraft(paperId); }}
-        onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
-          if (e.key === "Enter" && !isImeKey(e.nativeEvent)) {
-            e.preventDefault();
-            void flushDraft(paperId);
-          }
-        }}
-      />
+      {field === "title" ? <textarea {...control} rows={3}
+        className="w-full min-w-0 resize-y rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm leading-relaxed outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive" />
+        : <Input {...control} list={props.list} />}
       {problem && <div id={problemId} role="alert" className="col-start-2 flex items-start gap-2 text-[0.75rem] text-destructive">
         <span className="min-w-0 flex-1">{problem}</span>
         <button type="button" onClick={() => revertField(paperId, field)}
@@ -75,7 +77,7 @@ export function PaperMetadataForm({ paper, collections }: { paper: PaperData; co
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <section className="space-y-3">
         <ReadingOrganization paper={paper} />
         <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-x-2 gap-y-2 text-[0.8125rem]">
@@ -84,12 +86,17 @@ export function PaperMetadataForm({ paper, collections }: { paper: PaperData; co
           <datalist id={`${id}-collections`}>
             {collections.map((c) => <option key={c} value={c} />)}
           </datalist>
-          <p className="col-span-2 text-[0.75rem] text-muted-foreground">
-            「/」で区切るとサブフォルダーになります。フォルダーは欄を離れるか Enter で移動します。
-          </p>
+          {!!values.collection && <button type="button" className="col-start-2 justify-self-start rounded px-1 py-0.5 text-[0.75rem] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            onClick={() => { typeField(paperId, "collection", ""); void flushDraft(paperId); }}>
+            未分類に戻す
+          </button>}
+          <details className="col-start-2 text-[0.75rem] text-muted-foreground">
+            <summary className="cursor-pointer">フォルダーの入力方法</summary>
+            <p className="mt-1">「/」で区切るとサブフォルダーになります。欄を離れるか Enter で移動し、空欄にすると未分類になります。</p>
+          </details>
         </div>
       </section>
-      <section className="space-y-3 border-t pt-4">
+      <section className="space-y-3 border-t pt-3">
         <h3 className="text-[0.8125rem] font-semibold">論文情報 <span className="font-normal text-muted-foreground text-[0.75rem]">入力後に自動保存します。</span></h3>
         <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-x-2 gap-y-2 text-[0.8125rem]">
           {FIELDS.map(({ field, label, ...props }) => (
@@ -98,9 +105,10 @@ export function PaperMetadataForm({ paper, collections }: { paper: PaperData; co
               {input(field, props)}
             </div>
           ))}
-          <p className="col-span-2 text-[0.75rem] text-muted-foreground">
-            論文情報は追加時にPDFから読み取ります。設定の「論文情報の取得にAIを使う」がONの場合は、不足情報をAIと外部の書誌情報サービスで補完します。BibTeXに使います。
-          </p>
+          <details className="col-span-2 text-[0.75rem] text-muted-foreground">
+            <summary className="cursor-pointer">論文情報の取得について</summary>
+            <p className="mt-1">論文情報は追加時にPDFから読み取ります。設定の「論文情報の取得にAIを使う」がONの場合は、不足情報をAIと外部の書誌情報サービスで補完します。BibTeXに使います。</p>
+          </details>
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className={`text-[0.75rem] ${hasProblem || draft?.failure ? "text-destructive" : "text-muted-foreground"}`}

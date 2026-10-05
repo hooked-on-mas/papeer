@@ -52,6 +52,7 @@ export function usePaperGlossaryEditor(session: string | null, paperId: string) 
 export function PaperGlossaryReview({ editor, busy, onShare }: {
   editor: ReturnType<typeof usePaperGlossaryEditor>; busy: boolean; onShare: (term: Term) => void;
 }) {
+  if (!editor.candidates.length && !editor.terms.length) return null;
   return <div className="space-y-2 text-[0.8125rem]">
     {editor.candidates.length > 0 && <fieldset disabled={busy} className="space-y-2">
       <p className="font-medium">訳語の確認（最大5件）</p>

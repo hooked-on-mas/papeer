@@ -57,8 +57,7 @@ export function Header() {
           </div>
         ) : (
           <div className="flex flex-col">
-            <h1 className="text-[0.9375rem] font-semibold">論文を追加して、読み始めよう</h1>
-            <span className="text-[0.75rem] text-muted-foreground">PDFを追加 → AI接続を設定 → 翻訳・解説・チャット</span>
+            <h1 className="text-[0.9375rem] font-semibold">論文を選んで、読み始めよう</h1>
           </div>
         )}
       </header>
@@ -79,7 +78,6 @@ export function Header() {
     paper?.first_author,
     paper?.publication_year,
     paper?.collection_name || "未分類",
-    `${paper?.pages ?? "?"}ページ`,
   ].filter(Boolean).join(" · ");
 
   return (
@@ -90,7 +88,7 @@ export function Header() {
           className="text-[0.9375rem] font-semibold truncate"
           title={paper ? paperDisplayName(paper) : ""}
         >
-          {paper ? paperDisplayName(paper) : "読み込み中…"}
+          {paper ? (paper.title || paperDisplayName(paper)) : "読み込み中…"}
         </h1>
         <div className="flex items-center gap-2 text-[0.75rem] text-muted-foreground mt-0.5 min-w-0">
           <span className="truncate" title={meta}>{meta}</span>

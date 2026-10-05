@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, ChevronDown, NotebookPen, Search, StickyNote as StickyIcon, Trash2 } from "lucide-react";
+import { ArrowUpRight, ChevronDown, NotebookPen, Search, StickyNote as StickyIcon, Trash2, X } from "lucide-react";
 import { api, unwrap } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useTagChoices } from "@/api/tagChoices";
@@ -42,6 +42,7 @@ export function StickyNotesTab() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const client = useQueryClient();
   const { data: notes = [], isPending, isError, refetch } = useQuery({
     queryKey: [QK.stickyNotes, "all"], queryFn: async () => await unwrap(api.GET("/api/sticky-notes")) as StickyNote[],
@@ -104,9 +105,11 @@ export function StickyNotesTab() {
     </header>
     <div className="flex flex-wrap items-center gap-2 border-b px-5 pb-3">
       <div className="flex shrink-0 rounded-md bg-muted p-0.5">{(["paper", "all"] as const).map(scope => <button key={scope} disabled={scope === "paper" && !paperId} aria-pressed={effectiveScope === scope}
-        className={`flex-1 rounded px-2 py-1 text-xs ${effectiveScope === scope ? "bg-background shadow-sm" : "text-muted-foreground"}`}
+        className={`flex-1 whitespace-nowrap rounded px-2 py-1 text-xs ${effectiveScope === scope ? "bg-background shadow-sm" : "text-muted-foreground"}`}
         onClick={() => updateFilters({ scope })}>{scope === "paper" ? "この論文" : "すべての論文"}</button>)}</div>
-      <div className="relative min-w-48 flex-1"><Search className="absolute left-2 top-2 size-3.5 text-muted-foreground" /><input id="sticky-note-search" className={`${field} pl-7`} aria-label="付箋を検索" placeholder="引用・メモ・論文名を検索" value={filters.query} onChange={e => updateFilters({ query: e.target.value })} /></div>
+      <div className="relative min-w-48 flex-1"><Search className="absolute left-2 top-2 size-3.5 text-muted-foreground" /><input ref={searchRef} id="sticky-note-search" className={`${field} pl-7 pr-8`} aria-label="付箋を検索" placeholder="引用・メモ・論文名を検索" value={filters.query} onChange={e => updateFilters({ query: e.target.value })} />
+        {filters.query && <button type="button" aria-label="付箋の検索語を消す" title="検索語だけを消す" className="absolute right-1 top-1 rounded p-1 hover:bg-muted" onClick={() => { updateFilters({ query: "" }); searchRef.current?.focus(); }}><X className="size-3.5" /></button>}
+      </div>
       <div className="flex items-center gap-2">
         <select className={field} aria-label="付箋の分類で絞り込み" value={filters.label} onChange={e => updateFilters({ label: e.target.value })}>
           <option value="">すべての分類</option>{Array.from(new Set([...labels, ...notes.map(n => n.label)])).filter(Boolean).map(label => <option key={label}>{label}</option>)}
@@ -114,7 +117,7 @@ export function StickyNotesTab() {
         <select className={field} aria-label="付箋の原文・訳文" value={filters.side} onChange={e => updateFilters({ side: e.target.value })}><option value="">原文・訳文</option><option value="original">原文</option><option value="translated">訳文</option></select>
         <select className={field} aria-label="付箋・ハイライトで絞り込み" value={filters.kind} onChange={e => updateFilters({ kind: e.target.value as StickyFilters["kind"] })}><option value="">付箋・ハイライト</option><option value="note">付箋だけ</option><option value="highlight">ハイライトだけ</option></select>
       </div>
-      <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="mr-auto">{visible.length} / {scoped.length}件</span>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="mr-auto" role="status">{filtering ? `${visible.length} / ${scoped.length}件` : `${visible.length}件`}</span>
         {filtering && <button className="underline" onClick={() => updateFilters({ query: "", label: "", side: "", kind: "" })}>条件をクリア</button>}
         <select aria-label="付箋の並び順" className="min-w-0 bg-background" value={filters.sort} onChange={e => updateFilters({ sort: e.target.value as "page" | "newest" })}><option value="page">ページ順</option><option value="newest">追加が新しい順</option></select>
       </div>
@@ -138,7 +141,14 @@ export function StickyNotesTab() {
         </button>
         <div className="mt-2 flex items-center border-t border-current/10 pt-1"><button className={`${action} inline-flex items-center gap-1`} onClick={() => jump(item)}><ArrowUpRight className="size-3" />貼った場所へ</button><button className={`${action} ml-auto`} disabled={busy} aria-label={`${isHighlight(item) ? "ハイライト" : "付箋"}を削除：p.${item.page} ${stickyTitle(item)}`} onClick={() => void remove(item)}><Trash2 className="size-3.5" /></button></div>
       </article>)}</div>}
-      {!isPending && !isError && !visible.length && <p className="text-xs leading-6 text-muted-foreground">{scoped.length ? "条件に合う付箋はありません。検索語や絞り込みを変更してください。" : "気になる箇所に付箋を貼ってみましょう。PDFの文章を選ぶと出る小さなツールバーで、ハイライトや付箋をすぐに付けられます。右クリックや書き込みツールの「付箋」からも貼れます。"}</p>}
+      {!isPending && !isError && !visible.length && (scoped.length
+        ? <p className="text-xs leading-6 text-muted-foreground">条件に合う付箋はありません。検索語や絞り込みを変更してください。</p>
+        : <div className="text-xs leading-6 text-muted-foreground">
+          <p>付箋はまだありません。PDFの文章を選んで「付箋」を押すと追加できます。</p>
+          <details className="mt-1"><summary className="cursor-pointer">ほかの付け方</summary>
+            <p>文章の選択後にハイライトも付けられます。右クリックや書き込みツールの「付箋」からも追加できます。</p>
+          </details>
+        </div>)}
     </div>
   </section>;
 }

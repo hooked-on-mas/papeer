@@ -336,14 +336,14 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
           <summary className="cursor-pointer font-medium">詳細設定（モデル: {effectiveModel || "既定モデル"}）</summary>
           <div className="grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2 mt-2">
             <label className="text-[0.8125rem]">モデル</label>
-            <NativeSelect value={model} onChange={(e) => choose({ model: e.target.value, effort: "" })} disabled={loadingModels && !models.length}>
+            <NativeSelect aria-label="翻訳に使うモデル" value={model} onChange={(e) => choose({ model: e.target.value, effort: "" })} disabled={loadingModels && !models.length}>
               <option value="">AI接続の設定と同じ</option>
               {models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </NativeSelect>
             {efforts.length > 0 && (
               <>
                 <label className="text-[0.8125rem]">推論の強さ (effort)</label>
-                <NativeSelect value={effort} onChange={(e) => choose({ effort: e.target.value })}>
+                <NativeSelect aria-label="翻訳の推論の強さ" value={effort} onChange={(e) => choose({ effort: e.target.value })}>
                   <option value="">AI接続の設定と同じ</option>
                   {efforts.filter((e) => e.id).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </NativeSelect>
@@ -362,18 +362,18 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
           </p>
           </details>
           <div className="grid gap-2">
-            <NativeSelect value={scope} onChange={(e) => setRequest({ scope: e.target.value as Scope })}>
+            <NativeSelect aria-label="翻訳するページ" value={scope} onChange={(e) => setRequest({ scope: e.target.value as Scope })}>
               <option value="all">全ページ</option>
               <option value="current">現在のページ（{Math.min(currentPage, pageCount || currentPage)}ページ）</option>
               <option value="custom">ページを指定</option>
             </NativeSelect>
-            <Input
+            {scope === "custom" && <Input
+              aria-label="翻訳するページ番号"
               value={customRange}
               onChange={(e) => setRequest({ customRange: e.target.value })}
               placeholder="例: 1, 3-5, 8"
-              disabled={scope !== "custom"}
               onKeyDown={(e) => { if (e.key === "Enter" && !isImeKey(e.nativeEvent)) handleStart(); }}
-            />
+            />}
             <p className={`text-[0.75rem] ${selection.error ? "text-destructive" : "text-muted-foreground"}`}>
               {selection.error ?? (selection.pages ? translationTargetText(selection.pages.length, planFetching ? undefined : plan) : "")}
             </p>

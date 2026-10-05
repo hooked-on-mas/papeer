@@ -19,7 +19,7 @@ export function UiScaleSection() {
             aria-checked={scale === value}
             onClick={() => setScale(value)}
             className={cn(
-              "flex flex-col items-center gap-1 rounded-lg border px-2 py-3 tabular-nums transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+              "flex flex-col items-center gap-1 rounded-lg border px-2 py-2 tabular-nums transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
               scale === value ? "border-primary bg-primary/5 text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
             )}
           >
@@ -30,9 +30,8 @@ export function UiScaleSection() {
         ))}
       </div>
       <p className="text-[0.75rem] text-muted-foreground leading-relaxed">
-        メニュー・ライブラリ・サマリー・チャット・メモなど、画面全体の文字とボタンの大きさを変えます。
-        {withShortcutLabels("PDFの表示倍率はリーダーの拡大・縮小（Ctrl + / Ctrl − / Ctrl+ホイール）で別に変えられます。")}
-        すぐに反映され、保存ボタンを押す必要はありません。
+        画面全体の文字とボタンに反映します。
+        {withShortcutLabels("PDFの倍率は別に変更できます（Ctrl + / Ctrl − / Ctrl+ホイール）。")}
       </p>
     </div>
   );

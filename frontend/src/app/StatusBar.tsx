@@ -1,8 +1,9 @@
 import { useEffect } from "react";
-import { Gauge, Loader2, Square, Undo2 } from "lucide-react";
+import { Gauge, Info, Loader2, Square, Undo2 } from "lucide-react";
+import { Popover } from "@base-ui/react/popover";
 import { Progress } from "@/components/ui/progress";
 import { providerLabel, useHealth, useProviders, useSettings, useUsageLimits } from "@/api/hooks";
-import { formatTokens, limitsDetails, limitsSummary, useLastUsage, usageDetails } from "@/lib/usage";
+import { limitsDetails, limitsSummary, useLastUsage, usageDetails } from "@/lib/usage";
 import { useShallow } from "zustand/react/shallow";
 import { useStore } from "@/store";
 import { statusJob } from "@/features/jobs/jobSelectors";
@@ -69,24 +70,31 @@ export function StatusBar() {
           <Undo2 className="w-3 h-3" /> 元に戻す
         </button>
       )}
-      {usageTitle && (
+      {shownLimits && (
         <span
           className={`shrink-0 flex items-center gap-1 tabular-nums ${shownLimits?.windows.some((w) => w.used_percent >= 80) ? "text-destructive" : ""}`}
           title={usageTitle}
         >
           <Gauge className="w-3.5 h-3.5" />
-          {shownLimits ? limitsSummary(shownLimits)
-            : lastUsage && `直近 入力${formatTokens(lastUsage.input_tokens)} 出力${formatTokens(lastUsage.output_tokens)}`}
+          {limitsSummary(shownLimits)}
         </span>
       )}
-      <span className="shrink-0 hidden md:inline" title="AI接続">
-        {providerLabel(providers, settings?.provider)}
-      </span>
-      {health?.version && (
-        <span className="shrink-0 tabular-nums" title={`Papeer ${health.version}\n描画コード ${health.code_version.slice(12, 24)}`}>
-          v{health.version}
-        </span>
-      )}
+      <Popover.Root>
+        <Popover.Trigger aria-label="AI・接続情報" title="接続先とAI使用量を確認"
+          className="flex h-6 shrink-0 items-center gap-1 rounded px-1.5 hover:bg-muted hover:text-foreground">
+          <Info className="size-3.5" aria-hidden="true" />AI情報
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Positioner side="top" align="end" sideOffset={6} className="z-50 outline-none">
+            <Popover.Popup className="w-[min(24rem,calc(100vw-2rem))] max-h-[70vh] overflow-y-auto rounded-lg border bg-popover p-3 text-[0.75rem] text-popover-foreground shadow-lg outline-none">
+              <Popover.Title className="mb-2 font-medium">AI・接続情報</Popover.Title>
+              <p>{providerLabel(providers, settings?.provider)}</p>
+              {usageTitle && <p className="mt-2 whitespace-pre-line break-words">{usageTitle}</p>}
+              {health?.version && <p className="mt-2 text-muted-foreground">Papeer {health.version} · 描画コード {health.code_version.slice(12, 24)}</p>}
+            </Popover.Popup>
+          </Popover.Positioner>
+        </Popover.Portal>
+      </Popover.Root>
     </footer>
   );
 }

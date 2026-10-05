@@ -65,11 +65,16 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   const count = reading?.page_count ?? 0;
   const completed = reading?.completed_pages ?? [];
   const [pageText, setPageText] = useState(String(currentPage));
+  const cancelledPageEdit = useRef(false);
   useEffect(() => setPageText(String(currentPage)), [currentPage, paperId]);
 
   const commitPage = () => {
     const value = parseInt(pageText.normalize("NFKC"), 10);
-    if (Number.isFinite(value) && value !== currentPage) jumpToPage(value);
+    if (Number.isFinite(value)) {
+      const target = Math.max(1, Math.min(value, count || currentPage));
+      setPageText(String(target));
+      if (target !== currentPage) jumpToPage(target);
+    }
     else setPageText(String(currentPage));
   };
 
@@ -150,9 +155,17 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
           onChange={(e) => setPageText(e.target.value.replace(/[^0-9０-９]/g, ""))}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !isImeKey(e.nativeEvent)) commitPage();
-            if (e.key === "Escape") { setPageText(String(currentPage)); (e.target as HTMLInputElement).blur(); }
+            if (e.key === "Escape" && !isImeKey(e.nativeEvent)) {
+              e.preventDefault();
+              cancelledPageEdit.current = true;
+              setPageText(String(currentPage));
+              e.currentTarget.blur();
+            }
           }}
-          onBlur={commitPage}
+          onBlur={() => {
+            if (cancelledPageEdit.current) cancelledPageEdit.current = false;
+            else commitPage();
+          }}
           aria-label="ページ番号"
           title={withShortcutLabels("ページ番号を入力し、Enterで移動（Ctrl+G）")}
           className="w-11 h-6 shrink-0 text-center border rounded bg-background focus:ring-2 focus:ring-ring focus:outline-none tabular-nums"

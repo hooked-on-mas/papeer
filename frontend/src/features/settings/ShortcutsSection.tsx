@@ -1,10 +1,21 @@
 import { SHORTCUT_GROUPS } from "../../app/hotkeys";
 import { shortcutKeys, withShortcutLabels } from "@/lib/platform";
+import { useState } from "react";
+import { Input } from "@/components/ui/input";
 
 export function ShortcutsSection() {
+  const [query, setQuery] = useState("");
+  const terms = query.toLocaleLowerCase().replace(/\+/g, " ").trim().split(/\s+/).filter(Boolean);
+  const groups = SHORTCUT_GROUPS.map(group => ({ ...group, items: group.items.filter(item => {
+    const text = `${group.title} ${withShortcutLabels(item.label)} ${shortcutKeys(item.keys).join(" ")}`.toLocaleLowerCase();
+    const keys = shortcutKeys(item.keys).join(" ").toLocaleLowerCase().split(/[^a-z0-9]+/);
+    return terms.every(term => /^[a-z0-9]$/.test(term) ? keys.includes(term) : text.includes(term));
+  }) })).filter(group => group.items.length);
   return (
     <div className="space-y-5">
-      {SHORTCUT_GROUPS.map((group) => (
+      <Input type="search" aria-label="ショートカットを検索" placeholder="操作名やキーで検索（例：検索 / Ctrl F）" value={query} onChange={e => setQuery(e.target.value)} />
+      {!groups.length && <p role="status" className="text-muted-foreground">一致する操作がありません。検索語を変えてください。</p>}
+      {groups.map((group) => (
         <section key={group.title}>
           <h3 className="mb-1.5 text-[0.75rem] font-medium text-muted-foreground">{group.title}</h3>
           <ul className="divide-y rounded-lg border">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "@/api/client";
 import { invalidate } from "@/api/mutations";
@@ -40,6 +40,7 @@ function PaperReview({ paperId }: { paperId: string }) {
   const [tab, setTab] = useState<"issues" | "edit">("issues");
   const [selected, setSelected] = useState<Paragraph | null>(null);
   const [text, setText] = useState("");
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const [instruction, setInstruction] = useState("自然な日本語にしてください。");
   const [pending, setPending] = useState(false);
   // Text selected in the PDF, waiting for the paragraphs to load so that its paragraph can be opened.
@@ -77,6 +78,11 @@ function PaperReview({ paperId }: { paperId: string }) {
   const shrunkPages = readabilityPages(reading);
   const hint = (paragraph: Paragraph) => shorteningHint(warnings, paragraph, paragraphs);
   const selectedHint = selected && hint(selected);
+  useEffect(() => {
+    if (!open || view !== "edit" || !selected) return;
+    const timer = setTimeout(() => editorRef.current?.focus(), 0);
+    return () => clearTimeout(timer);
+  }, [open, view, selected]);
   const choose = async (paragraph: Paragraph) => {
     if (dirty && !await askConfirm("修正案を破棄", "保存していない修正案を破棄しますか？", "破棄")) return;
     setSelected(paragraph); setText(paragraph.text); setUnmatched(false);
@@ -128,9 +134,10 @@ function PaperReview({ paperId }: { paperId: string }) {
           {!!paragraphs.length && <p className="font-medium">p.{currentPage} の訳文 — 直したい段落を選んでください</p>}
           {unmatched && !!pageParagraphs.length && <p className="text-muted-foreground">選択した文章の段落を特定できませんでした。一覧から選んでください。</p>}
           {!isFetching && !!paragraphs.length && !pageParagraphs.length && <p className="text-muted-foreground">このページには修正できる訳文がありません。</p>}
-          {!!pageParagraphs.length && <div className="max-h-32 overflow-auto border rounded">{pageParagraphs.map(p => <button key={p.id}
+          {!!pageParagraphs.length && <details key={selected?.id ?? "unselected"} open={!selected}><summary className="cursor-pointer">段落一覧（{pageParagraphs.length}件）</summary><div className="mt-2 max-h-32 overflow-auto border rounded">{pageParagraphs.map((p, index) => <button key={p.id}
             disabled={pending || busy} className={`block w-full text-left p-2 border-b hover:bg-muted ${selected?.id === p.id ? "bg-muted" : ""}`}
-            onClick={() => void choose(p)}>p.{p.pages.join(", ")}　{hint(p) && <span className="text-destructive">［文字縮小］</span>}{p.text.slice(0, 160)}</button>)}</div>}
+            title={p.text} onClick={() => void choose(p)}>p.{p.pages.join(", ")} 段落{index + 1}　{hint(p) && <span className="text-destructive">［文字縮小］</span>}{p.text.slice(0, 160)}{p.text.length > 160 ? "…" : ""}</button>)}</div></details>}
+          {selected && <p className="font-medium">編集中：p.{selected.pages.join(", ")} 段落{paragraphs.filter(p => p.pages.includes(selected.page)).findIndex(p => p.id === selected.id) + 1}</p>}
           {!!paragraphs.length && <p className="text-xs text-muted-foreground">別のページを直すときは、PDFでそのページを表示してください。</p>}
           {selected && <>
             <p className="text-xs text-muted-foreground">数式の目印は残してください。修正案は「採用してPDFに反映」を押すまで保存されません。</p>
@@ -149,7 +156,7 @@ function PaperReview({ paperId }: { paperId: string }) {
             <details><summary className="cursor-pointer">原文を見る</summary><p className="whitespace-pre-wrap border rounded p-3 mt-2">{selected.source}</p></details>
             <div className="grid grid-cols-2 gap-3">
               <div><p className="font-medium mb-1">変更前</p><div className="border rounded p-3 h-48 overflow-auto whitespace-pre-wrap">{selected.text}</div></div>
-              <label className="font-medium">修正案<textarea aria-label="訳文の修正案" disabled={pending || busy} className="mt-1 border rounded bg-background p-3 w-full h-48 font-normal" value={text} onChange={e => setText(e.target.value)} /></label>
+              <label className="font-medium">修正案<textarea ref={editorRef} aria-label="訳文の修正案" disabled={pending || busy} className="mt-1 border rounded bg-background p-3 w-full h-48 font-normal" value={text} onChange={e => setText(e.target.value)} /></label>
             </div>
             <div className="flex flex-wrap gap-2"><input aria-label="再翻訳の指示" className="flex-1 min-w-48 border rounded bg-background px-2" value={instruction} onChange={e => setInstruction(e.target.value)} placeholder="例：直訳寄りにしてください" />
               <Button variant="outline" disabled={pending || busy} onClick={() => void run(true)}>AIで修正案を作る</Button>

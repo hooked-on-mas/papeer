@@ -44,6 +44,7 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
   const latestNote = useRef<string | null>(null);
   const savingNote = useRef<Promise<void>>(Promise.resolve());
   const noteRef = useRef<HTMLTextAreaElement>(null);
+  const editPlace = useRef({ start: 0, end: 0, top: 0 });
   const noteInsert = useStore((state) => state.noteInsert);
 
   useEffect(() => {
@@ -137,7 +138,20 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
               {noteState === "saving" ? "保存中…" : noteState === "dirty" ? "未保存" : "自動保存済み ✓"}
             </span>
             <button
-              onClick={() => setPreview(!preview)}
+              onClick={() => {
+                if (!preview && noteRef.current) {
+                  const el = noteRef.current;
+                  editPlace.current = { start: el.selectionStart, end: el.selectionEnd, top: el.scrollTop };
+                }
+                setPreview(!preview);
+                if (preview) requestAnimationFrame(() => {
+                  const el = noteRef.current;
+                  if (!el) return;
+                  el.focus({ preventScroll: true });
+                  el.setSelectionRange(editPlace.current.start, editPlace.current.end);
+                  el.scrollTop = editPlace.current.top;
+                });
+              }}
               title={preview ? "編集" : "プレビュー"}
               className="shrink-0 flex items-center gap-1 h-7 px-2 rounded border text-[0.75rem] hover:bg-muted"
             >
@@ -147,20 +161,22 @@ function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean })
           </div>
         </div>
         {note !== null && <NoteTemplates note={note} onInsert={content => { setNote(current => `${current?.trimEnd() ?? ""}${current?.trim() ? "\n\n" : ""}${content}\n`); setPreview(false); }} />}
-        <div className="flex-1 p-4 flex flex-col min-h-0">
+        <div className="flex-1 p-2 flex flex-col min-h-0">
           {preview ? (
-            <div className="flex-1 overflow-y-auto border rounded-lg p-4">
-              <MarkdownRenderer content={note ?? ""} paperId={paperId} />
+            <div className="flex-1 overflow-y-auto border rounded-lg p-3">
+              {note?.trim() ? <MarkdownRenderer content={note} paperId={paperId} />
+                : <p className="text-[0.8125rem] text-muted-foreground">メモはまだありません。「編集」で書き始めるか、テンプレートを追加してください。</p>}
             </div>
           ) : (
             <textarea
               ref={noteRef}
+              aria-label="論文のメモ"
               value={note ?? ""}
               disabled={note === null}
               onChange={(e) => setNote(e.target.value)}
               onBlur={() => void saveNote().catch(() => undefined)}
               placeholder="論文に関するメモを自由に記述できます…"
-              className="flex-1 w-full p-4 text-[0.875rem] leading-relaxed resize-none border rounded-lg focus:outline-none focus:ring-1 focus:ring-ring bg-transparent font-mono"
+              className="flex-1 w-full p-3 text-[0.875rem] leading-relaxed resize-none border rounded-lg focus:outline-none focus:ring-1 focus:ring-ring bg-transparent font-mono"
             />
           )}
         </div>

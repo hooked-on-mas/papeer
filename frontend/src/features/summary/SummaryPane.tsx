@@ -64,7 +64,7 @@ export function SummaryPane() {
       )}
 
       <div className="flex-1 min-h-0 overflow-y-auto bg-muted/30">
-        <div className="summary-page mx-auto w-full max-w-[56.25rem] px-5 py-8 sm:px-10 sm:py-12">
+        <div className="summary-page mx-auto w-full max-w-[56.25rem] px-4 py-5 sm:px-6 sm:py-6">
           {isLoading && <div className="text-muted-foreground text-sm flex items-center gap-2"><RefreshCw className="w-4 h-4 animate-spin" /> サマリーを読み込み中...</div>}
           {error && <div className="text-destructive text-sm p-4 border rounded bg-destructive/10">サマリーを読み込めませんでした: {error.message}</div>}
 
@@ -75,11 +75,10 @@ export function SummaryPane() {
             </article>
           ) : (
             !isLoading && !error && (
-              <div className="text-center py-12 max-w-md mx-auto">
+              <div className="text-center py-6 max-w-md mx-auto">
                 <p className="text-[0.9375rem] font-medium mb-2">サマリーはまだありません</p>
                 <p className="text-muted-foreground text-[0.8125rem] leading-relaxed mb-5">
-                  「サマリーを作成」で、イントロダクションから目的・手法・結果・限界まで、具体例を交えながら日本語で詳しく整理します。
-                  数分かかります。AI接続の設定のモデルを使います。
+                  目的・手法・結果・限界を日本語で整理します。作成には数分かかります。
                 </p>
                 <button
                   onClick={() => generateArticle(activePaperId)}

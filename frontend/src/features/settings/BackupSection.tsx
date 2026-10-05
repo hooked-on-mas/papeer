@@ -82,7 +82,12 @@ export function BackupSection() {
   };
   const disabled = pending || busy;
   return <div className="space-y-5">
-    <p>論文PDF、ペンの書き込み、翻訳結果、メモ、タグ、付箋、チャット、用語辞書、メモテンプレート、設定・プロンプトをまとめて保存します（CLIのパスとAPI URLはPCごとの設定のため含めません）。</p>
+    <div className="space-y-1">
+      <p>論文と読書データをまとめて保存します。</p>
+      <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">保存する内容と対象外の設定</summary>
+        <p className="mt-1">論文PDF、ペンの書き込み、翻訳結果、メモ、タグ、付箋、チャット、用語辞書、メモテンプレート、設定・プロンプトを保存します。CLIのパスとAPI URLはPCごとの設定のため含めません。</p>
+      </details>
+    </div>
     <Button disabled={disabled} onClick={() => void run("backup")}>ライブラリ全体をバックアップ</Button>
     <div className="border-t pt-4 space-y-3"><p>バックアップから復元できます。復元前のデータは、このPCの履歴に「戻す前」として残ります。</p>
       <label className="flex items-center gap-2"><input type="checkbox" checked={importSettings} disabled={disabled} onChange={e => setImportSettings(e.target.checked)} />

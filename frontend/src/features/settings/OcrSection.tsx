@@ -39,8 +39,8 @@ export function OcrSettingsView({ status }: { status: OcrStatus }) {
     finally { setSaving(false); }
   };
   const mode = MODE_CHOICES.find(choice => choice.value === status.settings.mode);
-  return <div className="space-y-6">
-    <p>スキャンした PDF や文字化けした PDF の「要OCR」のページを、画像から文字を読み取って翻訳できるようにします。この設定はこのPCだけのもので、同期・バックアップはしません（変えるとすぐ保存します）。</p>
+  return <div className="space-y-4">
+    <p>「要OCR」のページを画像から読み取り、翻訳できるようにします。設定はこのPCに自動保存され、同期・バックアップには含まれません。</p>
     <fieldset className="space-y-2" aria-describedby={modeHint}>
       <legend className="font-medium">論文を追加したとき</legend>
       {MODE_CHOICES.map(choice => <label key={choice.value} className="flex items-center gap-2">
@@ -101,10 +101,10 @@ function LanguageDataList({ status }: { status: OcrStatus }) {
   };
   return <section aria-label="Tesseract の言語データ" className="space-y-2 rounded border p-3">
     <h3 className="font-medium">Tesseract の言語データ</h3>
-    <p className="text-muted-foreground text-xs">保存先：<span className="break-all">{status.directory}</span></p>
+    <details className="text-muted-foreground text-xs"><summary className="cursor-pointer">言語データの保存先</summary><p className="mt-1 break-all">{status.directory}</p></details>
     <ul className="space-y-1">
       {status.language_data.map(entry => <li key={entry.lang} className="flex items-center justify-between gap-3">
-        <span>{entry.label}（{entry.file}、{formatMegabytes(entry.size)}）</span>
+        <span title={`ファイル名：${entry.file}`}>{entry.label}（{formatMegabytes(entry.size)}）</span>
         {entry.installed ? <span className="text-muted-foreground">入っています</span>
           : <Button variant="outline" size="sm" disabled={!!job} aria-label={`${entry.label}の言語データをダウンロード`}
             onClick={() => void download([entry])}>ダウンロード…</Button>}

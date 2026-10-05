@@ -109,28 +109,41 @@ export function ReaderSearch({ paperId, search, setSearch, ownsKey, open, setOpe
 
   const results = found?.results ?? [];
   const iconButton = "rounded p-1 hover:bg-muted disabled:opacity-40 disabled:pointer-events-none";
+  const closeSearch = () => {
+    pendingStep.current = 0;
+    setOpen(false);
+    const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="論文内検索"]');
+    (toggle ?? document.getElementById("page-input"))?.focus();
+  };
 
   if (!open) return null;
   return <div className="border-t bg-background text-[0.75rem] p-2">
     <div className="flex gap-2">
-      <input ref={inputRef} aria-label="論文内を検索" autoFocus className="flex-1 rounded border px-2 py-1 bg-background" value={input}
+      <input ref={inputRef} aria-label="論文内を検索" autoFocus className="min-w-0 flex-1 rounded border px-2 py-1 bg-background" value={input}
         onChange={e => setInput(e.target.value)}
         onKeyDown={e => {
           // Enter also confirms Japanese input; leave that to the IME.
           if (e.key === "Enter" && !isImeKey(e.nativeEvent)) { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
-          if (e.key === "Escape" && !isImeKey(e.nativeEvent)) { e.preventDefault(); setOpen(false); }
+          if (e.key === "Escape" && !isImeKey(e.nativeEvent)) { e.preventDefault(); closeSearch(); }
         }}
         placeholder="原文・訳文の語句を検索（Enter で次へ、Shift+Enter で前へ）" />
-      <select className="rounded border bg-background px-1" value={search.side} onChange={e => setSearch({ query: input, side: e.target.value as "original" | "translated" })}><option value="original">原文</option><option value="translated">訳文</option></select>
+      {input && <button aria-label="検索語を消す" title="検索語を消す" className={iconButton} onClick={() => {
+        pendingStep.current = 0;
+        setInput("");
+        setSearch({ ...search, query: "" });
+        inputRef.current?.focus();
+      }}><X className="size-4" /></button>}
+      <select aria-label="検索対象" title="検索対象：原文または日本語訳" className="shrink-0 rounded border bg-background px-1" value={search.side} onChange={e => setSearch({ query: input, side: e.target.value as "original" | "translated" })}><option value="original">原文</option><option value="translated">訳文</option></select>
       <button aria-label="前の結果" title="前の結果（Shift+Enter / Shift+F3）" className={iconButton} disabled={!results.length} onClick={() => step(-1)}><ChevronUp className="size-4" /></button>
       <button aria-label="次の結果" title="次の結果（Enter / F3）" className={iconButton} disabled={!results.length} onClick={() => step(1)}><ChevronDown className="size-4" /></button>
-      <button aria-label="検索を閉じる" title="閉じる（Esc）" className={iconButton} onClick={() => setOpen(false)}><X className="size-4" /></button>
+      <button aria-label="検索を閉じる" title="閉じる（Esc）" className={iconButton} onClick={closeSearch}><X className="size-4" /></button>
     </div>
-    {search.query && <div className="mt-1 text-muted-foreground">{found
-      ? `${current >= 0 && current < results.length ? `${current + 1} / ` : ""}${found.total}件${found.limited ? "以上（先頭200件）" : ""}`
+    {search.query.trim() && <div role="status" className="mt-1 text-muted-foreground">{found
+      ? found.total === 0 ? `${search.side === "original" ? "原文" : "日本語訳"}に一致する語句がありません。検索語を変えてください。`
+        : `${current >= 0 && current < results.length ? `${current + 1} / ` : ""}${found.total}件${found.limited ? "以上（先頭200件）" : ""}`
       : "検索中…"}</div>}
     <div ref={listRef} className="max-h-40 overflow-auto mt-1">{results.map((item, i) => (
-      <button key={i} aria-current={i === current || undefined}
+      <button key={i} aria-current={i === current || undefined} title={`p.${item.page}　${item.snippet}`}
         className={`block w-full text-left px-2 py-1 hover:bg-muted truncate ${i === current ? "bg-muted font-medium" : ""}`}
         onClick={() => showResult(i, results)}>p.{item.page}　{item.snippet}</button>
     ))}</div>

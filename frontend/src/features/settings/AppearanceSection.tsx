@@ -12,7 +12,7 @@ const THEMES = [
 ] as const;
 
 const optionClass = (checked: boolean) => cn(
-  "flex flex-col items-center gap-2 rounded-lg border px-3 py-4 transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+  "flex flex-col items-center gap-1.5 rounded-lg border px-3 py-2.5 transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
   checked ? "border-primary bg-primary/5 text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
 );
 
@@ -23,7 +23,7 @@ export function AppearanceSection() {
   const inkBarStart = useStore((s) => s.inkBarStart);
   const setInkBarStart = useStore((s) => s.setInkBarStart);
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="space-y-2">
         <h3 className="font-medium">テーマ</h3>
         <div role="radiogroup" aria-label="テーマ" className="grid grid-cols-3 gap-2">
@@ -60,13 +60,11 @@ export function AppearanceSection() {
             </button>
           ))}
         </div>
-        <p className="text-[0.75rem] text-muted-foreground leading-relaxed">
-          {"白いページがまぶしいときに、原文・翻訳のPDFの見た目だけを変えます。"}
-          {"「反転」は紙を暗く、文字を明るくします。図や写真も明るさが反転します（色合いはおおむね保たれます）。書き込みは色合いを保ち、黒いペンは明るく表示します。"}
-          {"「セピア」は紙を暗めの生成り色にします。"}
-          {!dark && "ライトテーマでは常に通常の見た目です。"}
-          {"図・数式のコピーやPDFの保存には影響しません。"}
-        </p>
+        <p className="text-[0.75rem] text-muted-foreground leading-relaxed">PDFの見た目だけを変えます。{!dark && "ライトテーマでは通常の表示です。"}</p>
+        <details className="text-[0.75rem] text-muted-foreground leading-relaxed">
+          <summary className="cursor-pointer">色と保存への影響</summary>
+          <p className="mt-1">「反転」は紙を暗く、文字を明るくします。図や写真も明るさが反転します（色合いはおおむね保たれます）。書き込みは色合いを保ち、黒いペンは明るく表示します。「セピア」は紙を暗めの生成り色にします。図・数式のコピーやPDFの保存には影響しません。</p>
+        </details>
       </div>
 
       <div className="space-y-2">
@@ -86,8 +84,7 @@ export function AppearanceSection() {
           ))}
         </div>
         <p id="ink-bar-start-hint" className="text-[0.75rem] text-muted-foreground leading-relaxed">
-          {"アプリを起動したときに、リーダーの書き込みツールバーを開いておくかどうかを選びます。次回の起動から反映されます。"}
-          {"起動したあとは、いつでもリーダーの「書き込み」ボタンで開閉できます。"}
+          次回の起動から反映されます。読書中は「書き込み」ボタンでいつでも開閉できます。
         </p>
       </div>
 

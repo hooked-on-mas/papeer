@@ -223,7 +223,8 @@ export function DriveSection() {
       <Button variant="outline" disabled={busy} onClick={() => void startNewLibrary()}>新しいライブラリとして始める</Button>
     </div>}
     <p className="font-medium">保存先：{data.connected ? "同期フォルダー ＋ このPC" : "このPC（ローカル）"}</p>
-    <p>PDF、書き込み、付箋、サマリー、翻訳、メモ、チャット、タグ、辞書、テンプレート、設定をまとめて同期します。オフライン中もこのPCに保存します。</p>
+    <p>論文と読書データをまとめて同期します。オフライン中もこのPCに保存します。</p>
+    <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">同期する内容</summary><p className="mt-1">PDF、書き込み、付箋、サマリー、翻訳、メモ、チャット、タグ、辞書、テンプレート、設定をまとめて同期します。</p></details>
     <p>{PLATFORM === "linux"
       ? "PC間で同期されるこのPCのフォルダー（Syncthing・Dropbox などの同期ソフトが同期するもの。ネットワーク上のドライブとして開いたものは使えません）を指定してください。アプリ内でのログインや認証設定は不要です。"
       : "PC版Google Driveの同期フォルダーを指定してください。アプリ内でのGoogleログインや認証設定は不要です。"}</p>
@@ -271,9 +272,9 @@ export function DriveSection() {
       {format?.format === 2 && !!format.revisions.count && <OldSyncData format={format} busy={busy} onRemove={() => void removeOldData(format)} />}
     </>}
     <VersionNoticeSetting />
-    <p className="text-xs text-muted-foreground">PC間の転送は{client.app}が行います。「今すぐ同期」の後、{client.service}側の同期完了も確認してから別PCに移ってください。別PCでは同じ同期フォルダーを指定します。{format?.format === 1
+    <details open={data.connected} className="text-xs text-muted-foreground"><summary className="cursor-pointer">別のPCで使うときの注意</summary><p className="mt-1">PC間の転送は{client.app}が行います。「今すぐ同期」の後、{client.service}側の同期完了も確認してから別PCに移ってください。別PCでは同じ同期フォルダーを指定します。{format?.format === 1
       ? "以前の形式では、変更のたびにライブラリ全体を保存し、履歴の分だけ容量を使います。"
-      : "同期フォルダーには変わったファイルだけを保存し、以前の状態はこのPCの履歴に残します。"}</p>
+      : "同期フォルダーには変わったファイルだけを保存し、以前の状態はこのPCの履歴に残します。"}</p></details>
     <Button variant="outline" onClick={() => openSettings("backup")}>バックアップ・復元を開く</Button>
   </div>;
 }

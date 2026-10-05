@@ -107,10 +107,10 @@ export function VersionNoticeSetting() {
     <label className="flex items-center gap-2">
       <input type="checkbox" checked={!dismissed} aria-describedby="version-notice-hint"
         onChange={(e) => setDismissed(!e.target.checked)} />
-      別のPCで新しい版のPapeerを使っているとき（このPCの版が知らない設定があるとき）に知らせる
+      別のPCで追加された未対応の設定を知らせる
     </label>
     <p id="version-notice-hint" className="text-xs text-muted-foreground">
-      このPCだけの設定です。通知で「{VERSION_NOTICE_OFF_LABEL}」を選ぶとオフになります。オンに戻すと、次に起動したときから再び知らせます。
+      新しい版のPapeerで追加され、このPCの版が知らない設定があるときの通知です。このPCだけに適用します。通知で「{VERSION_NOTICE_OFF_LABEL}」を選ぶとオフになり、オンに戻すと次回起動から再び知らせます。
     </p>
   </div>;
 }
