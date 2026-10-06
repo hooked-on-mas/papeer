@@ -13,7 +13,9 @@ Web検索はCodex CLI・Claude Code CLI・Antigravity CLIに対応していま�
 
 Claude Codeでは検索時だけ `WebSearch`・`WebFetch` を有効にします。組織のポリシーなどで検索が利用できない場合は、出典なしの回答を調査結果として保存しません。Antigravityでは実行ごとに一時フォルダーへ専用エージェントを作り、検索時は `search_web`・`read_url_content`、検索しないときは回答の終了処理だけを使用可能にします。検索時の自動承認はこの構成内に限定され、コマンド実行・ファイル操作・MCP・別エージェントの呼び出しは公開しません。ユーザーの設定ファイルは変更しません。
 
-実装の根拠：[Claude Codeのツール](https://code.claude.com/docs/en/tools-reference)、[Antigravityのエージェント構成](https://www.antigravity.google/docs/subagents/)、[AntigravityのWebツール](https://www.antigravity.google/docs/sdk/tools/)。CLIが古い場合は更新してください。
+Antigravityの調査結果は、プロンプトにJSONスキーマを含め、アプリ側で必須項目・型を検証してから読み取ります。agy 1.3.1では専用エージェントと `--json-schema` の組み合わせで空の関数呼び出しエラーが再現したため、このCLIオプションは使用しません。不正なJSONやツール呼び出しは回答形式のエラーとして扱い、接続エラーとして同じ要求を自動再送しません。
+
+実装の根拠：[Claude Codeのツール](https://code.claude.com/docs/en/tools-reference)、[Antigravityのエージェント構成](https://www.antigravity.google/docs/subagents/)、[AntigravityのWebツール](https://www.antigravity.google/docs/sdk/tools/)、[Antigravityの構造化出力](https://antigravity.google/docs/cli/headless/)。CLIが古い場合は更新してください。
 
 ## 参考文献の内容と入手先
 

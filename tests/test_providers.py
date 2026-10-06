@@ -509,11 +509,15 @@ class ProvidersTests(unittest.TestCase):
 
     def test_antigravity_provider_execution(self):
         launched = []
-        with cli(AntigravityProvider), patch(POPEN, side_effect=capture_popen(launched, agy_stream("Gemini Agy Output"))):
+        response = '{"translation": "Gemini Agy Output"}'
+        schema = {"type": "object", "properties": {"translation": {"type": "string"}}, "required": ["translation"]}
+        with cli(AntigravityProvider), patch(POPEN, side_effect=capture_popen(launched, agy_stream(response))):
             settings = Settings(provider="antigravity", model="gemini-3.8-flash", reasoning_effort="high")
             provider = create_provider(settings, threading.Event())
-            result = provider.generate("Translate this", '{"text": "hello"}', schema={"type": "object"})
-            self.assertEqual(result, "Gemini Agy Output")
+            result = provider.generate("Translate this", '{"text": "hello"}', schema=schema)
+            self.assertEqual(json.loads(result), {"translation": "Gemini Agy Output"})
+            self.assertNotIn("--json-schema", launched[0][0])
+            self.assertIn(json.dumps(schema), json.loads(launched[0][1])["message"]["content"])
             command = launched[0][0]
             self.assertIn("--print=", command)
             self.assertEqual(command[command.index("--model") + 1], "gemini-3.8-flash")

@@ -18,7 +18,7 @@ from papeer.core.config import Settings
 from papeer.core.paths import PaperFiles
 from papeer.core.service import PaperService
 from papeer.core.storage import Library
-from papeer.providers import Cancelled, ProviderBackend, ProviderSpec
+from papeer.providers import AnswerRejected, Cancelled, ProviderBackend, ProviderSpec
 from papeer.providers.codex import CodexProvider
 from papeer.providers.claude_code import ClaudeCodeProvider
 from papeer.providers.antigravity import AntigravityProvider
@@ -147,14 +147,16 @@ def test_antigravity_search_profile_and_off_requests_are_isolated(monkeypatch):
         agent = command[command.index("--agent") + 1]
         profile = (kwargs["root"] / ".agents" / "agents" / f"{agent}.md").read_text("utf-8")
         calls.append((command, profile, kwargs["prompt_bytes"]))
-        return json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": json.dumps(evidence()),
-                                                          "usage": {"output_tokens": 5}}}), ""
+        result = {"status": "SUCCESS", "response": json.dumps(evidence()) if agent == "papeer-web" else "回答の説明文",
+                  "usage": {"output_tokens": 5}}
+        return json.dumps({"event": "result", "result": result}), ""
     monkeypatch.setattr("papeer.providers.antigravity.run_cli_process", execute)
     provider = AntigravityProvider(Settings(provider="antigravity", model="gemini-test", reasoning_effort="high"))
     provider.generate("summarize", "document")
     assert json.loads(provider.search_web("research", "文献" * 40000, web_research._RECORD_SCHEMA)) == evidence()
     provider.generate("summarize", "document")
     assert ["--dangerously-skip-permissions" in c[0] for c in calls] == [False, True, False]
+    assert all("--json-schema" not in c[0] for c in calls)
     for i, (command, profile, prompt) in enumerate(calls):
         assert ("  - search_web\n" in profile) == (i == 1)
         assert ("  - read_url_content\n" in profile) == (i == 1)
@@ -171,6 +173,72 @@ def test_antigravity_search_profile_and_off_requests_are_isolated(monkeypatch):
             assert "文献" * 40000 in json.loads(prompt)["message"]["content"]
             assert "sources" in json.loads(prompt)["message"]["content"]
     assert provider.usage.output_tokens == 15
+
+
+@pytest.mark.parametrize("response", [None, "", "JSONではない説明文"])
+def test_antigravity_structured_answer_does_not_need_response_text(monkeypatch, response):
+    monkeypatch.setattr(AntigravityProvider, "command", lambda self: ["agy"])
+    def execute(**kwargs):
+        return json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": response,
+                          "structured_output": evidence(), "usage": {"output_tokens": 5}}}), ""
+    monkeypatch.setattr("papeer.providers.antigravity.run_cli_process", execute)
+    provider = AntigravityProvider(Settings(provider="antigravity"))
+    assert json.loads(provider.search_web("research", "document", web_research._RECORD_SCHEMA)) == evidence()
+    assert provider.usage.output_tokens == 5
+
+
+@pytest.mark.parametrize("structured", [None, {}, {"sources": "wrong type"}])
+def test_antigravity_invalid_structured_field_does_not_hide_valid_response(monkeypatch, structured):
+    monkeypatch.setattr(AntigravityProvider, "command", lambda self: ["agy"])
+    def execute(**kwargs):
+        return json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": json.dumps(evidence()),
+                          "structured_output": structured}}), ""
+    monkeypatch.setattr("papeer.providers.antigravity.run_cli_process", execute)
+    provider = AntigravityProvider(Settings(provider="antigravity"))
+    assert json.loads(provider.search_web("research", "document", web_research._RECORD_SCHEMA)) == evidence()
+
+
+@pytest.mark.parametrize("response", ["説明だけの回答", '{"sources": "wrong type"}'])
+def test_antigravity_invalid_json_answer_is_rejected_without_resending(monkeypatch, response):
+    calls = []
+    monkeypatch.setattr(AntigravityProvider, "command", lambda self: ["agy"])
+    def execute(**kwargs):
+        calls.append(kwargs["command"])
+        return json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": response,
+                          "usage": {"output_tokens": 5}}}), ""
+    monkeypatch.setattr("papeer.providers.antigravity.run_cli_process", execute)
+    provider = AntigravityProvider(Settings(provider="antigravity"))
+    with pytest.raises(AnswerRejected, match="指定した形式のJSON"):
+        provider.search_web("research", "document", web_research._RECORD_SCHEMA)
+    assert len(calls) == 1
+    assert "--json-schema" not in calls[0]
+    assert provider.usage.output_tokens == 5
+
+
+@pytest.mark.parametrize("failure_path", ["exit", "result", "no-result"])
+def test_antigravity_malformed_tool_call_is_answered_and_not_resent(monkeypatch, failure_path):
+    from papeer.providers.common import cli_exit_failure
+    detail = ("Your previous response contained an improperly formatted function call: Malformed function call: "
+              "Failed to parse function call: Function call is empty - no input to parse.\n"
+              "Please retry with a properly formatted function call\nRetries remaining: 3")
+    calls = []
+    monkeypatch.setattr(AntigravityProvider, "command", lambda self: ["agy"])
+    def execute(**kwargs):
+        calls.append(kwargs["command"])
+        if failure_path == "exit":
+            raise cli_exit_failure("Antigravity (agy)", detail, "", 3)
+        if failure_path == "no-result":
+            return json.dumps({"event": "error", "error": detail}), ""
+        return json.dumps({"event": "result", "result": {"status": "ERROR", "error": detail,
+                          "usage": {"output_tokens": 12}}}), ""
+    monkeypatch.setattr("papeer.providers.antigravity.run_cli_process", execute)
+    provider = AntigravityProvider(Settings(provider="antigravity"))
+    with pytest.raises(AnswerRejected, match="ツール呼び出し形式が不正") as error:
+        provider.generate("translate", "document")
+    assert "ログイン状態・利用枠を確認" not in str(error.value).splitlines()[0]
+    assert "Function call is empty" in str(error.value)
+    assert len(calls) == 1
+    assert provider.usage.output_tokens == (12 if failure_path == "result" else 0)
 
 
 def test_api_local_model_remains_unsupported():

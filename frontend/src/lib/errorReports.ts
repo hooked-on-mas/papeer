@@ -98,7 +98,7 @@ const NETWORK = new RegExp([
   "stream disconnected", "timed out", "timeout", "error sending request", "server_error",
 ].join("|"), "i");
 
-const ANSWER = /回答が空|出力上限で途切れ|指定した形式のjsonを取り出せません|回答ファイルが返り|テキストの回答が返り|回答を使えません|応答形式が不正|jsonオブジェクトではありません|再翻訳の上限|翻訳の一部が欠落/i;
+const ANSWER = /回答が空|出力上限で途切れ|指定した形式のjsonを取り出せません|回答ファイルが返り|テキストの回答が返り|回答を使えません|応答形式が不正|jsonオブジェクトではありません|再翻訳の上限|翻訳の一部が欠落|malformed function call|malformed_function_call|function call is empty/i;
 const BUSY = /すでに実行中|バックアップ・復元が実行中|終わってから|終わるまでお待ちください|library_busy/i;
 // The fixed lead of every CLI failure (papeer/providers/common.py, cli_failure).
 const CLI_FAILURE = /接続に失敗しました。ログイン状態・利用枠を確認してください/;

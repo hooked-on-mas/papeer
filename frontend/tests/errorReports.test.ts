@@ -31,6 +31,17 @@ test("the stream-json keys Claude Code always prints do not read as a usage limi
   assert.equal(errorCause(cli("Claude Code", overage)), "connection");
 });
 
+test("Antigravity malformed function calls are unusable answers, including older connection leads", () => {
+  const detail = "Your previous response contained an improperly formatted function call: Malformed function call: "
+    + "Failed to parse function call: Function call is empty - no input to parse.\n"
+    + "Please retry with a properly formatted function call\nRetries remaining: 3";
+  assert.equal(errorCause(cli("Antigravity (agy)", detail)), "answer");
+  assert.equal(errorCause("Antigravity (agy)の回答を使えませんでした。AIのツール呼び出し形式が不正です。\n" + detail), "answer");
+  assert.equal(errorCause(cli("Antigravity (agy)", "MALFORMED_FUNCTION_CALL")), "answer");
+  assert.equal(errorAdvice(cli("Antigravity (agy)", detail), { canResume: true }).primary, "resume");
+  assert.equal(errorCause(cli("Antigravity (agy)", detail + "\nRESOURCE_EXHAUSTED")), "quota");
+});
+
 test("document words echoed in a CLI failure do not decide the cause", () => {
   assert.equal(errorCause(cli("Codex", "…信用リスク(credit risk)モデルを訳すと… exit 1")), "connection");
   assert.equal(errorCause(cli("Codex", "認証 (authentication) プロトコル… exit 1")), "connection");
