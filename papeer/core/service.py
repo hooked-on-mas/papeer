@@ -179,14 +179,14 @@ class PaperService:
             check_cancel(self.cancel)
             self.progress(f"サマリーの資料を整理 {index + 1}/{len(chunks)}")
             data = "\n\n".join(f"[{paper_id}:p{x['page']}]\n{x['text']}" for x in chunk)
-            note = self.provider.generate(prompts.load("summary_notes"), data)
+            note = self.provider.generate(prompts.expand(prompts.load("summary_notes")), data)
             notes.append(note)
         check_cancel(self.cancel)
         self.progress("日本語のサマリー記事を作成しています…")
         # The notes stage may still drop images, so the article stage also gets the full list.
         catalog = "\n\n## Available images\n" + "\n".join(images) if images else ""
         article = self.provider.generate(
-            prompts.load("summary_article"),
+            prompts.expand(prompts.load("summary_article")),
             "\n\n".join(notes) + catalog)
         article = link_citations(article, {paper_id: document["page_count"]})
         atomic_write_text(files.article_md, article)

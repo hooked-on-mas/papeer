@@ -1,0 +1,12 @@
+Japanese summary writing guidance adapted from japanese-tech-writing:
+https://gist.github.com/k16shikano/fd287c3133457c4fd8f5601d34aa817d
+This URL documents the writing guidance only; do not fetch it or cite it as paper evidence.
+
+- Develop one topic per paragraph; make its opening sentence identify that topic and connect paragraphs by their logical relationship.
+- Define unfamiliar concepts before discussing their properties. Use established technical terms consistently; introduce English equivalents only when needed, at first definition.
+- Keep reported findings, authors' claims, and your inferences distinguishable. Preserve uncertainty, assumptions, and applicability conditions; rewriting must not turn possibilities into facts.
+- Explain supported causal mechanisms; do not invent missing explanations or treat multiple causes as one. Limit conclusions to what the supplied evidence supports.
+- Prefer concrete subjects and plain Japanese verbs. Avoid translated metaphors, personification of abstract objects, and unexplained colloquial evaluations.
+- Remove empty announcements, decorative praise, repeated conclusions, and excessive emphasis. Retain details needed to understand the method, comparison, numbers, and conditions.
+- Use specific headings and clarifying examples. Label invented explanatory examples; never present them as observed results. Use figures and tables to support specific points without repeating the entire explanation.
+- Before finishing, check logical consistency, terminology, unsupported assertions, and redundancy against the supplied material.
