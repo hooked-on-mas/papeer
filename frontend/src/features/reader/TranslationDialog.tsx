@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { api, unwrap } from "@/api/client";
 import { fetchPaperDomains, useSavePaperDomains } from "@/api/mutations";
 import { providerLabel, useProviderEfforts, useProviderModels, useProviders, useReading, useSettings, type ReadingData } from "@/api/hooks";
@@ -16,19 +17,19 @@ import { QK } from "@/lib/queryKeys";
 import { useOpenEdit } from "@/lib/pendingSaves";
 import { parsePageSelection } from "@/lib/pageSelection";
 import { useSessionState } from "@/lib/useSessionState";
-import { GlossaryEditor, useGlossaryEditor } from "./GlossaryEditor";
+import { DomainChoice, GlossaryEditor, useGlossaryEditor } from "./GlossaryEditor";
 import { PaperGlossaryReview, usePaperGlossaryEditor } from "./PaperGlossaryReview";
 import { withPaperTerms } from "./paperGlossary";
 import {
-  countDomainTerms, nextAutoStart, domainFailureMessage, domainJobMessage, readSplitChecked, selectionOf, selectionAttemptKey,
+  countDomainTerms, domainFailureMessage, domainJobMessage, selectionOf,
   unchosenNewDomains, unchosenNewDomainsMessage, type DomainJob, type PaperDomains,
 } from "./glossaryDomains";
 import { startDomainSelect, startGlossarySplit, takeSplitPreview, useGlossarySplitPreviews } from "./glossaryJobs";
 import { setGlossaryDialogPaper, startGlossaryDraft, takeGlossaryDraft, useGlossaryDrafts } from "./glossaryDraft";
 import { markRebuildJob } from "./rebuildJobs";
 import {
-  draftResultMessage, effectiveTerms, glossaryKey, glossaryReviewSkip, isResuming, mergeDraftTerms, normalizeTerms, primaryDomain,
-  readReviewedGlossary, recordReviewedGlossary, retranslatedInkPages, retranslationWarning, reviewSkipMessage, startButtonLabel, translationTargetText,
+  draftResultMessage, effectiveTerms, mergeDraftTerms, normalizeTerms, primaryDomain,
+  retranslatedInkPages, retranslationWarning, startButtonLabel, translationTargetText,
   type TranslationPlan,
 } from "./translationStart";
 import { isImeKey } from "@/lib/imeKeys";
@@ -40,25 +41,25 @@ interface TranslationDialogProps {
   onOpenChange: (open: boolean) => void;
   paperId: string;
   currentPage: number;
+  initialTab?: "translation" | "terms" | "dictionary";
 }
 
 type Scope = "all" | "current" | "custom";
 
 /** What the dialog asks for this time, from its opening on (useSessionState). */
 type Choices = {
+  tab: "translation" | "terms" | "dictionary";
+  saveNote: string;
   /** The pages to translate; null until chosen, or until the paper's previous request is known. */
   request: { scope: Scope; customRange: string } | null;
   /** "" for the connection's settings. */
   model: string;
   effort: string;
-  /** The terms were checked in this dialog: starting applies the candidates and records the check. */
+  /** Candidate extraction finished while editing the optional terms. */
   reviewed: boolean;
-  /** glossaryKey of the glossary this paper was last translated with after a check (translationStart.ts). */
-  reviewedKey: string | null;
   draftMessage: string;
   /** How the AI's work on the domain dictionaries ended, when the dialog has something to tell about it. */
   domainNote: string;
-  startNote: string;
 };
 
 /** Reopen with the previous request, as the old dialog did: its pages, unless they were all of them. */
@@ -67,14 +68,15 @@ function previousRequest(reading: ReadingData, pageCount: number): { scope: Scop
   return previous?.length && previous.length !== pageCount ? { scope: "custom", customRange: previous.join(", ") } : { scope: "all", customRange: "" };
 }
 
-export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: TranslationDialogProps) {
-  useOpenEdit(open, "翻訳の設定・辞書");
+export function TranslationDialog({ open, onOpenChange, paperId, currentPage, initialTab = "translation" }: TranslationDialogProps) {
+  useOpenEdit(open, "翻訳・訳語の設定");
   const session = open ? paperId : null;
   const [choices, choose] = useSessionState<Choices>(session, () => ({
-    request: null, model: "", effort: "", reviewed: false, draftMessage: "", domainNote: "", startNote: "",
-    reviewedKey: readReviewedGlossary(() => globalThis.localStorage, paperId),
+    tab: initialTab, saveNote: "", request: null, model: "", effort: "", reviewed: false, draftMessage: "", domainNote: "",
   }));
   const { model, effort } = choices;
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (contentRef.current) contentRef.current.scrollTop = 0; }, [choices.tab]);
   const [starting, setStarting] = useState(false);
   const [saving, setSaving] = useState(false);
   // The AI's check for unregistered terms runs as a job that outlives the dialog (glossaryDraft).
@@ -108,13 +110,13 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   const savedGlossary = glossary.saved;
   const splitPreview = useGlossarySplitPreviews((s) => s.previews[paperId]);
   useEffect(() => {
-    if (!open || !savedGlossary || !splitPreview || glossary.dirty) return;
+    if (!open || choices.tab === "translation" || !savedGlossary || !splitPreview || glossary.dirty) return;
     const preview = takeSplitPreview(paperId);
     if (!preview) return;
     glossary.previewSplit(preview.terms, preview.original);
-    choose({ domainNote: `分割案で${preview.moved}語の分野を変更しました。確認して「辞書を保存」で適用できます。` });
+    choose({ tab: "dictionary", domainNote: `分割案で${preview.moved}語の分野を変更しました。確認して「辞書を保存」で適用できます。` });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a finished preview is consumed once, after the current glossary loads
-  }, [open, savedGlossary, splitPreview, glossary.dirty, paperId]);
+  }, [open, choices.tab, savedGlossary, splitPreview, glossary.dirty, paperId]);
   // The domain dictionaries this paper uses; the sidecar keeps the choice (the AI's, or the user's).
   const { data: domainRecord, isPending: loadingDomains, isFetching: fetchingDomains } = useQuery({
     queryKey: [QK.glossaryDomains, paperId], queryFn: () => fetchPaperDomains(paperId), enabled: open, retry: false,
@@ -128,14 +130,14 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   // opening's already (started over during the render): without unsaved edits, the saved glossary.
   useEffect(() => {
     // The main domain comes from the choice, which has to be read first: it cannot be put right afterwards.
-    if (!open || !savedGlossary || !localGlossary.saved || localGlossary.fetching || loadingDomains || fetchingDomains || draft?.status !== "done") return;
+    if (!open || choices.tab === "translation" || !savedGlossary || !localGlossary.saved || localGlossary.fetching || loadingDomains || fetchingDomains || draft?.status !== "done") return;
     const terms = takeGlossaryDraft(paperId);
     if (!terms) return;
     // Only candidates the list does not have yet (the user may have added some meanwhile) count as new.
     const count = localGlossary.addCandidates(terms);
     choose({ reviewed: true, draftMessage: draftResultMessage(count) });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- glossary and choose are new on every render; a finished check is what it waits for
-  }, [open, paperId, draft, savedGlossary, localGlossary.saved, localGlossary.fetching, loadingDomains, fetchingDomains]);
+  }, [open, choices.tab, paperId, draft, savedGlossary, localGlossary.saved, localGlossary.fetching, loadingDomains, fetchingDomains]);
   const provider = settings?.provider ?? "";
   const pageCount = reading?.source_page_count ?? reading?.page_count ?? 0;
   // Once the paper is loaded; a choice made before that stays.
@@ -184,21 +186,14 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   const inkPages = new Map((savedInkPages ?? []).map((item) => [`${item.side}:${item.page}`, item]));
   for (const item of cachedInkPages(paperId)) inkPages.set(`${item.side}:${item.page}`, item);
   const affectedInkPages = retranslatedInkPages(planFetching ? undefined : plan, [...inkPages.values()]);
-  const startReady = !!plan && !!savedInkPages && !planFetching && !inkFetching && !planError && !inkError
-    && !fetchingDomains && !saveDomains.isPending && !glossary.fetching;
-  // Only the terms this paper uses count: editing a dictionary it does not use is no reason to check again.
-  const currentKey = glossaryKey(withPaperTerms(effectiveTerms(glossary.terms, domainSelection), localGlossary.effective));
-  // A plan being refetched (after a glossary save or a finished run) may be out of date.
-  const skip = glossaryReviewSkip({
-    plan: planFetching ? undefined : plan, glossaryDirty: glossary.dirty || localGlossary.dirty, resuming: isResuming(reading?.preview, selection.pages),
-    reviewedKey: choices.reviewedKey, currentKey,
-  });
-  const warning = retranslationWarning(planFetching ? undefined : plan, !!domainRecord?.available.length);
+  const startReady = !!plan && !!savedInkPages && !!reading && !!settings && !planFetching && !inkFetching && !planError && !inkError;
+  const startBusy = holding || paperJobRunning || !!domainJob || generating || saveDomains.isPending;
+  const sharedTerms = effectiveTerms(glossary.terms, domainSelection);
+  const warning = retranslationWarning(planFetching ? undefined : plan);
   const unchosenMessage = unchosenNewDomainsMessage(unchosenNewDomains(domainRecord));
 
   // The AI's work on the dictionaries. A failure is told in the dialog only (the handlers are quiet, translationJobs).
   const runSelect = async () => {
-    started.current.selects.add(selectionAttemptKey(paperId, domainRecord?.available ?? [], domainRecord?.selection_key));
     setLaunching("select");
     choose({ domainNote: "" });
     try {
@@ -211,13 +206,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
       setLaunching(null);
     }
   };
-  // What was started (by itself or by hand): the size a dictionary had when its split started, and the choices, so that
-  // a job that failed is not started again in a loop, nor one whose result is not read yet. The choices are tried again
-  // when the dialog is next opened.
-  const started = useRef<{ splits: Record<string, number>; selects: Set<string> }>({ splits: {}, selects: new Set() });
   const runSplit = async (domain: string) => {
-    const before = countDomainTerms(savedGlossary ?? [])[domain] ?? 0;
-    started.current.splits[domain] = before;
     setLaunching("split");
     choose({ domainNote: "" });
     try {
@@ -233,69 +222,21 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
       setLaunching(null);
     }
   };
-  useEffect(() => {
-    if (!open) {
-      started.current.selects.clear();
+  const handleStart = async () => {
+    if (!selection.pages?.length || startBusy || !startReady) return;
+    if (glossary.dirty || localGlossary.dirty || localGlossary.candidates.length) {
+      choose({ tab: glossary.dirty ? "dictionary" : "terms", saveNote: "訳語の変更を保存してから、翻訳に戻ってください。" });
       return;
     }
-    if (!domainRecord || !savedGlossary || !settings) return;
-    const next = nextAutoStart({
-      availableDomains: domainRecord.available, domainCounts: countDomainTerms(savedGlossary), record: domainRecord, dirty: glossary.dirty,
-      // A dictionary or a choice being read again may be what a job has just changed: the cached one is not to go by.
-      running: paperJobRunning || generating || !!launching || starting || saving || glossary.fetching || fetchingDomains || saveDomains.isPending,
-      splitChecked: readSplitChecked(() => globalThis.localStorage), splitAt: domainRecord.split_at,
-      paperId, tried: started.current,
-    });
-    if (next?.kind === "split") void runSplit(next.domain);
-    else if (next?.kind === "select") {
-      started.current.selects.add(next.key);
-      void runSelect();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- runSelect and runSplit are new on every render; what they wait for is listed
-  }, [open, paperId, domainRecord, savedGlossary, settings, glossary.dirty, glossary.fetching, fetchingDomains, paperJobRunning, generating, launching, starting, saving, saveDomains.isPending]);
-
-  const handleStart = async () => {
-    if (!selection.pages?.length || busy || !savedGlossary || !startReady) return;
     const pages = scope === "all" ? "" : selection.pages.join(",");
     // Every page from saved translations: the run only makes the PDF again (said so while it runs).
-    let rebuild = skip === "reusable";
+    const rebuild = !plan.needs_ai;
     setStarting(true);
-    choose({ startNote: "" });
     try {
-      if (glossary.dirty) {
-        await glossary.save();
-        // Saving a shared translation invalidates the semantic selection; finish that before translating.
-        const record = await fetchPaperDomains(paperId);
-        started.current.selects.add(selectionAttemptKey(paperId, record.available, record.selection_key));
-        if (record.available.length) await new Promise<void>((resolve, reject) => {
-          startDomainSelect(paperId, { model: model || undefined, effort: effort || undefined }, (event) => {
-            if (event.status === "succeeded") resolve();
-            else reject(new Error(event.error || "訳語の適用判定を完了できませんでした。"));
-          }).catch(reject);
-        });
-      }
-      await localGlossary.save();
-      if (glossary.dirty || localGlossary.dirty) {
-        const updated = await refetchPlan();
-        if (updated.error) throw updated.error;
-        if (!updated.data) return;
-        rebuild = !updated.data.needs_ai;
-        // Leave newly affected writing announced in the dialog before accepting another start.
-        if (retranslatedInkPages(updated.data, [...inkPages.values()]).some((page) => !affectedInkPages.includes(page))) {
-          choose({ startNote: "訳語を保存しました。再翻訳の対象が変わったため、下の注意を表示しています。" });
-          return;
-        }
-      }
       const jobId = await startJob(`/api/papers/${paperId}/translate`,
         { pages, model: model || undefined, effort: effort || undefined },
         { kind: "translate", paperId });
       if (rebuild) markRebuildJob(jobId);
-      // The next start skips the check while the glossary stays as it is now.
-      if (choices.reviewed) {
-        const record = await fetchPaperDomains(paperId);
-        recordReviewedGlossary(() => globalThis.localStorage, paperId,
-          glossaryKey(withPaperTerms(effectiveTerms(glossary.terms, selectionOf(record)), localGlossary.effective)));
-      }
       onOpenChange(false);
     } catch (error) {
       showError(error, "翻訳を開始できませんでした");
@@ -305,7 +246,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
   };
 
   const generateGlossary = async () => {
-    if (busy || !savedGlossary) return;
+    if (busy || !savedGlossary || localGlossary.dirty || localGlossary.candidates.length > 0) return;
     choose({ draftMessage: "" });
     try {
       await startGlossaryDraft(paperId, {
@@ -317,6 +258,31 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
     }
   };
 
+  const saveTerms = async (shared: boolean) => {
+    if (busy) return;
+    setSaving(true);
+    choose({ saveNote: "" });
+    try {
+      if (shared) await glossary.save();
+      else await localGlossary.save();
+      choose({ saveNote: shared ? "辞書を保存しました。各論文の次の翻訳から反映します。" : "この論文の訳語を保存しました。次の翻訳から反映します。" });
+    } catch (error) {
+      showError(error, "訳語を保存できませんでした");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const chooseDomains = async (domains: string[], newDomain: string | null) => {
+    const key = [QK.glossaryDomains, paperId];
+    await queryClient.cancelQueries({ queryKey: key });
+    queryClient.setQueryData<PaperDomains>(key, (old) => old && { ...old, domains, new_domain: newDomain, chosen_by: "user", scope_terms: [], scope_stale: true });
+    saveDomains.mutate({ paperId, domains, newDomain }, { onError: (error) => {
+      void queryClient.invalidateQueries({ queryKey: key });
+      showError(error, "分野辞書の選択を保存できませんでした");
+    } });
+  };
+
   const connection = providerLabel(providers, provider);
   const shownEffort = effort || settings?.reasoning_effort || "";
 
@@ -326,12 +292,32 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
       if (!next && (glossary.dirty || localGlossary.dirty) && !await askConfirm("訳語の変更を破棄", "保存していない訳語の変更を破棄しますか？", "破棄")) return;
       onOpenChange(next);
     }}>
-      <DialogContent className="sm:max-w-xl max-h-[calc(100vh-2rem)] overflow-y-auto">
+      <DialogContent className={`${choices.tab === "dictionary" ? "sm:max-w-3xl" : choices.tab === "terms" ? "sm:max-w-xl" : "sm:max-w-lg"} max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden`}>
         <DialogHeader>
-          <DialogTitle>翻訳の設定</DialogTitle>
-          <DialogDescription>ページと必要な訳語指定を確認して翻訳します。</DialogDescription>
+          <DialogTitle>{choices.tab === "translation" ? "日本語に翻訳" : choices.tab === "terms" ? "この論文の訳語" : "共用辞書"}</DialogTitle>
+          <DialogDescription>{choices.tab === "translation" ? "翻訳するページを選んで、開始してください。" : choices.tab === "terms" ? "原語と使いたい日本語訳を入力して保存します。この論文の次の翻訳に反映されます。" : "ほかの論文にも使う訳語を管理します。変更は各論文の次の翻訳に反映されます。"}</DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4 py-1">
+        <Tabs className="min-h-0 flex-col gap-3" value={choices.tab} onValueChange={value => choose({ tab: value as Choices["tab"], saveNote: "" })}>
+          <div ref={contentRef} className="min-h-0 overflow-y-auto pr-1">
+          <TabsContent value="translation" className="grid gap-4 py-1">
+          <div className="grid gap-2">
+            <label htmlFor="translation-pages" className="text-sm font-medium">翻訳するページ</label>
+            <NativeSelect id="translation-pages" aria-label="翻訳するページ" value={scope} onChange={(e) => setRequest({ scope: e.target.value as Scope })}>
+              <option value="all">全ページ</option>
+              <option value="current">現在のページ（{Math.min(currentPage, pageCount || currentPage)}ページ）</option>
+              <option value="custom">ページを指定</option>
+            </NativeSelect>
+            {scope === "custom" && <Input
+              aria-label="翻訳するページ番号"
+              value={customRange}
+              onChange={(e) => setRequest({ customRange: e.target.value })}
+              placeholder="例: 1, 3-5, 8"
+              onKeyDown={(e) => { if (e.key === "Enter" && !isImeKey(e.nativeEvent)) handleStart(); }}
+            />}
+            <p className={`text-[0.75rem] ${selection.error ? "text-destructive" : "text-muted-foreground"}`}>
+              {selection.error ?? (selection.pages ? translationTargetText(selection.pages.length, planFetching ? undefined : plan) : "")}
+            </p>
+          </div>
           <details className="border rounded p-2 text-[0.8125rem]">
           <summary className="cursor-pointer font-medium">詳細設定（モデル: {effectiveModel || "既定モデル"}）</summary>
           <div className="grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2 mt-2">
@@ -352,7 +338,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
           </div>
           <p className="text-[0.75rem] text-muted-foreground whitespace-pre-line">
             {`${connection}：${effectiveModel || "既定モデル"} / effort: ${shownEffort || "既定値"}\n`
-              + "今回の翻訳と対応表の作成に適用します。接続先・解説・チャットの設定は変更しません。"}
+              + "今回の翻訳に使います。"}
           </p>
           <p className="text-[0.75rem] text-muted-foreground whitespace-pre-line leading-relaxed">
             {`全${pageCount}ページ。PDFの先頭を1ページとして指定します。\n`
@@ -361,80 +347,93 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage }: 
               + "モデルを変更すると指定ページを再翻訳します。指定外のページは以前の訳文のまま残ります。"}
           </p>
           </details>
-          <div className="grid gap-2">
-            <NativeSelect aria-label="翻訳するページ" value={scope} onChange={(e) => setRequest({ scope: e.target.value as Scope })}>
-              <option value="all">全ページ</option>
-              <option value="current">現在のページ（{Math.min(currentPage, pageCount || currentPage)}ページ）</option>
-              <option value="custom">ページを指定</option>
-            </NativeSelect>
-            {scope === "custom" && <Input
-              aria-label="翻訳するページ番号"
-              value={customRange}
-              onChange={(e) => setRequest({ customRange: e.target.value })}
-              placeholder="例: 1, 3-5, 8"
-              onKeyDown={(e) => { if (e.key === "Enter" && !isImeKey(e.nativeEvent)) handleStart(); }}
-            />}
-            <p className={`text-[0.75rem] ${selection.error ? "text-destructive" : "text-muted-foreground"}`}>
-              {selection.error ?? (selection.pages ? translationTargetText(selection.pages.length, planFetching ? undefined : plan) : "")}
-            </p>
-          </div>
-          <PaperGlossaryReview editor={localGlossary} busy={busy} onShare={(term) => {
-            const { glossary: merged, added } = mergeDraftTerms(glossary.terms, [term], primaryDomain(domainSelection));
-            if (added.length) glossary.addCandidates(merged, added, { expand: true });
+          <Button variant="ghost" className="justify-start text-muted-foreground" onClick={() => choose({ tab: "terms", saveNote: "" })}>訳語を指定する（任意）</Button>
+          </TabsContent>
+          <TabsContent value="terms" className="grid gap-4 py-1">
+          <PaperGlossaryReview editor={localGlossary} sharedTerms={sharedTerms} busy={busy} dictionarySettings={domainRecord && <fieldset disabled={busy} className="min-w-0">
+            <DomainChoice record={domainRecord} counts={countDomainTerms(savedGlossary ?? [])} onChoose={chooseDomains}>
+              <details className="border-t pt-2 text-xs">
+                <summary className="cursor-pointer text-muted-foreground">訳語の適用を確認・更新</summary>
+                <div className="mt-2 space-y-2">
+                  <Button variant="outline" disabled={!savedGlossary || !settings || glossary.dirty} onClick={() => void runSelect()}>AIで適用する訳語を選び直す</Button>
+                  {domainJob && <p role="status" className="text-muted-foreground">{domainJobMessage(domainJob)}</p>}
+                  {choices.domainNote && <p className="text-muted-foreground break-words">{choices.domainNote}</p>}
+                  {unchosenMessage && <p className="text-amber-700 dark:text-amber-400">{unchosenMessage}</p>}
+                </div>
+              </details>
+              <Button variant="ghost" className="justify-start text-muted-foreground" onClick={() => choose({ tab: "dictionary", saveNote: "" })}>共用辞書を管理{glossary.dirty ? "（未保存の変更あり）" : ""}</Button>
+            </DomainChoice>
+          </fieldset>} onShare={(term, originalDomain) => {
+            const destination = originalDomain ?? primaryDomain(domainSelection);
+            const { glossary: merged, added } = mergeDraftTerms(glossary.terms, [term], destination);
+            if (added.length) {
+              glossary.addCandidates(merged, added, { expand: true });
+              choose({ tab: "dictionary", saveNote: `使う分野「${destination}」の追加候補に入れました。訳語と分野を確認して「辞書を保存」で反映します。` });
+            } else {
+              glossary.setView("all"); glossary.setSearch(term.source); glossary.setDomainFilter(destination);
+              choose({ tab: "dictionary", saveNote: `「${term.source}」は分野「${destination}」に登録済みです。この論文の訳「${term.target}」と比較して、必要なら辞書の訳語を編集してください。` });
+            }
           }} />
+          <details className="rounded-lg border p-3 text-[0.8125rem]">
+            <summary className="cursor-pointer font-medium">AIに訳語を提案してもらう（任意）</summary>
+            <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[0.8125rem]">
+            <p className="text-muted-foreground">AIが論文から専門用語を拾い、訳語候補を最大5件提案します。</p>
+            <Button variant="outline" onClick={generateGlossary}
+              title={localGlossary.dirty || localGlossary.candidates.length > 0 ? "先に「この論文の訳語を保存」で、編集中の訳語と候補を確定してください。" : "辞書にない専門用語の訳語候補を提案します。選んだ候補をこの論文だけに適用します。AIの利用枠を使います。"}
+              disabled={busy || !savedGlossary || !settings || localGlossary.dirty || localGlossary.candidates.length > 0}>
+              {generating ? "訳語候補を抽出中…" : "AIで訳語候補を抽出"}
+            </Button>
+          </div>
+            <p className="text-xs text-muted-foreground">AIの利用枠を使います。</p>
+            </div>
+          </details>
+          </TabsContent>
+          <TabsContent value="dictionary" className="space-y-3 py-1">
+          <Button variant="ghost" className="justify-start text-muted-foreground" onClick={() => choose({ tab: "terms", saveNote: "" })}>← この論文の訳語に戻る{localGlossary.dirty ? "（未保存の変更あり）" : ""}</Button>
           <GlossaryEditor editor={glossary} transferKey={`${paperId}-${open}`} busy={busy} onPending={setSaving}
+            saveInFooter
             domains={{
               record: domainRecord, canSplit: !!savedGlossary && !!settings, onSplit: (domain) => void runSplit(domain),
-              onRefresh: () => { started.current.selects.clear(); void runSelect(); },
-              onChoose: async (domains, newDomain) => {
-                started.current.selects.clear();
-                // The boxes follow the click; the saved choice is read again when the save ends. A read still under way
-                // (after a job) would put the previous choice back.
-                const key = [QK.glossaryDomains, paperId];
-                await queryClient.cancelQueries({ queryKey: key });
-                queryClient.setQueryData<PaperDomains>(key, (old) => old && { ...old, domains, new_domain: newDomain, chosen_by: "user", scope_terms: [], scope_stale: true });
-                saveDomains.mutate({ paperId, domains, newDomain }, { onError: (error) => {
-                  void queryClient.invalidateQueries({ queryKey: key });
-                  showError(error, "分野辞書の選択を保存できませんでした");
-                } });
-              },
+              onRefresh: () => void runSelect(),
+              onChoose: chooseDomains,
             }} />
+          </TabsContent>
           <div role="status" className="grid gap-1 text-[0.75rem]">
-            {generating ? <div className="flex items-center gap-2">
+            {choices.tab !== "translation" && choices.saveNote && <p className="text-primary">{choices.saveNote}</p>}
+            {choices.tab !== "translation" && generating ? <div className="flex items-center gap-2">
               <p className="text-muted-foreground flex-1">
                 {`AIが未登録の専門用語を抽出しています${draftCount ? `（${draftCount}）` : ""}。閉じても抽出は続き、終わったらお知らせします。`}</p>
               {cancelDraftId && <Button variant="outline" onClick={() => {
                 requestCancel(cancelDraftId).catch(error => showError(error, "抽出を中止できませんでした"));
               }}>抽出を中止</Button>}
-            </div> : <p className="text-muted-foreground">{choices.reviewed ? choices.draftMessage : reviewSkipMessage(skip)}</p>}
-            {domainJob && <p className="text-muted-foreground">{domainJobMessage(domainJob)}</p>}
-            {!domainJob && choices.domainNote && <p className="text-muted-foreground">{choices.domainNote}</p>}
-            {unchosenMessage && <p className="text-amber-700 dark:text-amber-400">{unchosenMessage}</p>}
-            {warning && <p className="text-amber-700 dark:text-amber-400">{warning}</p>}
-            {choices.startNote && <p className="text-muted-foreground">{choices.startNote}</p>}
-            {(planError || inkError) && <div className="flex items-center gap-2 text-destructive">
+            </div> : choices.tab === "terms" && choices.reviewed && <p className="text-muted-foreground">{choices.draftMessage}</p>}
+            {choices.tab === "dictionary" && domainJob && <p className="text-muted-foreground">{domainJobMessage(domainJob)}</p>}
+            {choices.tab === "dictionary" && !domainJob && choices.domainNote && <p className="text-muted-foreground">{choices.domainNote}</p>}
+            {choices.tab === "translation" && warning && <p className="text-amber-700 dark:text-amber-400">{warning}</p>}
+            {choices.tab === "translation" && (planError || inkError) && <div className="flex items-center gap-2 text-destructive">
               <p>翻訳対象と書き込みを確認できませんでした。</p>
               <Button variant="outline" disabled={planFetching || inkFetching} onClick={() => {
                 void refetchPlan(); void refetchInkPages();
               }}>再試行</Button>
             </div>}
-            {affectedInkPages.length > 0 && <p className="text-amber-700 dark:text-amber-400">
+            {choices.tab === "translation" && affectedInkPages.length > 0 && <p className="text-amber-700 dark:text-amber-400">
               注意：再翻訳の対象となる日本語訳のうち、{affectedInkPages.length}ページに書き込みがあります。訳文や文章の配置が変わっても書き込みは元の位置に残るため、線や蛍光ペンが意図した箇所からずれる可能性があります。
             </p>}
           </div>
         </div>
-        <DialogFooter>
+        </Tabs>
+        <DialogFooter className="shrink-0">
           <Button variant="outline" disabled={holding} onClick={async () => {
             if ((glossary.dirty || localGlossary.dirty) && !await askConfirm("訳語の変更を破棄", "保存していない訳語の変更を破棄しますか？", "破棄")) return;
             onOpenChange(false);
           }}>{generating ? "閉じる" : "キャンセル"}</Button>
-          {!choices.reviewed && !skip && <Button variant="outline" onClick={generateGlossary}
-            disabled={!selection.pages?.length || busy || !savedGlossary || !settings}>
-            {generating ? "用語を確認中…" : "訳語を確認する"}
-          </Button>}
-          <Button onClick={handleStart} disabled={!selection.pages?.length || busy || !savedGlossary || !startReady}>
-            {planFetching || inkFetching ? "翻訳対象を確認中…" : startButtonLabel({ reviewed: choices.reviewed, skip })}
+          {choices.tab !== "translation" && <Button variant="outline" disabled={holding} onClick={() => choose({ tab: "translation", saveNote: "" })}>翻訳に戻る</Button>}
+          {choices.tab === "dictionary" ? <Button onClick={() => void saveTerms(true)} disabled={!glossary.dirty || busy || !savedGlossary}>辞書を保存</Button> : choices.tab === "terms" ? <Button disabled={busy || (!localGlossary.dirty && !localGlossary.candidates.length)} onClick={() => void saveTerms(false)}>この論文の訳語を保存</Button> : <>
+          <Button onClick={handleStart} disabled={!selection.pages?.length || startBusy || !startReady}>
+            {planFetching || inkFetching ? "翻訳対象を確認中…" : startButtonLabel({ reviewed: false, skip: plan?.needs_ai === false ? "reusable" : null })}
           </Button>
+          </>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

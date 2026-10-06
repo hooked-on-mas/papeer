@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  Download, ExternalLink, FileText, FolderOpen, Languages, MoreVertical, PanelLeft, Pencil, ScrollText, Square, Trash2,
+  BookOpen, Download, ExternalLink, FileText, FolderOpen, Languages, MoreVertical, PanelLeft, Pencil, ScrollText, Square, Trash2,
 } from "lucide-react";
 import { useStore, paperBusy } from "../store";
 import { paperBusyFor, runningPaperJob } from "@/features/jobs/jobSelectors";
@@ -125,6 +125,9 @@ export function Header() {
             <MoreVertical className="w-4 h-4" /> その他
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuItem onClick={() => emitAppEvent("open-glossary-dialog")}>
+              <BookOpen className="w-4 h-4 mr-2" /> 訳語・辞書
+            </DropdownMenuItem>
             <DropdownMenuItem disabled={workBusy} onClick={() => generateArticle(activePaperId)}>
               <ScrollText className="w-4 h-4 mr-2" /> サマリー（解説）を作成
             </DropdownMenuItem>
@@ -177,9 +180,16 @@ export function TranslationDialogHost() {
   const activePaperId = useStore((s) => s.activePaperId);
   const currentPage = useStore((s) => s.currentPage);
   const [open, setOpen] = useState(false);
+  const [initialTab, setInitialTab] = useState<"translation" | "terms" | "dictionary">("translation");
   useEffect(() => {
-    return onAppEvent("open-translate-dialog", () => { if (useStore.getState().activePaperId) setOpen(true); });
+    const translation = onAppEvent("open-translate-dialog", () => {
+      if (useStore.getState().activePaperId) { setInitialTab("translation"); setOpen(true); }
+    });
+    const dictionary = onAppEvent("open-glossary-dialog", () => {
+      if (useStore.getState().activePaperId) { setInitialTab("terms"); setOpen(true); }
+    });
+    return () => { translation(); dictionary(); };
   }, []);
   if (!activePaperId) return null;
-  return <TranslationDialog open={open} onOpenChange={setOpen} paperId={activePaperId} currentPage={currentPage} />;
+  return <TranslationDialog open={open} onOpenChange={setOpen} paperId={activePaperId} currentPage={currentPage} initialTab={initialTab} />;
 }

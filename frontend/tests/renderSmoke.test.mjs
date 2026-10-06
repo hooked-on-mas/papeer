@@ -300,26 +300,28 @@ test("the translation dialog's glossary shows the saved glossary until it is edi
       domains: { record: undefined, canSplit: true, onSplit: () => {}, onChoose: () => {} } });
   }
   const html = render(React.createElement(Glossary), {}, {}, [[["glossary"], [{ source: "observer", target: "オブザーバ" }]]]);
-  assert.match(html, /共用辞書を管理（1件）/);
+  assert.match(html, /辞書全体（1件）/);
   assert.match(html, /value="observer"/);
   assert.match(html, /value="オブザーバ"/);
   assert.doesNotMatch(html, /AIで未登録の専門用語を確認/);
   // No domain dictionary: nothing to choose.
-  assert.doesNotMatch(html, /この論文に使う分野辞書/);
+  assert.doesNotMatch(html, /適用する分野：/);
 });
 
-test("the translation dialog's glossary offers the domain dictionaries the paper can use", () => {
-  const { React, glossaryEditor: { GlossaryEditor, useGlossaryEditor } } = modules;
+test("paper dictionary choices are separate from shared dictionary management", () => {
+  const { React, glossaryEditor: { DomainChoice, GlossaryEditor, useGlossaryEditor } } = modules;
   const record = { domains: ["電池"], new_domain: "材料", chosen_by: "ai", known_domains: ["電池", "生物"], available: ["電池", "生物"], stale: false, split_at: 150 };
   function Glossary() {
     const editor = useGlossaryEditor("p1");
-    return React.createElement(GlossaryEditor, { editor, transferKey: "p1-true", busy: false, generating: false,
-      canGenerate: true, onGenerate: () => {}, onPending: () => {}, domains: { record, canSplit: true, onSplit: () => {}, onChoose: () => {} } });
+    return React.createElement(React.Fragment, null,
+      React.createElement(DomainChoice, { record, counts: { 共通: 1, 電池: 1, 生物: 1 }, onChoose: () => {} }),
+      React.createElement(GlossaryEditor, { editor, transferKey: "p1-true", busy: false, onPending: () => {},
+        domains: { record, canSplit: true, onSplit: () => {}, onChoose: () => {} } }));
   }
   const terms = [{ source: "RL", target: "強化学習" }, { source: "cell", target: "セル", domain: "電池" }, { source: "cell", target: "細胞", domain: "生物" }];
   const html = render(React.createElement(Glossary), {}, {}, [[["glossary"], terms]]);
-  assert.match(html, /共用辞書を管理（3件）/);
-  assert.match(html, /この論文に使う分野辞書/);
+  assert.match(html, /辞書全体（3件）/);
+  assert.match(html, /選択中の分野辞書：/);
   assert.match(html, /共通（常に適用/);
   // 電池 is checked, 生物 is not; the new domain the AI proposed is offered.
   assert.match(html, /<input type="checkbox" checked=""[^>]*\/><span>電池/);

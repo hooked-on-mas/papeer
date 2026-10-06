@@ -167,9 +167,9 @@ export function withDomain<T extends Term>(term: T, domain: string): T {
 }
 
 /** The recorded choice: null while unreviewed, when only common and paper-local terms apply. */
-export function selectionOf(record: Pick<PaperDomains, "domains" | "new_domain" | "chosen_by" | "scope_terms"> | undefined): DomainSelection | null {
+export function selectionOf(record: Pick<PaperDomains, "domains" | "new_domain" | "chosen_by" | "scope_terms" | "scope_stale"> | undefined): DomainSelection | null {
   return record && record.chosen_by !== null ? { domains: record.domains, new_domain: record.new_domain,
-    scope_terms: record.scope_terms ?? [] } : null;
+    scope_terms: record.scope_stale ? [] : record.scope_terms ?? [] } : null;
 }
 
 /** The domain dictionaries checked in the list: only those explicitly chosen. */
@@ -194,7 +194,7 @@ export function unchosenNewDomains(record: Pick<PaperDomains, "chosen_by" | "sta
 }
 
 export function unchosenNewDomainsMessage(names: readonly string[]): string | null {
-  return names.length ? `新しい分野辞書 ${names.join("、")} は未選択です。使うときは「共用辞書を管理」の「この論文に使う分野辞書」で選んでください。` : null;
+  return names.length ? `新しい分野 ${names.join("、")} は未選択です。「使う分野を変更」で選ぶと適用対象になります。` : null;
 }
 
 export type DomainJob = "select" | "split";
@@ -212,8 +212,8 @@ export function domainJobMessage(running: DomainJob | null): string | null {
 export function domainFailureMessage(job: DomainJob, error: string | null): string {
   const reason = error?.trim() || "不明なエラー";
   return job === "select"
-    ? `AIが訳語の適用を判定できませんでした（${reason}）。未確認の分野の訳語は適用しません。「共用辞書を管理」の「分類の整理」で選び直せます。`
-    : `AIが辞書を分けられませんでした（${reason}）。「共用辞書を管理」の「分類の整理」で、もう一度実行できます。`;
+    ? `AIが訳語の適用を判定できませんでした（${reason}）。未確認の分野の訳語は適用しません。「AIで適用する訳語を選び直す」で再試行できます。`
+    : `AIが辞書を分けられませんでした（${reason}）。「辞書全体」タブの「分野の整理」で、もう一度実行できます。`;
 }
 
 /** What the dialog says when a split ended. */

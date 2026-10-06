@@ -5,6 +5,7 @@
  */
 export type AppEvents = {
   "open-translate-dialog": void;
+  "open-glossary-dialog": void;
   /** Edit a paper's information and organization without changing the open PDF or tab. */
   "open-paper-details": { paperId: string };
   "open-reader-search": void;

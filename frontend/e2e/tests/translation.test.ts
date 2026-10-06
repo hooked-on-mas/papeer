@@ -1,4 +1,4 @@
-// 翻訳: 代役 API で訳して PDF ができる、用語抽出を閉じて開き直すと引き継がれる（T42）、分野辞書の自動選択・手動の分割・選択の変更、用語抽出の候補が主な分野辞書に入る
+// 翻訳: 代役 API で訳して PDF ができる、用語抽出を閉じて開き直すと引き継がれる（T42）、辞書の任意の選択・選択の変更、用語抽出の候補を論文限定で保存
 import assert from "node:assert/strict";
 import { scenario } from "../lib/app.ts";
 import { waitFor } from "../lib/processes.ts";
@@ -18,7 +18,7 @@ scenario("代役 API で翻訳すると、訳文の PDF ができて表示され
   await page.getByRole("button", { name: "翻訳する…" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByText("翻訳対象: 3ページ").waitFor();
-  await dialog.getByRole("button", { name: "用語を確認せずに翻訳" }).click();
+  await dialog.getByRole("button", { name: "翻訳を開始" }).click();
   await dialog.waitFor({ state: "detached" });
   await page.locator("header").getByText(/翻訳中/).waitFor();
   await page.locator("header").getByText("翻訳完了 · 3/3ページ").waitFor({ timeout: 240_000 });
@@ -61,45 +61,31 @@ scenario("用語抽出中に翻訳の設定を閉じて開き直すと、抽出�
     await dialog.getByRole("button", { name: "抽出を中止" }).waitFor();
 
     // The result arrives in the reopened dialog, the terms marked as new.
-    await dialog.getByText(/訳語の判断が必要な未登録語を\d+件抽出しました/).waitFor({ timeout: 30_000 });
+    await dialog.getByText(/確認候補は\d+件です/).waitFor({ timeout: 30_000 });
     const targets = await dialog.locator("input").evaluateAll((inputs) => inputs.map((i) => (i as HTMLInputElement).value));
     assert.ok(targets.includes("訳語1"), `抽出した訳語が表示されていません: ${targets.join(", ")}`);
-    assert.ok(await dialog.getByText("新規", { exact: true }).count() > 0, "今回の追加候補に「新規」が付いていません");
+    assert.ok(await dialog.getByText(/AIからの提案（\d+件）/).count() > 0, "追加候補が表示されていません");
     assert.equal((await app.stubRequests()).glossary - before.glossary, 1, "用語抽出が 1 回だけ行われていません");
 
     await dialog.getByRole("button", { name: "キャンセル" }).click();
-    const discard = page.getByRole("dialog").filter({ hasText: "辞書の変更を破棄" });
-    await discard.getByRole("button", { name: "破棄" }).click();
     await page.getByRole("dialog").waitFor({ state: "detached" });
   } finally {
     await app.setStubDelay(0);
   }
 });
 
-scenario("分野辞書があると AI が論文の分野辞書を選び、手動で分けられ、チェックで選び直して翻訳できる", {
-  papers: [{ file: "observer.pdf" }],
-  timeout: 300_000,
-}, async (app) => {
+scenario("辞書のAI選択は任意で、通常の翻訳を開いても始まらない", {
+  papers: [{ file: "observer.pdf" }], timeout: 300_000,
+}, async app => {
   const { page, api } = app;
   const id = app.paperIds["observer.pdf"];
-  // 共通に 1 語、分野辞書「電池」に 1 語。代役 AI の応答は空（選択は何も選ばず、分割は何も動かさない）。
   await api.call("PUT", "/api/glossary", { expected_terms: [], terms: [
     { source: "observer", target: "オブザーバ" }, { source: "cell", target: "セル", domain: "電池" },
   ] });
   await waitForLibrary(page, ["Robust Observer"]);
   await openPaper(page, "Robust Observer");
   const before = await app.stubRequests();
-  // The choice takes a moment, so that the dialog can be seen holding the buttons meanwhile.
-  await app.setStubDelay(2);
-  try {
-    await page.getByRole("button", { name: "翻訳する…" }).click();
-    const dialog = page.getByRole("dialog");
-    await dialog.getByText("AIがこの論文の分野辞書を選んでいます…").waitFor();
-    assert.equal(await dialog.getByRole("button", { name: "用語を確認せずに翻訳" }).isDisabled(), true, "選択中に開始ボタンが押せます");
-    await dialog.getByText("AIがこの論文の分野辞書を選んでいます…").waitFor({ state: "detached", timeout: 30_000 });
-  } finally {
-    await app.setStubDelay(0);
-  }
+  await page.getByRole("button", { name: "翻訳する…", exact: true }).click();
   const dialog = page.getByRole("dialog");
   assert.equal((await app.stubRequests()).domains - before.domains, 1, "分野辞書の選択が 1 回だけ行われていません");
   let record = await api.call("GET", `/api/papers/${id}/glossary-domains`);
@@ -124,38 +110,29 @@ scenario("分野辞書があると AI が論文の分野辞書を選び、手動
 
   // Choosing by hand is saved at once, as the user's choice.
   const battery = dialog.getByRole("checkbox", { name: /^電池/ });
-  assert.equal(await battery.isChecked(), false);
-  await battery.click();
-  await waitFor(async () => await battery.isChecked(), "チェックがすぐに付くこと", 5_000);
-  await waitFor(async () => (await api.call("GET", `/api/papers/${id}/glossary-domains`)).chosen_by === "user", "選択がユーザーの選択として保存されること");
-  record = await api.call("GET", `/api/papers/${id}/glossary-domains`);
-  assert.deepEqual(record.domains, ["電池"]);
-  assert.equal((await app.stubRequests()).domains - before.domains, 2, "手動の選択のあとに AI が呼ばれています");
-
-  // Translating goes on with the terms of the domains chosen.
-  await dialog.getByRole("button", { name: "用語を確認せずに翻訳" }).click();
+  await battery.check();
+  await waitFor(async () => (await api.call("GET", `/api/papers/${id}/glossary-domains`)).chosen_by === "user", "手動の選択が保存されること");
+  assert.equal((await app.stubRequests()).domains - before.domains, 1, "分野を選んだだけでAI処理は始まらない");
+  await dialog.getByRole("button", { name: "翻訳に戻る", exact: true }).click();
+  await dialog.getByRole("button", { name: "翻訳を開始", exact: true }).click();
   await dialog.waitFor({ state: "detached" });
   await page.locator("header").getByText("翻訳完了 · 3/3ページ").waitFor({ timeout: 240_000 });
-  const paper = await api.call("GET", `/api/papers/${id}`);
-  assert.equal(paper.has_translated, true);
-  assert.equal((await app.stubRequests()).domains - before.domains, 2, "翻訳のあとに分野辞書の AI が呼ばれています");
+  assert.equal((await api.call("GET", `/api/papers/${id}`)).has_translated, true);
+  assert.equal((await app.stubRequests()).domains - before.domains, 1);
 });
 
-scenario("用語抽出の候補は、論文の主な分野辞書（選んだ分野辞書）の語として追加される", {
+scenario("抽出した訳語候補は、選んだ語だけを論文限定で保存できる", {
   papers: [{ file: "gradient.pdf" }],
-}, async (app) => {
+}, async app => {
   const { page, api } = app;
   const id = app.paperIds["gradient.pdf"];
-  // The paper's choice is the user's (the dictionary "電池"), so that the dialog does not ask the AI to choose.
-  await api.call("PUT", "/api/glossary", { expected_terms: [], terms: [
-    { source: "observer", target: "オブザーバ" }, { source: "cell", target: "セル", domain: "電池" },
-  ] });
+  const terms = [{ source: "observer", target: "オブザーバ" }, { source: "cell", target: "セル", domain: "電池" }];
+  await api.call("PUT", "/api/glossary", { expected_terms: [], terms });
   await api.call("PUT", `/api/papers/${id}/glossary-domains`, { domains: ["電池"], new_domain: null });
   await waitForLibrary(page, ["Stochastic Gradient"]);
   await openPaper(page, "Stochastic Gradient");
   const before = await app.stubRequests();
-
-  await page.getByRole("button", { name: "翻訳する…" }).click();
+  await page.getByRole("button", { name: "翻訳する…", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByText("専門用語辞書（2件・分野辞書 1）").click();
   await dialog.getByRole("checkbox", { name: /^電池/ }).waitFor();

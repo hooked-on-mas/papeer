@@ -129,10 +129,16 @@ test("checking a box keeps the order of the others, and the sidecar's new domain
   assert.deepEqual(toggledChoice(record(), "消えた分野", true), { domains: ["電池"], newDomain: null });
 });
 
+test("a stale applicability decision keeps the domains but does not apply their old terms", () => {
+  const scoped = { ...record(), scope_terms: [{ source: "cell", target: "セル", domain: "電池" }] };
+  assert.deepEqual(selectionOf({ ...scoped, scope_stale: false })?.scope_terms, scoped.scope_terms);
+  assert.deepEqual(selectionOf({ ...scoped, scope_stale: true }), { domains: ["電池"], new_domain: null, scope_terms: [] });
+});
+
 test("the dictionaries added after the user chose are announced, and only to the user who chose", () => {
   const added = record({ chosen_by: "user", stale: true, known_domains: ["電池"], available: ["電池", "生物", "強化学習"] });
   assert.deepEqual(unchosenNewDomains(added), ["生物", "強化学習"]);
-  assert.match(unchosenNewDomainsMessage(unchosenNewDomains(added)) ?? "", /^新しい分野辞書 生物、強化学習 は未選択です/);
+  assert.match(unchosenNewDomainsMessage(unchosenNewDomains(added)) ?? "", /^新しい分野 生物、強化学習 は未選択です/);
   assert.deepEqual(unchosenNewDomains({ ...added, chosen_by: "ai" }), []);
   assert.deepEqual(unchosenNewDomains({ ...added, stale: false }), []);
   // A dictionary that is gone makes the choice stale, but there is nothing new to choose.
@@ -145,7 +151,7 @@ test("the status line says what the AI is doing, and how it failed", () => {
   assert.equal(domainJobMessage("select"), "AIが原文の使われ方を見て、適用する訳語を選んでいます…");
   assert.equal(domainJobMessage("split"), "AIが辞書を分野ごとに分けています…");
   assert.equal(domainJobMessage(null), null);
-  assert.match(domainFailureMessage("select", "接続できません"), /^AIが訳語の適用を判定できませんでした（接続できません）。.*選び直せます/);
+  assert.match(domainFailureMessage("select", "接続できません"), /^AIが訳語の適用を判定できませんでした（接続できません）。.*再試行できます/);
   assert.doesNotMatch(domainFailureMessage("select", "x"), /共通だけ/);
   assert.match(domainFailureMessage("split", null), /^AIが辞書を分けられませんでした（不明なエラー）/);
   assert.match(domainFailureMessage("split", "  "), /不明なエラー/);

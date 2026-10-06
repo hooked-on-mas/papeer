@@ -134,7 +134,7 @@ export function reviewSkipMessage(skip: ReviewSkip): string {
     case "reusable": return "指定ページはすべて保存済みの訳文を使えます。AIには送らず、PDFだけを作り直します。";
     case "resume": return "中断した翻訳の続きを行います。用語の確認は省略します（辞書は下の欄で確認・修正できます）。";
     case "unchanged": return "前回この論文の用語を確認したときから、この論文に使う辞書が変わっていないため、用語の確認は省略します。";
-    default: return "通常はそのまま翻訳できます。「訳語を確認する」では、判断が読解に影響する語だけ最大5件を確認します（利用枠を使います）。";
+    default: return "通常はそのまま翻訳できます。「AIで訳語候補を抽出」では、読解に影響する未登録の専門用語と推奨訳を最大5件提案します（利用枠を使います）。";
   }
 }
 
