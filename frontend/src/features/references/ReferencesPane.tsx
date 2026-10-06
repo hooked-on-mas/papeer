@@ -18,7 +18,7 @@ import { AutoResearchControl } from "./AutoResearchControl";
 import { useDiscovery } from "./discoveryHooks";
 import { discoveryDiagnostics } from "./discoveryDiagnostics";
 import { useGroupDescriptions } from "./groupHooks";
-import { externalCitationSource, externalCitationSources, localMap, mapRows, mapWindow, mapPositions, mapViews, newView, type MapMode, type MapNode, type SavedMapView } from "./mapGraph";
+import { externalCitationSource, externalCitationSources, localMap, mapRows, mapWindow, mapPositions, mapViews, newView, type MapMode, type MapNode, type MapResult, type SavedMapView } from "./mapGraph";
 import { openReferencePaper } from "./researchNavigation";
 
 const MODES: [MapMode, string][] = [["nearby", "周辺の論文"], ["references", "直接の参考文献"], ["incoming", "この論文を引用"],
@@ -50,7 +50,14 @@ export function ReferencesView({ graph, activePaperId }: { graph: CitationGraph;
   const pane = useRef<HTMLElement>(null), paneScroll = useRef(view.paneScroll ?? 0);
   const client = useQueryClient();
   const discovery = useDiscovery(activePaperId, view.origin);
-  const data = discovery.data ?? localMap(graph, view.origin);
+  const localData = useMemo(() => localMap(graph, view.origin), [graph, view.origin]);
+  const data = discovery.data ?? localData;
+  const [settledGroupData, setSettledGroupData] = useState<MapResult | null>(null);
+  useEffect(() => {
+    if (discovery.settled) setSettledGroupData(data);
+  }, [discovery.settled, data]);
+  // Retain completed citation evidence during refresh; first-time partial results stay ungrouped.
+  const groupData = discovery.settled ? data : settledGroupData;
   const emptyMap = data.nodes.length <= 1;
   const diagnostics = discoveryDiagnostics(data.warnings);
   const fetchErrors = [discovery.error || (discovery.isError ? discovery.failureReason?.message || "外部情報を取得できませんでした。" : ""),
@@ -62,8 +69,12 @@ export function ReferencesView({ graph, activePaperId }: { graph: CitationGraph;
   const rows = mapRows(data, effective);
   const limit = view.diagramLimit && view.diagramLimit !== "auto" ? Number(view.diagramLimit) : paneWidth < 900 ? 20 : 30;
   const window = mapWindow(data, rows, effective, limit);
-  const groups = mapGroups(window.nodes, data.edges, data.origin);
-  const groupDescriptions = useGroupDescriptions(activePaperId, data, groups, !!discovery.data && !discovery.running && paneWidth > 0);
+  const groups = useMemo(() => {
+    if (groupData?.origin !== data.origin) return [];
+    const groupNodes = new Set(groupData.nodes.map(n => n.id));
+    return mapGroups(window.nodes.filter(n => groupNodes.has(n.id)), groupData.edges, data.origin);
+  }, [groupData, data.origin, window.nodes]);
+  const groupDescriptions = useGroupDescriptions(activePaperId, groupData ?? data, groups, !!discovery.data && discovery.settled && paneWidth > 0);
   const layout = useMemo(() => {
     const start = performance.now();
     const result = reconcileMapLayout(window.nodes, data.origin, selected && view.selected && selected.id !== view.selected && view.positions[view.selected]
@@ -169,6 +180,7 @@ export function ReferencesView({ graph, activePaperId }: { graph: CitationGraph;
       <p className="text-sm font-medium break-words line-clamp-2" title={current?.title}>起点：{current?.title ?? "論文を確認しています…"}</p>
       <div className="flex flex-wrap gap-2 text-xs text-muted-foreground" role="status">
         <span>{discovery.running ? "外部情報を取得中 · 保存済みの結果を表示" : discovery.enabled ? data.checked_at ? `取得済み ${new Date(data.checked_at).toLocaleDateString()}${data.stale ? " · 更新待ち" : ""}` : "保存済みの引用情報を表示" : "外部情報の自動取得はOFF"}</span>
+        {!discovery.settled && <span>グループ化は情報取得後に行います</span>}
         <details><summary className="cursor-pointer">取得範囲</summary><p className="mt-1 max-w-xl">{data.coverage}</p><MapTimings timing={data.timing} layout={layoutTiming?.origin === data.origin ? layoutTiming : null} /></details>
       </div>
       {diagnostics.notices.length > 0 && <details className="text-xs text-muted-foreground"><summary>探索範囲・照合結果 · 詳細</summary><p className="break-words whitespace-pre-line">{diagnostics.notices.join("\n")}</p></details>}

@@ -36,9 +36,13 @@ export function useDiscovery(source: string | null, origin: string) {
   const stale = query.data?.stale === true;
   const originNode = query.data?.nodes.find(n => n.id === query.data?.origin);
   const identity = originNode?.doi || originNode?.arxiv_id || originNode?.title || "";
+  const manualKey = `${scope}:retry:${revision}`, automaticKey = `${scope}:auto:${identity}`;
+  const manual = revision > 0 && !attempted.current.has(manualKey);
+  const pending = enabled && (manual || stale && !attempted.current.has(automaticKey));
+  // Include queued and restored jobs so partial citation evidence cannot briefly form groups.
+  const settled = (query.isSuccess || query.isError) && (capability.isSuccess || capability.isError)
+    && !query.isFetching && !running && !busy && !pending;
   useEffect(() => {
-    const manualKey = `${scope}:retry:${revision}`, automaticKey = `${scope}:auto:${identity}`;
-    const manual = revision > 0 && !attempted.current.has(manualKey);
     if (!source || !enabled || (!stale && !manual) || active.current?.alive || busy) return;
     const key = manual ? manualKey : automaticKey;
     if (attempted.current.has(key)) return;
@@ -62,8 +66,8 @@ export function useDiscovery(source: string | null, origin: string) {
       });
     }, 0);
     return () => clearTimeout(timer);
-  }, [source, origin, enabled, stale, revision, client, scope, busy, identity]);
-  return { ...query, running, error: status.scope === scope ? status.error : "", enabled, refresh: () => {
+  }, [source, origin, enabled, stale, revision, client, scope, busy, identity, manualKey, automaticKey, manual]);
+  return { ...query, running, settled, error: status.scope === scope ? status.error : "", enabled, refresh: () => {
     void query.refetch(); if (!running) setRetry({ scope, revision: revision + 1 });
   } };
 }

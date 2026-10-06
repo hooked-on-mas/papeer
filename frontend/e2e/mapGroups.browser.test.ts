@@ -8,6 +8,88 @@ import type { CitationGraph } from "../src/features/references/graph.ts";
 import { localMap } from "../src/features/references/mapGraph.ts";
 import type { MapGroupResult } from "../src/api/jobTypes.ts";
 
+test("grouping waits for discovery, retains completed evidence during refresh, and uses partial results after failure", { timeout: 120_000 }, async t => {
+  const root = "a".repeat(32), ids = ["a", "b", "c", "d", "e", "f"].map(id => `ref:${id}`);
+  const graph: CitationGraph = {
+    nodes: [{ id: root, paper_id: root, title: "Current paper", year: "2024", url: "" },
+      ...ids.map((id, i) => ({ id, paper_id: null, title: `Research ${i + 1}`, year: "2020", url: "" }))],
+    edges: [...ids.map(target => ({ source: root, target })),
+      { source: ids[0], target: ids[1] }, { source: ids[1], target: ids[2] }, { source: ids[0], target: ids[2] },
+      { source: ids[3], target: ids[4] }, { source: ids[4], target: ids[5] }, { source: ids[3], target: ids[5] }],
+    references: [], warnings: [],
+  };
+  let current = localMap(graph, root);
+  let saved: MapGroupResult = { origin: root, groups: [], connection: "claude-code:information-model" };
+  const frontend = path.resolve(import.meta.dirname, "..");
+  const server = await createServer({ root: frontend, configFile: path.join(frontend, "vite.config.ts"), logLevel: "error",
+    cacheDir: path.resolve(frontend, "../tmp/vite-settled-groups-browser"), server: { host: "127.0.0.1", port: 0, hmr: false } });
+  await server.listen(); t.after(() => server.close());
+  const browser = await chromium.launch({ channel: "msedge", headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  page.setDefaultTimeout(20_000); page.setDefaultNavigationTimeout(60_000);
+  const errors: string[] = []; page.on("pageerror", e => errors.push(e.message));
+  let socket: WebSocketRoute | undefined;
+  await page.routeWebSocket(/\/ws\/events/, s => { socket = s; });
+  let discoveryPosts = 0;
+  const groupPosts: { groups: string[][]; force: boolean }[] = [];
+  await page.route(url => url.pathname.startsWith("/api/"), async route => {
+    const request = route.request(), url = new URL(request.url());
+    const headers = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "*" };
+    if (request.method() === "OPTIONS") { await route.fulfill({ status: 204, headers }); return; }
+    if (url.pathname.endsWith("/cancel")) { await route.fulfill({ json: {}, headers }); return; }
+    if (request.method() === "POST") {
+      const job_id = url.pathname.endsWith("/discovery/groups")
+        ? (groupPosts.push(request.postDataJSON()), `groups-${groupPosts.length}`) : `discovery-${++discoveryPosts}`;
+      await route.fulfill({ json: { job_id }, headers }); return;
+    }
+    const json = url.pathname.endsWith("/discovery/groups") ? saved : url.pathname.endsWith("/discovery") ? current
+      : url.pathname === "/api/citations" ? graph
+      : url.pathname === "/api/research-capabilities" ? { paper_discovery_enabled: true, reference_research_enabled: true, reference_lookup: true }
+      : url.pathname === "/api/jobs" || url.pathname.endsWith("/reference-research") || url.pathname === "/api/collections" ? [] : {};
+    await route.fulfill({ json, headers });
+  });
+  await page.goto(`${server.resolvedUrls!.local[0]}e2e/fixtures/discovery.html`);
+  const canvas = page.getByLabel("論文の関係図"); await canvas.waitFor();
+  await page.getByText("外部情報を取得中 · 保存済みの結果を表示", { exact: true }).waitFor();
+  // Wait for a progress poll, longer than the AI debounce, while usable citation data is already visible.
+  await page.waitForResponse(r => r.request().method() === "GET" && r.url().endsWith(`/discovery?origin=${root}`));
+  assert.equal(await canvas.locator("[data-node-id]").count(), 7);
+  assert.equal(await canvas.locator("[data-map-group]").count(), 0);
+  assert.equal(groupPosts.length, 0);
+  await page.getByText("グループ化は情報取得後に行います", { exact: true }).waitFor();
+  current = { ...current, stale: false, checked_at: new Date().toISOString() };
+  const firstExplanation = page.waitForResponse(r => r.request().method() === "POST" && r.url().endsWith("/discovery/groups"));
+  socket!.send(JSON.stringify({ type: "job.finished", job_id: "discovery-1", paper_id: root, kind: "paper-discovery",
+    status: "succeeded", running: false, cancelled: false, message: "", error: null, result: current }));
+  await firstExplanation;
+  assert.equal(groupPosts[0].groups.length, 2);
+  assert.equal(await canvas.locator("[data-map-group]").count(), 2);
+  saved = { ...saved, groups: groupPosts[0].groups.map((members, i) => ({ key: `key-${i}`, members, name: `Completed ${i}`,
+    description: "Completed evidence", evidence: [members[0]], provider: "claude-code", model: "information-model",
+    created_at: new Date().toISOString(), elapsed_ms: 10, stale: false })) };
+  socket!.send(JSON.stringify({ type: "job.finished", job_id: "groups-1", paper_id: root, kind: "paper-map-groups",
+    status: "succeeded", running: false, cancelled: false, message: "", error: null, result: saved }));
+  await page.getByLabel("グループの一覧").getByRole("button", { name: /Completed 0/ }).waitFor();
+  const refresh = page.waitForResponse(r => r.request().method() === "POST" && r.url().endsWith("/discovery"));
+  await page.getByRole("button", { name: "再取得", exact: true }).click(); await refresh;
+  // This unfinished graph would remove the second community if it were used for grouping.
+  current = { ...current, stale: true, checked_at: "", edges: [
+    ...ids.map(target => ({ source: root, target, kind: "citation" as const, provenance: "library" })),
+    ...ids.slice(0, 3).flatMap((source, i) => ids.slice(i + 1, 3).map(target => ({ source, target, kind: "citation" as const, provenance: "library" }))),
+  ] };
+  await page.waitForResponse(r => r.request().method() === "GET" && r.url().endsWith(`/discovery?origin=${root}`));
+  assert.equal(await canvas.locator("[data-map-group]").count(), 2);
+  assert.equal(groupPosts.length, 1);
+  socket!.send(JSON.stringify({ type: "job.finished", job_id: "discovery-2", paper_id: root, kind: "paper-discovery",
+    status: "failed", running: false, cancelled: false, message: "", error: "取得制限", result: null }));
+  await page.getByLabel("論文のまとまり").locator("summary").filter({ hasText: "1グループ" }).waitFor();
+  assert.equal(await canvas.locator("[data-map-group]").count(), 1);
+  assert.equal(groupPosts.length, 1); // The remaining group's unchanged explanation is reusable.
+  assert.equal(await page.getByText("グループ化は情報取得後に行います", { exact: true }).count(), 0);
+  assert.equal(discoveryPosts, 2);
+  assert.deepEqual(errors, []);
+});
+
 test("citation communities explain with the information model, preserve camera, reuse cache and cancel", { timeout: 120_000 }, async t => {
   const root = "a".repeat(32);
   const ids = ["a", "b", "c", "d", "e", "f"].map(id => "ref:" + id);
