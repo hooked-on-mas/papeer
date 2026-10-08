@@ -193,6 +193,8 @@ def stub_answer(instruction: str, data: str) -> str:
     if SCHEMA_MARKER not in instruction:
         return STUB_TEXT
     payload = json.loads(data)
+    if isinstance(payload, dict) and "existing_terms" in payload:
+        return json.dumps({"domain": "制御理論", "terms": []})
     if isinstance(payload, dict) and "source_parts" in payload:
         # Formula-marker recovery: keep every math part, replace the prose.
         parts = [part if part.get("kind") == "math" else {"kind": "text", "text": STUB_TEXT}

@@ -31,7 +31,7 @@ def test_answer_chooses_no_domains_and_splits_nothing():
     select = [{"content": "Choose"}, {"content": json.dumps({"paper": {"title": "T"}, "available_domains": [{"name": "電池"}]})}]
     kind, content = answer(select)
     assert kind == "domains"
-    assert json.loads(content) == {"domains": [], "new_domain": None}
+    assert json.loads(content) == {"domains": [], "new_domain": None, "allowed_terms": []}
     split = [{"content": "Split"}, {"content": json.dumps({"domain": "共通", "terms": [], "existing_domains": []})}]
     kind, content = answer(split)
     assert kind == "domains"

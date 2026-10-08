@@ -1,6 +1,8 @@
 """Request models of the reading aids (sidecar/routes/reading.py): choices, templates, glossary, revisions, backup."""
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -51,6 +53,20 @@ class GlossarySplitRequest(BaseModel):
 class GlossaryTermRequest(BaseModel):
     source: str = Field(min_length=1, max_length=100)
     target: str = Field(min_length=1, max_length=100)
+
+
+class TermReplacementRequest(GlossaryTermRequest):
+    before: str = Field(min_length=1, max_length=100)
+
+
+class ApplyTermReplacementRequest(TermReplacementRequest):
+    expected_key: str = Field(min_length=64, max_length=64)
+    selected_ids: list[str] = Field(max_length=20000)
+    remember: Literal["none", "paper", "shared"] = "paper"
+
+
+class TermResearchRequest(BaseModel):
+    source: str = Field(min_length=1, max_length=100)
 
 
 class BackupRequest(BaseModel):

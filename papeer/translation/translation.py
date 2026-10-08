@@ -121,6 +121,16 @@ def page_fingerprint(units):
                                      sort_keys=True).encode()).hexdigest()
 
 
+def page_source_fingerprint(units):
+    """Extraction identity independent of later terminology preferences (for reading and revision)."""
+    return page_fingerprint([{k: v for k, v in unit.items() if k != "glossary"} for unit in units])
+
+
+def same_page_source(entry, units):
+    return (entry["raw_source"] == page_source_fingerprint(units) if entry.get("raw_source")
+            else entry.get("source") == page_fingerprint(units))
+
+
 def translation_fingerprint(settings, units):
     return hashlib.sha256(json.dumps({
         "version": 3, "provider": settings.provider, "model": settings.model,

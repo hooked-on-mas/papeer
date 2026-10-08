@@ -17,6 +17,7 @@ import { QK } from "@/lib/queryKeys";
 import { useOpenEdit } from "@/lib/pendingSaves";
 import { GlossaryWarnings } from "./GlossaryWarnings";
 import { OcrPanel } from "./OcrPanel";
+import { TermFeedbackDialog } from "./TermFeedback";
 import { readabilityPages, shorteningHint, translationIssues } from "@/lib/translationIssues";
 
 type Paragraph = { id: string; page: number; pages: number[]; source: string; text: string };
@@ -24,7 +25,7 @@ type Revision = { id: string; unit_id: string; before: string; after: string; cr
 
 /** The 翻訳の確認・修正 dialog; the reading toolbar opens it with the open-translation-review event. */
 export function TranslationReview({ paperId }: { paperId: string }) {
-  return <PaperReview key={paperId} paperId={paperId} />;
+  return <><PaperReview key={paperId} paperId={paperId} /><TermFeedbackDialog key={`terms:${paperId}`} paperId={paperId} /></>;
 }
 
 function PaperReview({ paperId }: { paperId: string }) {

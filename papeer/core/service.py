@@ -13,7 +13,7 @@ from papeer.providers import ProviderBackend, check_cancel
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library, in_collection, normalize_collection_name
 from papeer.layout.math_layout import restore_formula_text
-from papeer.translation.translation import page_fingerprint
+from papeer.translation.translation import same_page_source
 from papeer.layout.reading_flow import unit_pages, materialize_flows, join_unit_translations, resolve_unit_joins
 from papeer.core.summary_figures import summary_figures
 from papeer.core import prompts
@@ -81,7 +81,7 @@ def cached_translations(folder: Path, document: dict) -> tuple[list[dict], dict[
     done = {}
     for number, entry in cache.get("completed_pages", {}).items():
         page_units = [u for u in units if int(number) in unit_pages(u)]
-        if page_units and entry.get("source") == page_fingerprint(page_units):
+        if page_units and same_page_source(entry, page_units):
             done.update(entry.get("translations", {}))
     return units, done
 

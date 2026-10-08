@@ -772,6 +772,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/papers/{paper_id}/term-replacement-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Term Replacement */
+        post: operations["preview_term_replacement_api_papers__paper_id__term_replacement_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/term-replacement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replace Term */
+        post: operations["replace_term_api_papers__paper_id__term_replacement_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/term-research": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Lookup Term */
+        post: operations["lookup_term_api_papers__paper_id__term_research_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tags": {
         parameters: {
             query?: never;
@@ -1847,6 +1898,25 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** ApplyTermReplacementRequest */
+        ApplyTermReplacementRequest: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Before */
+            before: string;
+            /** Expected Key */
+            expected_key: string;
+            /** Selected Ids */
+            selected_ids: string[];
+            /**
+             * Remember
+             * @default paper
+             * @enum {string}
+             */
+            remember?: "none" | "paper" | "shared";
+        };
         /**
          * Article
          * @description GET /api/papers/{paper_id}/article: the summary article, and what generating it used (None if unknown).
@@ -2628,7 +2698,7 @@ export interface components {
              */
             cancelled: boolean;
             /** Result */
-            result: components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["GlossaryDomainsResult"] | components["schemas"]["GlossarySplitResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | components["schemas"]["ResearchRecord"] | components["schemas"]["DiscoveryResult"] | components["schemas"]["MapGroupResult"] | components["schemas"]["ReferenceImportResult"] | null;
+            result: components["schemas"]["TermReplacementResult"] | components["schemas"]["TermResearchResult"] | components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["GlossaryDomainsResult"] | components["schemas"]["GlossarySplitResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | components["schemas"]["ResearchRecord"] | components["schemas"]["DiscoveryResult"] | components["schemas"]["MapGroupResult"] | components["schemas"]["ReferenceImportResult"] | null;
             /** Error */
             error: string | null;
         };
@@ -2637,7 +2707,7 @@ export interface components {
          * @description The kinds of background jobs; the names are what the frontend receives (jobKinds.ts).
          * @enum {string}
          */
-        JobKind: "translate" | "revision" | "revision-draft" | "glossary-draft" | "glossary-select" | "glossary-split" | "article" | "ask" | "check" | "import" | "export" | "interleaved" | "backup" | "restore" | "drive-sync" | "ocr" | "ocr-data" | "reference-research" | "paper-discovery" | "paper-map-groups" | "reference-import";
+        JobKind: "translate" | "revision" | "revision-draft" | "glossary-draft" | "glossary-select" | "glossary-split" | "term-replace" | "term-research" | "article" | "ask" | "check" | "import" | "export" | "interleaved" | "backup" | "restore" | "drive-sync" | "ocr" | "ocr-data" | "reference-research" | "paper-discovery" | "paper-map-groups" | "reference-import";
         /**
          * JobStarted
          * @description The answer of a route that starts a job: follow it with GET /api/jobs/{job_id} or the events.
@@ -3824,6 +3894,53 @@ export interface components {
             /** Content */
             content: string;
         };
+        /** TermReplacementRequest */
+        TermReplacementRequest: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Before */
+            before: string;
+        };
+        /** TermReplacementResult */
+        TermReplacementResult: {
+            /** Changed */
+            changed: number;
+            /**
+             * Remember
+             * @enum {string}
+             */
+            remember: "none" | "paper" | "shared";
+        };
+        /** TermResearchRequest */
+        TermResearchRequest: {
+            /** Source */
+            source: string;
+        };
+        /** TermResearchResult */
+        TermResearchResult: {
+            /** Candidates */
+            candidates: components["schemas"]["TermUsageCandidate"][];
+        };
+        /** TermUsageCandidate */
+        TermUsageCandidate: {
+            /** Target */
+            target: string;
+            /** Explanation */
+            explanation: string;
+            /** Sources */
+            sources: components["schemas"]["TermUsageSource"][];
+        };
+        /** TermUsageSource */
+        TermUsageSource: {
+            /** Title */
+            title: string;
+            /** Url */
+            url: string;
+            /** Quote */
+            quote: string;
+        };
         /** TranslateRequest */
         TranslateRequest: {
             /** Pages */
@@ -4134,7 +4251,7 @@ export interface components {
              * Result
              * @default null
              */
-            result: components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["GlossaryDomainsResult"] | components["schemas"]["GlossarySplitResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | components["schemas"]["ResearchRecord"] | components["schemas"]["DiscoveryResult"] | components["schemas"]["MapGroupResult"] | components["schemas"]["ReferenceImportResult"] | null;
+            result: components["schemas"]["TermReplacementResult"] | components["schemas"]["TermResearchResult"] | components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["GlossaryDomainsResult"] | components["schemas"]["GlossarySplitResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | components["schemas"]["ResearchRecord"] | components["schemas"]["DiscoveryResult"] | components["schemas"]["MapGroupResult"] | components["schemas"]["ReferenceImportResult"] | null;
             /**
              * Error
              * @default null
@@ -6079,6 +6196,123 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_term_replacement_api_papers__paper_id__term_replacement_preview_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TermReplacementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    replace_term_api_papers__paper_id__term_replacement_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyTermReplacementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lookup_term_api_papers__paper_id__term_research_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TermResearchRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

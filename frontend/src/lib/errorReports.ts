@@ -121,7 +121,7 @@ const STATUS_EVENT = /^\s*\{.*"type"\s*:\s*"(?:rate_limit_event|system)".*$/gm;
  * Jobs that call the AI; the same list as AI_PLAN_JOBS (features/jobs/jobKinds.ts, checked by
  * tests/errorReports.test.ts), kept here so that this file imports nothing at run time.
  */
-export const AI_JOB_KINDS: readonly string[] = ["translate", "revision", "revision-draft", "glossary-draft", "glossary-select", "glossary-split", "article", "ask", "check", "reference-research", "paper-map-groups", "reference-import"];
+export const AI_JOB_KINDS: readonly string[] = ["translate", "revision", "revision-draft", "glossary-draft", "glossary-select", "glossary-split", "term-research", "article", "ask", "check", "reference-research", "paper-map-groups", "reference-import"];
 
 const SUMMARIES: Record<Exclude<ErrorCause, "other">, string> = {
   login: "AIサービスにログインしていないか、APIキー・権限が正しくありません。",

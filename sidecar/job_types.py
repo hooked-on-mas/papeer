@@ -24,6 +24,8 @@ class JobKind(StrEnum):
     GLOSSARY_DRAFT = "glossary-draft"
     GLOSSARY_SELECT = "glossary-select"  # The AI chooses the domain dictionaries a paper uses.
     GLOSSARY_SPLIT = "glossary-split"  # The AI splits a dictionary into domain dictionaries by subject.
+    TERM_REPLACE = "term-replace"
+    TERM_RESEARCH = "term-research"
     ARTICLE = "article"
     ASK = "ask"
     CHECK = "check"
@@ -50,6 +52,7 @@ SNAPSHOT_KINDS = frozenset({JobKind.BACKUP, JobKind.RESTORE, JobKind.DRIVE_SYNC}
 REFERENCE_RESEARCH_COMPATIBLE_KINDS = frozenset({
     JobKind.TRANSLATE, JobKind.REVISION, JobKind.REVISION_DRAFT,
     JobKind.GLOSSARY_DRAFT, JobKind.GLOSSARY_SELECT, JobKind.GLOSSARY_SPLIT,
+    JobKind.TERM_REPLACE, JobKind.TERM_RESEARCH,
     JobKind.ARTICLE, JobKind.ASK, JobKind.EXPORT, JobKind.INTERLEAVED,
 })
 
@@ -124,6 +127,27 @@ class GlossarySplitResult(BaseModel):
     domains: list[GlossaryDomainCount]  # Every domain dictionary afterwards (not 共通), with its terms.
     terms: list[dict[str, str]] | None = None
     original: list[dict[str, str]] | None = None
+
+
+class TermReplacementResult(BaseModel):
+    changed: int
+    remember: Literal["none", "paper", "shared"]
+
+
+class TermUsageSource(BaseModel):
+    title: str
+    url: str
+    quote: str
+
+
+class TermUsageCandidate(BaseModel):
+    target: str
+    explanation: str
+    sources: list[TermUsageSource]
+
+
+class TermResearchResult(BaseModel):
+    candidates: list[TermUsageCandidate]
 
 
 class ArticleResult(BaseModel):
@@ -206,6 +230,8 @@ RESULT_TYPES: dict[JobKind, Any] = {
     JobKind.GLOSSARY_DRAFT: GlossaryDraftResult,
     JobKind.GLOSSARY_SELECT: GlossaryDomainsResult,
     JobKind.GLOSSARY_SPLIT: GlossarySplitResult,
+    JobKind.TERM_REPLACE: TermReplacementResult,
+    JobKind.TERM_RESEARCH: TermResearchResult,
     JobKind.ARTICLE: ArticleResult,
     JobKind.ASK: AskResult,
     JobKind.CHECK: CheckResult,
@@ -226,6 +252,7 @@ RESULT_TYPES: dict[JobKind, Any] = {
 # Which one belongs to which kind is RESULT_TYPES (and the frontend's JobResults); the union is only
 # the schema's answer to "what can a result be".
 JobResult = Union[
+    TermReplacementResult, TermResearchResult,
     TranslateResult, RevisionDraftResult, GlossaryDraftResult, GlossaryDomainsResult, GlossarySplitResult, ArticleResult, AskResult, ImportResult,
     ExportResult, InterleavedResult, BackupResult, RestoreResult, DriveSyncResult, OcrResult, OcrDataResult,
     CheckResult, ResearchRecord, DiscoveryResult, MapGroupResult, ReferenceImportResult,

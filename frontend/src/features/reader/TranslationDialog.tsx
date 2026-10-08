@@ -19,6 +19,7 @@ import { parsePageSelection } from "@/lib/pageSelection";
 import { useSessionState } from "@/lib/useSessionState";
 import { DomainChoice, GlossaryEditor, useGlossaryEditor } from "./GlossaryEditor";
 import { PaperGlossaryReview, usePaperGlossaryEditor } from "./PaperGlossaryReview";
+import { TermFeedback } from "./TermFeedback";
 import { withPaperTerms } from "./paperGlossary";
 import {
   countDomainTerms, domainFailureMessage, domainJobMessage, selectionOf,
@@ -224,7 +225,7 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage, in
   };
   const handleStart = async () => {
     if (!selection.pages?.length || startBusy || !startReady) return;
-    if (glossary.dirty || localGlossary.dirty || localGlossary.candidates.length) {
+    if (glossary.dirty || localGlossary.dirty) {
       choose({ tab: glossary.dirty ? "dictionary" : "terms", saveNote: "訳語の変更を保存してから、翻訳に戻ってください。" });
       return;
     }
@@ -293,12 +294,12 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage, in
       onOpenChange(next);
     }}>
       <DialogContent className={`${choices.tab === "dictionary" ? "sm:max-w-3xl" : choices.tab === "terms" ? "sm:max-w-xl" : "sm:max-w-lg"} max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden`}>
-        <DialogHeader>
-          <DialogTitle>{choices.tab === "translation" ? "日本語に翻訳" : choices.tab === "terms" ? "この論文の訳語" : "共用辞書"}</DialogTitle>
-          <DialogDescription>{choices.tab === "translation" ? "翻訳するページを選んで、開始してください。" : choices.tab === "terms" ? "原語と使いたい日本語訳を入力して保存します。この論文の次の翻訳に反映されます。" : "ほかの論文にも使う訳語を管理します。変更は各論文の次の翻訳に反映されます。"}</DialogDescription>
+        <DialogHeader className="shrink-0">
+          <DialogTitle>{choices.tab === "translation" ? "日本語に翻訳" : choices.tab === "terms" ? "訳語の修正" : "共用辞書"}</DialogTitle>
+          <DialogDescription>{choices.tab === "translation" ? "翻訳するページを選んで、開始してください。訳語は論文の文脈に合わせて自動で統一します。" : choices.tab === "terms" ? "読んでいて気になった訳語を、一括置換したり今後の翻訳に反映できます。" : "ほかの論文にも使う訳語を管理します。変更は各論文の次の翻訳に反映されます。"}</DialogDescription>
         </DialogHeader>
-        <Tabs className="min-h-0 flex-col gap-3" value={choices.tab} onValueChange={value => choose({ tab: value as Choices["tab"], saveNote: "" })}>
-          <div ref={contentRef} className="min-h-0 overflow-y-auto pr-1">
+        <Tabs className="min-h-0 flex-1 flex-col gap-3 overflow-hidden" value={choices.tab} onValueChange={value => choose({ tab: value as Choices["tab"], saveNote: "" })}>
+          <div ref={contentRef} className="min-h-0 flex-1 overflow-y-auto pr-1">
           <TabsContent value="translation" className="grid gap-4 py-1">
           <div className="grid gap-2">
             <label htmlFor="translation-pages" className="text-sm font-medium">翻訳するページ</label>
@@ -347,9 +348,14 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage, in
               + "モデルを変更すると指定ページを再翻訳します。指定外のページは以前の訳文のまま残ります。"}
           </p>
           </details>
-          <Button variant="ghost" className="justify-start text-muted-foreground" onClick={() => choose({ tab: "terms", saveNote: "" })}>訳語を指定する（任意）</Button>
+          <p className="text-xs text-muted-foreground">事前の訳語確認は不要です。気になる訳語は、読書中に「訳語の修正」から直せます。</p>
+          <Button variant="ghost" className="justify-start text-muted-foreground" onClick={() => choose({ tab: "terms", saveNote: "" })}>訳語の修正</Button>
           </TabsContent>
           <TabsContent value="terms" className="grid gap-4 py-1">
+          <TermFeedback key={paperId} paperId={paperId} />
+          <details className="rounded-lg border p-3 text-[0.8125rem]">
+          <summary className="cursor-pointer">訳語の一覧・辞書を管理（詳細設定）</summary>
+          <div className="mt-3 space-y-3">
           <PaperGlossaryReview editor={localGlossary} sharedTerms={sharedTerms} busy={busy} dictionarySettings={domainRecord && <fieldset disabled={busy} className="min-w-0">
             <DomainChoice record={domainRecord} counts={countDomainTerms(savedGlossary ?? [])} onChoose={chooseDomains}>
               <details className="border-t pt-2 text-xs">
@@ -387,6 +393,8 @@ export function TranslationDialog({ open, onOpenChange, paperId, currentPage, in
           </div>
             <p className="text-xs text-muted-foreground">AIの利用枠を使います。</p>
             </div>
+          </details>
+          </div>
           </details>
           </TabsContent>
           <TabsContent value="dictionary" className="space-y-3 py-1">

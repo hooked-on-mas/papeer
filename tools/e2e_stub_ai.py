@@ -53,7 +53,7 @@ def glossary_answer(data: str) -> str:
 def domains_answer(data: str) -> str:
     """Nothing chosen and no new domain for a selection; no groups (nothing moves) for a split."""
     if SELECT_MARKER in data:
-        return json.dumps({"domains": [], "new_domain": None})
+        return json.dumps({"domains": [], "new_domain": None, "allowed_terms": []})
     return json.dumps({"domains": []})
 
 
@@ -63,6 +63,8 @@ def answer(messages: list[dict[str, Any]]) -> tuple[str, str]:
     if SELECT_MARKER in data or SPLIT_MARKER in data:
         return "domains", domains_answer(data)
     if GLOSSARY_MARKER in data:
+        if "Choose consistent Japanese renderings" in instruction:
+            return "other", json.dumps({"domain": "制御理論", "terms": []})
         return "glossary", glossary_answer(data)
     kind = "translation" if '"blocks"' in data or '"texts"' in data else "other"
     return kind, stub_answer(instruction, data)

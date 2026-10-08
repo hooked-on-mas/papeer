@@ -34,7 +34,19 @@ def translate_paper(paper_id: str, body: TranslateRequest) -> JobStarted:
     settings = deps.settings_for_run(body.model, body.effort)
 
     def action(cancel: threading.Event, progress: Any, page_ready: Any) -> dict:
-        service = PaperService(lib, deps.provider_for(settings, cancel), cancel, progress=progress, page_ready=page_ready)
+        provider = deps.provider_for(settings, cancel)
+        from papeer.core.automatic_terminology import prepare_terminology
+        from papeer.core.glossary_domains import select_domains
+        from papeer.core.terminology import global_glossary, glossary_scope_key, paper_glossary
+        if plan_translation(lib, paper_id, settings, selected_pages)["needs_ai"]:
+            terms = global_glossary(lib.root)
+            source = "\n\n".join(text for _, text in lib.page_texts(paper_id))
+            scope = paper_glossary(lib.root, paper_id)["scope"]
+            if any(t.get("domain") for t in terms) and (not scope or scope["key"] != glossary_scope_key(terms, source)):
+                progress("論文の文脈に合う訳語を選んでいます…")
+                select_domains(lib, paper_id, provider, cancel)
+            prepare_terminology(lib, paper_id, provider, cancel, progress)
+        service = PaperService(lib, provider, cancel, progress=progress, page_ready=page_ready)
         result = service.translate(paper_id, pages=selected_pages)
         deps.paper_changed(paper_id)
         return result

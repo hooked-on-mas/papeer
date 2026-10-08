@@ -201,6 +201,8 @@ class PaperFiles:
     @property
     def translation_revisions(self) -> Path: return self.folder / "translation-revisions.json"
     @property
+    def automatic_glossary(self) -> Path: return self.folder / "automatic-glossary.json"
+    @property
     def translation_pages(self) -> Path: return self.folder / "translation-pages"
 
     # Summary

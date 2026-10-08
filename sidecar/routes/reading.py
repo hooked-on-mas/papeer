@@ -17,6 +17,7 @@ from papeer.core.terminology import (
 from sidecar import deps
 from sidecar.job_types import JobKind, JobStarted
 from sidecar.schemas.reading import (
+    ApplyTermReplacementRequest, TermReplacementRequest, TermResearchRequest,
     BackupRequest,
     GlobalGlossaryRequest,
     GlossaryDraftRequest,
@@ -33,6 +34,43 @@ from sidecar.schemas.reading import (
 )
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
+
+
+@router.post("/api/papers/{paper_id}/term-replacement-preview")
+def preview_term_replacement(paper_id: str, body: TermReplacementRequest):
+    from papeer.core.terminology_feedback import replacement_preview
+    lib = deps.get_library()
+    lib.paper_folder(paper_id)
+    return replacement_preview(lib, paper_id, body.source, body.before, body.target)
+
+
+@router.post("/api/papers/{paper_id}/term-replacement")
+def replace_term(paper_id: str, body: ApplyTermReplacementRequest) -> JobStarted:
+    from papeer.core.terminology_feedback import apply_replacement
+    lib = deps.get_library()
+    lib.paper_folder(paper_id)
+    settings = deps.get_settings()
+    def action(cancel, progress, page_ready):
+        result = apply_replacement(lib, paper_id, body.source, body.before, body.target, body.expected_key,
+            body.selected_ids, body.remember, deps.provider_for(settings, cancel), cancel, progress, page_ready)
+        deps.paper_changed(paper_id)
+        return result
+    return deps.submit_job(JobKind.TERM_REPLACE, action, paper_id)
+
+
+@router.post("/api/papers/{paper_id}/term-research")
+def lookup_term(paper_id: str, body: TermResearchRequest) -> JobStarted:
+    from papeer.core.terminology_research import research_term
+    from papeer.providers import spec_for
+    lib = deps.get_library()
+    lib.paper_folder(paper_id)
+    settings = deps.get_settings()
+    if not spec_for(settings.provider).web_search:
+        raise Invalid("この接続先はWeb検索に対応していません。設定で対応するAI接続を選んでください。")
+    def action(cancel, progress, _page_ready):
+        progress("学術・公的な出典で日本語の用例を調べています…")
+        return research_term(lib, paper_id, body.source.strip(), deps.provider_for(settings, cancel), cancel)
+    return deps.submit_job(JobKind.TERM_RESEARCH, action, paper_id)
 
 
 

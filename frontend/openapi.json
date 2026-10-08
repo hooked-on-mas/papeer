@@ -3883,6 +3883,247 @@
         }
       }
     },
+    "/api/papers/{paper_id}/term-replacement-preview": {
+      "post": {
+        "summary": "Preview Term Replacement",
+        "operationId": "preview_term_replacement_api_papers__paper_id__term_replacement_preview_post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TermReplacementRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/papers/{paper_id}/term-replacement": {
+      "post": {
+        "summary": "Replace Term",
+        "operationId": "replace_term_api_papers__paper_id__term_replacement_post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyTermReplacementRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/papers/{paper_id}/term-research": {
+      "post": {
+        "summary": "Lookup Term",
+        "operationId": "lookup_term_api_papers__paper_id__term_research_post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TermResearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tags": {
       "get": {
         "summary": "Tags",
@@ -9077,6 +9318,61 @@
         "title": "AiReading",
         "description": "Whether the AI connection now chosen can read a page from its image, and if not, why."
       },
+      "ApplyTermReplacementRequest": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Source"
+          },
+          "target": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Target"
+          },
+          "before": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Before"
+          },
+          "expected_key": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Expected Key"
+          },
+          "selected_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20000,
+            "title": "Selected Ids"
+          },
+          "remember": {
+            "type": "string",
+            "enum": [
+              "none",
+              "paper",
+              "shared"
+            ],
+            "title": "Remember",
+            "default": "paper"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "target",
+          "before",
+          "expected_key",
+          "selected_ids"
+        ],
+        "title": "ApplyTermReplacementRequest"
+      },
       "Article": {
         "properties": {
           "content": {
@@ -11064,6 +11360,12 @@
           "result": {
             "anyOf": [
               {
+                "$ref": "#/components/schemas/TermReplacementResult"
+              },
+              {
+                "$ref": "#/components/schemas/TermResearchResult"
+              },
+              {
                 "$ref": "#/components/schemas/TranslateResult"
               },
               {
@@ -11167,6 +11469,8 @@
           "glossary-draft",
           "glossary-select",
           "glossary-split",
+          "term-replace",
+          "term-research",
           "article",
           "ask",
           "check",
@@ -13795,6 +14099,138 @@
         ],
         "title": "TemplateRequest"
       },
+      "TermReplacementRequest": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Source"
+          },
+          "target": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Target"
+          },
+          "before": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Before"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "target",
+          "before"
+        ],
+        "title": "TermReplacementRequest"
+      },
+      "TermReplacementResult": {
+        "properties": {
+          "changed": {
+            "type": "integer",
+            "title": "Changed"
+          },
+          "remember": {
+            "type": "string",
+            "enum": [
+              "none",
+              "paper",
+              "shared"
+            ],
+            "title": "Remember"
+          }
+        },
+        "type": "object",
+        "required": [
+          "changed",
+          "remember"
+        ],
+        "title": "TermReplacementResult"
+      },
+      "TermResearchRequest": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Source"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "title": "TermResearchRequest"
+      },
+      "TermResearchResult": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/TermUsageCandidate"
+            },
+            "type": "array",
+            "title": "Candidates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "candidates"
+        ],
+        "title": "TermResearchResult"
+      },
+      "TermUsageCandidate": {
+        "properties": {
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/TermUsageSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target",
+          "explanation",
+          "sources"
+        ],
+        "title": "TermUsageCandidate"
+      },
+      "TermUsageSource": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "quote": {
+            "type": "string",
+            "title": "Quote"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "url",
+          "quote"
+        ],
+        "title": "TermUsageSource"
+      },
       "TranslateRequest": {
         "properties": {
           "pages": {
@@ -14568,6 +15004,12 @@
           },
           "result": {
             "anyOf": [
+              {
+                "$ref": "#/components/schemas/TermReplacementResult"
+              },
+              {
+                "$ref": "#/components/schemas/TermResearchResult"
+              },
               {
                 "$ref": "#/components/schemas/TranslateResult"
               },

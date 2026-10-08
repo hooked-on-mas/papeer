@@ -32,7 +32,7 @@ from papeer.layout.reading_flow import (expand_pages, join_unit_translations, ma
 from papeer.pdf.pdf_engine import PDF_LOCK, batches, build_translated_pdf, translation_units
 from papeer.pdf.pdf_typography import fonts_need_conversion, prepare_fonts_in_background
 from papeer.providers import ProviderBackend, check_cancel
-from papeer.translation.translation import (RetryState, TranslationKey, page_fingerprint, shared_translations,
+from papeer.translation.translation import (RetryState, TranslationKey, page_fingerprint, page_source_fingerprint, same_page_source, shared_translations,
                                             translate_batches)
 from papeer.translation.translation_context import contextual_units, paper_context
 from papeer.translation.translation_preview import (PREVIOUS_CACHE, preview_page, remove_unused_runs, translated_page,
@@ -182,7 +182,8 @@ class TranslationRun:
         for number, page_units in source_pages.items():
             entry = cache.get("completed_pages", {}).get(str(number), {})
             reusable = key.matches_page(entry)
-            if ((reusable or (replacements and number in self.selected)) and entry.get("source") == self.page_keys[number]
+            source_matches = (same_page_source(entry, page_units) if replacements else entry.get("source") == self.page_keys[number])
+            if ((reusable or (replacements and number in self.selected)) and source_matches
                     and all(u["id"] in entry.get("translations", {}) for u in page_units)):
                 done.update(entry["translations"])
                 self.completed_pages[str(number)] = entry
@@ -365,6 +366,7 @@ class TranslationRun:
                 origin = completed_pages[str(number)] if number in self.revised_only else {}
                 completed_pages[str(number)] = {
                     "version": origin.get("version", self.version), "source": self.page_keys[number],
+                    "raw_source": page_source_fingerprint(self.source_pages[number]),
                     "model": origin.get("model", self.settings.model),
                     "translations": {u["id"]: done[u["id"]] for u in page_units}}
                 if number not in self.revised_only:

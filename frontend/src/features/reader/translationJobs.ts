@@ -62,10 +62,16 @@ export const translationJobHandlers: JobHandlers = {
       });
       notifyIfAway("翻訳処理が終了しました", message);
     },
-    refresh: translationQueries,
+    refresh: (event) => [...translationQueries(event), ...domainQueries(event),
+      ...(event.paper_id ? [[QK.effectiveGlossary, event.paper_id]] : [])],
     resume: { label: "翻訳を再開…", run: openTranslationDialog },
   },
   revision: { refresh: translationQueries },
+  "term-replace": {
+    refresh: (event) => [...translationQueries(event), ...domainQueries(event),
+      ...invalidationsFor({ kind: "glossary" }).map(s => [...s.queryKey]),
+      ...(event.paper_id ? [[QK.paperGlossary, event.paper_id]] : [])],
+  },
   "glossary-draft": {
     // The translation dialog shows the candidates itself; closed, it may be long forgotten.
     succeeded: (event, { done }) => {

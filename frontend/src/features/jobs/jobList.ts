@@ -13,6 +13,8 @@ const KIND_LABELS: Record<string, string> = {
   "glossary-draft": "専門用語の確認",
   "glossary-select": "分野辞書の選択",
   "glossary-split": "辞書の分野分け",
+  "term-replace": "訳語の一括置換",
+  "term-research": "訳語のWeb調査",
   article: "解説の作成",
   ask: "チャットの回答",
   check: "接続の確認",

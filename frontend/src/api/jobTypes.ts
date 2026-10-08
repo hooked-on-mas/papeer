@@ -27,6 +27,8 @@ export type GlossaryDraftResult = Schemas["GlossaryDraftResult"];
 export type GlossaryDomainsResult = Schemas["GlossaryDomainsResult"];
 /** glossary-split: how many terms were given a domain, and every domain dictionary afterwards with its terms. */
 export type GlossarySplitResult = Schemas["GlossarySplitResult"];
+export type TermReplacementResult = Schemas["TermReplacementResult"];
+export type TermResearchResult = Schemas["TermResearchResult"];
 export type ArticleResult = Schemas["ArticleResult"];
 export type AskResult = Schemas["AskResult"];
 /** paper_ids in the order the paths were sent; a PDF already in the library gives its paper. */
@@ -50,6 +52,8 @@ export type CheckResult = string;
 
 /** What a job of each kind returns once it has succeeded (RESULT_TYPES in sidecar/job_types.py). */
 export type JobResults = {
+  "term-replace": TermReplacementResult;
+  "term-research": TermResearchResult;
   translate: TranslateResult;
   revision: TranslateResult;
   "revision-draft": RevisionDraftResult;

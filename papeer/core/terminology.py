@@ -147,8 +147,17 @@ def _effective(root: Path, paper_id: str) -> list[dict[str, str]]:
     scoped = [t for t in terms if not t.get("domain") or term_identity(t) in allowed]
     local = [{"source": t["source"], "target": t["target"]} for t in preferences["terms"]]
     overridden = {t["source"].casefold() for t in local}
-    return local + [t for t in _filtered(scoped, paper_domains(root, paper_id))
-                    if t["source"].casefold() not in overridden]
+    result = local + [t for t in _filtered(scoped, paper_domains(root, paper_id))
+                      if t["source"].casefold() not in overridden]
+    from papeer.core.paths import PaperFiles
+    folder = root / "papers" / paper_id
+    if not PaperFiles(folder).automatic_glossary.is_file():
+        return result
+    from papeer.core.automatic_terminology import automatic_terms
+    with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db:
+        text = "\n\n".join(row[0] for row in db.execute("SELECT text FROM pages WHERE paper_id=? ORDER BY number", (paper_id,)))
+    known = {t["source"].casefold() for t in result}
+    return result + [t for t in automatic_terms(folder, text) if t["source"].casefold() not in known]
 
 
 def term_identity(term: dict) -> tuple[str, str, str]:

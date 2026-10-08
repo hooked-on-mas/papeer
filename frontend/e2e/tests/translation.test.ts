@@ -48,8 +48,10 @@ scenario("用語抽出中に翻訳の設定を閉じて開き直すと、抽出�
     const header = page.getByRole("button", { name: "翻訳する…" });
     await header.click();
     const dialog = page.getByRole("dialog");
-    await dialog.getByText(/専門用語辞書（\d+件/).click();
-    await dialog.getByRole("button", { name: "AIで未登録の専門用語を確認" }).click();
+    await dialog.getByRole("button", { name: "訳語の修正", exact: true }).click();
+    await dialog.getByText("訳語の一覧・辞書を管理（詳細設定）", { exact: true }).click();
+    await dialog.getByText("AIに訳語を提案してもらう（任意）", { exact: true }).click();
+    await dialog.getByRole("button", { name: "AIで訳語候補を抽出" }).click();
     await dialog.getByRole("button", { name: "抽出を中止" }).waitFor();
     await dialog.getByRole("button", { name: "閉じる", exact: true }).click();
     await dialog.waitFor({ state: "detached" });
@@ -57,6 +59,8 @@ scenario("用語抽出中に翻訳の設定を閉じて開き直すと、抽出�
     // Reopened while the extraction runs: it shows the extraction going on, not a fresh start.
     assert.equal(await header.isEnabled(), true, "用語抽出中に「翻訳する…」が押せません");
     await header.click();
+    await dialog.getByRole("button", { name: "訳語の修正", exact: true }).click();
+    await dialog.getByText("訳語の一覧・辞書を管理（詳細設定）", { exact: true }).click();
     await dialog.getByText(/AIが未登録の専門用語を抽出しています/).waitFor();
     await dialog.getByRole("button", { name: "抽出を中止" }).waitFor();
 
@@ -87,28 +91,16 @@ scenario("辞書のAI選択は任意で、通常の翻訳を開いても始ま�
   const before = await app.stubRequests();
   await page.getByRole("button", { name: "翻訳する…", exact: true }).click();
   const dialog = page.getByRole("dialog");
-  assert.equal((await app.stubRequests()).domains - before.domains, 1, "分野辞書の選択が 1 回だけ行われていません");
-  let record = await api.call("GET", `/api/papers/${id}/glossary-domains`);
-  assert.equal(record.chosen_by, "ai");
-  assert.deepEqual(record.domains, []);
-
-  // The list: the heading counts the domains, each term shows its domain, and the list can be narrowed to one.
-  await dialog.getByText("専門用語辞書（2件・分野辞書 1）").click();
-  await dialog.getByText("この論文に使う分野辞書").waitFor();
-  await dialog.getByText(/AIがこの論文の内容から選びました/).waitFor();
-  assert.equal(await dialog.getByLabel("分野 2").inputValue(), "電池");
-  assert.equal(await dialog.getByLabel("分野 1").inputValue(), "共通");
-  await dialog.getByLabel("分野で絞り込み").selectOption("電池");
-  assert.equal(await dialog.locator('input[aria-label^="原語"]').count(), 1);
-  await dialog.getByLabel("分野で絞り込み").selectOption("");
-  assert.equal(await dialog.locator('input[aria-label^="原語"]').count(), 2);
-
-  // Splitting by hand asks the AI once (nothing moves with the stand-in's empty answer) and says so.
-  await dialog.getByRole("button", { name: "AIで分野ごとに分ける" }).click();
-  await dialog.getByText(/分野辞書へ移す語はありませんでした/).waitFor({ timeout: 30_000 });
-  assert.equal((await app.stubRequests()).domains - before.domains, 2, "手動の分割が 1 回だけ行われていません");
-
-  // Choosing by hand is saved at once, as the user's choice.
+  await dialog.getByRole("button", { name: "翻訳を開始", exact: true }).waitFor();
+  assert.equal(await dialog.getByRole("tablist").count(), 0);
+  assert.equal((await app.stubRequests()).domains - before.domains, 0);
+  await dialog.getByRole("button", { name: "訳語の修正", exact: true }).click();
+  await dialog.getByText("訳語の一覧・辞書を管理（詳細設定）", { exact: true }).click();
+  await dialog.getByText("使う分野を変更", { exact: true }).click();
+  await dialog.getByText("訳語の適用を確認・更新", { exact: true }).click();
+  await dialog.getByRole("button", { name: "AIで適用する訳語を選び直す", exact: true }).click();
+  await waitFor(async () => (await api.call("GET", `/api/papers/${id}/glossary-domains`)).chosen_by === "ai", "明示的に依頼した選択が保存されること");
+  assert.equal((await app.stubRequests()).domains - before.domains, 1);
   const battery = dialog.getByRole("checkbox", { name: /^電池/ });
   await battery.check();
   await waitFor(async () => (await api.call("GET", `/api/papers/${id}/glossary-domains`)).chosen_by === "user", "手動の選択が保存されること");
@@ -134,25 +126,19 @@ scenario("抽出した訳語候補は、選んだ語だけを論文限定で保�
   const before = await app.stubRequests();
   await page.getByRole("button", { name: "翻訳する…", exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByText("専門用語辞書（2件・分野辞書 1）").click();
-  await dialog.getByRole("checkbox", { name: /^電池/ }).waitFor();
-  await dialog.getByRole("button", { name: "AIで未登録の専門用語を確認" }).click();
-  await dialog.getByText(/訳語の判断が必要な未登録語を\d+件抽出しました/).waitFor({ timeout: 30_000 });
-
-  // 今回の追加候補: every candidate is new, and in the paper's main domain rather than 共通.
-  const candidates = dialog.getByLabel(/^分野 \d+$/);
-  const count = await candidates.count();
-  assert.ok(count > 0, "追加候補が表示されていません");
-  assert.equal(await dialog.getByText("新規", { exact: true }).count(), count, "追加候補のすべてに「新規」が付いていません");
-  const domains = await candidates.evaluateAll((selects) => selects.map((s) => (s as HTMLSelectElement).value));
-  assert.deepEqual([...new Set(domains)], ["電池"], `候補の分野が主な分野辞書ではありません: ${domains.join(", ")}`);
-  assert.equal((await app.stubRequests()).glossary - before.glossary, 1, "用語抽出が 1 回だけ行われていません");
-  assert.equal((await app.stubRequests()).domains - before.domains, 0, "分野辞書の AI が呼ばれています");
-
-  // Saved with the domain: the dictionary holds the candidates as 電池's terms.
-  await dialog.getByRole("button", { name: "辞書を保存" }).click();
-  await waitFor(async () => (await api.call("GET", "/api/glossary")).length === 2 + count, "候補が辞書に保存されること", 15_000);
-  const saved = (await api.call("GET", "/api/glossary")) as { source: string; domain?: string }[];
-  assert.equal(saved.filter((t) => t.domain === "電池").length, 1 + count);
-  assert.equal(saved.find((t) => t.source === "observer")?.domain, undefined, "共通の語に分野が付いています");
+  await dialog.getByRole("button", { name: "訳語の修正", exact: true }).click();
+  await dialog.getByText("訳語の一覧・辞書を管理（詳細設定）", { exact: true }).click();
+  await dialog.getByText("AIに訳語を提案してもらう（任意）", { exact: true }).click();
+  await dialog.getByRole("button", { name: "AIで訳語候補を抽出", exact: true }).click();
+  await dialog.getByText(/確認候補は\d+件です/).waitFor({ timeout: 30_000 });
+  const candidates = dialog.locator('fieldset').filter({ hasText: "AIからの提案" }).getByRole("checkbox");
+  assert.ok(await candidates.count() > 0);
+  assert.equal(await candidates.first().isChecked(), false);
+  await candidates.first().check();
+  await dialog.getByRole("button", { name: "この論文の訳語を保存", exact: true }).click();
+  await dialog.getByText("この論文の訳語を保存しました。次の翻訳から反映します。", { exact: true }).waitFor();
+  assert.equal((await api.call("GET", `/api/papers/${id}/glossary`)).terms.length, 1);
+  assert.deepEqual(await api.call("GET", "/api/glossary"), terms);
+  assert.equal((await app.stubRequests()).glossary - before.glossary, 1);
+  assert.equal((await app.stubRequests()).domains - before.domains, 0);
 });

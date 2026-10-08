@@ -28,12 +28,12 @@ def translation_paragraphs(lib: Library, paper_id: str) -> list[dict]:
     units = translation_units(document)
     apply_glossary(units, effective_glossary(lib, paper_id))
     cache = PaperFiles.read_json(PaperFiles(folder).translation_cache, {})
-    from papeer.translation.translation import page_fingerprint
+    from papeer.translation.translation import same_page_source
     from papeer.layout.reading_flow import unit_pages
     done = {}
     for number, entry in cache.get("completed_pages", {}).items():
         page_units = [unit for unit in units if int(number) in unit_pages(unit)]
-        if entry.get("source") == page_fingerprint(page_units):
+        if same_page_source(entry, page_units):
             done.update(entry.get("translations", {}))
     return [dict(id=u["id"], page=u["page"], pages=sorted(unit_pages(u)), source=u["text"],
                  text=done[u["id"]]) for u in units if u["id"] in done]
