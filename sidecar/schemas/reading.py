@@ -62,7 +62,45 @@ class TermReplacementRequest(GlossaryTermRequest):
 class ApplyTermReplacementRequest(TermReplacementRequest):
     expected_key: str = Field(min_length=64, max_length=64)
     selected_ids: list[str] = Field(max_length=20000)
+    # paper: keep the term as this paper's own choice; shared: also add it to the dictionary other papers use;
+    # none: replace only (kept for old callers, the app no longer sends it).
     remember: Literal["none", "paper", "shared"] = "paper"
+
+
+class TermCardRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)  # What the user selected; only the start of a long selection is used.
+    side: Literal["original", "translated"]
+
+
+class TermVariant(BaseModel):
+    text: str
+    # A wording: of the `missing` paragraphs how many use it (variants), or of the paragraphs holding the
+    # selected translation how many have it in their original text (source_candidates). Counts are paragraphs.
+    count: int
+
+
+class DictionaryTerm(BaseModel):
+    target: str
+    domain: str  # Empty: the general dictionary.
+
+
+class TermCardEntry(BaseModel):
+    source: str
+    current: str
+    count: int  # Paragraphs that have the source and `current` (paragraphs, not occurrences).
+    missing: int  # Paragraphs that have the source but not `current`.
+    variants: list[TermVariant]  # Empty in `candidates`: worked out once one term is chosen.
+    dictionary: list[DictionaryTerm]  # The shared dictionary's entries for the source (all domains); empty in `candidates`.
+
+
+class TermCard(TermCardEntry):
+    """Empty `source`/`current` when the selection fits no term or several (then `candidates` has one card each).
+
+    A translated selection that is in no dictionary has `current` only; `source_candidates` then suggests the
+    original wording the paragraphs holding it share (empty when that cannot be told).
+    """
+    candidates: list[TermCardEntry]
+    source_candidates: list[TermVariant]
 
 
 class TermResearchRequest(BaseModel):

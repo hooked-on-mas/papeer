@@ -12,8 +12,11 @@ query.setQueryData(["settings"], { provider: "codex", model: "test", reasoning_e
 query.setQueryData(["providers"], [{ id: "codex", label: "Test", web_search: true }]);
 registerJobHandlers(translationJobHandlers);
 useStore.setState({ activePaperId: "driving", activeTab: "reader" });
+// ?side=original|translated&text=... chooses the selection (the translated "ポリシー" by default).
+const params = new URLSearchParams(location.search);
+const selection = { side: params.get("side") === "original" ? "original" as const : "translated" as const, text: params.get("text") ?? "ポリシー" };
 function Fixture() {
   useJobEvents();
-  return <main className="max-w-3xl mx-auto p-4"><TermFeedback paperId="driving" selection={{ side: "translated", text: "ポリシー" }} /></main>;
+  return <main className="max-w-3xl mx-auto p-4"><TermFeedback paperId="driving" selection={selection} /></main>;
 }
 createRoot(document.getElementById("root")!).render(<QueryClientProvider client={query}><Fixture /></QueryClientProvider>);

@@ -772,6 +772,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/papers/{paper_id}/term-card": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Term Card */
+        post: operations["term_card_api_papers__paper_id__term_card_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/papers/{paper_id}/term-replacement-preview": {
         parameters: {
             query?: never;
@@ -2194,6 +2211,13 @@ export interface components {
         CreateCollectionRequest: {
             /** Name */
             name: string;
+        };
+        /** DictionaryTerm */
+        DictionaryTerm: {
+            /** Target */
+            target: string;
+            /** Domain */
+            domain: string;
         };
         /** DiscoveryEdge */
         DiscoveryEdge: {
@@ -3894,6 +3918,56 @@ export interface components {
             /** Content */
             content: string;
         };
+        /**
+         * TermCard
+         * @description Empty `source`/`current` when the selection fits no term or several (then `candidates` has one card each).
+         *
+         *     A translated selection that is in no dictionary has `current` only; `source_candidates` then suggests the
+         *     original wording the paragraphs holding it share (empty when that cannot be told).
+         */
+        TermCard: {
+            /** Source */
+            source: string;
+            /** Current */
+            current: string;
+            /** Count */
+            count: number;
+            /** Missing */
+            missing: number;
+            /** Variants */
+            variants: components["schemas"]["TermVariant"][];
+            /** Dictionary */
+            dictionary: components["schemas"]["DictionaryTerm"][];
+            /** Candidates */
+            candidates: components["schemas"]["TermCardEntry"][];
+            /** Source Candidates */
+            source_candidates: components["schemas"]["TermVariant"][];
+        };
+        /** TermCardEntry */
+        TermCardEntry: {
+            /** Source */
+            source: string;
+            /** Current */
+            current: string;
+            /** Count */
+            count: number;
+            /** Missing */
+            missing: number;
+            /** Variants */
+            variants: components["schemas"]["TermVariant"][];
+            /** Dictionary */
+            dictionary: components["schemas"]["DictionaryTerm"][];
+        };
+        /** TermCardRequest */
+        TermCardRequest: {
+            /** Text */
+            text: string;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "original" | "translated";
+        };
         /** TermReplacementRequest */
         TermReplacementRequest: {
             /** Source */
@@ -3940,6 +4014,13 @@ export interface components {
             url: string;
             /** Quote */
             quote: string;
+        };
+        /** TermVariant */
+        TermVariant: {
+            /** Text */
+            text: string;
+            /** Count */
+            count: number;
         };
         /** TranslateRequest */
         TranslateRequest: {
@@ -6204,6 +6285,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    term_card_api_papers__paper_id__term_card_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TermCardRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TermCard"];
                 };
             };
             /** @description Validation Error */

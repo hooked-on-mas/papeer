@@ -17,7 +17,7 @@ from papeer.core.terminology import (
 from sidecar import deps
 from sidecar.job_types import JobKind, JobStarted
 from sidecar.schemas.reading import (
-    ApplyTermReplacementRequest, TermReplacementRequest, TermResearchRequest,
+    ApplyTermReplacementRequest, TermCard, TermCardRequest, TermReplacementRequest, TermResearchRequest,
     BackupRequest,
     GlobalGlossaryRequest,
     GlossaryDraftRequest,
@@ -34,6 +34,14 @@ from sidecar.schemas.reading import (
 )
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
+
+
+@router.post("/api/papers/{paper_id}/term-card")
+def term_card(paper_id: str, body: TermCardRequest) -> TermCard:
+    from papeer.core.terminology_feedback import term_card as card
+    lib = deps.get_library()
+    lib.paper_folder(paper_id)
+    return TermCard(**card(lib, paper_id, body.text[:100], body.side))
 
 
 @router.post("/api/papers/{paper_id}/term-replacement-preview")

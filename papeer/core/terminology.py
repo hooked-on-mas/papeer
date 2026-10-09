@@ -362,6 +362,18 @@ def matching_terms(text: str, terms: list[dict]) -> list[dict]:
     return [term for term in terms if (matcher := _matcher(term["source"])) and matcher.search(searchable, folded)]
 
 
+def prepare_search(text: str) -> tuple[str, str]:
+    """A source text as matching_terms searches it, for found_in: normalized once, however many terms are tried."""
+    searchable = _searchable(text)
+    return searchable, searchable.casefold()
+
+
+def found_in(prepared: tuple[str, str], term: dict) -> bool:
+    """Whether the term's source is in a text made by prepare_search; the same answer as matching_terms."""
+    matcher = _matcher(term["source"])
+    return bool(matcher and matcher.search(*prepared))
+
+
 def term_contexts(text: str, term: dict, limit: int = 3) -> list[str]:
     """Bounded evidence using the same boundary, plural and PDF normalization rules as translation."""
     matcher = _matcher(term["source"])

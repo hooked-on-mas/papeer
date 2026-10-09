@@ -33,6 +33,8 @@ export const QK = {
   inkPages: "ink-pages",
   stickyNotes: "sticky-notes",
   effectiveGlossary: "effective-glossary",
+  termCard: "term-card",
+  termPreview: "term-preview",
   translationPlan: "translation-plan",
   citationExcerpts: "citation-excerpts",
   readingStatuses: "reading-statuses",

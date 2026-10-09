@@ -3883,6 +3883,87 @@
         }
       }
     },
+    "/api/papers/{paper_id}/term-card": {
+      "post": {
+        "summary": "Term Card",
+        "operationId": "term_card_api_papers__paper_id__term_card_post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TermCardRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TermCard"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/papers/{paper_id}/term-replacement-preview": {
       "post": {
         "summary": "Preview Term Replacement",
@@ -10087,6 +10168,24 @@
         ],
         "title": "CreateCollectionRequest"
       },
+      "DictionaryTerm": {
+        "properties": {
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "domain": {
+            "type": "string",
+            "title": "Domain"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target",
+          "domain"
+        ],
+        "title": "DictionaryTerm"
+      },
       "DiscoveryEdge": {
         "properties": {
           "source": {
@@ -14099,6 +14198,135 @@
         ],
         "title": "TemplateRequest"
       },
+      "TermCard": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "current": {
+            "type": "string",
+            "title": "Current"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "missing": {
+            "type": "integer",
+            "title": "Missing"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/TermVariant"
+            },
+            "type": "array",
+            "title": "Variants"
+          },
+          "dictionary": {
+            "items": {
+              "$ref": "#/components/schemas/DictionaryTerm"
+            },
+            "type": "array",
+            "title": "Dictionary"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/TermCardEntry"
+            },
+            "type": "array",
+            "title": "Candidates"
+          },
+          "source_candidates": {
+            "items": {
+              "$ref": "#/components/schemas/TermVariant"
+            },
+            "type": "array",
+            "title": "Source Candidates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "current",
+          "count",
+          "missing",
+          "variants",
+          "dictionary",
+          "candidates",
+          "source_candidates"
+        ],
+        "title": "TermCard",
+        "description": "Empty `source`/`current` when the selection fits no term or several (then `candidates` has one card each).\n\nA translated selection that is in no dictionary has `current` only; `source_candidates` then suggests the\noriginal wording the paragraphs holding it share (empty when that cannot be told)."
+      },
+      "TermCardEntry": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "current": {
+            "type": "string",
+            "title": "Current"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "missing": {
+            "type": "integer",
+            "title": "Missing"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/TermVariant"
+            },
+            "type": "array",
+            "title": "Variants"
+          },
+          "dictionary": {
+            "items": {
+              "$ref": "#/components/schemas/DictionaryTerm"
+            },
+            "type": "array",
+            "title": "Dictionary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "current",
+          "count",
+          "missing",
+          "variants",
+          "dictionary"
+        ],
+        "title": "TermCardEntry"
+      },
+      "TermCardRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "original",
+              "translated"
+            ],
+            "title": "Side"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "side"
+        ],
+        "title": "TermCardRequest"
+      },
       "TermReplacementRequest": {
         "properties": {
           "source": {
@@ -14230,6 +14458,24 @@
           "quote"
         ],
         "title": "TermUsageSource"
+      },
+      "TermVariant": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "count"
+        ],
+        "title": "TermVariant"
       },
       "TranslateRequest": {
         "properties": {

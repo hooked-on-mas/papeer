@@ -70,7 +70,7 @@ export const translationJobHandlers: JobHandlers = {
   "term-replace": {
     refresh: (event) => [...translationQueries(event), ...domainQueries(event),
       ...invalidationsFor({ kind: "glossary" }).map(s => [...s.queryKey]),
-      ...(event.paper_id ? [[QK.paperGlossary, event.paper_id]] : [])],
+      ...(event.paper_id ? [[QK.paperGlossary, event.paper_id], [QK.termCard, event.paper_id]] : [])],
   },
   "glossary-draft": {
     // The translation dialog shows the candidates itself; closed, it may be long forgotten.
