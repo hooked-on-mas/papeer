@@ -55,7 +55,7 @@ When you find another version, leave the verified identifiers unchanged; do not 
 """
 _ANSWER_INSTRUCTION = """Answer the question in Japanese, using the provided paper excerpts and live web
 search. You must perform a web search. Distinguish what the supplied paper states from external context.
-Cite supplied paper facts with their exact [documentid:pN] markers. Cite web facts with [Web N] referring
+Cite supplied paper facts with the exact [ID:pN] markers of the evidence (ID is the 32-character identifier in the evidence header, e.g. [0123456789abcdef0123456789abcdef:p4]; never write the word documentid). Cite web facts with [Web N] referring
 to the sources array, starting at 1. Provide real source titles and URLs you opened, not search pages.
 Previous dialogue is context, not evidence. Clearly state limits of the excerpts and sources.
 Return at most five scholarly papers worth reading when relevant, using verified bibliographic identity,

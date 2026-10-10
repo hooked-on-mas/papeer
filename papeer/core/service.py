@@ -21,8 +21,21 @@ from papeer.core.terminology import apply_glossary, glossary_for_folder
 from papeer.core.translation_run import TranslationRun
 
 
+_PLACEHOLDER_CITATION = re.compile(
+    r"\[(?:document[ _-]?id|paper[ _-]?id|document|paper|id)\s*:\s*(p?\.?\s*\d+(?:\s*[,、]\s*p?\.?\s*\d+)*)\]", re.I)
+
+
 def link_citations(answer: str, allowed: dict[str, int]) -> str:
-    """Only turn validated document/page identifiers into navigable internal links."""
+    """Only turn validated document/page identifiers into navigable internal links.
+
+    The prompts show the marker as [documentid:pN], and the AI sometimes writes that placeholder
+    word instead of the identifier it was given. With a single document in scope the placeholder
+    is unambiguous, so it is read as that document; with several it is left as written.
+    """
+    if len(allowed) == 1:
+        only = next(iter(allowed))
+        answer = _PLACEHOLDER_CITATION.sub(lambda m: f"[{only}:{m.group(1)}]", answer)
+
     def replace(match):
         content = match.group(1)
         parts = content.split(',')

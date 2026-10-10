@@ -395,6 +395,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("参照未確認", answer)
         self.assertNotIn(f"papeer://{self.paper_id}/999", answer)
 
+    def test_placeholder_citations_resolve_for_a_single_document(self):
+        answer = link_citations("A [documentid:p4]。B [document_id:p1, p2]。C [documentid:p999]。", {self.paper_id: 2})
+        self.assertNotIn("documentid", answer)
+        self.assertNotIn("document_id", answer)
+        self.assertIn(f"[p.1](papeer://{self.paper_id}/1) [p.2](papeer://{self.paper_id}/2)", answer)
+        self.assertIn("参照未確認", answer)
+        # With several documents in scope the placeholder is ambiguous and stays as written.
+        other = "0" * 32
+        self.assertEqual(link_citations("[documentid:p1]", {self.paper_id: 2, other: 2}), "[documentid:p1]")
+
     def test_scanned_pdf_is_reported(self):
         target = self.root / "scan.pdf"
         with fitz.open() as document:
