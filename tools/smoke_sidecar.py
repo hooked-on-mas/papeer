@@ -20,7 +20,10 @@ folder there, and leave it behind when killed). Then:
    (never a real AI, nothing leaves the PC), so translated.pdf is typeset with the bundled Japanese
    fonts: the check reads the fonts and text of that PDF. The instructions it receives must have
    the shared prompt sections (papeer/core/prompts/_*.txt) in place of their markers.
-6. /shutdown: the process ends by itself with exit code 0, and no _MEI* folder was made at any point.
+6. papeer-cli (the second launcher of the folder, next to the sidecar's) connects to this sidecar with
+   --url and the token in PAPEER_TOKEN, and `--json status`, `folder list` and `ls` answer with what the
+   steps above made (`python -m papeer.cli` with --source). It never starts a sidecar of its own here.
+7. /shutdown: the process ends by itself with exit code 0, and no _MEI* folder was made at any point.
 7. Started again as the app starts it (PAPEER_WATCH_STDIN=1, a pipe as its standard input), it ends by
    itself with exit code 0 once the pipe closes, as when the app's process ends however it ends.
 8. macOS and Linux: started again, SIGTERM (what the app sends when /shutdown is not enough, and what
@@ -30,7 +33,8 @@ Each step prints OK; the first failure prints what went wrong and the end of the
 and the exit code is 1. The sidecar is stopped (killed if need be) and the temporary folder removed
 in every case, unless --keep asks to keep it for a look. `--source` runs the same checks against
 `python -m sidecar` from this checkout instead of the exe (no _MEI* checks), to try the script itself.
-`--exe` names another launcher, such as the one in a folder an installer was unpacked to.
+`--exe` names another launcher, such as the one in a folder an installer was unpacked to; papeer-cli is
+taken from the same folder.
 """
 from __future__ import annotations
 
@@ -63,7 +67,7 @@ if str(ROOT) not in sys.path:
 
 from papeer import __version__  # noqa: E402
 from papeer.core import paths  # noqa: E402
-from papeer.core.code_version import SIDECAR_DIR, SIDECAR_EXE, source_version  # noqa: E402
+from papeer.core.code_version import CLI_EXE, SIDECAR_DIR, SIDECAR_EXE, source_version  # noqa: E402
 from tools.bump_version import SEMVER  # noqa: E402 (the release version rule: MAJOR.MINOR.PATCH)
 
 # PyInstaller's output (sidecar.spec COLLECT); tools/place_sidecar.py copies the folder to SIDECAR_DIR once this passes.
@@ -76,6 +80,8 @@ PROMPT_DIR = ROOT / "papeer" / "core" / "prompts"
 HEALTH_TIMEOUT = 120.0
 JOB_TIMEOUT = 300.0
 EXIT_TIMEOUT = 45.0
+# One papeer-cli command (a first launch of a new build is scanned by antivirus, like the sidecar's).
+CLI_TIMEOUT = 90.0
 
 # papeer.layout.math_layout.MATH_TOKEN (tests/test_smoke_sidecar.py keeps the two the same).
 MATH_TOKEN = re.compile(r"\[\[PD_MATH_[A-Za-z0-9_]+\]\]")
@@ -175,6 +181,25 @@ def check_health(body: Any, expected_version: str, expected_code: str) -> None:
     if code != expected_code:
         raise SmokeFailure(f"/health の code_version がソースと一致しません（exe: {code}, ソース: {expected_code}）。"
                            "exe が古い可能性があります。`just build-sidecar` で作り直してください。")
+
+
+def cli_launcher(sidecar_exe: Path) -> Path:
+    """The papeer-cli beside a sidecar launcher (they share the folder and its _internal)."""
+    return sidecar_exe.with_name(CLI_EXE.name)
+
+
+def check_cli_status(body: Any) -> None:
+    """`papeer-cli --json status` against the running sidecar of this checkout (a job may still be running)."""
+    instance = body.get("instance") if isinstance(body, dict) else None
+    if not isinstance(body, dict) or body.get("running") is not True or not isinstance(instance, dict):
+        raise SmokeFailure(f"status の結果が不正です: {body!r}")
+    if instance.get("version") != __version__:
+        raise SmokeFailure(f"status の版 {instance.get('version')!r} がソースの版 {__version__} と違います。")
+    pid = instance.get("pid")
+    if not isinstance(pid, int) or pid <= 0 or not isinstance(instance.get("port"), int):
+        raise SmokeFailure(f"status に sidecar の pid・ポートがありません: {instance!r}")
+    if not isinstance(body.get("jobs"), list):
+        raise SmokeFailure(f"status にジョブの一覧がありません: {body!r}")
 
 
 def job_outcome(job: Any, job_id: str) -> dict[str, Any] | None:
@@ -348,8 +373,10 @@ class Client:
 
 
 class Smoke:
-    def __init__(self, command: list[str], cwd: Path, root: Path, frozen: bool, out: Any) -> None:
+    def __init__(self, command: list[str], cwd: Path, root: Path, frozen: bool, out: Any,
+                 cli_command: list[str] | None = None) -> None:
         self.command = command
+        self.cli_command = cli_command
         self.cwd = cwd
         self.frozen = frozen
         self.out = out
@@ -438,6 +465,9 @@ class Smoke:
                 paper_id = self.check_import()
             with self.step("翻訳（ローカルの代役 API）と同梱フォントでの PDF 作成"):
                 self.check_translation(paper_id, stub)
+            if self.cli_command is not None:
+                with self.step("papeer-cli が sidecar に接続して status・folder list・ls を実行"):
+                    self.check_cli(paper_id)
             with self.step("/shutdown で終了"):
                 self.check_shutdown()
         with self.step("アプリの終了（標準入力のパイプが閉じる）で終了"):
@@ -511,6 +541,35 @@ class Smoke:
         if reply.status != 200:
             raise SmokeFailure(f"translated.pdf を取得できません（HTTP {reply.status}）。")
         check_translated_pdf(reply.body)
+
+    def run_cli(self, *arguments: str) -> Any:
+        """One papeer-cli command against this sidecar; its --json result. The token is in the environment
+        (PAPEER_TOKEN, as the CLI's documentation advises), not in the arguments."""
+        assert self.cli_command is not None
+        command = [*self.cli_command, "--json", "--no-spawn", "--url", self.client.base, *arguments]
+        try:
+            done = subprocess.run(command, cwd=self.cwd, env=self.env, stdin=subprocess.DEVNULL,
+                                  capture_output=True, timeout=CLI_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            raise SmokeFailure(f"papeer-cli {' '.join(arguments)} が {CLI_TIMEOUT:.0f} 秒で終わりません。") from None
+        if done.returncode != 0:
+            raise SmokeFailure(f"papeer-cli {' '.join(arguments)} の終了コードが {done.returncode} です: "
+                               f"{done.stderr.decode('utf-8', 'replace').strip()[-500:]}")
+        try:
+            return json.loads(done.stdout.decode("utf-8"))
+        except ValueError:
+            raise SmokeFailure(f"papeer-cli {' '.join(arguments)} の標準出力が JSON ではありません: "
+                               f"{done.stdout[:200]!r}") from None
+
+    def check_cli(self, paper_id: str) -> None:
+        check_cli_status(self.run_cli("status"))
+        folders = self.run_cli("folder", "list")
+        if not isinstance(folders, dict) or folders.get("folders") != [] or folders.get("unfiled") != 1:
+            raise SmokeFailure(f"folder list の結果が、取り込んだ 1 件（未分類）と合いません: {folders!r}")
+        papers = self.run_cli("ls")
+        if not isinstance(papers, list) or [row.get("id") for row in papers] != [paper_id]:
+            raise SmokeFailure(f"ls の結果が取り込んだ論文 {paper_id} と合いません: {papers!r}")
+        self.check_nothing_unpacked()
 
     def check_shutdown(self) -> None:
         assert self.process is not None
@@ -593,14 +652,16 @@ def remove_tree(path: Path) -> bool:
     return False
 
 
-def run_smoke(command: list[str], *, cwd: Path | None, frozen: bool, keep: bool = False, out: Any = None) -> int:
-    """Run every check against `command`; 0 when all pass, 1 (after saying why) when one fails."""
+def run_smoke(command: list[str], *, cwd: Path | None, frozen: bool, keep: bool = False, out: Any = None,
+              cli_command: list[str] | None = None) -> int:
+    """Run every check against `command` (and the papeer-cli `cli_command`, when given); 0 when all pass,
+    1 (after saying why) when one fails."""
     out = sys.stdout if out is None else out
     root = Path(tempfile.mkdtemp(prefix="papeer-smoke-"))
     smoke: Smoke | None = None
     try:
         # Inside the try: a failure while preparing the folders must not leave `root` behind either.
-        smoke = Smoke(command, cwd or root, root, frozen, out)
+        smoke = Smoke(command, cwd or root, root, frozen, out, cli_command)
         smoke.run()
     except SmokeFailure as exc:
         assert smoke is not None  # only smoke.run() raises SmokeFailure
@@ -633,13 +694,16 @@ def main(argv: list[str] | None = None, out: Any = None) -> int:
 
     if args.source:
         print("対象: python -m sidecar（ソース）", file=out)
-        return run_smoke([sys.executable, "-m", "sidecar"], cwd=ROOT, frozen=False, keep=args.keep, out=out)
+        return run_smoke([sys.executable, "-m", "sidecar"], cwd=ROOT, frozen=False, keep=args.keep, out=out,
+                         cli_command=[sys.executable, "-m", "papeer.cli"])
     exe = args.exe.resolve()
-    if not exe.is_file():
-        print(f"スモークテスト失敗: {exe} がありません。先に `just build-sidecar` を実行してください。", file=out)
-        return 1
-    print(f"対象: {exe}", file=out)
-    return run_smoke([str(exe)], cwd=None, frozen=True, keep=args.keep, out=out)
+    cli = cli_launcher(exe)
+    for launcher in (exe, cli):
+        if not launcher.is_file():
+            print(f"スモークテスト失敗: {launcher} がありません。先に `just build-sidecar` を実行してください。", file=out)
+            return 1
+    print(f"対象: {exe}（papeer-cli: {cli.name}）", file=out)
+    return run_smoke([str(exe)], cwd=None, frozen=True, keep=args.keep, out=out, cli_command=[str(cli)])
 
 
 if __name__ == "__main__":

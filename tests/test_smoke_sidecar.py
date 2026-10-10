@@ -17,9 +17,10 @@ from papeer.layout.math_layout import MATH_TOKEN
 from papeer.providers.openai_compat import OpenAICompatProvider
 from papeer.translation.translation import TRANSLATION_SCHEMA, _assemble_parts, _source_parts, validate_translations
 from tools import smoke_sidecar
-from tools.smoke_sidecar import (STUB_TEXT, SmokeFailure, StubAI, check_health, check_translated_pdf,
-                                 device_directory_in, expected_prompts, is_semver, job_outcome, main, mei_folders,
-                                 run_smoke, sidecar_environment, stub_answer)
+from tools.smoke_sidecar import (STUB_TEXT, SmokeFailure, StubAI, check_cli_status, check_health,
+                                 check_translated_pdf, cli_launcher, device_directory_in, expected_prompts,
+                                 is_semver, job_outcome, main, mei_folders, run_smoke, sidecar_environment,
+                                 stub_answer)
 
 CODE = "code-sha256-" + "0" * 64
 UNITS = [{"id": "p1-b1", "page": 1, "text": "We study an adaptive controller [[PD_MATH_1]] where the error is bounded."},
@@ -87,6 +88,32 @@ def test_health_check():
         check_health({"status": "ok", "version": "0.2.0", "code_version": "code-sha256-" + "1" * 64}, "0.2.0", CODE)
     with pytest.raises(SmokeFailure, match="応答が不正"):
         check_health({"version": "0.2.0"}, "0.2.0", CODE)
+
+
+def test_cli_status_check():
+    instance = {"pid": 4242, "port": 5123, "version": "0.2.0", "launcher": "dev", "data_dir": "x"}
+    ok = {"running": True, "instance": instance, "jobs": []}
+    check_cli_status({**ok, "instance": {**instance, "version": smoke_sidecar.__version__}})
+    with pytest.raises(SmokeFailure, match="ソースの版"):
+        check_cli_status({**ok, "instance": {**instance, "version": "0.0.1"}})
+    version = {**instance, "version": smoke_sidecar.__version__}
+    for broken in ({"running": False}, [], {**ok, "instance": {**version, "pid": 0}},
+                   {**ok, "instance": {**version, "port": None}}, {**ok, "instance": version, "jobs": None}):
+        with pytest.raises(SmokeFailure):
+            check_cli_status(broken)
+
+
+def test_the_cli_is_looked_for_beside_the_sidecar_launcher():
+    exe = Path("C:/app/sidecar/papeer-sidecar.exe" if os.name == "nt" else "/app/sidecar/papeer-sidecar")
+    assert cli_launcher(exe) == exe.with_name("papeer-cli.exe" if os.name == "nt" else "papeer-cli")
+
+
+def test_a_missing_cli_is_reported_before_anything_starts(tmp_path):
+    sidecar = tmp_path / ("papeer-sidecar.exe" if os.name == "nt" else "papeer-sidecar")
+    sidecar.write_text("exe")
+    out = io.StringIO()
+    assert main(["--exe", str(sidecar)], out=out) == 1
+    assert "papeer-cli" in out.getvalue() and "just build-sidecar" in out.getvalue()
 
 
 def test_job_outcome():
@@ -228,6 +255,7 @@ def test_every_check_passes_against_the_source_sidecar(smoke_root):
     out = io.StringIO()
     assert main(["--source"], out=out) == 0, out.getvalue()
     # SIGTERM is tried on macOS and Linux only.
-    assert out.getvalue().count("OK  ") == (8 if os.name == "nt" else 9)
+    assert out.getvalue().count("OK  ") == (9 if os.name == "nt" else 10)
+    assert "papeer-cli が sidecar に接続" in out.getvalue()
     assert not smoke_root.exists()
     assert Path(smoke_sidecar.SAMPLE_PDF).is_file()

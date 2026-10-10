@@ -5,7 +5,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from papeer.core.code_version import (RENDER_DIRECTORIES, RENDER_EXCLUDED, RENDER_SOURCES, SIDECAR_DIR,
+from papeer.core.code_version import (CLI_EXE, RENDER_DIRECTORIES, RENDER_EXCLUDED, RENDER_SOURCES, SIDECAR_DIR,
                                       SIDECAR_EXE, application_version, bundle_version, check_build, source_version)
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -80,11 +80,12 @@ class CodeVersionTests(unittest.TestCase):
             for name in ('sidecar.spec', 'pyproject.toml', 'uv.lock'):
                 (root / name).write_bytes(b'first\n')
             record, bundle = root / 'code-version.txt', root / 'sidecar-sources.txt'
-            self.assertEqual(len(check_build(root, record, bundle)), 3)
+            self.assertEqual(len(check_build(root, record, bundle)), 4)
             record.write_text(source_version(root) + '\n', encoding='utf-8')
             bundle.write_text(bundle_version(root) + '\n', encoding='utf-8')
             (root / SIDECAR_EXE).parent.mkdir(parents=True)
             (root / SIDECAR_EXE).write_bytes(b'exe')
+            (root / CLI_EXE).write_bytes(b'cli')
             # The sidecar folder carries the code-version.txt it was built with (sidecar.spec datas).
             bundled = root / SIDECAR_DIR / '_internal' / 'code-version.txt'
             self.assertEqual(check_build(root, record, bundle),
@@ -121,6 +122,10 @@ class CodeVersionTests(unittest.TestCase):
             (root / 'papeer' / RENDER_SOURCES[0]).write_bytes(b'x = 1\n')
             (root / SIDECAR_EXE).unlink()
             self.assertEqual(len(check_build(root, record, bundle)), 1)
+            (root / SIDECAR_EXE).write_bytes(b'exe')
+            # The command line client is part of the build: a folder without it is not complete.
+            (root / CLI_EXE).unlink()
+            self.assertEqual(check_build(root, record, bundle), [f'{CLI_EXE.as_posix()} がありません。'])
 
     def test_frozen_app_uses_build_identity_and_rejects_invalid_record(self):
         with tempfile.TemporaryDirectory() as temporary:

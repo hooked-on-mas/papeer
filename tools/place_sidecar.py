@@ -14,12 +14,13 @@ from pathlib import Path
 import shutil
 import sys
 import time
+from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from papeer.core.code_version import SIDECAR_DIR, SIDECAR_EXE  # noqa: E402
+from papeer.core.code_version import LAUNCHERS, SIDECAR_DIR  # noqa: E402
 
 SOURCE = ROOT / "dist" / SIDECAR_DIR.name
 
@@ -41,10 +42,11 @@ def _rename(source: Path, target: Path) -> None:
             time.sleep(RENAME_DELAY)
 
 
-def place(source: Path, target: Path, launcher: str) -> None:
-    """Replace `target` with a copy of `source`, which must hold `launcher`."""
-    if not (source / launcher).is_file():
-        raise FileNotFoundError(f"{source / launcher} がありません。先に PyInstaller で sidecar.spec をビルドしてください。")
+def place(source: Path, target: Path, launchers: str | Sequence[str]) -> None:
+    """Replace `target` with a copy of `source`, which must hold every one of `launchers` (names)."""
+    for launcher in [launchers] if isinstance(launchers, str) else launchers:
+        if not (source / launcher).is_file():
+            raise FileNotFoundError(f"{source / launcher} がありません。先に PyInstaller で sidecar.spec をビルドしてください。")
     staging = target.with_name(target.name + ".new")
     previous = target.with_name(target.name + ".old")
     # Left by an interrupted run; copytree fails below if they cannot be removed.
@@ -66,7 +68,7 @@ def place(source: Path, target: Path, launcher: str) -> None:
 
 def main() -> int:
     try:
-        place(SOURCE, ROOT / SIDECAR_DIR, SIDECAR_EXE.name)
+        place(SOURCE, ROOT / SIDECAR_DIR, [launcher.name for launcher in LAUNCHERS])
     except OSError as exc:
         print(f"sidecar を配置できませんでした: {exc}", file=sys.stderr)
         return 1

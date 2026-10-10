@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 import urllib.parse
 
+from papeer.cli import setup_path
 from papeer.cli.client import ApiError, CliError, Session, Target
 from papeer.cli.connect import EXIT_NO_SIDECAR, Connector
 from papeer.cli.jobs import JobInfo, require_success, run_job
@@ -618,3 +619,10 @@ def cmd_server_stop(ctx: Context) -> int:
     out.emit({"running": True, "stopped": gone, "pid": target.pid},
              "ヘッドレスの Papeer を停止しました。" if gone else "停止を依頼しました（まだ終了処理中です）。")
     return 0 if gone else 1
+
+
+# --- setup-path ---
+
+def cmd_setup_path(ctx: Context) -> int:
+    """Needs no sidecar: it edits the user's PATH (Windows) or says how to link the exe (macOS, Linux)."""
+    return setup_path.run(ctx.out, remove=bool(ctx.args.remove), executable=setup_path.installed_executable())

@@ -51,7 +51,7 @@ PDF、書き込み、付箋・ハイライト、サマリー、翻訳結果・�
 - 保存先が見つからない場合も作業用データはPC内に残ります。エラーや競合の後は定期同期を止めるので、保存先とGoogle Driveを確認して「今すぐ同期」で再試行してください。
 - 新しいバージョンのPapeerで作成された世代は取り込まず、Papeerの更新を促します。古いバージョンで作成された世代は、取り込んだ後にこのPCのPapeerの形式へ移行します。同期するPCのPapeerは同じバージョンにそろえてください。
 - 「ローカル保存に戻す」はフォルダー同期を停止します。PC内と同期フォルダーのデータは削除しません。
-- 保存先のパスや最終同期の基準、CLIのパスとAPI URL、このPCの履歴は、端末別に `%LOCALAPPDATA%\PapeerSync` に保存します（macOS は `~/Library/Application Support/PapeerSync`、Linux は `~/.local/state/papeer`。README「データの保存場所」）。
+- 保存先のパスや最終同期の基準、CLIのパスとAPI URL、このPCの履歴、papeer-cli が接続先を見つけるための sidecar の起動情報（`instances\`）は、端末別に `%LOCALAPPDATA%\PapeerSync` に保存します（macOS は `~/Library/Application Support/PapeerSync`、Linux は `~/.local/state/papeer`。README「データの保存場所」）。
 
 ## 容量と履歴
 

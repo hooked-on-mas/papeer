@@ -10,6 +10,9 @@ well; signing again after it makes sure of every file, and the verification fail
   uv run python tools/sign_sidecar.py                       # dist/sidecar: sign, then verify
   uv run python tools/sign_sidecar.py --verify <folder>     # verify only (release.yml: the folder in Papeer.app)
 
+The folder holds two launchers, papeer-sidecar and the command line client papeer-cli (sidecar.spec); both are
+signed, after the libraries, and verified with them.
+
 Does nothing on Windows and Linux.
 """
 from __future__ import annotations
@@ -21,7 +24,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FOLDER = ROOT / "dist" / "sidecar"
-LAUNCHER = "papeer-sidecar"
+# The programs of the folder (papeer.core.code_version.LAUNCHERS; macOS names carry no suffix).
+LAUNCHERS = ("papeer-sidecar", "papeer-cli")
 
 # The first four bytes of a Mach-O file: 32/64-bit in either byte order, and a universal ("fat") binary
 # with 32-bit or 64-bit offsets (FAT_MAGIC, FAT_MAGIC_64), in either byte order. 0xcafebabe is also a Java
@@ -41,10 +45,12 @@ def is_macho(path: Path) -> bool:
 
 
 def macho_files(folder: Path) -> list[Path]:
-    """The Mach-O files in `folder`, the launcher last (a link to a file is signed as that file)."""
+    """The Mach-O files in `folder`, the launchers last, in the order of LAUNCHERS (a link to a file is
+    signed as that file)."""
     files = sorted(path for path in folder.rglob("*")
                    if path.is_file() and not path.is_symlink() and is_macho(path))
-    return sorted(files, key=lambda path: path == folder / LAUNCHER)
+    launchers = [folder / name for name in LAUNCHERS]
+    return sorted(files, key=lambda path: launchers.index(path) + 1 if path in launchers else 0)
 
 
 def _codesign(arguments: list[str], files: list[Path]) -> None:
@@ -70,9 +76,9 @@ def main(argv: list[str] | None = None) -> int:
         print("macOS ではないため、sidecar には署名しません。")
         return 0
     files = macho_files(args.folder)
-    if args.folder / LAUNCHER not in files:
-        print(f"{args.folder / LAUNCHER} がありません。先に PyInstaller で sidecar.spec をビルドしてください。",
-              file=sys.stderr)
+    missing = [args.folder / name for name in LAUNCHERS if args.folder / name not in files]
+    if missing:
+        print(f"{missing[0]} がありません。先に PyInstaller で sidecar.spec をビルドしてください。", file=sys.stderr)
         return 1
     try:
         if not args.verify:

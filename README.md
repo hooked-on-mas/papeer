@@ -14,6 +14,8 @@
 | 左右表示 | 原文と訳文を並べて表示。スクロールと倍率を同期。サマリー・チャット・メモを PDF の右に開ける（通常表示ではツールバーの「右パネル」プルダウン、集中表示では個別のボタン）。ほかのタブから戻っても読んでいた位置のまま、論文を開き直すと前回のページのその位置から |
 | 解説・チャット | 論文の解説記事を Markdown で生成（作り直すときは、今の解説を置き換える前に確認）。本文のページを引用して回答。PDF で選んだ箇所を添付して聞ける（右クリックの「説明してもらう」「チャットに添付」「メモに引用」は PDF の右に開き、添付をクリックで PDF のその箇所へ移動） |
 | ライブラリ | 入れ子フォルダーでの整理、ドラッグ＆ドロップ、検索、Markdown メモ。Ctrl・Shift+クリックで複数の論文を選び、右クリックやドラッグでまとめて移動・タグ付け・読書状態の変更・削除 |
+| AIでフォルダー分け | フォルダー・未分類・選んだ論文・追加直後の論文を AI が内容で振り分ける案を作り、除外・移動先の変更・新しいフォルダー名の修正・作り直しをしてから適用。1 回の操作として元に戻せる（PDF ファイルは動かさない。300 件まで。詳細は [docs/organize.md](docs/organize.md)） |
+| コマンドライン | `papeer-cli` で PDF の取り込み・一覧・フォルダー操作・AI のフォルダー分け・翻訳・ジョブの確認をスクリプトから実行。Papeer のウィンドウが開いていればその sidecar に、なければヘッドレスの sidecar を自動で起動して接続（詳細は [docs/cli.md](docs/cli.md)） |
 | 論文内検索・付箋・ハイライト | PDFの文章や図のそばに付箋を貼り、小さなダイアログでメモを入力。文章を選ぶと出るツールバーで色を付けてハイライト。「付箋」タブで一覧・検索・編集、p.N リンク付きでメモに書き出し |
 | PDFの書き込み・編集 | ペン・蛍光ペン・図形・テキスト、範囲選択／投げ縄、移動・コピー・拡縮・回転、部分消しゴム、自動保存、書き込み付きPDFの保存 |
 | 図・数式のコピー | PDFの範囲をPNG画像としてコピー、出典ページ付きで読書メモに追加 |
@@ -53,6 +55,7 @@ papeer/        翻訳・PDF 処理・ライブラリ管理のコア (Python)
   layout/         読み順・数式・表・図・参考文献のレイアウト解析
   pdf/            PDF の抽出と生成 (PyMuPDF)
   translation/    翻訳バッチ処理とプレビュー
+  cli/            papeer-cli（コマンドライン）。標準ライブラリだけで sidecar に HTTP で接続する（docs/cli.md）
 sidecar/          papeer を HTTP/WebSocket で公開する FastAPI サーバー
   routes/         API のルート。入力を解釈して papeer を呼ぶだけにし、処理の中身は papeer/core に置く
   schemas/        API のリクエスト・レスポンスのモデル（ルーターごと。ジョブの結果とイベントは job_types.py）
@@ -89,6 +92,8 @@ just setup
 just dev-sidecar    # ターミナル 1: FastAPI サーバー (ポート 8000)
 just dev-frontend   # ターミナル 2: Tauri + Vite
 ```
+
+コマンドライン（`papeer-cli`）は `just cli <コマンド>`（例: `just cli status`、`just cli add paper.pdf --folder 試験`）でソースから実行できます。`just dev-sidecar` を動かしていれば（同じライブラリなら）その sidecar に、なければヘッドレスの sidecar を自動で起動して接続します。使い方は [docs/cli.md](docs/cli.md) を参照してください。
 
 sidecar は `/health` 以外のすべての API と WebSocket に認証トークンを求め、`PAPEER_TOKEN` が未設定なら起動しません。`just dev-sidecar` は開発用の固定トークン `dev_token` で起動し、デバッグビルドの Tauri も同じ値をフロントエンドへ渡します。Tauri を使わずブラウザーで Vite を開く場合も、開発サーバーでは同じ値を既定で使います（別の値にするときは `VITE_PAPEER_TOKEN` を指定）。本番ビルドでは Tauri が起動ごとに OS の乱数生成器で 256 bit のトークンを作ります。API ドキュメント（`/docs`、`/openapi.json`）は配信しません。
 
@@ -163,11 +168,11 @@ just build
 次の処理を順に行います。
 
 1. `code-version.txt`（抽出・PDF 生成コードの識別値）と、同梱ソースと依存関係の内容ハッシュを生成する
-2. PyInstaller で `sidecar.spec` から sidecar をフォルダー形式（onedir）で作る。`dist/sidecar/` に起動用の `papeer-sidecar.exe`（macOS・Linux では `papeer-sidecar`）と、Python・ライブラリ・同梱データの入った `_internal/` ができる
-3. macOS では、その中の Mach-O ファイル（起動用のプログラムと、Python・拡張モジュール・`.dylib`）すべてに ad-hoc 署名して確かめる（`tools/sign_sidecar.py`。ほかの OS では何もしない）
+2. PyInstaller で `sidecar.spec` から sidecar をフォルダー形式（onedir）で作る。`dist/sidecar/` に起動用の `papeer-sidecar.exe`（macOS・Linux では `papeer-sidecar`）、コマンドラインの `papeer-cli.exe`（同じく `papeer-cli`）、Python・ライブラリ・同梱データの入った `_internal/`（2 つの exe で共有）ができる。`papeer-cli` は標準ライブラリだけで動く小さな exe で、重いライブラリと同梱データ（プロンプト・フォント）は持たない。`papeer.exe`（アプリ本体）とは別の名前にしている
+3. macOS では、その中の Mach-O ファイル（2 つの起動用のプログラムと、Python・拡張モジュール・`.dylib`）すべてに ad-hoc 署名して確かめる（`tools/sign_sidecar.py`。ほかの OS では何もしない）
 4. そのフォルダーを `just smoke-sidecar` と同じ手順で試す（次節）。失敗したらここで止まる
 5. 試したフォルダーを `frontend/src-tauri/sidecar/` に置き（`tools/place_sidecar.py`。隣にコピーしてから名前の変更で入れ替えるので、途中で失敗しても中途半端なフォルダーは残らない）、成功したら 1 の内容ハッシュを `sidecar-sources.txt` に記録する
-6. `code-version.txt` と sidecar が現在のソースから作られたこと（と `frontend/src-tauri/sidecar/papeer-sidecar(.exe)` があること）を確かめ（`just check-sidecar`）、`pnpm tauri build` でインストーラーを作る（Windows は NSIS と MSI、macOS は `.app` と `.dmg`（`tauri.macos.conf.json`）、Linux は `.deb`（`tauri.linux.conf.json`））
+6. `code-version.txt` と sidecar が現在のソースから作られたこと（と `frontend/src-tauri/sidecar/papeer-sidecar(.exe)`・`papeer-cli(.exe)` があること）を確かめ（`just check-sidecar`）、`pnpm tauri build` でインストーラーを作る（Windows は NSIS と MSI、macOS は `.app` と `.dmg`（`tauri.macos.conf.json`）、Linux は `.deb`（`tauri.linux.conf.json`））
 
 インストーラーは `frontend/src-tauri/target/release/bundle/` に出力されます。sidecar のフォルダーは `tauri.conf.json` の `bundle.resources` でそのまま同梱され、インストール先では `papeer.exe` の隣の `sidecar\` に入ります。アプリはリソースフォルダーの中の `sidecar\papeer-sidecar.exe` を起動し（`frontend/src-tauri/src/sidecar.rs`）、ジョブオブジェクトに入れて、終了時は `/shutdown` で自分で終わるのを待ちます（30 秒で終わらなければジョブごと止める）。以前の onefile の exe と違い、起動のたびに `%TEMP%\_MEI*` へ展開しないため、起動が速く、強制終了しても何も残りません。
 
@@ -178,7 +183,7 @@ just build
 - macOS・Linux では、sidecar を専用のプロセスグループで起動し、`/shutdown` で終わらなければグループに SIGTERM を、15 秒たっても残っていれば SIGKILL を送ります。AI の CLI は、sidecar がそれぞれを止められるように別のセッションで動かしているため、このグループには入っていません。sidecar は動いている CLI を覚えておき、SIGTERM を受けたとき・標準入力のパイプが閉じたときは、ジョブを取り消してすぐ、それぞれのグループに SIGTERM を、2 秒後に SIGKILL を送ってから終わります（終了する直前にも、残っている CLI を止めます）。Linux では、アプリのプロセスが終わると sidecar に SIGTERM が届くようにもしています（`PR_SET_PDEATHSIG`）。
 - macOS・Linux では、Finder や Dock から開いたアプリの PATH は最小限（`/usr/bin:/bin:/usr/sbin:/sbin`）なので、ログインシェル（`$SHELL`、なければユーザーの設定のシェル）から PATH を読み、先頭に足して sidecar を起動します。読むのはアプリの起動の初めから別のスレッドで行い、5 秒で答えなければ使いません。端末から起動したときは読みません。絶対パスの項目だけを使います。
 
-NSIS のインストーラーは、ファイルを置く前にインストール先の古い `sidecar\` と 0.2.0 以前の `sidecar.exe` を消します（`frontend/src-tauri/windows/hooks.nsh`）。ただし Papeer か sidecar が動いている間は `sidecar\` を消しません（このフックはアプリを閉じるよう求める確認より前に動くため、そこで取り消されても起動できなくならないように）。MSI は置き換える版のファイルを自分で消します。
+NSIS のインストーラーは、ファイルを置く前にインストール先の古い `sidecar\` と 0.2.0 以前の `sidecar.exe` を消します（`frontend/src-tauri/windows/hooks.nsh`）。ただし Papeer か sidecar、`papeer-cli.exe` が動いている間は `sidecar\` を消しません（このフックはアプリを閉じるよう求める確認より前に動くため、そこで取り消されても起動できなくならないように）。MSI は置き換える版のファイルを自分で消します。インストーラーは PATH を編集しません（長い PATH を切らないため）。`papeer-cli` を名前だけで呼べるようにするには、インストール後に `papeer-cli setup-path` を実行します（macOS・Linux ではシンボリックリンクの作り方を表示します。[docs/cli.md](docs/cli.md)）。
 
 `target/release/papeer.exe` をインストールせずにそのまま起動するときは、`target/release/sidecar/` を使います。tauri-build はビルドのたびにこのフォルダーへ上書きでコピーするだけなので、前のビルドにしかないファイルが残ることがあります。おかしいときは `target/release/sidecar/` を消してからビルドし直してください（インストーラーには `frontend/src-tauri/sidecar/` の中身だけが入ります）。
 
@@ -193,9 +198,10 @@ PyInstaller は依存グループ `build` にあり、`just build-sidecar` が `
 3. 同梱のプロンプトが `papeer/core/prompts` と一致し、設定を保存できる
 4. `tests/fixtures/sample.pdf` を取り込み、テキストを抽出・検索できる
 5. その論文を翻訳し、同梱の日本語フォント（源ノ明朝）を埋め込んだ `translated.pdf` ができる。翻訳の依頼先は、スクリプトが `127.0.0.1` で動かす OpenAI 互換の代役サーバーで、実際の AI は呼ばず、PC の外にも通信しない。翻訳の指示に共通部分（`papeer/core/prompts/_*.txt`）が差し込まれていることも確かめる
-6. `/shutdown` でプロセスが終了コード 0 で終わる。起動してから終わるまで、一時フォルダーに `_MEI*`（onefile の展開フォルダー）が作られない（作られたら onefile の exe を試している）
-7. アプリと同じように（`PAPEER_WATCH_STDIN=1`、標準入力をパイプにして）起動し直し、パイプを閉じると（アプリが異常終了したときと同じ）終了コード 0 で終わる
-8. macOS・Linux では、もう一度起動し直し、SIGTERM で終了コード 0 で終わる
+6. 同じフォルダーの `papeer-cli(.exe)` を、`--url` と環境変数 `PAPEER_TOKEN` でこの sidecar に接続して実行し、`--json status`・`folder list`・`ls` が手順 4 で取り込んだ論文と合った結果を返す（`--source` では `python -m papeer.cli`。ヘッドレスの sidecar は起動しない）
+7. `/shutdown` でプロセスが終了コード 0 で終わる。起動してから終わるまで、一時フォルダーに `_MEI*`（onefile の展開フォルダー）が作られない（作られたら onefile の exe を試している）
+8. アプリと同じように（`PAPEER_WATCH_STDIN=1`、標準入力をパイプにして）起動し直し、パイプを閉じると（アプリが異常終了したときと同じ）終了コード 0 で終わる
+9. macOS・Linux では、もう一度起動し直し、SIGTERM で終了コード 0 で終わる
 
 データフォルダー、この PC のフォルダーの元になる変数（Windows の `LOCALAPPDATA`、macOS・Linux の `HOME` と `XDG_DATA_HOME`・`XDG_STATE_HOME`・`XDG_CACHE_HOME`・`XDG_CONFIG_HOME`）、一時フォルダー（`TEMP`・`TMP`・`TMPDIR`）は毎回新しい一時フォルダーに向けるため、実際のライブラリや PC ごとの設定には触れません（一時フォルダーに何も展開されないことも、そこで正確に確かめられます）。PC ごとの設定が保存される場所は、`papeer.core.paths.device_directory()` と同じ規則で確かめます。失敗すると、失敗した確認と sidecar のログの末尾を表示して終了コード 1 で終わります。どの場合も sidecar は止め（応答しなければ強制終了）、一時フォルダーは消します。`--keep` で一時フォルダー（データとログ）を残し、`--exe` で別の場所の exe（インストーラーを展開したフォルダーの `sidecar\papeer-sidecar.exe` など）を、`--source` で exe の代わりに `python -m sidecar` を同じ手順で試せます（`tests/test_smoke_sidecar.py` はこちらを使い、exe なしでスクリプト自体を検査します）。`just build-sidecar`（`just build` とリリースのワークフローも使う）は sidecar を作った直後にこのテストを実行し、通ったフォルダーだけを `frontend/src-tauri/sidecar/` に置きます。
 
@@ -376,6 +382,7 @@ PapeerSync/                   このPCだけの設定（同期・バックアッ
   history-settings.json       このPCの履歴に残す記録の数（直近 N 件・日ごと D 日分）
   history/<ハッシュ>/          このPCの履歴（同期した時点・選ばなかった側・復元の直前）。entries/ に各時点の一覧、blobs/ に
                               中身の SHA-256 を名前にしたファイル（同じ内容は1つだけ）。library.json に元のライブラリの場所
+  instances/                  ライブラリを今開いている sidecar の起動情報（<ハッシュ>.lock と <ハッシュ>.json。ポート・トークン・pid。papeer-cli が接続先を見つけるのに使い、終了すると消える。同期・バックアップの対象外）
   <ハッシュ>.json             同期フォルダーの保存先と最終同期の基準
   <ハッシュ>.review-pages.json  論文ごとの翻訳が必要なページ（ライブラリ一覧と閲覧画面用。document.json とコードが変わると作り直す）
   <ハッシュ>.opened.json      このPCで論文を最後に開いた日時（ライブラリの「最近開いた順」と「続きから読む」用。消すと開いた記録がなくなるだけ）
@@ -396,8 +403,13 @@ PapeerSync/                   このPCだけの設定（同期・バックアッ
 | `PAPEER_FONT_CACHE_DIR` | 同梱フォントの変換結果の置き場所（既定は Windows `%LOCALAPPDATA%\PapeerSync\font-cache`、macOS `~/Library/Caches/Papeer/font-cache`、Linux `~/.cache/papeer/font-cache`。pytest は `.pytest_cache` 内を使う） |
 | `PAPEER_DEV_NO_AUTH` | `1` のとき、`PAPEER_TOKEN` なしで認証なしの sidecar を起動する（開発専用。PyInstaller で作った sidecar では無視） |
 | `PAPEER_API_KEY` | API 接続で使う API キーの初期値（未設定なら `OPENAI_API_KEY`、次に `GEMINI_API_KEY`） |
+| `PAPEER_LAUNCHER` | sidecar を起動した主体（`app`・`dev`・`cli`）。未設定なら配布版は `app`、ソースからは `dev`。`cli` は papeer-cli が起動したヘッドレスの sidecar で、ウィンドウの sidecar が引き継ぐ相手になる |
+| `PAPEER_IDLE_EXIT` | 秒数。`PAPEER_LAUNCHER=cli` の sidecar が、ジョブ・リクエスト・接続がなくなってからこの秒数で自分で終了する（papeer-cli が `--idle`、既定 10 秒で設定する）。ほかの起動主体では無視 |
+| `PAPEER_CLI_URL` | papeer-cli の接続先の sidecar の URL（`--url` が優先。認証は `PAPEER_TOKEN`）。使い方は [docs/cli.md](docs/cli.md) |
 | `PAPEER_WATCH_STDIN` | `1` のとき、標準入力が閉じたら（パイプの向こうのアプリが終わったら）ジョブを止めて終了する。本番のアプリが sidecar に付ける |
 | `PAPEER_E2E_DIR` | E2E テスト専用（デバッグ版のアプリだけが読む）。メインウィンドウの WebView2 のプロファイルをこのフォルダーに作り、ウィンドウの位置を保存・復元しない（README「E2E テスト」） |
+
+sidecar は、ポートが使用中なら終了コード 3、ライブラリを別の Papeer（ウィンドウや、papeer-cli が起動したヘッドレスの sidecar）が使用中なら終了コード 4 で終わります。1 つのライブラリを扱う sidecar は 1 つだけで、ウィンドウの sidecar はヘッドレスの sidecar から引き継げますが、ウィンドウどうしでは引き継ぎません（終了コード 4 のとき、アプリは「このライブラリは別の Papeer が使用中です」と表示して終わります）。
 
 ## キーボードショートカット
 

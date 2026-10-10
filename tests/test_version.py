@@ -164,7 +164,7 @@ def test_release_workflow_builds_on_version_tags():
     scripts = {step.get("name"): step.get("run", "") for step in build["steps"]}
     assert "Signature=adhoc" in scripts["Check the ad-hoc signatures"]
     assert "tools/sign_sidecar.py --verify" in scripts["Check the ad-hoc signatures"]
-    assert "papeer-sidecar" in scripts["Check the .deb"]
+    assert "papeer-sidecar" in scripts["Check the .deb"] and "papeer-cli" in scripts["Check the .deb"]
     checkout = next(step for step in build["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["persist-credentials"] is False
     for job in (build, release):

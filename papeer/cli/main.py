@@ -158,6 +158,10 @@ def build_parser() -> argparse.ArgumentParser:
     server_sub = server.add_subparsers(dest="server_command", metavar="操作", required=True, parser_class=_Parser)
     command(server_sub, "stop", commands.cmd_server_stop,
             "CLI が起動したヘッドレスの sidecar を停止します（ウィンドウのものは止めません）")
+
+    setup = command(sub, "setup-path", commands.cmd_setup_path,
+                    "インストールした papeer-cli をターミナルから呼べるようにします（Windows: ユーザーの PATH に追加）")
+    setup.add_argument("--remove", action="store_true", help="追加した PATH を削除します（macOS・Linux では削除用のコマンドを表示）")
     return parser
 
 

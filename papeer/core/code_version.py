@@ -54,6 +54,10 @@ RENDER_EXCLUDED = {
 # The onedir sidecar (sidecar.spec) as `just build-sidecar` places it for Tauri's bundle.resources, and its launcher.
 SIDECAR_DIR = Path("frontend/src-tauri/sidecar")
 SIDECAR_EXE = SIDECAR_DIR / ("papeer-sidecar.exe" if os.name == "nt" else "papeer-sidecar")
+# The command line client built beside it (the second launcher of sidecar.spec; papeer/cli).
+CLI_EXE = SIDECAR_DIR / ("papeer-cli.exe" if os.name == "nt" else "papeer-cli")
+# Every launcher of the folder (tools/place_sidecar.py, tools/sign_sidecar.py): the sidecar's first.
+LAUNCHERS = (SIDECAR_EXE, CLI_EXE)
 # What PyInstaller bundles from the source tree (sidecar.spec) and the dependencies it installs.
 _BUNDLED = ("papeer", "sidecar", "sidecar.spec", "pyproject.toml", "uv.lock")
 
@@ -113,6 +117,8 @@ def check_build(root: Path, record: Path, bundle: Path) -> list[str]:
           or (root / bundled).read_text("utf-8").strip() != record.read_text("utf-8").strip()):
         # The folder of another build (the record is rewritten by every `just build-sidecar`).
         problems.append(f"{bundled.as_posix()} が {record.name} と一致しません。")
+    if not (root / CLI_EXE).is_file():
+        problems.append(f"{CLI_EXE.as_posix()} がありません。")
     if not bundle.is_file() or bundle.read_text("utf-8").strip() != bundle_version(root):
         problems.append(f"sidecar のビルド後にソースまたは依存関係が変更されています（{bundle.name} と不一致）。")
     return problems

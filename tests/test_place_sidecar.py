@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from papeer.core.code_version import SIDECAR_DIR, SIDECAR_EXE
+from papeer.core.code_version import CLI_EXE, LAUNCHERS, SIDECAR_DIR, SIDECAR_EXE
 from tools import place_sidecar
 from tools.place_sidecar import ROOT, place
 
@@ -19,6 +19,11 @@ def test_names_match_the_bundle_and_the_tauri_resource():
     # The same names in sidecar.spec (COLLECT, EXE), tauri.conf.json (bundle.resources) and sidecar.rs.
     spec = (ROOT / "sidecar.spec").read_text("utf-8")
     assert f"name='{SIDECAR_DIR.name}'" in spec and f"name='{SIDECAR_EXE.stem}'" in spec
+    # The command line client is the second launcher of the same folder, and is never Tauri's main binary.
+    assert f"name='{CLI_EXE.stem}'" in spec and CLI_EXE.parent == SIDECAR_EXE.parent
+    assert CLI_EXE.stem == "papeer-cli" and CLI_EXE.stem != json.loads(
+        (ROOT / "frontend" / "src-tauri" / "tauri.conf.json").read_text("utf-8"))["productName"].lower()
+    assert LAUNCHERS == (SIDECAR_EXE, CLI_EXE)
     assert place_sidecar.SOURCE == ROOT / "dist" / SIDECAR_DIR.name
     config = json.loads((ROOT / "frontend" / "src-tauri" / "tauri.conf.json").read_text("utf-8"))
     assert config["bundle"]["resources"] == {f"{SIDECAR_DIR.name}/": f"{SIDECAR_DIR.name}/"}
@@ -32,6 +37,8 @@ def test_names_match_the_bundle_and_the_tauri_resource():
     rmdir = preinstall.index("RMDir")
     assert preinstall.index('"${MAINBINARYNAME}.exe"') < rmdir
     assert preinstall.index(f'"{SIDECAR_EXE.stem}.exe"') < rmdir
+    # A running papeer-cli (a terminal, a script) holds files of the folder too.
+    assert preinstall.index(f'"{CLI_EXE.stem}.exe"') < rmdir
     rust = (ROOT / "frontend" / "src-tauri" / "src" / "sidecar.rs").read_text("utf-8")
     assert f'const SIDECAR_DIR: &str = "{SIDECAR_DIR.name}";' in rust
     assert f'const SIDECAR_EXE: &str = "{SIDECAR_EXE.stem}";' in rust
@@ -61,6 +68,18 @@ def test_replaces_the_whole_folder(tmp_path):
     assert (target / "_internal" / "code-version.txt").read_text() == "new"
     assert not (target / "_internal" / "gone.pyd").exists()
     assert sorted(p.name for p in target.parent.iterdir()) == ["sidecar"]
+
+
+def test_every_launcher_must_be_there(tmp_path):
+    source = _bundle(tmp_path / "dist" / "sidecar")
+    target = _bundle(tmp_path / "src-tauri" / "sidecar", marker="old")
+    with pytest.raises(FileNotFoundError, match="papeer-cli.exe"):
+        place(source, target, ["papeer-sidecar.exe", "papeer-cli.exe"])
+    assert (target / "papeer-sidecar.exe").read_text() == "old"
+    (source / "papeer-cli.exe").write_text("new cli")
+    place(source, target, ["papeer-sidecar.exe", "papeer-cli.exe"])
+    assert (target / "papeer-cli.exe").read_text() == "new cli"
+    assert (target / "papeer-sidecar.exe").read_text() == "new"
 
 
 def test_leftovers_of_an_interrupted_run_are_cleared(tmp_path):

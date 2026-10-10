@@ -93,6 +93,14 @@ audit *ecosystems:
 dev-sidecar: (stop-stale-dev '-Port 8000')
     uv run python -m sidecar
 
+# Run the command line client (papeer/cli, docs/cli.md) from the source tree
+# Papeer のウィンドウ（開発用の sidecar）が動いていればそこへ、なければヘッドレスの sidecar を自動で起動して接続する（何もしなければ自分で終了する）
+# 配布版は sidecar フォルダー（dist/sidecar、インストール先の sidecar）の papeer-cli で、PATH は papeer-cli setup-path で通す。
+# 空白を含むパスは just が引数を空白でつなぐため分かれる。そのときは uv run python -m papeer.cli を直接使う
+# コマンドラインから Papeer を操作する（例: just cli status、just cli add paper.pdf --folder 試験、just cli --help）
+cli *args:
+    uv run python -m papeer.cli {{ args }}
+
 # Run frontend in development
 # 前回の Vite (1420) とデバッグ版のウィンドウが残っていれば止めてから起動する
 # デバッグ版は sidecar を同梱せず 8000 に接続するので、just clippy と同じく TAURI_CONFIG で bundle.resources を外し、

@@ -146,7 +146,7 @@ jobs:
           grep -q "Signature=adhoc" <<< "$signature"
           uv run python tools/sign_sidecar.py --verify "$app/Contents/Resources/sidecar"
 
-      # The package's dependencies, and the sidecar's launcher installed as a program (mode 755).
+      # The package's dependencies, and the sidecar's launcher and the command line client installed as programs (mode 755).
       - name: Check the .deb
         if: runner.os == 'Linux'
         run: |
@@ -157,6 +157,9 @@ jobs:
           launcher=$(dpkg-deb --contents "$deb" | grep -E '/sidecar/papeer-sidecar$')
           echo "$launcher"
           grep -q '^-rwxr-xr-x' <<< "$launcher"
+          cli=$(dpkg-deb --contents "$deb" | grep -E '/sidecar/papeer-cli$')
+          echo "$cli"
+          grep -q '^-rwxr-xr-x' <<< "$cli"
 
       - name: Collect installers
         env:
