@@ -447,7 +447,11 @@ pub fn run() {
             }
 
             #[cfg(not(debug_assertions))]
-            app.manage(sidecar::spawn(app, port, &token, search_path)?);
+            {
+                app.manage(sidecar::spawn(app, port, &token, search_path)?);
+                // A sidecar that finds the library in use by another Papeer exits with code 4: say so.
+                sidecar::watch_startup(app.handle());
+            }
             Ok(())
         })
         .build(context)

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { JobInfo } from "../src/api/jobTypes.ts";
-import { endedWhileAway, LOST_JOB_ERROR, lostJob, settledJob, shownJob, stillRunning } from "../src/features/jobs/jobReconnect.ts";
+import { endedWhileAway, hasFailed, LOST_JOB_ERROR, lostJob, settledJob, shownJob, stillRunning } from "../src/features/jobs/jobReconnect.ts";
 import { errorAdvice, errorCause } from "../src/lib/errorReports.ts";
 
 const base = { paper_id: null, message: "", done: null, total: null, cancelled: false } as const;
@@ -51,4 +51,12 @@ test("a job the sidecar no longer knows ends as a failure, so that its watchers 
   // Told in its own words, never as an AI or connection problem, whatever the job.
   for (const kind of ["translate", "ask", "check", "drive-sync", "import"]) assert.equal(errorCause(LOST_JOB_ERROR, kind), "other");
   assert.equal(errorAdvice(LOST_JOB_ERROR, { kind: "translate" }).summary, LOST_JOB_ERROR);
+});
+
+test("on the first connection, the queries that gave up are loaded again, those loading or loaded are not", () => {
+  const state = (status: string, fetchStatus: string) => ({ state: { status, fetchStatus } });
+  assert.equal(hasFailed(state("error", "idle")), true);
+  assert.equal(hasFailed(state("error", "fetching")), false);
+  assert.equal(hasFailed(state("success", "idle")), false);
+  assert.equal(hasFailed(state("pending", "fetching")), false);
 });

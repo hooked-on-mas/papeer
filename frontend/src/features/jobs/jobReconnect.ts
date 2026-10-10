@@ -53,3 +53,12 @@ export function lostJob(jobId: string, meta: { kind: JobKind; paperId: string | 
     status: "failed", running: false, result: null, error: LOST_JOB_ERROR,
   };
 }
+
+/**
+ * Whether a query's last attempt failed and nothing is fetching it now. On the first connection of the
+ * event stream these are loaded again: the sidecar may have taken a long while to answer (a handover from
+ * the CLI's sidecar takes up to some 30 seconds), and a query's retries are over long before.
+ */
+export function hasFailed(query: { state: { status: string; fetchStatus: string } }): boolean {
+  return query.state.status === "error" && query.state.fetchStatus === "idle";
+}

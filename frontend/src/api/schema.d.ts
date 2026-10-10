@@ -27,6 +27,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Instance
+         * @description Who answers: the CLI and a second window check the discovery file's claim here (papeer.core.instance).
+         *
+         *     Allowed during a sync, backup or restore (app.SNAPSHOT_READS), and not counted as activity by the idle
+         *     exit (sidecar/instance.py).
+         */
+        get: operations["get_instance_api_instance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui-state": {
         parameters: {
             query?: never;
@@ -2741,6 +2764,24 @@ export interface components {
             /** Arrowheadlength */
             arrowHeadLength?: number | null;
         };
+        /**
+         * InstanceResponse
+         * @description Who this sidecar is (GET /api/instance): what the CLI and a second window check a discovery file against.
+         */
+        InstanceResponse: {
+            /** Pid */
+            pid: number;
+            /** Launcher */
+            launcher: string;
+            /** Data Dir */
+            data_dir: string;
+            /** Port */
+            port: number | null;
+            /** Version */
+            version: string;
+            /** Idle Exit */
+            idle_exit: number | null;
+        };
         /** InterleavedResult */
         InterleavedResult: {
             /**
@@ -4583,6 +4624,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_instance_api_instance_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceResponse"];
                 };
             };
             /** @description Validation Error */

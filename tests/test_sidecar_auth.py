@@ -10,8 +10,10 @@ import pytest
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
 
+from papeer.core import instance as instance_module
 from sidecar import app as app_module
 from sidecar import deps
+from sidecar import instance as sidecar_instance
 from sidecar.app import app
 from sidecar.jobs import JobManager
 from sidecar.routes import system
@@ -142,9 +144,41 @@ def test_development_flag_has_no_legacy_spelling(client, monkeypatch):
     assert app_module.startup_error()
 
 
+class _FakeSocket:
+    """What bind_socket gives main() instead of a real listening socket."""
+
+    def __init__(self, port: int) -> None:
+        self.port = port
+
+    def getsockname(self) -> tuple[str, int]:
+        return ("127.0.0.1", self.port or 54321)
+
+
+def _no_server(monkeypatch, started: bool = True) -> list[dict]:
+    """uvicorn's server and the socket replaced by recorders: what main() hands the server, and the
+    discovery file as it was while the server ran."""
+    ran: list[dict] = []
+
+    class FakeServer:
+        def __init__(self, config):
+            self.config = config
+            self.started = started
+
+        def run(self, sockets=None):
+            ran.append({"host": self.config.host, "port": self.config.port, "log_level": self.config.log_level,
+                        "access_log": self.config.access_log,
+                        "timeout_graceful_shutdown": self.config.timeout_graceful_shutdown,
+                        "sockets": sockets, "advertised": instance_module.read_instance(deps.get_data_dir())})
+
+    monkeypatch.setattr("uvicorn.Server", FakeServer)
+    monkeypatch.setattr(app_module, "bind_socket", _FakeSocket)
+    for name in ("_lock", "_root", "_info", "_idle_grace"):  # What main() sets; put back after the test.
+        monkeypatch.setattr(sidecar_instance, name, None)
+    return ran
+
+
 def test_sidecar_refuses_to_start_without_a_token(monkeypatch):
-    ran = []
-    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: ran.append(kwargs))
+    ran = _no_server(monkeypatch)
     with pytest.raises(SystemExit) as stopped:
         app_module.main()
     assert "PAPEER_TOKEN" in str(stopped.value.code)
@@ -160,20 +194,37 @@ def _ends_with_the_app(monkeypatch) -> list[str]:
 
 
 def test_sidecar_starts_with_a_token_and_keeps_it_out_of_the_access_log(monkeypatch):
-    ran = []
-    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: ran.append(kwargs))
+    ran = _no_server(monkeypatch)
     ends = _ends_with_the_app(monkeypatch)
     monkeypatch.setenv("PAPEER_TOKEN", TOKEN)
     monkeypatch.setenv("PAPEER_PORT", "8123")
+    monkeypatch.setenv("PAPEER_LAUNCHER", "app")
     app_module.main()
-    # After SIGTERM, requests still running get a few seconds before the jobs are stopped.
-    assert ran == [{"host": "127.0.0.1", "port": 8123, "log_level": "info", "access_log": False,
-                    "timeout_graceful_shutdown": app_module.SIGTERM_REQUEST_TIMEOUT}]
+    # After SIGTERM, requests still running get a few seconds before the jobs are stopped. The socket is
+    # bound by main() (the server is given it), and the discovery file was written before the server ran.
+    assert len(ran) == 1
+    assert {key: value for key, value in ran[0].items() if key not in ("sockets", "advertised")} == {
+        "host": "127.0.0.1", "port": 8123, "log_level": "info", "access_log": False,
+        "timeout_graceful_shutdown": app_module.SIGTERM_REQUEST_TIMEOUT}
+    assert len(ran[0]["sockets"]) == 1 and ran[0]["sockets"][0].port == 8123
+    advertised = ran[0]["advertised"]
+    assert (advertised.port, advertised.token, advertised.launcher) == (8123, TOKEN, "app")
+    # Withdrawn and released once the server has stopped.
+    assert instance_module.read_instance(deps.get_data_dir()) is None
     assert ends == ["stdin", "sigterm"]
 
 
+def test_sidecar_that_could_not_start_its_server_exits_with_3_like_uvicorn_run(monkeypatch):
+    _no_server(monkeypatch, started=False)
+    _ends_with_the_app(monkeypatch)
+    monkeypatch.setenv("PAPEER_TOKEN", TOKEN)
+    with pytest.raises(SystemExit) as stopped:
+        app_module.main()
+    assert stopped.value.code == app_module.EXIT_PORT_TAKEN == 3
+
+
 def test_sidecar_starts_without_auth_only_when_asked(monkeypatch, capsys):
-    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: None)
+    _no_server(monkeypatch)
     _ends_with_the_app(monkeypatch)
     monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     app_module.main()

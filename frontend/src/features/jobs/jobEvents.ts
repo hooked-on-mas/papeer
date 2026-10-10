@@ -20,7 +20,7 @@ import { addJobFailure, clearJobFailure, showJobFailure } from "./jobFailures";
 import { jobHandler, type JobContext, type JobFinished, type JobSucceeded } from "./jobHandlers";
 import { AI_PLAN_JOBS, isJobKind, type JobKind } from "./jobKinds";
 import { backgroundFailureTitle, doneTitle, failureTitle, jobKindLabel, QUICK_RECONNECT_MS, statusWhenCancelEnds } from "./jobList";
-import { endedWhileAway, lostJob, settledJob, shownJob, stillRunning } from "./jobReconnect";
+import { endedWhileAway, hasFailed, lostJob, settledJob, shownJob, stillRunning } from "./jobReconnect";
 
 export type { JobFinished } from "./jobHandlers";
 
@@ -342,6 +342,9 @@ export function useJobEvents(): void {
         // Events sent while the stream was down are lost: the running jobs are read again (and those that
         // ended meanwhile asked about), and what a missed library.changed would have refreshed is refreshed now.
         if (useConnection.getState().everConnected) void invalidate({ kind: "reconnected" }, queryClient);
+        // The first time: a sidecar that took long to start (it takes the library over from the CLI's
+        // headless one first, up to some 30 seconds) may have outlasted the queries' retries.
+        else void queryClient.refetchQueries({ type: "active", predicate: hasFailed });
         wasOpen = true;
         markConnected();
         void refreshJobs();

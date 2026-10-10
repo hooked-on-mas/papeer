@@ -70,6 +70,69 @@
         }
       }
     },
+    "/api/instance": {
+      "get": {
+        "summary": "Get Instance",
+        "description": "Who answers: the CLI and a second window check the discovery file's claim here (papeer.core.instance).\n\nAllowed during a sync, backup or restore (app.SNAPSHOT_READS), and not counted as activity by the idle\nexit (sidecar/instance.py).",
+        "operationId": "get_instance_api_instance_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/ui-state": {
       "get": {
         "summary": "Get Ui State",
@@ -11590,6 +11653,59 @@
           "points"
         ],
         "title": "InkStroke"
+      },
+      "InstanceResponse": {
+        "properties": {
+          "pid": {
+            "type": "integer",
+            "title": "Pid"
+          },
+          "launcher": {
+            "type": "string",
+            "title": "Launcher"
+          },
+          "data_dir": {
+            "type": "string",
+            "title": "Data Dir"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "idle_exit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idle Exit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pid",
+          "launcher",
+          "data_dir",
+          "port",
+          "version",
+          "idle_exit"
+        ],
+        "title": "InstanceResponse",
+        "description": "Who this sidecar is (GET /api/instance): what the CLI and a second window check a discovery file against."
       },
       "InterleavedResult": {
         "properties": {

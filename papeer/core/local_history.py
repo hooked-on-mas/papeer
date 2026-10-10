@@ -46,7 +46,6 @@ import re
 import shutil
 import sqlite3
 import stat
-import sys
 import tempfile
 import threading
 import time
@@ -55,6 +54,7 @@ import zipfile
 import zlib
 
 from papeer import __version__
+from papeer.core import file_lock
 from papeer.core.backup import DATABASE_FILES, STORED_SUFFIXES, unsafe_path
 from papeer.core.fileio import (atomic_write_bytes, atomic_write_json, ensure_free_space, is_temporary, move_file,
                                  sync_directory)
@@ -127,42 +127,14 @@ class HistoryBusy(ValueError):
     """Another process holds this history (a second Papeer on the same library)."""
 
 
-def _lock_file(handle) -> None:
-    handle.seek(0)
-    if sys.platform == "win32":
-        import msvcrt
-        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
 def _unlock_file(handle) -> None:
-    try:
-        handle.seek(0)
-        if sys.platform == "win32":
-            import msvcrt
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    finally:
-        handle.close()
+    file_lock.unlock(handle)
 
 
 def _acquire_file_lock(path: Path):
     """The history's lock file, opened and locked; waits up to LOCK_WAIT for another process (HistoryBusy)."""
-    handle = open(path, "a+b")  # noqa: SIM115 - kept open while the lock is held, closed by _unlock_file
-    deadline = time.monotonic() + LOCK_WAIT
-    while True:
-        try:
-            _lock_file(handle)
-            return handle
-        except OSError:
-            if time.monotonic() >= deadline:
-                handle.close()
-                raise HistoryBusy("このPCの履歴を別のPapeerが使っています。しばらくしてからもう一度お試しください。") from None
-            time.sleep(0.1)
+    return file_lock.acquire(path, LOCK_WAIT, lambda: HistoryBusy(
+        "このPCの履歴を別のPapeerが使っています。しばらくしてからもう一度お試しください。"))
 
 
 @contextmanager

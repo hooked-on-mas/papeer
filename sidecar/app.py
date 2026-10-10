@@ -4,7 +4,10 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import json
+import logging
+import os
 import re
+import socket
 import sys
 from typing import Any, AsyncGenerator
 
@@ -18,8 +21,9 @@ from papeer import __version__
 from papeer.core.errors import AppError
 from papeer.core.paths import app_env
 from papeer.translation import translation_preview
-from sidecar import deps
+from sidecar import deps, instance
 from sidecar.errors import AnswerUnexpectedErrors, error_response, log_to_file, where
+from sidecar.instance import TrackActivity
 from sidecar.job_types import event_schemas
 from sidecar.routes import ai_jobs, drive, ink, ocr, papers, reading, research, discovery, settings, system
 
@@ -35,8 +39,15 @@ def remove_unused_translation_runs() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     deps.job_manager.set_loop(asyncio.get_running_loop())
-    # Before the first request, so no translation is writing a run folder its preview does not name yet.
+    # Before the first request, so no translation is writing a run folder its preview does not name yet. And
+    # only the sidecar that holds the library's lock gets here (main() claims it before the server starts),
+    # so no other sidecar's running translation has its run folder taken away.
     await asyncio.to_thread(remove_unused_translation_runs)
+    # Started here, not in main(): the idle timer begins when the server is about to answer, so a slow start
+    # is never counted as idleness. Only a sidecar the CLI started, and asked to (PAPEER_IDLE_EXIT).
+    grace = instance.idle_exit_grace()
+    if grace is not None:
+        instance.start_idle_exit(grace)
     yield
 
 
@@ -53,8 +64,9 @@ app = FastAPI(
 
 # What must still answer while a sync, backup or restore holds the library: reading its progress (and how
 # the jobs a reconnecting window waited on ended), and stopping it or the whole app (closing the window
-# cancels the job, then calls /shutdown).
-SNAPSHOT_READS = {"/health", "/api/jobs", "/api/drive"}
+# cancels the job, then calls /shutdown). /api/instance is what the CLI and a second window check a discovery
+# file's claim with: a sidecar busy with a sync must still answer it as itself.
+SNAPSHOT_READS = {"/health", "/api/instance", "/api/jobs", "/api/drive"}
 SNAPSHOT_JOB_READ = re.compile(r"/api/jobs/[^/]+")
 SNAPSHOT_CONTROLS = re.compile(r"/api/jobs/(?:cancel-all|[^/]+/cancel)|/shutdown")
 # What a background sync lets through (deps.snapshot_blocks): the PDFs, images and summary that pdf.js,
@@ -124,8 +136,11 @@ class ProtectLibrarySnapshot:
 
 
 # Before CORS: the last middleware added runs first, so refusals and answers to bugs get the CORS headers too.
+# TrackActivity (what the idle exit looks at) is outside ProtectLibrarySnapshot, so a request it refuses with
+# 409 counts as activity, and inside CORS, so its 503 `sidecar_closing` is readable by a window.
 app.add_middleware(AnswerUnexpectedErrors)
 app.add_middleware(ProtectLibrarySnapshot)
+app.add_middleware(TrackActivity)
 
 
 # The Tauri window's origins (macOS/Linux, then Windows). Only a development sidecar (`just dev-sidecar`,
@@ -209,6 +224,32 @@ def startup_error() -> str | None:
 
 
 SIGTERM_REQUEST_TIMEOUT = 3
+# uvicorn's exit code when the server could not start (the port is taken): uvicorn.run exits with it.
+EXIT_PORT_TAKEN = 3
+# Where the packaged app and `tauri dev` expect the sidecar when no port is given.
+DEFAULT_PORT = 8000
+
+
+def bind_socket(port: int) -> socket.socket:
+    """Listen on 127.0.0.1:`port` (0: any free port); exit with EXIT_PORT_TAKEN, as uvicorn.run does, if taken.
+
+    Bound here, before the server starts, so that the port is known (PAPEER_PORT=0) for the discovery file
+    that is written before the server runs. SO_REUSEADDR as asyncio sets it for a server, which is POSIX only:
+    on Windows it would let a second sidecar bind a port that is in use. Listening at once means a client that
+    comes while the app starts waits in the backlog (the CLI connects as soon as it finds the file) instead of
+    being refused.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if os.name == "posix":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", port))
+        sock.listen(2048)
+    except OSError as exc:
+        sock.close()
+        print(f"ポート {port} を使えません（別のプログラムが使用中です）: {exc}", file=sys.stderr)
+        sys.exit(EXIT_PORT_TAKEN)
+    return sock
 
 
 def main() -> None:
@@ -221,14 +262,37 @@ def main() -> None:
         print("警告: PAPEER_DEV_NO_AUTH=1 のため認証なしで起動します（開発専用）。", file=sys.stderr)
     # Tracebacks of bugs, kept on this PC: Tauri does not read the packaged sidecar's stderr.
     log_to_file()
-    port = int(app_env("PORT") or "8000")
-    # Ending with the app however it ends (see system.watch_stdin and system.stop_on_terminate).
+    # Ending with the app however it ends (see system.watch_stdin and system.stop_on_terminate). Before the
+    # library is claimed, so that an app closed while this sidecar waits for another to hand it over ends it
+    # at once, instead of its taking the library over afterwards.
     system.start_watching_stdin()
     system.stop_on_terminate()
+    # One sidecar per library (sidecar/instance.py): the lock first, so what the sidecar does to the library
+    # at startup (the lifespan's cleanup of translation runs) cannot meet another sidecar's work. May exit
+    # with instance.EXIT_LIBRARY_IN_USE.
+    root = deps.get_data_dir()
+    who = instance.launcher()
+    instance.claim_library(root, who)
+    sock = bind_socket(int(app_env("PORT") or str(DEFAULT_PORT)))
+    port = sock.getsockname()[1]
+    # Only now: whoever reads the file finds a socket that is listening.
+    instance.advertise(root, port, deps.get_auth_token(), who)
     # Media URLs carry the token in the query string, so the access log would write it out. After SIGTERM,
     # requests still running get a few seconds before the jobs are stopped (system.stop_on_terminate).
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info", access_log=False,
-                timeout_graceful_shutdown=SIGTERM_REQUEST_TIMEOUT)
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info", access_log=False,
+                            timeout_graceful_shutdown=SIGTERM_REQUEST_TIMEOUT)
+    server = uvicorn.Server(config)
+    # What uvicorn.run says when it binds the socket itself (and `just dev-sidecar` shows).
+    logging.getLogger("uvicorn.error").info("Uvicorn running on http://127.0.0.1:%d (Press CTRL+C to quit)", port)
+    try:
+        server.run(sockets=[sock])
+    except KeyboardInterrupt:
+        pass
+    finally:
+        instance.withdraw()
+        instance.release()
+    if not server.started:
+        sys.exit(EXIT_PORT_TAKEN)
 
 
 if __name__ == "__main__":

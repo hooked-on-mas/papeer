@@ -16,9 +16,9 @@ from papeer.core.code_version import application_version
 from papeer.core.errors import NotFound
 from papeer.core.paths import app_env
 from papeer.providers.common import end_running_clis
-from sidecar import deps
+from sidecar import deps, instance
 from sidecar.job_types import JobInfo
-from sidecar.schemas.system import HealthResponse, UIStateModel
+from sidecar.schemas.system import HealthResponse, InstanceResponse, UIStateModel
 from sidecar.ui_state import load_ui_state, save_ui_state
 
 public = APIRouter()
@@ -41,6 +41,9 @@ SHUTDOWN_REQUEST_TIMEOUT = 5.0
 
 
 def exit_process() -> None:
+    # os._exit skips atexit and finally: the discovery file goes first, so that nobody is sent to a sidecar
+    # that is gone (the lock itself is freed by the OS with the process).
+    instance.withdraw()
     # A CLI still running (its job did not stop in time) ends now, not after the sidecar: each runs in a
     # session of its own, which ending the sidecar's process group would not reach.
     end_running_clis()
@@ -137,6 +140,16 @@ def shutdown() -> dict[str, Any]:
 
     threading.Thread(target=stop, daemon=True).start()
     return {"status": "shutting down", "cancelled": cancelled, "stopped": stopped}
+
+
+@router.get("/api/instance", response_model=InstanceResponse)
+def get_instance() -> dict[str, Any]:
+    """Who answers: the CLI and a second window check the discovery file's claim here (papeer.core.instance).
+
+    Allowed during a sync, backup or restore (app.SNAPSHOT_READS), and not counted as activity by the idle
+    exit (sidecar/instance.py).
+    """
+    return instance.describe()
 
 
 @router.get("/api/ui-state", response_model=UIStateModel)

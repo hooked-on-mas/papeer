@@ -16,6 +16,10 @@
 //!   terminated here and when the app exits however it exits (「タスクの終了」 included);
 //! - on Linux, it is also sent SIGTERM when the app's process ends (PR_SET_PDEATHSIG).
 //!
+//! Only one sidecar serves a library at a time (sidecar/instance.py). The app starts its sidecar as the
+//! launcher "app": it takes the library over from a headless sidecar the CLI started, and a sidecar that
+//! finds the library in use by another Papeer exits with code 4, which the app reports (watch_startup).
+//!
 //! What differs between platforms (starting the launcher, holding and ending its processes, the PATH it
 //! gets) is in `platform` below.
 
@@ -28,6 +32,7 @@ use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 /// The bundle's folder in the resource directory (sidecar.spec COLLECT, tauri.conf.json bundle.resources).
 const SIDECAR_DIR: &str = "sidecar";
@@ -35,6 +40,20 @@ const SIDECAR_DIR: &str = "sidecar";
 const SIDECAR_EXE: &str = "papeer-sidecar";
 /// Tells the sidecar to end when its standard input (the app's pipe) closes (sidecar/routes/system.py).
 const WATCH_STDIN_VARIABLE: &str = "PAPEER_WATCH_STDIN";
+/// Tells the sidecar who started it (sidecar/instance.py): "app" may take the library over from the CLI's
+/// headless sidecar. A development sidecar (`just dev-sidecar`, which a debug build talks to instead of
+/// launching one) is "dev" by default, so this module, release builds only, always says "app".
+const LAUNCHER_VARIABLE: &str = "PAPEER_LAUNCHER";
+const LAUNCHER: &str = "app";
+/// The exit code of a sidecar that gave up because another Papeer serves the library
+/// (EXIT_LIBRARY_IN_USE in sidecar/instance.py).
+const LIBRARY_IN_USE_EXIT_CODE: i32 = 4;
+/// How long after the start the app looks for that exit: a handover from the CLI's sidecar may take its
+/// jobs' stopping time (SHUTDOWN_JOB_TIMEOUT + SHUTDOWN_REQUEST_TIMEOUT + 5 s in sidecar/instance.py).
+const STARTUP_WATCH: Duration = Duration::from_secs(120);
+/// What the dialog says when the sidecar gave up (the app ends after it).
+const LIBRARY_IN_USE_MESSAGE: &str =
+    "このライブラリは別の Papeer が使用中です。もう一方を終了してから起動し直してください。";
 
 /// How long to wait after the app exits for a sidecar the frontend has already sent /shutdown.
 const EXIT_GRACE: Duration = Duration::from_secs(3);
@@ -88,6 +107,16 @@ impl SearchPath {
     }
 }
 
+/// The command that starts the sidecar `exe` on `port`, with the environment it is configured by.
+fn sidecar_command(exe: &Path, port: u16, token: &str) -> Command {
+    let mut command = Command::new(exe);
+    command
+        .env("PAPEER_PORT", port.to_string())
+        .env("PAPEER_TOKEN", token)
+        .env(LAUNCHER_VARIABLE, LAUNCHER);
+    command
+}
+
 pub fn spawn(
     app: &tauri::App,
     port: u16,
@@ -95,10 +124,7 @@ pub fn spawn(
     search_path: SearchPath,
 ) -> Result<Sidecar, Box<dyn std::error::Error>> {
     let exe = launcher(&app.path().resource_dir()?);
-    let mut command = Command::new(&exe);
-    command
-        .env("PAPEER_PORT", port.to_string())
-        .env("PAPEER_TOKEN", token);
+    let mut command = sidecar_command(&exe, port, token);
     if let Some(path) = search_path.take() {
         command.env("PATH", path);
     }
@@ -128,6 +154,19 @@ impl Sidecar {
         })
     }
 
+    /// How the sidecar stands at startup: running, given up because the library is in use, or ended
+    /// otherwise (or already taken by `end`, as the app exits).
+    fn startup_state(&self) -> StartupState {
+        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        match child.as_mut().map(Child::try_wait) {
+            Some(Ok(None)) => StartupState::Running,
+            Some(Ok(Some(status))) if status.code() == Some(LIBRARY_IN_USE_EXIT_CODE) => {
+                StartupState::LibraryInUse
+            }
+            _ => StartupState::Ended,
+        }
+    }
+
     /// Called as the app exits. The frontend has normally cancelled the jobs and sent /shutdown already
     /// (AppShell.tsx useCloseHandling); if the sidecar is still running, ask it here, then wait for it.
     pub fn stop(&self, app: &tauri::AppHandle) {
@@ -142,8 +181,8 @@ impl Sidecar {
         self.end(EXIT_GRACE, SIDECAR_EXIT_TIMEOUT);
     }
 
-    /// Wait up to `grace` for the sidecar to end, then send it /shutdown and wait up to `timeout`,
-    /// then kill it. True if it had to be killed.
+    /// Wait up to `grace` for the sidecar to end, then close its stdin and send it /shutdown and wait up to
+    /// `timeout`, then kill it. True if it had to be killed.
     fn end(&self, grace: Duration, timeout: Duration) -> bool {
         let Some(mut child) = self.child.lock().unwrap_or_else(|e| e.into_inner()).take() else {
             return false;
@@ -151,6 +190,11 @@ impl Sidecar {
         if exits_within(&mut child, grace) {
             return false;
         }
+        // The sidecar ends when its stdin closes (WATCH_STDIN_VARIABLE), which it does even before it
+        // listens: one that still waits for another sidecar to hand the library over (up to some 30
+        // seconds) refuses /shutdown, and would otherwise sit there until it is killed. The write end of
+        // that pipe is `child.stdin`, kept open until here.
+        drop(child.stdin.take());
         let deadline = Instant::now() + timeout;
         request_shutdown(self.port, &self.token, timeout);
         if exits_within(
@@ -164,6 +208,43 @@ impl Sidecar {
         exits_within(&mut child, KILL_TIMEOUT);
         true
     }
+}
+
+#[derive(Debug, PartialEq)]
+enum StartupState {
+    Running,
+    LibraryInUse,
+    Ended,
+}
+
+/// Watch for the sidecar giving up because another Papeer serves the library (it says so within seconds
+/// of starting, or after a handover that did not come). Tell the user and end the app: it would
+/// otherwise sit on a window whose every request fails. Any other end of the sidecar is left as it was.
+pub fn watch_startup(app: &tauri::AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let deadline = Instant::now() + STARTUP_WATCH;
+        while Instant::now() < deadline {
+            let state = match app.try_state::<Sidecar>() {
+                Some(sidecar) => sidecar.startup_state(),
+                None => return,
+            };
+            match state {
+                StartupState::Running => std::thread::sleep(Duration::from_millis(200)),
+                StartupState::Ended => return,
+                StartupState::LibraryInUse => {
+                    // Not on the main thread, which the dialog needs to run on.
+                    app.dialog()
+                        .message(LIBRARY_IN_USE_MESSAGE)
+                        .title("Papeer")
+                        .kind(MessageDialogKind::Error)
+                        .blocking_show();
+                    app.exit(1);
+                    return;
+                }
+            }
+        }
+    });
 }
 
 /// True if the process has ended, or ends within `timeout`.
@@ -487,6 +568,50 @@ mod tests {
     }
 
     #[test]
+    fn the_sidecar_is_started_as_the_app_on_its_port_with_its_token() {
+        let command = sidecar_command(Path::new("papeer-sidecar"), 51234, "secret");
+        let env: std::collections::HashMap<_, _> = command
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        assert_eq!(env["PAPEER_LAUNCHER"].as_deref(), Some("app"));
+        assert_eq!(env["PAPEER_PORT"].as_deref(), Some("51234"));
+        assert_eq!(env["PAPEER_TOKEN"].as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn a_sidecar_that_found_the_library_in_use_is_told_from_the_others() {
+        let wait_for = |sidecar: &Sidecar, expected: StartupState| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while sidecar.startup_state() != expected {
+                assert!(Instant::now() < deadline, "{:?}", sidecar.startup_state());
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        let in_use = Sidecar::start(shell("exit 4", "exit 4"), closed_port(), "t").expect("start");
+        wait_for(&in_use, StartupState::LibraryInUse);
+        // Port taken (uvicorn's exit code 3) or any other end: not this dialog's business.
+        let port_taken =
+            Sidecar::start(shell("exit 3", "exit 3"), closed_port(), "t").expect("start");
+        wait_for(&port_taken, StartupState::Ended);
+        let running = Sidecar::start(
+            shell("ping -n 3 127.0.0.1 >nul", "sleep 2"),
+            closed_port(),
+            "t",
+        )
+        .expect("start");
+        assert_eq!(running.startup_state(), StartupState::Running);
+        // Once the app has taken the child to end it, there is nothing to report.
+        assert!(!running.end(Duration::from_secs(20), Duration::from_secs(1)));
+        assert_eq!(running.startup_state(), StartupState::Ended);
+    }
+
+    #[test]
     fn the_sidecar_is_told_to_watch_its_stdin_which_closes_with_the_app() {
         // A sidecar that ends when its stdin ends, and says whether it was asked to (exit code 0).
         let sidecar = Sidecar::start(
@@ -504,6 +629,27 @@ mod tests {
         drop(child.stdin.take());
         assert!(exits_within(&mut child, Duration::from_secs(10)));
         assert_eq!(child.wait().expect("status").code(), Some(0));
+    }
+
+    #[test]
+    fn a_sidecar_that_does_not_listen_yet_ends_when_its_stdin_is_closed_not_killed() {
+        // A sidecar that waits for the library to be handed over listens on no port: /shutdown is refused,
+        // and only its stdin tells it the app is closing (as it does in watch_stdin).
+        let sidecar = Sidecar::start(
+            shell(
+                "sort >nul & if %PAPEER_WATCH_STDIN%==1 (exit 0) else (exit 3)",
+                "cat >/dev/null; test \"$PAPEER_WATCH_STDIN\" = 1",
+            ),
+            closed_port(),
+            "t",
+        )
+        .expect("start");
+        let started = Instant::now();
+        assert!(
+            !sidecar.end(Duration::from_millis(200), Duration::from_secs(20)),
+            "killed"
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 
     #[cfg(windows)]
@@ -669,10 +815,8 @@ mod tests {
                 std::fs::create_dir_all(dir).expect("folder");
             }
             let port = closed_port();
-            let mut command = Command::new(&exe);
+            let mut command = sidecar_command(&exe, port, "test-token");
             command
-                .env("PAPEER_PORT", port.to_string())
-                .env("PAPEER_TOKEN", "test-token")
                 .env("PAPEER_DATA_DIR", &data)
                 .env("LOCALAPPDATA", pc.join("localappdata"))
                 .env("XDG_DATA_HOME", pc.join("xdg-data"))
