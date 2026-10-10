@@ -10,6 +10,11 @@ export type AppEvents = {
   /** Edit a paper's information and organization without changing the open PDF or tab. */
   "open-paper-details": { paperId: string };
   "open-reader-search": void;
+  /**
+   * Opens the folder organizing dialog (features/library/OrganizeDialog.tsx) for the papers directly in the
+   * folder `source` ("" is 未分類), or for `paperIds`; with neither, as it was left (its proposal or its running job).
+   */
+  "open-organize-dialog": { source?: string; paperIds?: string[] };
   /** Opens the translation editor on the page's paragraph containing the selected text (or on `unit`, a paragraph id). */
   "open-paragraph-editor": { page: number; side: "original" | "translated"; text: string; unit?: string };
   /** Opens 翻訳の確認・修正 on its list of pages to check. */

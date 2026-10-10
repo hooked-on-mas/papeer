@@ -24,6 +24,7 @@ import { ChatPane, NotesPane, SummaryPane, ReferencesPane } from "./lazyPanes";
 import { StickyNotesTab } from "../features/reader/StickyNotesTab";
 import { StickyNoteDialog } from "../features/reader/StickyNoteDialog";
 import { PaperDetailsPanel } from "../features/notes/PaperDetailsPanel";
+import { OrganizeDialogHost } from "../features/library/OrganizeDialog";
 import { DriveSyncHost } from "../features/settings/DriveSection";
 import { SettingsVersionNotice } from "../features/settings/VersionNoticeHost";
 import { syncDrive } from "../features/settings/driveSync";
@@ -502,6 +503,7 @@ export function AppShell() {
       <SettingsVersionNotice />
       <StickyNoteDialog />
       <PaperDetailsPanel />
+      <OrganizeDialogHost />
       <AppDialogs />
       <Lightbox />
       <TranslationDialogHost />

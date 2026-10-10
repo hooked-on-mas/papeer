@@ -2672,6 +2672,8 @@ export interface components {
             paper_ids: string[];
             /** Added */
             added: number;
+            /** Added Ids */
+            added_ids?: string[];
             /** Needs Ocr */
             needs_ocr?: string[];
             /** Metadata Failures */

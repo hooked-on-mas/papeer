@@ -439,7 +439,7 @@ def test_collection_rules_match_old_library(test_env):
 
     # Importing the same PDF again opens the existing paper instead of adding one.
     again = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
-    assert again.result.model_dump() == {"paper_ids": [paper_id], "added": 0, "needs_ocr": [], "metadata_failures": []}
+    assert again.result.model_dump() == {"paper_ids": [paper_id], "added": 0, "added_ids": [], "needs_ocr": [], "metadata_failures": []}
 
 
 def test_import_announces_page_counts_before_each_paper(test_env):
@@ -465,7 +465,23 @@ def test_imports_requested_together_run_in_turn(test_env):
     first, second = _wait(first), _wait(second)
     assert (first.status, second.status) == ("succeeded", "succeeded")
     assert first.result.added == 1
-    assert second.result.model_dump() == {"paper_ids": first.result.paper_ids, "added": 0, "needs_ocr": [], "metadata_failures": []}
+    assert second.result.model_dump() == {"paper_ids": first.result.paper_ids, "added": 0, "added_ids": [], "needs_ocr": [], "metadata_failures": []}
+
+
+def test_import_tells_the_new_papers_apart_from_the_ones_already_in_the_library(test_env):
+    client, tmp_dir = test_env
+    first = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF)]}).json()["job_id"])
+    other = tmp_dir / "other.pdf"
+    with fitz.open() as pdf:
+        pdf.new_page().insert_text((72, 72), "A different paper that is not in the library yet.")
+        pdf.save(other)
+    # A PDF already there, a new one, and the new one again: paper_ids answers each path, added_ids the new paper once.
+    job = _wait(client.post("/api/papers/import", json={"paths": [str(FIXTURE_PDF), str(other), str(other)]}).json()["job_id"])
+    assert job.status == "succeeded"
+    known, new = first.result.paper_ids[0], job.result.paper_ids[1]
+    assert new != known and job.result.paper_ids == [known, new, new]
+    assert job.result.added == 1
+    assert job.result.added_ids == [new]
 
 
 def test_paper_metadata_reading_and_export_guards(test_env, tmp_path):

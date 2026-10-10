@@ -117,6 +117,7 @@ def import_papers(body: ImportRequest) -> JobStarted:
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict[str, Any]:
         imported_ids: list[str] = []
+        added_ids: list[str] = []
         needs_ocr: list[str] = []
         metadata_failures: list[str] = []
         added = 0
@@ -138,6 +139,8 @@ def import_papers(body: ImportRequest) -> JobStarted:
                 raise Cancelled("追加を中止しました。追加済みの論文は保存されています。") from None
             imported_ids.append(paper_id)
             added += is_new
+            if is_new:
+                added_ids.append(paper_id)
             document = lib.document(paper_id)
             if is_new and any(entry.get("reason") != "partial" for entry in document["ocr_pages"]):
                 needs_ocr.append(paper_id)
@@ -158,7 +161,7 @@ def import_papers(body: ImportRequest) -> JobStarted:
                 except Exception as error:  # noqa: BLE001 - optional metadata failure must not lose an imported PDF
                     logger.warning("Paper metadata completion failed for %s", paper_id, exc_info=True)
                     metadata_failures.append(f"{path.name}: {error}")
-        return {"paper_ids": imported_ids, "added": added, "needs_ocr": needs_ocr,
+        return {"paper_ids": imported_ids, "added": added, "added_ids": added_ids, "needs_ocr": needs_ocr,
                 "metadata_failures": metadata_failures}
 
     return JobStarted(job_id=submit_import(action, announce_pages))

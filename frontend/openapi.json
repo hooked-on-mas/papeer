@@ -11371,6 +11371,13 @@
             "type": "integer",
             "title": "Added"
           },
+          "added_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Added Ids"
+          },
           "needs_ocr": {
             "items": {
               "type": "string"

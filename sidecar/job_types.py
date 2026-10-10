@@ -186,6 +186,7 @@ class AskResult(BaseModel):
 class ImportResult(BaseModel):
     paper_ids: list[str]  # In the order the paths were sent; a PDF already in the library gives its paper.
     added: int  # How many were new.
+    added_ids: list[str] = Field(default_factory=list)  # The new papers only (not the PDFs already in the library), in the same order.
     # The new papers with pages still needing OCR (scans not read when added): the frontend offers to read them.
     needs_ocr: list[str] = Field(default_factory=list)
     # Optional opt-in metadata lookup can fail while the PDF itself is safely imported.

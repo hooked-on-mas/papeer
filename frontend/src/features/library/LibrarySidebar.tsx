@@ -13,7 +13,7 @@ import {
 } from "@dnd-kit/core";
 import {
   ArrowUpDown, BookOpen, ChevronDown, ChevronRight, CircleAlert, Copy, Download, Edit2, ExternalLink, FilePlus2, FileText, Folder,
-  FolderOpen, FolderPlus, Loader2, Plus, Save, Search, Tag, Trash2, Undo2, X,
+  FolderOpen, FolderPlus, Loader2, Plus, Save, Search, Sparkles, Tag, Trash2, Undo2, X,
 } from "lucide-react";
 import { paperDisplayName, useCollections, usePaperList, type PaperData } from "@/api/hooks";
 import { useStore } from "@/store";
@@ -460,8 +460,19 @@ export function LibrarySidebar() {
           <FilePlus2 className="w-4 h-4" />
           PDF を追加
         </button>
-        <div className="text-[0.75rem] text-muted-foreground truncate px-0.5" title={currentCollection || "未分類"}>
-          追加先：{currentCollection || "未分類"}
+        <div className="flex items-center gap-1 px-0.5">
+          <div className="min-w-0 flex-1 text-[0.75rem] text-muted-foreground truncate" title={currentCollection || "未分類"}>
+            追加先：{currentCollection || "未分類"}
+          </div>
+          {/* The papers not in a folder: the usual ones to sort after adding PDFs (OrganizeDialog.tsx). */}
+          <button
+            onClick={() => emitAppEvent("open-organize-dialog", { source: "" })}
+            className="w-6 h-6 flex items-center justify-center rounded hover:bg-muted shrink-0"
+            title="未分類の論文をAIで内容別にフォルダー分け…"
+            aria-label="未分類の論文をAIで内容別にフォルダー分けする"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-muted-foreground" />
+          </button>
         </div>
         {lastUndo && <button onClick={undoMove} title={withShortcutLabels(`${undoText}（ライブラリ内で Ctrl+Z）`)}
           className="w-full flex items-center justify-center gap-2 h-7 border rounded-md hover:bg-muted disabled:opacity-40 disabled:cursor-default">
@@ -932,6 +943,12 @@ function FolderRowView({ node, level, setSize, posInSet, papers, filtered, setEx
         <ContextMenuItem onClick={() => createFolder(node.path)}>
           <FolderPlus className="w-4 h-4 mr-2" /> {node.path ? "子フォルダーを作成…" : "フォルダーを作成…"}
         </ContextMenuItem>
+        {/* The papers directly in the folder (those of 未分類 for it), not its subfolders'; while searching, the
+            rows hold only the matches, so the dialog says if there are none. */}
+        <ContextMenuItem disabled={!filtered && !node.papers.length}
+          onClick={() => emitAppEvent("open-organize-dialog", { source: node.path })}>
+          <Sparkles className="w-4 h-4 mr-2" /> AIで内容別に分ける…
+        </ContextMenuItem>
         {node.path && (
           <>
             <ContextMenuItem onClick={() => renameFolderRow(node.path)}>
@@ -1224,6 +1241,10 @@ function SelectionMenu({ ids, paperId, collections }: { ids: string[]; paperId: 
           <ContextMenuItem onClick={() => void movePapersToNewCollection(ids, "")}>新しい分類を入力…</ContextMenuItem>
         </ContextMenuSubContent>
       </ContextMenuSub>
+      {/* The selection as it is, from any folders; new folders go under the folder they share (organizePlan.commonFolder). */}
+      <ContextMenuItem onClick={() => emitAppEvent("open-organize-dialog", { paperIds: ids })}>
+        <Sparkles className="w-4 h-4 mr-2" /> AIで内容別に分ける…
+      </ContextMenuItem>
       <ContextMenuSub>
         <ContextMenuSubTrigger>
           <Tag className="w-4 h-4 mr-2" /> タグを付ける
