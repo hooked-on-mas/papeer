@@ -9,7 +9,7 @@ appear in the API's schema (JobInfo in GET /api/jobs and /api/jobs/{job_id}, and
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, TypedDict, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from sidecar.schemas.research import ResearchRecord, ReferenceImportResult
@@ -41,6 +41,7 @@ class JobKind(StrEnum):
     PAPER_DISCOVERY = "paper-discovery"
     MAP_GROUPS = "paper-map-groups"
     REFERENCE_IMPORT = "reference-import"
+    LIBRARY_ORGANIZE = "library-organize"  # The AI proposes folders for the papers of a folder (nothing is moved).
 
 
 # The jobs that copy or replace the whole library: nothing else runs beside them (JobManager), and the
@@ -127,6 +128,28 @@ class GlossarySplitResult(BaseModel):
     domains: list[GlossaryDomainCount]  # Every domain dictionary afterwards (not 共通), with its terms.
     terms: list[dict[str, str]] | None = None
     original: list[dict[str, str]] | None = None
+
+
+class OrganizeFolder(BaseModel):
+    name: str  # The folder's path, "親 / 子".
+    reason: str  # What its papers have in common, in the AI's words; may be empty.
+    new: bool  # Not in the library yet: applying the proposal creates it.
+
+
+# "from" is a Python keyword, so the key is spelled with the functional syntax.
+OrganizeMove = TypedDict("OrganizeMove", {"paper_id": str, "title": str, "from": str, "to": str})
+
+
+class OrganizeProposal(BaseModel):
+    """library-organize: a proposal to show the user, applied by POST /api/collections/apply-moves with
+    `moves` and `expected`. Sent back as `previous` to have the AI revise it."""
+    source: str  # The folder organized ("" for 未分類); the base under which new folders are made.
+    instruction: str = Field(max_length=2000)
+    folders: list[OrganizeFolder] = Field(max_length=1000)  # The folders the moves go to.
+    moves: list[OrganizeMove] = Field(max_length=1000)  # Only papers that change folder.
+    expected: dict[str, str] = Field(max_length=1000)  # The folder of each moved paper when the proposal was made.
+    message: str
+    usage: Usage | None = None
 
 
 class TermReplacementResult(BaseModel):
@@ -247,6 +270,7 @@ RESULT_TYPES: dict[JobKind, Any] = {
     JobKind.PAPER_DISCOVERY: DiscoveryResult,
     JobKind.MAP_GROUPS: MapGroupResult,
     JobKind.REFERENCE_IMPORT: ReferenceImportResult,
+    JobKind.LIBRARY_ORGANIZE: OrganizeProposal,
 }
 
 # Which one belongs to which kind is RESULT_TYPES (and the frontend's JobResults); the union is only
@@ -256,6 +280,7 @@ JobResult = Union[
     TranslateResult, RevisionDraftResult, GlossaryDraftResult, GlossaryDomainsResult, GlossarySplitResult, ArticleResult, AskResult, ImportResult,
     ExportResult, InterleavedResult, BackupResult, RestoreResult, DriveSyncResult, OcrResult, OcrDataResult,
     CheckResult, ResearchRecord, DiscoveryResult, MapGroupResult, ReferenceImportResult,
+    OrganizeProposal,
 ]
 
 _RESULT_ADAPTERS = {kind: TypeAdapter(result_type) for kind, result_type in RESULT_TYPES.items()}

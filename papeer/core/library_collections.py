@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from papeer.core.collection_paths import collection_ancestors, in_collection, normalize_collection_name
+from papeer.core.errors import Conflict, Invalid
 from papeer.core.library_base import LibraryBase
 
 
@@ -52,6 +53,38 @@ class Collections(LibraryBase):
                 if mapped(name) != name:
                     db.execute("UPDATE papers SET collection_name=? WHERE id=?", (mapped(name), row["id"]))
         return destination
+
+    def apply_moves(self, moves: list[dict], expected: dict[str, str]) -> dict:
+        """Move papers to folders, all or none: `moves` is [{"paper_id", "to"}], `expected` the folder each
+        moved paper must be in now (as when the moves were proposed). A paper that is gone or in another
+        folder is a Conflict (code collection_changed) and nothing changes. Missing target folders and their
+        parents are created. Returns {"moved": papers whose folder changed, "created": new folder names}."""
+        targets: dict[str, str] = {}
+        for move in moves:
+            if move["paper_id"] in targets:
+                raise Invalid("同じ論文が複数回指定されています。")
+            if move["paper_id"] not in expected:
+                raise Invalid("移動前のフォルダーが指定されていません。")
+            targets[move["paper_id"]] = normalize_collection_name(move["to"])
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            known = {path for row in db.execute("SELECT name FROM collections") for path in collection_ancestors(row[0])}
+            current: dict[str, str] = {}
+            for row in db.execute("SELECT id,collection_name FROM papers").fetchall():
+                current[row["id"]] = normalize_collection_name(row["collection_name"])
+                known.update(collection_ancestors(row["collection_name"]))
+            for paper_id in targets:
+                if paper_id not in current:
+                    raise Conflict("論文が削除されたため、整理の案を適用できません。もう一度案を作ってください。", code="collection_changed")
+                if current[paper_id] != normalize_collection_name(expected[paper_id]):
+                    raise Conflict("論文のフォルダーが案を作った後に変更されたため、適用できません。もう一度案を作ってください。",
+                                   code="collection_changed")
+            created = [path for target in targets.values() for path in collection_ancestors(target) if path not in known]
+            created = list(dict.fromkeys(created))
+            db.executemany("INSERT OR IGNORE INTO collections(name) VALUES(?)", [(name,) for name in created])
+            changed = [(target, paper_id) for paper_id, target in targets.items() if target != current[paper_id]]
+            db.executemany("UPDATE papers SET collection_name=? WHERE id=?", changed)
+        return {"moved": len(changed), "created": created}
 
     def delete_collection(self, path: str, *, undo_token: str | None = None) -> list[str]:
         """Remove a folder subtree, preserving every paper and its files."""

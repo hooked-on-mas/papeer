@@ -610,6 +610,46 @@ export interface paths {
         patch: operations["rename_collection_api_collections_rename_patch"];
         trace?: never;
     };
+    "/api/collections/organize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Organize Collection
+         * @description Have the AI propose folders for the papers of a folder (or of paper_ids); the result is a preview.
+         */
+        post: operations["organize_collection_api_collections_organize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/collections/apply-moves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Collection Moves
+         * @description Apply a proposal all or nothing: 409 (code collection_changed) when a paper is gone or has moved since.
+         */
+        post: operations["apply_collection_moves_api_collections_apply_moves_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/collections/bibtex": {
         parameters: {
             query?: never;
@@ -1915,6 +1955,22 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** ApplyMovesRequest */
+        ApplyMovesRequest: {
+            /** Moves */
+            moves: components["schemas"]["CollectionMove"][];
+            /** Expected */
+            expected: {
+                [key: string]: string;
+            };
+        };
+        /** ApplyMovesResult */
+        ApplyMovesResult: {
+            /** Moved */
+            moved: number;
+            /** Created */
+            created: string[];
+        };
         /** ApplyTermReplacementRequest */
         ApplyTermReplacementRequest: {
             /** Source */
@@ -2206,6 +2262,13 @@ export interface components {
             paper_id: string;
             /** Message */
             message: string;
+        };
+        /** CollectionMove */
+        CollectionMove: {
+            /** Paper Id */
+            paper_id: string;
+            /** To */
+            to: string;
         };
         /** CreateCollectionRequest */
         CreateCollectionRequest: {
@@ -2722,7 +2785,7 @@ export interface components {
              */
             cancelled: boolean;
             /** Result */
-            result: components["schemas"]["TermReplacementResult"] | components["schemas"]["TermResearchResult"] | components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["GlossaryDomainsResult"] | components["schemas"]["GlossarySplitResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | components["schemas"]["ResearchRecord"] | components["schemas"]["DiscoveryResult"] | components["schemas"]["MapGroupResult"] | components["schemas"]["ReferenceImportResult"] | null;
+            result: components["schemas"]["TermReplacementResult"] | components["schemas"]["TermResearchResult"] | components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["GlossaryDomainsResult"] | components["schemas"]["GlossarySplitResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | components["schemas"]["ResearchRecord"] | components["schemas"]["DiscoveryResult"] | components["schemas"]["MapGroupResult"] | components["schemas"]["ReferenceImportResult"] | components["schemas"]["OrganizeProposal"] | null;
             /** Error */
             error: string | null;
         };
@@ -2731,7 +2794,7 @@ export interface components {
          * @description The kinds of background jobs; the names are what the frontend receives (jobKinds.ts).
          * @enum {string}
          */
-        JobKind: "translate" | "revision" | "revision-draft" | "glossary-draft" | "glossary-select" | "glossary-split" | "term-replace" | "term-research" | "article" | "ask" | "check" | "import" | "export" | "interleaved" | "backup" | "restore" | "drive-sync" | "ocr" | "ocr-data" | "reference-research" | "paper-discovery" | "paper-map-groups" | "reference-import";
+        JobKind: "translate" | "revision" | "revision-draft" | "glossary-draft" | "glossary-select" | "glossary-split" | "term-replace" | "term-research" | "article" | "ask" | "check" | "import" | "export" | "interleaved" | "backup" | "restore" | "drive-sync" | "ocr" | "ocr-data" | "reference-research" | "paper-discovery" | "paper-map-groups" | "reference-import" | "library-organize";
         /**
          * JobStarted
          * @description The answer of a route that starts a job: follow it with GET /api/jobs/{job_id} or the events.
@@ -3040,6 +3103,73 @@ export interface components {
         OptionsRequest: {
             /** Auto Sync */
             auto_sync: boolean;
+        };
+        /** OrganizeFolder */
+        OrganizeFolder: {
+            /** Name */
+            name: string;
+            /** Reason */
+            reason: string;
+            /** New */
+            new: boolean;
+        };
+        /** OrganizeMove */
+        OrganizeMove: {
+            /** Paper Id */
+            paper_id: string;
+            /** Title */
+            title: string;
+            /** From */
+            from: string;
+            /** To */
+            to: string;
+        };
+        /**
+         * OrganizeProposal
+         * @description library-organize: a proposal to show the user, applied by POST /api/collections/apply-moves with
+         *     `moves` and `expected`. Sent back as `previous` to have the AI revise it.
+         */
+        OrganizeProposal: {
+            /** Source */
+            source: string;
+            /** Instruction */
+            instruction: string;
+            /** Folders */
+            folders: components["schemas"]["OrganizeFolder"][];
+            /** Moves */
+            moves: components["schemas"]["OrganizeMove"][];
+            /** Expected */
+            expected: {
+                [key: string]: string;
+            };
+            /** Message */
+            message: string;
+            usage?: components["schemas"]["Usage"] | null;
+        };
+        /** OrganizeRequest */
+        OrganizeRequest: {
+            /**
+             * Source
+             * @default
+             */
+            source?: string;
+            /**
+             * Instruction
+             * @default
+             */
+            instruction?: string;
+            /** Paper Ids */
+            paper_ids?: string[] | null;
+            /**
+             * Feedback
+             * @default
+             */
+            feedback?: string;
+            previous?: components["schemas"]["OrganizeProposal"] | null;
+            /** Model */
+            model?: string | null;
+            /** Effort */
+            effort?: string | null;
         };
         /** OtherHistoriesRemoveRequest */
         OtherHistoriesRemoveRequest: {
@@ -4332,7 +4462,7 @@ export interface components {
              * Result
              * @default null
              */
-            result: components["schemas"]["TermReplacementResult"] | components["schemas"]["TermResearchResult"] | components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["GlossaryDomainsResult"] | components["schemas"]["GlossarySplitResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | components["schemas"]["ResearchRecord"] | components["schemas"]["DiscoveryResult"] | components["schemas"]["MapGroupResult"] | components["schemas"]["ReferenceImportResult"] | null;
+            result: components["schemas"]["TermReplacementResult"] | components["schemas"]["TermResearchResult"] | components["schemas"]["TranslateResult"] | components["schemas"]["RevisionDraftResult"] | components["schemas"]["GlossaryDraftResult"] | components["schemas"]["GlossaryDomainsResult"] | components["schemas"]["GlossarySplitResult"] | components["schemas"]["ArticleResult"] | components["schemas"]["AskResult"] | components["schemas"]["ImportResult"] | components["schemas"]["ExportResult"] | components["schemas"]["InterleavedResult"] | components["schemas"]["BackupResult"] | components["schemas"]["RestoreResult"] | components["schemas"]["DriveSyncResult"] | components["schemas"]["OcrResult"] | components["schemas"]["OcrDataResult"] | string | components["schemas"]["ResearchRecord"] | components["schemas"]["DiscoveryResult"] | components["schemas"]["MapGroupResult"] | components["schemas"]["ReferenceImportResult"] | components["schemas"]["OrganizeProposal"] | null;
             /**
              * Error
              * @default null
@@ -5944,6 +6074,80 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    organize_collection_api_collections_organize_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_collection_moves_api_collections_apply_moves_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyMovesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyMovesResult"];
                 };
             };
             /** @description Validation Error */

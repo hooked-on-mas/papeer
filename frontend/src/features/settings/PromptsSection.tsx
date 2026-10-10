@@ -17,6 +17,7 @@ const PROMPT_LABELS: Record<string, string> = {
   glossary_draft: "専門用語の抽出",
   glossary_select: "分野辞書の選択",
   glossary_split: "辞書の分野分け",
+  library_organize: "フォルダーの整理",
   revision_draft: "訳文の修正案",
 };
 

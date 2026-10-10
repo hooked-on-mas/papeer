@@ -47,6 +47,8 @@ export type ResearchRecord = Schemas["ResearchRecord"];
 export type DiscoveryResult = Schemas["DiscoveryResult"];
 export type MapGroupResult = Schemas["MapGroupResult"];
 export type ReferenceImportResult = Schemas["ReferenceImportResult"];
+/** library-organize: the AI's proposal of folders and moves; nothing is moved until POST /api/collections/apply-moves. */
+export type OrganizeProposal = Schemas["OrganizeProposal"];
 /** check: the connection's answer as one line of text. */
 export type CheckResult = string;
 
@@ -75,6 +77,7 @@ export type JobResults = {
   "paper-map-groups": MapGroupResult;
   "reference-research": ResearchRecord;
   "reference-import": ReferenceImportResult;
+  "library-organize": OrganizeProposal;
 };
 
 // --- Jobs ---

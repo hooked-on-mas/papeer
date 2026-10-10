@@ -3166,6 +3166,152 @@
         }
       }
     },
+    "/api/collections/organize": {
+      "post": {
+        "summary": "Organize Collection",
+        "description": "Have the AI propose folders for the papers of a folder (or of paper_ids); the result is a preview.",
+        "operationId": "organize_collection_api_collections_organize_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/collections/apply-moves": {
+      "post": {
+        "summary": "Apply Collection Moves",
+        "description": "Apply a proposal all or nothing: 409 (code collection_changed) when a paper is gone or has moved since.",
+        "operationId": "apply_collection_moves_api_collections_apply_moves_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyMovesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyMovesResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/collections/bibtex": {
       "post": {
         "summary": "Export Collection Bibtex",
@@ -9399,6 +9545,54 @@
         "title": "AiReading",
         "description": "Whether the AI connection now chosen can read a page from its image, and if not, why."
       },
+      "ApplyMovesRequest": {
+        "properties": {
+          "moves": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionMove"
+            },
+            "type": "array",
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Moves"
+          },
+          "expected": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "maxProperties": 1000,
+            "title": "Expected"
+          }
+        },
+        "type": "object",
+        "required": [
+          "moves",
+          "expected"
+        ],
+        "title": "ApplyMovesRequest"
+      },
+      "ApplyMovesResult": {
+        "properties": {
+          "moved": {
+            "type": "integer",
+            "title": "Moved"
+          },
+          "created": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Created"
+          }
+        },
+        "type": "object",
+        "required": [
+          "moved",
+          "created"
+        ],
+        "title": "ApplyMovesResult"
+      },
       "ApplyTermReplacementRequest": {
         "properties": {
           "source": {
@@ -10154,6 +10348,27 @@
           "message"
         ],
         "title": "CitationWarning"
+      },
+      "CollectionMove": {
+        "properties": {
+          "paper_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Paper Id"
+          },
+          "to": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "To"
+          }
+        },
+        "type": "object",
+        "required": [
+          "paper_id",
+          "to"
+        ],
+        "title": "CollectionMove"
       },
       "CreateCollectionRequest": {
         "properties": {
@@ -11525,6 +11740,9 @@
                 "$ref": "#/components/schemas/ReferenceImportResult"
               },
               {
+                "$ref": "#/components/schemas/OrganizeProposal"
+              },
+              {
                 "type": "null"
               }
             ],
@@ -11584,7 +11802,8 @@
           "reference-research",
           "paper-discovery",
           "paper-map-groups",
-          "reference-import"
+          "reference-import",
+          "library-organize"
         ],
         "title": "JobKind",
         "description": "The kinds of background jobs; the names are what the frontend receives (jobKinds.ts)."
@@ -12353,6 +12572,191 @@
           "auto_sync"
         ],
         "title": "OptionsRequest"
+      },
+      "OrganizeFolder": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "new": {
+            "type": "boolean",
+            "title": "New"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "reason",
+          "new"
+        ],
+        "title": "OrganizeFolder"
+      },
+      "OrganizeMove": {
+        "properties": {
+          "paper_id": {
+            "type": "string",
+            "title": "Paper Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "from": {
+            "type": "string",
+            "title": "From"
+          },
+          "to": {
+            "type": "string",
+            "title": "To"
+          }
+        },
+        "type": "object",
+        "required": [
+          "paper_id",
+          "title",
+          "from",
+          "to"
+        ],
+        "title": "OrganizeMove"
+      },
+      "OrganizeProposal": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "instruction": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Instruction"
+          },
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizeFolder"
+            },
+            "type": "array",
+            "maxItems": 1000,
+            "title": "Folders"
+          },
+          "moves": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizeMove"
+            },
+            "type": "array",
+            "maxItems": 1000,
+            "title": "Moves"
+          },
+          "expected": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "maxProperties": 1000,
+            "title": "Expected"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "instruction",
+          "folders",
+          "moves",
+          "expected",
+          "message"
+        ],
+        "title": "OrganizeProposal",
+        "description": "library-organize: a proposal to show the user, applied by POST /api/collections/apply-moves with\n`moves` and `expected`. Sent back as `previous` to have the AI revise it."
+      },
+      "OrganizeRequest": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Source",
+            "default": ""
+          },
+          "instruction": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Instruction",
+            "default": ""
+          },
+          "paper_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 1000,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Ids"
+          },
+          "feedback": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Feedback",
+            "default": ""
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrganizeProposal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effort"
+          }
+        },
+        "type": "object",
+        "title": "OrganizeRequest"
       },
       "OtherHistoriesRemoveRequest": {
         "properties": {
@@ -15315,6 +15719,9 @@
               },
               {
                 "$ref": "#/components/schemas/ReferenceImportResult"
+              },
+              {
+                "$ref": "#/components/schemas/OrganizeProposal"
               },
               {
                 "type": "null"

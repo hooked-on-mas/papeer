@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, with_config
 
 from papeer.core.translation_status import TranslationStatus
 from papeer.core.pdf_outline import PdfOutlineEntry
-from sidecar.job_types import GlossaryTerm, Usage
+from sidecar.job_types import GlossaryTerm, OrganizeProposal, Usage
 from sidecar.schemas.common import Stored
 
 
@@ -77,6 +77,31 @@ class CreateCollectionRequest(BaseModel):
 class RenameCollectionRequest(BaseModel):
     old_name: str
     new_name: str
+
+
+class OrganizeRequest(BaseModel):
+    source: str = Field(default="", max_length=1000)  # The folder to organize; "" for 未分類. Its own papers only, not its subfolders'.
+    instruction: str = Field(default="", max_length=2000)
+    paper_ids: list[str] | None = Field(default=None, min_length=1, max_length=1000)  # Only these (of any folders); source is then the base for new folders.
+    feedback: str = Field(default="", max_length=2000)  # With `previous`: what to change in the earlier proposal.
+    previous: OrganizeProposal | None = None
+    model: str | None = None
+    effort: str | None = None
+
+
+class CollectionMove(BaseModel):
+    paper_id: str = Field(min_length=1, max_length=64)
+    to: str = Field(max_length=1000)  # The folder path; "" for 未分類.
+
+
+class ApplyMovesRequest(BaseModel):
+    moves: list[CollectionMove] = Field(min_length=1, max_length=1000)
+    expected: dict[str, str] = Field(max_length=1000)  # The folder of each moved paper as the proposal saw it.
+
+
+class ApplyMovesResult(BaseModel):
+    moved: int  # Papers whose folder changed.
+    created: list[str]  # Folders made (parents included).
 
 
 # --- Papers ---

@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 
-from papeer.core import ocr, reading_state, search
+from papeer.core import library_organize, ocr, reading_state, search
 from papeer.core.bibtex import bibtex, export_bibtex
 from papeer.core.citations import citation_graph
 from papeer.core.errors import Invalid, NotFound
@@ -28,6 +28,8 @@ from sidecar.job_types import ImportItemEvent, ImportPagesEvent, JobKind, JobSta
 from sidecar.jobs import ConcurrencyConflict, TurnQueue
 from sidecar.routes.ocr import ocr_turn
 from sidecar.schemas.papers import (
+    ApplyMovesRequest,
+    ApplyMovesResult,
     Article,
     BibtexExportRequest,
     BibtexRequest,
@@ -36,6 +38,7 @@ from sidecar.schemas.papers import (
     CreateCollectionRequest,
     ImportRequest,
     LibraryStickyNote,
+    OrganizeRequest,
     Paper,
     PaperOpened,
     PaperRow,
@@ -406,6 +409,34 @@ def rename_collection(body: RenameCollectionRequest) -> dict[str, str]:
     destination = lib.rename_collection(body.old_name, leaf)
     deps.library_changed()
     return {"status": "renamed", "name": destination}
+
+
+@router.post("/api/collections/organize")
+def organize_collection(body: OrganizeRequest) -> JobStarted:
+    """Have the AI propose folders for the papers of a folder (or of paper_ids); the result is a preview."""
+    lib = deps.get_library()
+    library_organize.organize_candidates(lib, body.source, body.paper_ids)  # Invalid (400) before the job starts.
+    settings = deps.settings_for_run(body.model, body.effort)
+    previous = body.previous.model_dump() if body.previous else None
+
+    def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict:
+        provider = deps.provider_for(settings, cancel)
+        result = library_organize.propose_organization(
+            lib, provider, cancel, progress, source=body.source, instruction=body.instruction,
+            paper_ids=body.paper_ids, feedback=body.feedback, previous=previous)
+        report = getattr(provider, "usage_report", None)
+        return {**result, "usage": report() if report else None}
+
+    return deps.submit_job(JobKind.LIBRARY_ORGANIZE, action)
+
+
+@router.post("/api/collections/apply-moves", response_model=ApplyMovesResult)
+def apply_collection_moves(body: ApplyMovesRequest) -> dict[str, Any]:
+    """Apply a proposal all or nothing: 409 (code collection_changed) when a paper is gone or has moved since."""
+    result = deps.get_library().apply_moves([move.model_dump() for move in body.moves], body.expected)
+    if result["moved"] or result["created"]:
+        deps.library_changed()
+    return result
 
 
 @router.post("/api/collections/bibtex")
