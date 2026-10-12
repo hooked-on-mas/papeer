@@ -1781,6 +1781,16 @@
             }
           },
           {
+            "name": "keep_notebooks",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Keep Notebooks"
+            }
+          },
+          {
             "name": "token",
             "in": "query",
             "required": false,
@@ -4210,6 +4220,612 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notebooks": {
+      "get": {
+        "summary": "List Notebooks",
+        "operationId": "list_notebooks_api_notebooks_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PaperRow"
+                  },
+                  "title": "Response List Notebooks Api Notebooks Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Notebook",
+        "operationId": "create_notebook_api_notebooks_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewNotebook"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperRow"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notebooks/{notebook_id}": {
+      "get": {
+        "summary": "Get Notebook",
+        "operationId": "get_notebook_api_notebooks__notebook_id__get",
+        "parameters": [
+          {
+            "name": "notebook_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Notebook Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotebookDocument"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notebooks/{notebook_id}/pages": {
+      "post": {
+        "summary": "Change Pages",
+        "operationId": "change_pages_api_notebooks__notebook_id__pages_post",
+        "parameters": [
+          {
+            "name": "notebook_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Notebook Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotebookChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotebookDocument"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notebooks/{notebook_id}/placement": {
+      "post": {
+        "summary": "Move Notebook",
+        "operationId": "move_notebook_api_notebooks__notebook_id__placement_post",
+        "parameters": [
+          {
+            "name": "notebook_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Notebook Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotebookMove"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notebooks/{notebook_id}/pages/{page_id}/ink": {
+      "get": {
+        "summary": "Get Page Ink",
+        "operationId": "get_page_ink_api_notebooks__notebook_id__pages__page_id__ink_get",
+        "parameters": [
+          {
+            "name": "notebook_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Notebook Id"
+            }
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Page Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Put Page Ink",
+        "operationId": "put_page_ink_api_notebooks__notebook_id__pages__page_id__ink_put",
+        "parameters": [
+          {
+            "name": "notebook_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Notebook Id"
+            }
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Page Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InkPageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notebooks/{notebook_id}/ink": {
+      "get": {
+        "summary": "Notebook Ink",
+        "operationId": "notebook_ink_api_notebooks__notebook_id__ink_get",
+        "parameters": [
+          {
+            "name": "notebook_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Notebook Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "$ref": "#/components/schemas/InkPageRequest"
+                  },
+                  "title": "Response Notebook Ink Api Notebooks  Notebook Id  Ink Get"
+                }
               }
             }
           },
@@ -10731,6 +11347,17 @@
       },
       "BookmarkRequest": {
         "properties": {
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Id"
+          },
           "page": {
             "type": "integer",
             "title": "Page"
@@ -12194,6 +12821,17 @@
       },
       "InkCaptureRequest": {
         "properties": {
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Id"
+          },
           "side": {
             "type": "string",
             "enum": [
@@ -12756,6 +13394,17 @@
       },
       "LibraryStickyNote": {
         "properties": {
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Id"
+          },
           "id": {
             "type": "integer",
             "title": "Id"
@@ -13206,6 +13855,315 @@
         "additionalProperties": false,
         "type": "object",
         "title": "NewMemo"
+      },
+      "NewNotebook": {
+        "properties": {
+          "size": {
+            "type": "string",
+            "enum": [
+              "A4",
+              "B5",
+              "A5",
+              "Letter",
+              "16:9"
+            ],
+            "title": "Size",
+            "default": "A4"
+          },
+          "orientation": {
+            "type": "string",
+            "enum": [
+              "portrait",
+              "landscape"
+            ],
+            "title": "Orientation",
+            "default": "portrait"
+          },
+          "template": {
+            "type": "string",
+            "enum": [
+              "blank",
+              "ruled7",
+              "ruled6",
+              "ruled5",
+              "grid5",
+              "grid10",
+              "dot5",
+              "cornell"
+            ],
+            "title": "Template",
+            "default": "ruled7"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "white",
+              "cream",
+              "dark"
+            ],
+            "title": "Color",
+            "default": "white"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "default": "\u30ce\u30fc\u30c8"
+          },
+          "collection": {
+            "type": "string",
+            "title": "Collection",
+            "default": ""
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "NewNotebook"
+      },
+      "NotebookChange": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "append",
+              "insert",
+              "duplicate",
+              "delete",
+              "paper",
+              "reorder"
+            ],
+            "title": "Action"
+          },
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Id"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
+          },
+          "spec": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NotebookPaper"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "revision",
+          "action"
+        ],
+        "title": "NotebookChange"
+      },
+      "NotebookDocument": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Version"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/NotebookPage"
+            },
+            "type": "array",
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "revision",
+          "pages"
+        ],
+        "title": "NotebookDocument"
+      },
+      "NotebookMove": {
+        "properties": {
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "collection": {
+            "type": "string",
+            "title": "Collection",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "NotebookMove"
+      },
+      "NotebookPage": {
+        "properties": {
+          "size": {
+            "type": "string",
+            "enum": [
+              "A4",
+              "B5",
+              "A5",
+              "Letter",
+              "16:9"
+            ],
+            "title": "Size",
+            "default": "A4"
+          },
+          "orientation": {
+            "type": "string",
+            "enum": [
+              "portrait",
+              "landscape"
+            ],
+            "title": "Orientation",
+            "default": "portrait"
+          },
+          "template": {
+            "type": "string",
+            "enum": [
+              "blank",
+              "ruled7",
+              "ruled6",
+              "ruled5",
+              "grid5",
+              "grid10",
+              "dot5",
+              "cornell"
+            ],
+            "title": "Template",
+            "default": "ruled7"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "white",
+              "cream",
+              "dark"
+            ],
+            "title": "Color",
+            "default": "white"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "width_mm": {
+            "type": "number",
+            "title": "Width Mm"
+          },
+          "height_mm": {
+            "type": "number",
+            "title": "Height Mm"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "width_mm",
+          "height_mm"
+        ],
+        "title": "NotebookPage"
+      },
+      "NotebookPaper": {
+        "properties": {
+          "size": {
+            "type": "string",
+            "enum": [
+              "A4",
+              "B5",
+              "A5",
+              "Letter",
+              "16:9"
+            ],
+            "title": "Size",
+            "default": "A4"
+          },
+          "orientation": {
+            "type": "string",
+            "enum": [
+              "portrait",
+              "landscape"
+            ],
+            "title": "Orientation",
+            "default": "portrait"
+          },
+          "template": {
+            "type": "string",
+            "enum": [
+              "blank",
+              "ruled7",
+              "ruled6",
+              "ruled5",
+              "grid5",
+              "grid10",
+              "dot5",
+              "cornell"
+            ],
+            "title": "Template",
+            "default": "ruled7"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "white",
+              "cream",
+              "dark"
+            ],
+            "title": "Color",
+            "default": "white"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "NotebookPaper"
       },
       "OcrApplied": {
         "properties": {
@@ -15415,6 +16373,17 @@
       },
       "StickyNote": {
         "properties": {
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Id"
+          },
           "id": {
             "type": "integer",
             "title": "Id"
@@ -15507,8 +16476,7 @@
           "color",
           "rects"
         ],
-        "title": "StickyNote",
-        "description": "A sticky note or highlight (a bookmarks row, Library._bookmark).\n\nkind and color are plain text: a newer Papeer on another PC may store values this one does not know\n(the database is synced)."
+        "title": "StickyNote"
       },
       "SyncRequest": {
         "properties": {

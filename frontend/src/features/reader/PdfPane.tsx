@@ -38,7 +38,8 @@ import { usePdfTouch, usePdfTouchOwner } from "./usePdfTouch";
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 interface PdfPaneProps {
-  inkPage?: { paperId: string; page: number };
+  inkPage?: { paperId: string; page: number; pageId?: string };
+  preservePaperColor?: boolean;
   url: string | null;
   pageNumber: number;
   /** Multiplier over the width that fits the pane, or ZOOM_FIT_PAGE to fit the whole page. */
@@ -127,10 +128,10 @@ function fitTextLayer(layer: HTMLElement, content: TextContent, scale: number) {
 
 export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholder, missingPageMessage,
   translated = false, searchTerm = "", jumpTarget,
-  savedHighlights = [], inkPage, onDocumentLoad, onInternalLink, caption, badge, inkToolbarSlot }: PdfPaneProps) {
+  savedHighlights = [], inkPage, preservePaperColor = false, onDocumentLoad, onInternalLink, caption, badge, inkToolbarSlot }: PdfPaneProps) {
   const [inkViewport, setInkViewport] = useState<{ key: string; ratio: number } | null>(null);
   const side = translated ? "translated" : "original";
-  const editor = useInkEditor(url && !placeholder ? inkPage?.paperId : undefined, side, inkPage?.page ?? pageNumber, inkViewport?.ratio ?? 1);
+  const editor = useInkEditor(url && !placeholder ? inkPage?.paperId : undefined, side, inkPage?.page ?? pageNumber, inkViewport?.ratio ?? 1, inkPage?.pageId);
   const { ink } = editor;
   // Whether this pane has a page to write on, and so can be the one the writing toolbar serves.
   const inkHost = !!inkPage && !!url && !placeholder;
@@ -178,7 +179,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
   const loadedPage = useRef<PageCallback | null>(null);
   const textContent = useRef<TextContent | null>(null);
   const [matches, setMatches] = useState<{ left: number; top: number; width: number; height: number; saved: boolean }[]>([]);
-  const appearance = pageAppearance(useStore((s) => s.pageFilter), useTheme().dark);
+  const appearance = pageAppearance(useStore((s) => s.pageFilter), useTheme().dark && !preservePaperColor);
   // Only the canvases are filtered: the text layer, links, highlights, sticky notes and ink above
   // them keep their own colours.
   const pageStyle = { "--pdf-page-filter": appearance.filter ?? "none", "--pdf-page-bg": appearance.background } as React.CSSProperties;
@@ -413,7 +414,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
       disabled={inkViewport?.key !== inkKey} onStickyNote={selection => {
       const box = editor.selection;
       if (selection && box) {
-        void openStickyNote({ paperId: inkPage.paperId, page: inkPage.page, side: translated ? "translated" : "original",
+        void openStickyNote({ paperId: inkPage.paperId, pageId: inkPage.pageId, page: inkPage.page, side: translated ? "translated" : "original",
           anchorY: box.y, anchorX: box.x, quote: editor.selected.map(s => s.text ?? "").filter(Boolean).join("\n") });
       } else {
         editor.setTool("select"); setCapture(null); setPlacingNote(value => !value);
@@ -431,7 +432,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     {badge && <div className="pointer-events-none absolute right-5 top-1 z-10 flex rounded-full bg-background/80 p-0.5 shadow-sm backdrop-blur-sm">
       {badge}
     </div>}
-    {capture && inkPage && <InkCapture key={`${inkPage.paperId}:${inkPage.page}`} paperId={inkPage.paperId} page={inkPage.page}
+    {capture && inkPage && <InkCapture key={`${inkPage.paperId}:${inkPage.page}`} paperId={inkPage.paperId} page={inkPage.page} pageId={inkPage.pageId}
       side={translated ? "translated" : "original"} box={capture} onClose={() => setCapture(null)} />}
     <PdfContextMenu translated={translated}>
       <div
@@ -527,7 +528,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                     onClick={e => {
                       e.stopPropagation();
                       const rect = e.currentTarget.getBoundingClientRect();
-                      void openStickyNote({ paperId: inkPage.paperId, page: inkPage.page, side: translated ? "translated" : "original", quote: "",
+                      void openStickyNote({ paperId: inkPage.paperId, pageId: inkPage.pageId, page: inkPage.page, side: translated ? "translated" : "original", quote: "",
                         anchorY: e.detail === 0 ? 0.5 : Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
                         anchorX: e.detail === 0 ? 0.5 : Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) });
                       setPlacingNote(false);

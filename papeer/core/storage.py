@@ -140,3 +140,6 @@ class Library(PaperRecords, ItemRelations, Collections, Annotations, Choices, Co
                 migrate_database(root)
         from papeer.core.memo_migration import migrate_memos
         migrate_memos(root)
+
+        from papeer.core.notebook import recover
+        recover(root)

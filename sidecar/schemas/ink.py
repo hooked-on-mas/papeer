@@ -50,6 +50,7 @@ class InkExportRequest(BaseModel):
 
 
 class InkCaptureRequest(BaseModel):
+    page_id: str | None = None
     side: Side
     include_ink: bool = False
     page: int = Field(ge=1)

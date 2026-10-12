@@ -25,7 +25,7 @@ from sidecar import deps, instance
 from sidecar.errors import AnswerUnexpectedErrors, error_response, log_to_file, where
 from sidecar.instance import TrackActivity
 from sidecar.job_types import event_schemas
-from sidecar.routes import ai_jobs, attachments, drive, ink, ocr, papers, reading, research, discovery, settings, system
+from sidecar.routes import ai_jobs, attachments, notebooks, drive, ink, ocr, papers, reading, research, discovery, settings, system
 
 
 def remove_unused_translation_runs() -> None:
@@ -162,7 +162,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for module in (system, settings, papers, attachments, ai_jobs, reading, ink, drive, ocr, research, discovery):
+for module in (system, settings, papers, attachments, notebooks, ai_jobs, reading, ink, drive, ocr, research, discovery):
     app.include_router(module.router)
 app.include_router(system.public)
 

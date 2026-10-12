@@ -1,3 +1,6 @@
+import { NotebookPages } from "@/features/notebooks/NotebookPages";
+import { useNotebook, useNotebookBusy } from "@/features/notebooks/notebooks";
+import { useInkTools } from "./useInkEditor";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FilePlus2, Languages, Loader2 } from "lucide-react";
@@ -67,6 +70,11 @@ export function Reader() {
   // What the open item can do (see lib/itemKinds.ts): an item that is not translated has no right pane
   // and no 翻訳済みページのみ filter, whatever the filter is set to for the papers.
   const caps = useItemCapabilities(activePaperId);
+  const { data: notebook } = useNotebook(activePaperId, caps.notebook);
+  const notebookBusy = useNotebookBusy(s => !!activePaperId && s.ids.includes(activePaperId));
+  useEffect(() => {
+    if (activePaperId && caps.notebook) { useInkTools.getState().setTool("pen"); useStore.getState().setInkBarOpen(true); }
+  }, [activePaperId, caps.notebook]);
   const translatedOnly = useStore((s) => s.translatedOnly) && caps.translate;
   const [search, setSearch] = useState<{ query: string; side: "original" | "translated" }>({ query: "", side: "original" });
   const [bookmarkTarget, setBookmarkTarget] = useState<JumpTarget | null>(null);
@@ -120,7 +128,7 @@ export function Reader() {
   }, [activePaperId, reading?.outline]);
   useEffect(() => { outlineDoc.current = null; setLoadedOutline(null); }, [activePaperId]);
 
-  const pageCount = reading?.page_count ?? 0;
+  const pageCount = caps.notebook && notebook ? notebook.pages.length : reading?.page_count ?? 0;
   const completed = reading?.completed_pages ?? NO_PAGES;
   // A paper opens where its page was last left (paperAnchors, saved in ui-state.json), from the top otherwise.
   // Until the view has moved there, the scrolls to the top of the page on the way are not kept (recordAnchor).
@@ -298,7 +306,7 @@ export function Reader() {
   // The paging keys (see readerKeyAction), never taken from a text field.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || isImeKey(e) || !ownsKey(e)) return;
+      if (e.defaultPrevented || isImeKey(e) || !ownsKey(e) || useNotebookBusy.getState().ids.includes(useStore.getState().activePaperId ?? "")) return;
       const target = e.target instanceof Element ? e.target : null;
       const pane = readingPane(activePane.current);
       const action = readerKeyAction({
@@ -335,7 +343,7 @@ export function Reader() {
 
   const fileUrl = (file: string, version: number) =>
     backendUrl(`/api/papers/${activePaperId}/files/${file}?v=${version}`);
-  const leftUrl = fileUrl("original.pdf", reading?.original_mtime ?? 0);
+  const leftUrl = fileUrl("original.pdf", caps.notebook ? notebook?.revision ?? 0 : reading?.original_mtime ?? 0);
   const ref = reading?.translated_pages?.[String(currentPage)];
   const rightUrl = ref ? fileUrl(ref.file, ref.mtime) : null;
   const caption = translatedCaption(reading, currentPage, rebuilding);
@@ -365,9 +373,10 @@ export function Reader() {
   return (
     <div ref={readerRef} className="flex flex-col h-full w-full bg-reader-bg">
       <ReaderToolbar paperId={activePaperId} search={search} setSearch={setSearch} outline={reading?.outline ?? outline} ownsKey={ownsKey} />
+      {caps.notebook && notebook && <NotebookPages id={activePaperId} document={notebook} />}
       <span role="status" className="sr-only">{rebuilding ? "PDFを作り直しています" : translating ? "翻訳中" : ""}</span>
       {/* data-ink-toolbar-slot: INK_TOOLBAR_SLOT, which lets the toolbar's keys through to its pane. */}
-      <div id="reader-ink-tools" ref={setInkToolbarSlot} data-ink-toolbar-slot="" className="flex flex-col shrink-0 max-h-[40%]" />
+      <div id="reader-ink-tools" ref={setInkToolbarSlot} data-ink-toolbar-slot="" inert={notebookBusy} className="flex flex-col shrink-0 max-h-[40%]" />
       {noTranslatedPages ? (
         <div className="flex-1 flex items-center justify-center text-muted-foreground p-8 text-[0.8125rem]">
           翻訳済みのページはまだありません。完了すると自動で表示します。
@@ -386,10 +395,11 @@ export function Reader() {
           }}
         >
           <ResizablePanel id="original" defaultSize={caps.split ? `${readerSplit * 100}%` : "100%"} minSize="15%" className="flex flex-col">
-            <div className="flex-1 relative min-h-0" role="region" aria-label="原文">
+            <div className="flex-1 relative min-h-0" role="region" aria-label={caps.notebook ? "ノート" : "原文"} inert={notebookBusy}>
               <PdfPane
-                url={leftUrl}
-                inkPage={reading ? { paperId: activePaperId, page: currentPage } : undefined}
+                url={caps.notebook && !notebook ? null : leftUrl}
+                preservePaperColor={caps.notebook}
+                inkPage={reading && (!caps.notebook || notebook?.pages[currentPage - 1]) ? { paperId: activePaperId, page: currentPage, pageId: caps.notebook ? notebook?.pages[currentPage - 1]?.id : undefined } : undefined}
                 pageNumber={currentPage}
                 zoom={zoom}
                 onScroll={(e) => { syncScroll(e.currentTarget, rightScrollRef.current); recordAnchor(e.currentTarget); }}
@@ -400,7 +410,7 @@ export function Reader() {
                 savedHighlights={sourceHighlights}
                 onDocumentLoad={onOriginalLoad}
                 onInternalLink={(place) => navigateTo({ ...place, side: "original" })}
-                caption="原文"
+                caption={caps.notebook ? "ノート" : "原文"}
                 inkToolbarSlot={inkToolbarSlot}
               />
             </div>

@@ -1,3 +1,4 @@
+import { newNotebook, moveNotebook } from "@/features/notebooks/NotebookDialogs";
 import { useEffect, useState } from "react";
 import {
   BookOpen, Download, ExternalLink, FileText, FolderOpen, Languages, MoreVertical, PanelLeft, Pencil, ScrollText, Square, Trash2,
@@ -35,6 +36,7 @@ export function Header() {
   const rebuilding = useRebuilding(translateJobId);
 
   const { data: paper } = usePaper(activePaperId);
+  const { data: owner } = usePaper(paper?.parent_id ?? null);
   const { data: reading } = useReading(activePaperId);
   // What the open item can do: the controls of what it cannot (a notebook is not translated) are not offered.
   const caps = itemCapabilities(paper);
@@ -81,7 +83,7 @@ export function Header() {
   const meta = [
     paper?.first_author,
     paper?.publication_year,
-    paper?.collection_name || "未分類",
+    paper?.parent_id ? `持ち主：${owner?.title ?? "読み込み中…"}` : paper?.collection_name || "未分類",
   ].filter(Boolean).join(" · ");
 
   return (
@@ -131,6 +133,8 @@ export function Header() {
             <MoreVertical className="w-4 h-4" /> その他
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-64">
+            {paper && !paper.parent_id && <DropdownMenuItem onClick={() => newNotebook(paper)}>専用ノートを作る…</DropdownMenuItem>}
+            {paper && caps.notebook && <DropdownMenuItem onClick={() => moveNotebook(paper)}>持ち主を変更・独立させる…</DropdownMenuItem>}
             {caps.translate && <DropdownMenuItem onClick={() => emitAppEvent("open-glossary-dialog")}>
               <BookOpen className="w-4 h-4 mr-2" /> 訳語・辞書
             </DropdownMenuItem>}

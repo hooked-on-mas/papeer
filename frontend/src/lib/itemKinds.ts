@@ -14,6 +14,7 @@ export type ItemKind = PaperData["kind"];
 
 export type ItemCapabilities = {
   /** Translating it and what follows from a translation: the terms dictionary, 翻訳の確認・修正, the translated PDFs, the translation status. */
+  notebook: boolean;
   translate: boolean;
   /** The reader's right pane (the translation, side by side with the original). */
   split: boolean;
@@ -49,13 +50,13 @@ export type ItemCapabilities = {
 
 /** What an item of a kind unknown to this app can do: nothing, so that nothing is offered that may not work. */
 const NONE: ItemCapabilities = {
-  translate: false, split: false, summary: false, chat: false, memo: false, stickyNotes: false, citationMap: false,
+  notebook: false, translate: false, split: false, summary: false, chat: false, memo: false, stickyNotes: false, citationMap: false,
   bibliography: false, ocr: false, fullTextSearch: false, organize: false, annotate: false, originalPdf: false, rename: false,
   fileExtension: "", listedFirst: false,
 };
 
 const PDF: ItemCapabilities = {
-  translate: true, split: true, summary: true, chat: true, memo: true, stickyNotes: true, citationMap: true,
+  notebook: false, translate: true, split: true, summary: true, chat: true, memo: true, stickyNotes: true, citationMap: true,
   bibliography: true, ocr: true, fullTextSearch: true, organize: true, annotate: true, originalPdf: true, rename: true,
   fileExtension: ".pdf", listedFirst: false,
 };
@@ -67,7 +68,7 @@ const PDF: ItemCapabilities = {
  * (`organize`), which the sidecar does for PDFs only.
  */
 const NOTEBOOK: ItemCapabilities = {
-  ...NONE, memo: true, annotate: true, rename: true, listedFirst: true,
+  ...NONE, notebook: true, memo: true, stickyNotes: true, annotate: true, rename: true, listedFirst: true,
 };
 
 /** A Record, so that a kind the schema gains does not typecheck until it is given its capabilities. */
@@ -90,7 +91,8 @@ export function kindCapabilities(kind: string | null | undefined): ItemCapabilit
  * showed before kinds, rather than hide their controls for the moment the row takes to load.
  */
 export function itemCapabilities(item: { kind?: string | null } | null | undefined): ItemCapabilities {
-  return kindCapabilities(item ? item.kind : undefined);
+  const caps = kindCapabilities(item ? item.kind : undefined);
+  return item && "parent_id" in item && item.parent_id ? { ...caps, memo: false } : caps;
 }
 
 type FlagKey = { [K in keyof ItemCapabilities]: ItemCapabilities[K] extends boolean ? K : never }[keyof ItemCapabilities];

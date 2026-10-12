@@ -34,7 +34,7 @@ export function StickyNoteDialog() {
     useStickyNotes.setState({ busy: true }); setError("");
     try {
       const saved = await saveNote.mutateAsync({ paperId: item.paperId, id: item.id, fields:
-        { page: item.page, side: item.side, quote: item.quote, anchor_y: item.anchorY, anchor_x: item.anchorX ?? 0, label: item.label ?? labels[0] ?? "未分類", note: item.note ?? "" } });
+        { page_id: item.pageId, page: item.page, side: item.side, quote: item.quote, anchor_y: item.anchorY, anchor_x: item.anchorX ?? 0, label: item.label ?? labels[0] ?? "未分類", note: item.note ?? "" } });
       useStickyNotes.setState({ draft: null, dirty: false, selectedId: saved.id });
       useStore.getState().setStatus("付箋を保存しました。");
       // Closed already; another save or delete waits until the notes have been loaded again, as before.

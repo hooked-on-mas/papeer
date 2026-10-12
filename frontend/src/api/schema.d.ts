@@ -815,6 +815,110 @@ export interface paths {
         patch: operations["edit_memo_api_papers__paper_id__attachments__attachment_id__patch"];
         trace?: never;
     };
+    "/api/notebooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Notebooks */
+        get: operations["list_notebooks_api_notebooks_get"];
+        put?: never;
+        /** Create Notebook */
+        post: operations["create_notebook_api_notebooks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notebooks/{notebook_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Notebook */
+        get: operations["get_notebook_api_notebooks__notebook_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notebooks/{notebook_id}/pages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change Pages */
+        post: operations["change_pages_api_notebooks__notebook_id__pages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notebooks/{notebook_id}/placement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move Notebook */
+        post: operations["move_notebook_api_notebooks__notebook_id__placement_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notebooks/{notebook_id}/pages/{page_id}/ink": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Page Ink */
+        get: operations["get_page_ink_api_notebooks__notebook_id__pages__page_id__ink_get"];
+        /** Put Page Ink */
+        put: operations["put_page_ink_api_notebooks__notebook_id__pages__page_id__ink_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notebooks/{notebook_id}/ink": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Notebook Ink */
+        get: operations["notebook_ink_api_notebooks__notebook_id__ink_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/papers/{paper_id}/translate": {
         parameters: {
             query?: never;
@@ -2257,6 +2361,8 @@ export interface components {
         };
         /** BookmarkRequest */
         BookmarkRequest: {
+            /** Page Id */
+            page_id?: string | null;
             /** Page */
             page: number;
             /** Side */
@@ -2826,6 +2932,8 @@ export interface components {
         };
         /** InkCaptureRequest */
         InkCaptureRequest: {
+            /** Page Id */
+            page_id?: string | null;
             /**
              * Side
              * @enum {string}
@@ -3004,6 +3112,8 @@ export interface components {
          * @description GET /api/sticky-notes: with the paper's title and file name, for the list across the library.
          */
         LibraryStickyNote: {
+            /** Page Id */
+            page_id?: string | null;
             /** Id */
             id: number;
             /** Paper Id */
@@ -3183,6 +3293,142 @@ export interface components {
              * @enum {string}
              */
             source?: "user" | "imported";
+        };
+        /** NewNotebook */
+        NewNotebook: {
+            /**
+             * Size
+             * @default A4
+             * @enum {string}
+             */
+            size?: "A4" | "B5" | "A5" | "Letter" | "16:9";
+            /**
+             * Orientation
+             * @default portrait
+             * @enum {string}
+             */
+            orientation?: "portrait" | "landscape";
+            /**
+             * Template
+             * @default ruled7
+             * @enum {string}
+             */
+            template?: "blank" | "ruled7" | "ruled6" | "ruled5" | "grid5" | "grid10" | "dot5" | "cornell";
+            /**
+             * Color
+             * @default white
+             * @enum {string}
+             */
+            color?: "white" | "cream" | "dark";
+            /**
+             * Title
+             * @default ノート
+             */
+            title?: string;
+            /**
+             * Collection
+             * @default
+             */
+            collection?: string;
+            /** Parent Id */
+            parent_id?: string | null;
+        };
+        /** NotebookChange */
+        NotebookChange: {
+            /** Revision */
+            revision: number;
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "append" | "insert" | "duplicate" | "delete" | "paper" | "reorder";
+            /** Page Id */
+            page_id?: string | null;
+            /** Order */
+            order?: string[] | null;
+            spec?: components["schemas"]["NotebookPaper"] | null;
+        };
+        /** NotebookDocument */
+        NotebookDocument: {
+            /**
+             * Version
+             * @constant
+             */
+            version: 1;
+            /** Revision */
+            revision: number;
+            /** Pages */
+            pages: components["schemas"]["NotebookPage"][];
+        };
+        /** NotebookMove */
+        NotebookMove: {
+            /** Parent Id */
+            parent_id?: string | null;
+            /**
+             * Collection
+             * @default
+             */
+            collection?: string;
+        };
+        /** NotebookPage */
+        NotebookPage: {
+            /**
+             * Size
+             * @default A4
+             * @enum {string}
+             */
+            size?: "A4" | "B5" | "A5" | "Letter" | "16:9";
+            /**
+             * Orientation
+             * @default portrait
+             * @enum {string}
+             */
+            orientation?: "portrait" | "landscape";
+            /**
+             * Template
+             * @default ruled7
+             * @enum {string}
+             */
+            template?: "blank" | "ruled7" | "ruled6" | "ruled5" | "grid5" | "grid10" | "dot5" | "cornell";
+            /**
+             * Color
+             * @default white
+             * @enum {string}
+             */
+            color?: "white" | "cream" | "dark";
+            /** Id */
+            id: string;
+            /** Width Mm */
+            width_mm: number;
+            /** Height Mm */
+            height_mm: number;
+        };
+        /** NotebookPaper */
+        NotebookPaper: {
+            /**
+             * Size
+             * @default A4
+             * @enum {string}
+             */
+            size?: "A4" | "B5" | "A5" | "Letter" | "16:9";
+            /**
+             * Orientation
+             * @default portrait
+             * @enum {string}
+             */
+            orientation?: "portrait" | "landscape";
+            /**
+             * Template
+             * @default ruled7
+             * @enum {string}
+             */
+            template?: "blank" | "ruled7" | "ruled6" | "ruled5" | "grid5" | "grid10" | "dot5" | "cornell";
+            /**
+             * Color
+             * @default white
+             * @enum {string}
+             */
+            color?: "white" | "cream" | "dark";
         };
         /**
          * OcrApplied
@@ -4217,14 +4463,10 @@ export interface components {
             /** Unknown Keys */
             unknown_keys: string[];
         };
-        /**
-         * StickyNote
-         * @description A sticky note or highlight (a bookmarks row, Library._bookmark).
-         *
-         *     kind and color are plain text: a newer Papeer on another PC may store values this one does not know
-         *     (the database is synced).
-         */
+        /** StickyNote */
         StickyNote: {
+            /** Page Id */
+            page_id?: string | null;
             /** Id */
             id: number;
             /** Paper Id */
@@ -5634,6 +5876,7 @@ export interface operations {
     delete_paper_api_papers__paper_id__delete: {
         parameters: {
             query?: {
+                keep_notebooks?: boolean;
                 token?: string | null;
             };
             header?: {
@@ -6845,6 +7088,302 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemoContent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_notebooks_api_notebooks_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_notebook_api_notebooks_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewNotebook"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperRow"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_notebook_api_notebooks__notebook_id__get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                notebook_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotebookDocument"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_pages_api_notebooks__notebook_id__pages_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                notebook_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotebookChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotebookDocument"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_notebook_api_notebooks__notebook_id__placement_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                notebook_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotebookMove"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_page_ink_api_notebooks__notebook_id__pages__page_id__ink_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                notebook_id: string;
+                page_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_page_ink_api_notebooks__notebook_id__pages__page_id__ink_put: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                notebook_id: string;
+                page_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InkPageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    notebook_ink_api_notebooks__notebook_id__ink_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                notebook_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: components["schemas"]["InkPageRequest"];
+                    };
                 };
             };
             /** @description Validation Error */

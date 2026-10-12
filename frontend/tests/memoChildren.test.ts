@@ -26,3 +26,12 @@ test("memo children show five in order and a uniquely keyed remainder, with tree
   assert.equal(closed[1].kind === "paper" && closed[1].expandable, true);
   assert.equal(memoChildren([]).length, 0);
 });
+
+
+test("notebooks and memos share the five-row limit and owned rows activate separately", () => {
+  const memos = [{ id: "m", title: "memo" }];
+  const notebooks = Array.from({ length: 6 }, (_, index) => ({ id: `n${index}`, title: `notebook${index}` }));
+  const children = memoChildren(memos, notebooks);
+  assert.equal(children.filter(row => row.kind === "owned").length, 5);
+  assert.deepEqual(children[5], { kind: "more", id: "more", title: "ほか 2件" });
+});

@@ -8,14 +8,14 @@ const FLAGS = (caps: ItemCapabilities) => Object.entries(caps).filter(([, value]
 test("a PDF can do everything a paper could before kinds, with the .pdf renaming adds", () => {
   const pdf = kindCapabilities("pdf");
   // Listed ahead of the papers is how a kind is placed, not something a PDF can do.
-  for (const [name, value] of FLAGS(pdf)) assert.equal(value, name !== "listedFirst", name);
+  for (const [name, value] of FLAGS(pdf)) assert.equal(value, name !== "listedFirst" && name !== "notebook", name);
   assert.equal(pdf.fileExtension, ".pdf");
 });
 
 test("a notebook is not translated and has no text: only writing, a memo and a name, listed ahead of the papers", () => {
   const notebook = kindCapabilities("notebook");
   const on = FLAGS(notebook).filter(([, value]) => value).map(([name]) => name).sort();
-  assert.deepEqual(on, ["annotate", "listedFirst", "memo", "rename"]);
+  assert.deepEqual(on, ["annotate", "listedFirst", "memo", "notebook", "rename", "stickyNotes"]);
   for (const name of ["translate", "split", "summary", "chat", "citationMap", "bibliography", "ocr", "fullTextSearch", "organize", "originalPdf"]) {
     assert.equal(notebook[name as keyof ItemCapabilities], false, name);
   }
@@ -45,6 +45,8 @@ test("a tab shows for an item when it can do what the tab is for; the reader's t
   const notebook = kindCapabilities("notebook");
   for (const tab of ["reader", "summary", "chat", "notes", "sticky-notes", "references"]) assert.equal(tabAvailable(pdf, tab), true, tab);
   assert.deepEqual(["reader", "summary", "chat", "notes", "sticky-notes", "references"].filter((tab) => tabAvailable(notebook, tab)),
-    ["reader", "notes"]);
+    ["reader", "notes", "sticky-notes"]);
   assert.deepEqual(["reader", "summary", "notes"].filter((tab) => tabAvailable(kindCapabilities("whiteboard"), tab)), ["reader"]);
 });
+
+test("a held notebook has no memo children", () => { assert.equal(itemCapabilities(paperData({ id: "n", kind: "notebook", parent_id: "p" })).memo, false); });

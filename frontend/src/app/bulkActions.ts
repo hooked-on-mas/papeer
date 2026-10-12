@@ -1,3 +1,4 @@
+import { confirmItemDeletion } from "@/features/notebooks/NotebookDialogs";
 /**
  * Actions on the papers selected in the library: moving them to a folder, tagging them or taking a tag
  * off, setting their reading status, deleting them. The sidecar has no bulk API, so each paper is sent
@@ -9,7 +10,7 @@
  */
 import { api, ApiError, unwrap } from "@/api/client";
 import { patchPaper } from "@/api/mutations";
-import { askConfirm, askText } from "@/components/AppDialogs";
+import { askText } from "@/components/AppDialogs";
 import { showError } from "@/components/errorDialog";
 import { clearJobFailure } from "@/features/jobs/jobFailures";
 import { useStore, type MoveRecord } from "@/store";
@@ -147,13 +148,13 @@ export async function deletePapers(ids: string[]): Promise<boolean> {
   }
   const titles = ids.slice(0, LISTED_TITLES).map((id) => `・${listedTitle(id)}`);
   if (ids.length > LISTED_TITLES) titles.push(`ほか${ids.length - LISTED_TITLES}件`);
-  const ok = await askConfirm(`${ids.length}件の論文を削除`,
-    `選択した${ids.length}件の論文をライブラリから削除しますか？\n${titles.join("\n")}\n\n訳文・サマリー・チャット履歴・メモも削除され、元に戻せません。`,
-    `${ids.length}件を削除`, true);
-  if (!ok) return false;
+  let choice;
+  try { choice = await confirmItemDeletion(ids, `選択した${ids.length}件をライブラリから削除しますか？\n${titles.join("\n")}\n\n訳文・サマリー・チャット履歴・メモも削除され、元に戻せません。`); }
+  catch (error) { showError(error); return false; }
+  if (!choice) return false;
   const deleted = await eachPaper(ids, "削除中", async (id) => {
     try {
-      await unwrap(api.DELETE("/api/papers/{paper_id}", { params: { path: { paper_id: id } } }));
+      await unwrap(api.DELETE("/api/papers/{paper_id}", { params: { path: { paper_id: id }, query: { keep_notebooks: choice.keep } } }));
     } catch (error) {
       // Already gone, which is what was asked.
       if (error instanceof ApiError && error.status === 404) return "unchanged";
@@ -166,6 +167,7 @@ export async function deletePapers(ids: string[]): Promise<boolean> {
     failed: (n) => `${n}件の論文を削除できませんでした`,
   }, async (outcome) => {
     const gone = new Set([...outcome.done, ...outcome.unchanged]);
+    if (!choice.keep) choice.children.forEach(row => { if (row.parent_id && gone.has(row.parent_id)) gone.add(row.id); });
     const s = useStore.getState();
     if (s.activePaperId !== null && gone.has(s.activePaperId)) s.setActivePaperId(null);
     for (const id of gone) clearJobFailure(id);

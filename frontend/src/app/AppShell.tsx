@@ -1,7 +1,8 @@
+import { NotebookDialogs, newNotebook } from "@/features/notebooks/NotebookDialogs";
 import { useSettingsNavigation } from "../features/settings/settingsNavigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
-import { FilePlus2, Settings2 } from "lucide-react";
+import { FilePlus2, NotebookPen, Settings2 } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, unwrap } from "@/api/client";
@@ -445,6 +446,7 @@ export function AppShell() {
             <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title={withShortcutLabels("PDFを追加（Ctrl+O）")} onClick={importPdfs}>
               <FilePlus2 className="w-4 h-4 text-muted-foreground" />
             </button>
+            <button aria-label="ノートを作る" className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" onClick={() => newNotebook()}><NotebookPen className="size-4 text-muted-foreground" /></button>
             <button className="mt-auto w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title="接続・設定"
               onClick={() => setIsSettingsOpen(true)}>
               <Settings2 className="w-4 h-4 text-muted-foreground" />
@@ -512,6 +514,7 @@ export function AppShell() {
       <StickyNoteDialog />
       <PaperDetailsPanel />
       <OrganizeDialogHost />
+      <NotebookDialogs />
       <AppDialogs />
       <Lightbox />
       <TranslationDialogHost />

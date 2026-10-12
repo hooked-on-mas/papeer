@@ -22,6 +22,7 @@ PageFraction = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 
 
 class BookmarkRequest(BaseModel):
+    page_id: str | None = None
     page: int
     side: str
     quote: str
@@ -295,6 +296,7 @@ class Article(BaseModel):
 
 
 class StickyNote(BaseModel):
+    page_id: str | None = None
     """A sticky note or highlight (a bookmarks row, Library._bookmark).
 
     kind and color are plain text: a newer Papeer on another PC may store values this one does not know

@@ -1,3 +1,5 @@
+import { newNotebook, moveNotebook, showHoldings } from "@/features/notebooks/NotebookDialogs";
+import { useNotebooks } from "@/features/notebooks/notebooks";
 import { useTagChoices } from "@/api/tagChoices";
 import { importMemoFiles, useAttachments } from "@/api/attachments";
 import { queryClient } from "@/lib/queryClient";
@@ -18,7 +20,7 @@ import {
 } from "@dnd-kit/core";
 import {
   ArrowUpDown, BookOpen, ChevronDown, ChevronRight, CircleAlert, Copy, Download, Edit2, ExternalLink, FilePlus2, FileText, Folder,
-  FolderOpen, FolderPlus, Loader2, Plus, Save, Search, Sparkles, Tag, Trash2, Undo2, X,
+  FolderOpen, FolderPlus, Loader2, NotebookPen, Plus, Save, Search, Sparkles, Tag, Trash2, Undo2, X,
 } from "lucide-react";
 import { paperDisplayName, useCollections, usePaperList, type PaperData } from "@/api/hooks";
 import { useStore } from "@/store";
@@ -200,7 +202,8 @@ export function LibrarySidebar() {
   const [readFilter, setReadFilter] = useState("");
   const filtered = !!librarySearch.trim() || !!tagFilter || !!readFilter;
   const { data: paperList, isSuccess: papersLoaded, isError: papersFailed, refetch: reloadPapers } = usePaperList("", sortOrder);
-  const allPapers = paperList ?? NO_PAPERS;
+  const { data: notebooks = NO_PAPERS } = useNotebooks();
+  const allPapers = useMemo(() => [...(paperList ?? NO_PAPERS), ...notebooks.filter(row => row.parent_id)], [paperList, notebooks]);
   useEffect(() => {
     if (papersLoaded && tagFilter && !allPapers.some(paper => paper.tags?.includes(tagFilter))) setTagFilter("");
   }, [allPapers, papersLoaded, tagFilter]);
@@ -255,9 +258,9 @@ export function LibrarySidebar() {
     if (librarySearch.trim()) return [];
     const open = expandedCollections && new Set(expandedCollections);
     return treeLines(tree, (path) => filtered || !open || open.has(path), {
-      of: paper => memoChildren(childrenByOwner.get(paper.id) ?? []), isOpen: id => expandedPapers.includes(id),
+      of: paper => memoChildren(childrenByOwner.get(paper.id) ?? [], notebooks.filter(row => row.parent_id === paper.id)), isOpen: id => expandedPapers.includes(id),
     });
-  }, [tree, expandedCollections, expandedPapers, childrenByOwner, filtered, librarySearch]);
+  }, [tree, expandedCollections, expandedPapers, childrenByOwner, notebooks, filtered, librarySearch]);
   // The rows on screen, for the keyboard (see treeKeys.ts): the same lines.
   const rows = useMemo(() => treeRows(lines, libraryPaperTitle), [lines]);
   // Before paint, so that the row that takes the Tab key is right as soon as the rows are, and papers
@@ -431,18 +434,19 @@ export function LibrarySidebar() {
   useEffect(() => {
     // Citations and Ctrl+L reveal the paper: open its ancestors and scroll to it, or focus it.
     const reveal = ({ paperId, focus }: { paperId: string; focus: boolean }) => {
-      const paper = papers.find((p) => p.id === paperId);
+      const paper = allPapers.find((p) => p.id === paperId);
       const expandedCollections = useStore.getState().expandedCollections;
-      if (paper && expandedCollections !== null) {
+      if (paper) {
         // The folders to open; the paper rows it names (for an item another holds) have nothing to open them yet.
         const { folders, papers: owners } = revealOpenings(paper, (id) => allPapers.find((p) => p.id === id));
         owners.forEach(id => expandMemoOwner(id, true));
-        const next = new Set(expandedCollections);
+        const next = new Set(expandedCollections ?? allFolderPaths(tree));
         folders.forEach((folder) => next.add(folder));
-        if (next.size !== expandedCollections.length) setExpandedCollections([...next]);
+        if (next.size !== expandedCollections?.length) setExpandedCollections([...next]);
       }
-      if (focus) requestTreeFocus(paperKey(paperId));
-      else setTimeout(() => treeList.current?.scrollTo(paperKey(paperId)), 50);
+      const key = paper?.parent_id ? `owned:${paper.parent_id}:${paperId}` : paperKey(paperId);
+      if (focus) requestTreeFocus(key);
+      else setTimeout(() => treeList.current?.scrollTo(key), 50);
     };
     const offReveal = onAppEvent("reveal-paper", reveal);
     // Ctrl+L: the row the keys were on while it is on screen, else the open paper, else the row that
@@ -451,12 +455,12 @@ export function LibrarySidebar() {
       const { rows, focused, tabStop } = useTreeFocus.getState();
       const { activePaperId, selectedFolder } = useStore.getState();
       if (focused !== null && rows.some((row) => row.key === focused)) requestTreeFocus(focused);
-      else if (activePaperId && selectedFolder === null && papers.some((p) => p.id === activePaperId)) reveal({ paperId: activePaperId, focus: true });
+      else if (activePaperId && selectedFolder === null && allPapers.some((p) => p.id === activePaperId)) reveal({ paperId: activePaperId, focus: true });
       else if (tabStop !== null) requestTreeFocus(tabStop);
       else document.getElementById("library-search")?.focus();
     });
     return () => { offReveal(); offFocus(); };
-  }, [papers, allPapers, setExpandedCollections]);
+  }, [papers, allPapers, tree, setExpandedCollections]);
 
   const clearSearch = () => {
     setSearchText("");
@@ -478,6 +482,7 @@ export function LibrarySidebar() {
       }
     }}>
       <div className="p-2 space-y-2 shrink-0">
+        <button onClick={() => newNotebook()} className="w-full flex items-center justify-center gap-2 border h-8 rounded-md hover:bg-muted"><NotebookPen className="size-4" />ノートを作る</button>
         <button
           onClick={importPdfs}
           title={withShortcutLabels(`追加するPDFを「${currentCollection || "未分類"}」へ入れます。（Ctrl+O）`)}
@@ -904,10 +909,17 @@ type RowProps = {
 type LinePlace = { level: number; setSize: number; posInSet: number };
 
 function activateChild(line: ChildLine) {
-  if (line.kind === "attachment" || line.kind === "more") {
+  if (line.kind === "owned") { useStore.getState().setActiveTab("reader"); openPaper(line.child.id, line.owner.collection_name); return; }
+  if (line.kind === "more") {
+    const notebooks = queryClient.getQueryData<PaperData[]>([QK.notebooks]) ?? [];
+    if (notebooks.some(row => row.parent_id === line.owner.id)) showHoldings(line.owner);
+    else { openPaper(line.owner.id, line.owner.collection_name); openMemo(line.owner.id); }
+    return;
+  }
+  if (line.kind === "attachment") {
     if (!itemCapabilities(line.owner).memo) return;
     openPaper(line.owner.id, line.owner.collection_name);
-    openMemo(line.owner.id, line.kind === "attachment" ? line.child.id : undefined);
+    openMemo(line.owner.id, line.child.id);
   }
 }
 
@@ -920,7 +932,7 @@ function MemoChildRow({ line }: { line: ChildLine }) {
     onFocus={e => { if (e.target === e.currentTarget) updateTreeFocus({ focused: line.key }); }} onClick={() => activateChild(line)}
     className={`flex cursor-pointer items-center gap-1.5 py-1 pr-2 text-[0.75rem] leading-5 text-muted-foreground hover:bg-muted/60 ${FOCUS_RING}`}
     style={{ paddingLeft: `${(line.level - 1) * 16 + 8}px` }} title={line.child.title}>
-    {line.kind !== "more" && <FileText className="size-3 shrink-0" />}<span className="truncate">{line.child.title}</span>
+    {line.kind === "owned" ? <NotebookPen className="size-3 shrink-0" /> : line.kind !== "more" && <FileText className="size-3 shrink-0" />}<span className="truncate">{line.child.title}</span>
   </div>;
 }
 
@@ -1055,7 +1067,8 @@ function PendingRow({ item, level, setSize, posInSet }: { item: PendingImport } 
  * left, and a job's progress events render its paper's row only when what the row shows changes.
  */
 const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, setSize, posInSet, collections, onTagSelect }: { paper: PaperData; expanded: boolean; expandable: boolean; collections: string[]; onTagSelect: (name: string) => void } & LinePlace) {
-  const memoCount = useAttachments().data?.filter(row => row.owner_id === paper.id && row.format === "md").length ?? 0;
+  const memoCount = (useAttachments().data?.filter(row => row.owner_id === paper.id && row.format === "md").length ?? 0)
+    + (useNotebooks().data?.filter(row => row.parent_id === paper.id).length ?? 0);
   const [allTags, setAllTags] = useState(false);
   // A treeitem, not dnd-kit's default button; the row itself starts a drag from the keyboard, not a button in it.
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({ id: paper.id, attributes: { role: "treeitem" } });
@@ -1136,7 +1149,7 @@ const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, se
             onClick={e => { e.stopPropagation(); expandMemoOwner(paper.id, !expanded); }}>
             {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
           </button>}
-          <FileText className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" />
+          {itemCapabilities(paper).notebook ? <NotebookPen className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" /> : <FileText className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" />}
           <div className="flex-1 min-w-0">
             <div className="truncate leading-5">{libraryPaperTitle(paper)}</div>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.75rem] leading-4 text-muted-foreground tabular-nums">
@@ -1189,6 +1202,8 @@ function PaperMenu({ paper, collection, collections }: { paper: PaperData; colle
   if (ids.length > 1) return <SelectionMenu ids={ids} paperId={paper.id} collections={collections} />;
   return (
     <>
+      {!paper.parent_id && <ContextMenuItem onClick={() => newNotebook(paper)}><NotebookPen className="size-4 mr-2" />専用ノートを作る…</ContextMenuItem>}
+      {caps.notebook && <ContextMenuItem onClick={() => moveNotebook(paper)}><Folder className="size-4 mr-2" />持ち主を変更・独立させる…</ContextMenuItem>}
       <ContextMenuItem onClick={() => emitAppEvent("open-paper-details", { paperId: paper.id })}>
         <FileText className="w-4 h-4 mr-2" /> 論文情報・整理
       </ContextMenuItem>

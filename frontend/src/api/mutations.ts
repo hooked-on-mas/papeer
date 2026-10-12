@@ -39,7 +39,7 @@ export function patchPaper(paperId: string, body: Schemas["UpdatePaperRequest"])
 
 // --- Sticky notes ---------------------------------------------------------------------------
 
-type StickyNoteFields = { page: number; side: "original" | "translated"; quote: string; anchor_y: number; anchor_x: number; label: string; note: string };
+type StickyNoteFields = { page_id?: string | null; page: number; side: "original" | "translated"; quote: string; anchor_y: number; anchor_x: number; label: string; note: string };
 
 /**
  * A sticky note added (POST) or edited (PATCH, with `id`). mutateAsync settles once it is saved, so that

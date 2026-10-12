@@ -1,3 +1,4 @@
+import { confirmItemDeletion } from "@/features/notebooks/NotebookDialogs";
 import { api, ApiError, unwrap } from "@/api/client";
 import { getPaper, type PaperData, type ReadingData } from "@/api/hooks";
 import { invalidate, patchPaper } from "@/api/mutations";
@@ -498,20 +499,22 @@ export async function deletePaper(paperId: string): Promise<boolean> {
     showError(error);
     return false;
   }
-  const ok = await askConfirm("論文を削除",
-    `「${current.title}」をライブラリから削除しますか？\n訳文・サマリー・チャット履歴・メモも削除され、元に戻せません。`, "削除", true);
-  if (!ok) return false;
+  let choice;
+  try { choice = await confirmItemDeletion([paperId], `「${current.title}」をライブラリから削除しますか？\n訳文・サマリー・チャット履歴・メモも削除され、元に戻せません。`); }
+  catch (error) { showError(error); return false; }
+  if (!choice) return false;
   try {
-    await unwrap(api.DELETE("/api/papers/{paper_id}", { params: { path: { paper_id: paperId } } }));
+    await unwrap(api.DELETE("/api/papers/{paper_id}", { params: { path: { paper_id: paperId }, query: { keep_notebooks: choice.keep } } }));
   } catch (error) {
     showError(error, "削除できませんでした");
     return false;
   }
   const s = useStore.getState();
-  if (s.activePaperId === paperId) s.setActivePaperId(null);
-  clearJobFailure(paperId);
-  forgetDraftsOfPapers([paperId]);
-  useStore.setState({ moveHistory: forgetPapers(s.moveHistory, new Set([paperId])) });
+  const removed = new Set([paperId, ...(!choice.keep ? choice.children.map(row => row.id) : [])]);
+  if (s.activePaperId && removed.has(s.activePaperId)) s.setActivePaperId(null);
+  removed.forEach(clearJobFailure);
+  forgetDraftsOfPapers(removed);
+  useStore.setState({ moveHistory: forgetPapers(s.moveHistory, removed) });
   s.setStatus(`「${current.title}」を削除しました。`);
   await refreshLibrary();
   return true;

@@ -57,6 +57,9 @@ before(async () => {
     PdfPane: (await load("/src/features/reader/PdfPane.tsx")).PdfPane,
     useStore: (await load("/src/store/index.ts")).useStore,
     useInkPanes: (await load("/src/features/reader/useInkEditor.ts")).useInkPanes,
+    inkStore: await load("/src/features/reader/inkStore.ts"),
+    notebooks: await load("/src/features/notebooks/notebooks.ts"),
+    pendingSaves: await load("/src/lib/pendingSaves.ts"),
     SelectionToolbarView: (await load("/src/features/reader/SelectionToolbar.tsx")).SelectionToolbarView,
     passageActions: (await load("/src/features/reader/passageActions.ts")).passageActions,
     kindCapabilities: (await load("/src/lib/itemKinds.ts")).kindCapabilities,
@@ -717,4 +720,237 @@ test("the OCR part of the translation review is left out when no page needs OCR 
     paperId: "p1", busy: false, onJump: () => undefined, reading: { completed_pages: [], ocr_pages: [], ocr_applied: [] },
   }));
   assert.equal(html, "");
+});
+
+
+test("notebook ink keeps a stable address when numbers move and a late deleted-page reply cannot resurrect its journal", async () => {
+  const { api, inkStore: { InkPage } } = modules;
+  const original = { GET: api.GET, PUT: api.PUT };
+  const calls = [];
+  let release;
+  api.GET = async () => ({ data: { strokes: [] }, response: new Response(null, { status: 200 }) });
+  api.PUT = async (route, options) => { calls.push({ route, options }); await new Promise(resolve => { release = resolve; }); return { data: {}, response: new Response(null, { status: 200 }) }; };
+  const entry = new InkPage("a".repeat(32), "original", 1, "stable-page");
+  try {
+    await entry.load();
+    entry.change([{ id: "stroke", points: [[.1,.2]], color: "#000000", width: .003 }]);
+    await new Promise(resolve => setImmediate(resolve));
+    entry.page = 4;
+    assert.equal(calls[0].route, "/api/notebooks/{notebook_id}/pages/{page_id}/ink");
+    assert.equal(calls[0].options.params.path.page_id, "stable-page");
+    const saving = entry.save();
+    entry.forget(); release(); await saving;
+    assert.equal(localStorage.getItem(`papeer-notebook-ink:${"a".repeat(32)}:stable-page`), null);
+    assert.equal(calls.length, 1);
+  } finally { release?.(); entry.forget(); api.GET = original.GET; api.PUT = original.PUT; }
+});
+
+test("a notebook page forgotten during GET never becomes ready again", async () => {
+  const { api, inkStore: { InkPage } } = modules;
+  const original = api.GET;
+  let release;
+  api.GET = async () => { await new Promise(resolve => { release = resolve; }); return { data: { strokes: [] }, response: new Response(null, { status: 200 }) }; };
+  const entry = new InkPage("b".repeat(32), "original", 1, "deleted-page");
+  try {
+    const loading = entry.load(); await new Promise(resolve => setImmediate(resolve));
+    entry.forget(); release(); await loading;
+    assert.equal(entry.snapshot.ready, false);
+  } finally { release?.(); api.GET = original; }
+});
+
+test("flushing notebook ink finds an unseen journal after restart and preserves it on failure", async () => {
+  const { api, inkStore: { flushInkSaves }, pendingSaves: { forgetDraftsOfPapers } } = modules;
+  const owner = "c".repeat(32), key = `papeer-notebook-ink:${owner}:unseen`;
+  const stroke = { id: "draft", points: [[.1,.2]], color: "#000000", width: .003 };
+  const original = { GET: api.GET, PUT: api.PUT, storage: globalThis.localStorage };
+  const values = { [key]: JSON.stringify([stroke]) };
+  globalThis.localStorage = Object.assign(values, { getItem: name => values[name] ?? null, setItem: (name, value) => { values[name] = value; }, removeItem: name => { delete values[name]; } });
+  api.GET = async route => ({ data: route === "/api/notebooks/{notebook_id}" ? { pages: [{ id: "unseen" }] } : { strokes: [] }, response: new Response(null, { status: 200 }) });
+  api.PUT = async () => { throw new Error("offline"); };
+  try {
+    await assert.rejects(flushInkSaves(owner), /offline/);
+    assert.equal(localStorage.getItem(key), JSON.stringify([stroke]));
+    let sent;
+    api.PUT = async (_route, options) => { sent = options; return { data: {}, response: new Response(null, { status: 200 }) }; };
+    await flushInkSaves(owner);
+    assert.deepEqual(sent.body.strokes, [stroke]);
+    assert.equal(sent.params.path.page_id, "unseen");
+    assert.equal(localStorage.getItem(key), null);
+  } finally { forgetDraftsOfPapers([owner]); api.GET = original.GET; api.PUT = original.PUT; globalThis.localStorage = original.storage; }
+});
+
+
+test("a failed notebook page operation keeps the saved unseen draft attached to its original stable page", async () => {
+  const { api, notebooks: { changeNotebook, useNotebookBusy }, inkStore: { notebookDraftInk }, pendingSaves: { forgetDraftsOfPapers }, useStore, queryClient } = modules;
+  const owner = "d".repeat(32), key = `papeer-notebook-ink:${owner}:original-page`;
+  const stroke = { id: "kept", points: [[.1,.2]], color: "#000000", width: .003 };
+  const document = { version: 1, revision: 1, pages: [{ id: "original-page", size: "A4", orientation: "portrait", template: "blank", color: "white", width_mm: 210, height_mm: 297 }] };
+  const original = { GET: api.GET, PUT: api.PUT, POST: api.POST, storage: globalThis.localStorage, state: useStore.getState() };
+  const values = { [key]: JSON.stringify([stroke]) };
+  globalThis.localStorage = Object.assign(values, { getItem: name => values[name] ?? null, setItem: (name, value) => { values[name] = value; }, removeItem: name => { delete values[name]; } });
+  api.GET = async route => ({ data: route === "/api/notebooks/{notebook_id}" ? document : { strokes: [] }, response: new Response(null, { status: 200 }) });
+  const sent = [];
+  api.PUT = async (_route, options) => { sent.push(options.body.strokes); return { data: {}, response: new Response(null, { status: 200 }) }; };
+  api.POST = async () => { assert.equal(sent.length, 1, "ink saves before the page operation"); throw new Error("page operation offline"); };
+  useStore.setState({ activePaperId: owner, currentPage: 1 });
+  try {
+    const successfulPut = api.PUT, failingPost = api.POST;
+    api.PUT = async () => { throw new Error("ink offline"); };
+    api.POST = async () => { assert.fail("a failed ink save must stop the page operation"); };
+    await assert.rejects(changeNotebook(owner, document, { action: "append" }), /ink offline/);
+    assert.equal(localStorage.getItem(key), JSON.stringify([stroke]));
+    assert.deepEqual(notebookDraftInk(owner, "original-page"), [stroke]);
+    assert.equal(useNotebookBusy.getState().ids.includes(owner), false);
+    api.PUT = successfulPut; api.POST = failingPost;
+    await assert.rejects(changeNotebook(owner, document, { action: "append" }), /page operation offline/);
+    assert.deepEqual(sent, [[stroke]]);
+    assert.deepEqual(notebookDraftInk(owner, "original-page"), [stroke]);
+    assert.deepEqual(queryClient.getQueryData(["notebook", owner]), document);
+    assert.equal(useNotebookBusy.getState().ids.includes(owner), false);
+    assert.equal(useStore.getState().currentPage, 1);
+  } finally { forgetDraftsOfPapers([owner]); api.GET = original.GET; api.PUT = original.PUT; api.POST = original.POST; globalThis.localStorage = original.storage; useStore.setState(original.state); queryClient.clear(); }
+});
+
+// A page deleted on the server whose reply and recovery read were both lost: the old document stays on screen,
+// still takes ink for the page, and the entry would be saved to a missing page forever.
+// With `journal: false` the browser storage refuses writes, so the drafts only live in memory.
+async function lostNotebookDeletion(owner, { journal = true } = {}) {
+  const { React, api, notebooks: { changeNotebook }, inkStore: { useInkPage }, useStore, server: { renderToString } } = modules;
+  const page = id => ({ id, size: "A4", orientation: "portrait", template: "blank", color: "white", width_mm: 210, height_mm: 297 });
+  const ok = data => ({ data, response: new Response(null, { status: 200 }) });
+  const stroke = id => ({ id, points: [[.1, .2]], color: "#000000", width: .003 });
+  const old = { version: 1, revision: 1, pages: [page("keep"), page("gone")] };
+  const latest = { version: 1, revision: 2, pages: [page("keep")] };
+  const server = { document: old, getDown: false, putDown: false, gate: null, puts: [], missing: [] };
+  // Unlike the shared stub, this one lists its keys, as the flush does to find journals.
+  const values = {};
+  globalThis.localStorage = Object.assign(values, { getItem: name => values[name] ?? null,
+    setItem: (name, value) => { if (!journal) throw new DOMException("quota", "QuotaExceededError"); values[name] = value; },
+    removeItem: name => { delete values[name]; } });
+  api.GET = async route => {
+    if (route !== "/api/notebooks/{notebook_id}") return ok({ strokes: [] });
+    const { document, gate } = server;
+    if (server.getDown) throw new Error("read lost");
+    if (gate) await gate;
+    return ok(document);
+  };
+  api.PUT = async (_route, options) => {
+    const id = options.params.path.page_id;
+    if (server.putDown) throw new Error("offline");
+    if (!server.document.pages.some(value => value.id === id)) { server.missing.push(id); return { error: {}, response: new Response(null, { status: 404 }) }; }
+    server.puts.push([id, options.body.strokes]);
+    return ok({});
+  };
+  api.POST = async () => { server.document = latest; server.getDown = true; throw new Error("reply lost"); };
+  const entries = {};
+  renderToString(React.createElement(function Pages() {
+    entries.keep = useInkPage(owner, "original", 1, "keep").entry;
+    entries.gone = useInkPage(owner, "original", 2, "gone").entry;
+    return null;
+  }));
+  await Promise.all([entries.keep.load(), entries.gone.load()]);
+  useStore.setState({ activePaperId: owner, currentPage: 2 });
+  await assert.rejects(changeNotebook(owner, old, { action: "delete", page_id: "gone" }), /reply lost/);
+  // The server committed the deletion; the old UI keeps drawing on both pages while saves fail.
+  server.putDown = true;
+  entries.keep.change([stroke("kept")]);
+  entries.gone.change([stroke("doomed")]);
+  await new Promise(resolve => setImmediate(resolve));
+  server.putDown = false; server.getDown = false;
+  const keys = { keep: `papeer-notebook-ink:${owner}:keep`, gone: `papeer-notebook-ink:${owner}:gone` };
+  assert.equal(entries.gone.snapshot.dirty, true);
+  assert.equal(entries.keep.snapshot.dirty, true);
+  if (journal) {
+    assert.deepEqual(JSON.parse(localStorage.getItem(keys.gone)), [stroke("doomed")]);
+    assert.deepEqual(JSON.parse(localStorage.getItem(keys.keep)), [stroke("kept")]);
+  } else {
+    assert.equal(localStorage.getItem(keys.gone), null);
+    assert.equal(localStorage.getItem(keys.keep), null);
+  }
+  return { server, entries, keys, stroke, page, ok };
+}
+
+test("a successful notebook read settles ink of a page deleted by a lost reply, even when an older read is delayed", async () => {
+  const { api, notebooks: { fetchNotebook }, inkStore: { flushInkSaves, notebookDraftInk, useInkPage }, pendingSaves: { forgetDraftsOfPapers }, useStore, queryClient, React, server: { renderToString } } = modules;
+  const owner = "e".repeat(32);
+  const original = { GET: api.GET, PUT: api.PUT, POST: api.POST, storage: globalThis.localStorage, state: useStore.getState() };
+  try {
+    const { server, entries, keys, stroke, page, ok } = await lostNotebookDeletion(owner);
+    await fetchNotebook(owner);
+    assert.equal(localStorage.getItem(keys.gone), null);
+    assert.equal(notebookDraftInk(owner, "gone"), undefined);
+    assert.deepEqual(notebookDraftInk(owner, "keep"), [stroke("kept")], "the surviving draft stays");
+    await flushInkSaves(owner);
+    assert.deepEqual(server.puts, [["keep", [stroke("kept")]]]);
+    assert.deepEqual(server.missing, [], "no save is sent to the deleted page");
+    assert.equal(localStorage.getItem(keys.keep), null);
+    // A newer document adds a page that takes a draft; the older read, sent before and answered after it, is ignored.
+    const older = server.document;
+    let release;
+    server.gate = new Promise(resolve => { release = resolve; });
+    const late = fetchNotebook(owner);
+    await new Promise(resolve => setImmediate(resolve));
+    server.gate = null;
+    server.document = { ...older, revision: 3, pages: [...older.pages, page("fresh")] };
+    await fetchNotebook(owner);
+    let fresh;
+    renderToString(React.createElement(function Fresh() { fresh = useInkPage(owner, "original", 2, "fresh").entry; return null; }));
+    await fresh.load();
+    server.putDown = true;
+    fresh.change([stroke("new")]);
+    await new Promise(resolve => setImmediate(resolve));
+    release();
+    await late;
+    assert.deepEqual(notebookDraftInk(owner, "fresh"), [stroke("new")]);
+    assert.deepEqual(JSON.parse(localStorage.getItem(`papeer-notebook-ink:${owner}:fresh`)), [stroke("new")]);
+    server.putDown = false;
+    await flushInkSaves(owner);
+    assert.deepEqual(server.puts.at(-1), ["fresh", [stroke("new")]]);
+    assert.deepEqual(server.missing, []);
+  } finally { forgetDraftsOfPapers([owner]); api.GET = original.GET; api.PUT = original.PUT; api.POST = original.POST; globalThis.localStorage = original.storage; useStore.setState(original.state); queryClient.clear(); }
+});
+
+test("flushing notebook ink settles a page deleted by a lost reply before saving, so shutdown and backup succeed", async () => {
+  const { api, inkStore: { flushInkSaves, notebookDraftInk }, pendingSaves: { forgetDraftsOfPapers }, useStore, queryClient } = modules;
+  const owner = "f".repeat(32);
+  const original = { GET: api.GET, PUT: api.PUT, POST: api.POST, storage: globalThis.localStorage, state: useStore.getState() };
+  try {
+    const { server, keys, stroke } = await lostNotebookDeletion(owner);
+    server.missing.length = 0;
+    await flushInkSaves(owner);
+    assert.deepEqual(server.missing, [], "no save is sent to the deleted page");
+    assert.deepEqual(server.puts, [["keep", [stroke("kept")]]]);
+    assert.equal(localStorage.getItem(keys.gone), null);
+    assert.equal(localStorage.getItem(keys.keep), null);
+    assert.equal(notebookDraftInk(owner, "gone"), undefined);
+    await flushInkSaves(owner);
+    assert.deepEqual(server.missing, []);
+  } finally { forgetDraftsOfPapers([owner]); api.GET = original.GET; api.PUT = original.PUT; api.POST = original.POST; globalThis.localStorage = original.storage; useStore.setState(original.state); queryClient.clear(); }
+});
+
+test("flushing notebook ink also reconciles a draft that only lives in memory because the journal cannot be written", async () => {
+  const { api, inkStore: { flushInkSaves, notebookDraftInk }, pendingSaves: { forgetDraftsOfPapers }, useStore, queryClient } = modules;
+  const owner = "9".repeat(32);
+  const original = { GET: api.GET, PUT: api.PUT, POST: api.POST, storage: globalThis.localStorage, state: useStore.getState() };
+  try {
+    // No notebook query is active and no journal exists: only the in-memory entries know of the owner.
+    const { server, entries, stroke } = await lostNotebookDeletion(owner, { journal: false });
+    server.missing.length = 0;
+    server.getDown = true;
+    await assert.rejects(flushInkSaves(owner), /read lost/);
+    assert.deepEqual(server.puts, []);
+    assert.deepEqual(server.missing, [], "nothing is sent before the document is known");
+    assert.equal(entries.keep.snapshot.dirty, true, "a failed read keeps the drafts");
+    assert.deepEqual(notebookDraftInk(owner, "keep"), [stroke("kept")]);
+    assert.deepEqual(notebookDraftInk(owner, "gone"), [stroke("doomed")]);
+    server.getDown = false;
+    await flushInkSaves(owner);
+    assert.deepEqual(server.missing, [], "no save is sent to the deleted page");
+    assert.deepEqual(server.puts, [["keep", [stroke("kept")]]]);
+    assert.equal(entries.keep.snapshot.dirty, false);
+    assert.equal(notebookDraftInk(owner, "gone"), undefined);
+    await flushInkSaves(owner);
+    assert.deepEqual(server.missing, []);
+    assert.deepEqual(server.puts, [["keep", [stroke("kept")]]]);
+  } finally { forgetDraftsOfPapers([owner]); api.GET = original.GET; api.PUT = original.PUT; api.POST = original.POST; globalThis.localStorage = original.storage; useStore.setState(original.state); queryClient.clear(); }
 });

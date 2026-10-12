@@ -1,7 +1,7 @@
 """The library: papers, folders (collections), their files, sticky notes and what the reader shows."""
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 import logging
 import re
@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 
-from papeer.core import library_organize, ocr, reading_state, search
+from papeer.core import library_organize, notebook, ocr, reading_state, search
 from papeer.core.bibtex import bibtex, export_bibtex
 from papeer.core.citations import citation_graph
 from papeer.core.errors import Invalid, NotFound
@@ -212,12 +212,12 @@ def rename_paper(paper_id: str, body: RenamePaperRequest) -> dict[str, str]:
 
 
 @router.delete("/api/papers/{paper_id}")
-def delete_paper(paper_id: str) -> dict[str, str]:
+def delete_paper(paper_id: str, keep_notebooks: bool = False) -> dict[str, str]:
     lib = deps.get_library()
     lib.paper_folder(paper_id)
     # The notebooks it holds go with it, so a job on any of them also prevents the removal.
     with deps.job_manager.idle("処理中のジョブがあるため削除できません。", {paper_id, *lib.owned_notebooks(paper_id)}):
-        lib.delete_paper(paper_id)
+        lib.delete_paper(paper_id, keep_notebooks=keep_notebooks)
     deps.library_changed()
     return {"status": "deleted"}
 
@@ -286,7 +286,7 @@ def stream_paper_file(paper_id: str, file_path: str, request: Request) -> Respon
 
     stat = target.stat()
     file_size = stat.st_size
-    etag = f'"{int(stat.st_mtime)}-{file_size}"'
+    etag = f'"{stat.st_mtime_ns}-{file_size}"'
 
     if_none_match = request.headers.get("if-none-match")
     if if_none_match and if_none_match == etag:
@@ -355,21 +355,33 @@ def _paper_library(paper_id: str):
     return lib
 
 
-@router.get("/api/sticky-notes", response_model=list[LibraryStickyNote])
+@router.get("/api/sticky-notes", response_model=list[LibraryStickyNote], response_model_exclude_unset=True)
 def get_sticky_notes() -> list[dict]:
-    return deps.get_library().sticky_notes()
+    lib = deps.get_library()
+    with notebook.lock(lib.root, "placement"), ExitStack() as locks:
+        with lib.connection() as db:
+            identities = [row[0] for row in db.execute("SELECT id FROM papers WHERE kind='notebook' ORDER BY id")]
+        for identity in identities:
+            locks.enter_context(notebook.lock(lib.root, identity))
+        return notebook.bookmarks_with_ids(lib, lib.sticky_notes())
 
 
-@router.get("/api/papers/{paper_id}/sticky-notes", response_model=list[StickyNote])
+@router.get("/api/papers/{paper_id}/sticky-notes", response_model=list[StickyNote], response_model_exclude_unset=True)
 def get_bookmarks(paper_id: str) -> list[dict]:
-    return _paper_library(paper_id).bookmarks(paper_id)
+    lib = _paper_library(paper_id)
+    with notebook.lock(lib.root, paper_id):
+        return notebook.bookmarks_with_ids(lib, lib.bookmarks(paper_id))
 
 
-@router.post("/api/papers/{paper_id}/sticky-notes", response_model=StickyNote)
+@router.post("/api/papers/{paper_id}/sticky-notes", response_model=StickyNote, response_model_exclude_unset=True)
 def add_bookmark(paper_id: str, body: BookmarkRequest) -> dict:
-    return _paper_library(paper_id).add_bookmark(paper_id, body.page, body.side, body.quote, body.label, body.note,
-                                                 body.anchor_y, body.anchor_x, kind=body.kind, color=body.color,
-                                                 rects=[list(rect) for rect in body.rects])
+    lib = _paper_library(paper_id)
+    with notebook.lock(lib.root, paper_id):
+        page = notebook.request_page(lib, paper_id, body.page_id, body.page, body.side)
+        saved = lib.add_bookmark(paper_id, page, body.side, body.quote, body.label, body.note,
+                                 body.anchor_y, body.anchor_x, kind=body.kind, color=body.color,
+                                 rects=[list(rect) for rect in body.rects])
+        return notebook.bookmarks_with_ids(lib, [saved])[0]
 
 
 @router.delete("/api/papers/{paper_id}/sticky-notes/{bookmark_id}")
@@ -377,11 +389,14 @@ def delete_bookmark(paper_id: str, bookmark_id: int) -> dict[str, bool]:
     return {"deleted": _paper_library(paper_id).delete_bookmark(paper_id, bookmark_id)}
 
 
-@router.patch("/api/papers/{paper_id}/sticky-notes/{bookmark_id}", response_model=StickyNote)
+@router.patch("/api/papers/{paper_id}/sticky-notes/{bookmark_id}", response_model=StickyNote, response_model_exclude_unset=True)
 def update_bookmark(paper_id: str, bookmark_id: int, body: BookmarkEditRequest) -> dict:
     # A missing note is NotFound (404); a wrong color, like any other invalid value, 400.
-    return _paper_library(paper_id).update_bookmark(paper_id, bookmark_id, body.label, body.note,
-                                                    anchor_x=body.anchor_x, anchor_y=body.anchor_y, color=body.color)
+    lib = _paper_library(paper_id)
+    with notebook.lock(lib.root, paper_id):
+        saved = lib.update_bookmark(paper_id, bookmark_id, body.label, body.note,
+                                    anchor_x=body.anchor_x, anchor_y=body.anchor_y, color=body.color)
+        return notebook.bookmarks_with_ids(lib, [saved])[0]
 
 
 # --- Folders (collections) ---

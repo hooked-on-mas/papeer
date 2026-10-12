@@ -3,13 +3,13 @@ import { highlightColor, type PageRect } from "./highlights.ts";
 
 export type StickyNote = {
   id: number; paper_id: string; paper_title?: string; paper_name?: string;
-  page: number; side: "original" | "translated"; quote: string; label: string; note: string;
+  page_id?: string | null; page: number; side: "original" | "translated"; quote: string; label: string; note: string;
   anchor_y: number; anchor_x: number; created_at: string;
   /** "highlight": text highlighted from a selection (see highlights.ts). Missing from an older sidecar. */
   kind?: "note" | "highlight"; color?: string; rects?: PageRect[];
 };
 export type StickyDraft = {
-  paperId: string; page: number; side: "original" | "translated"; quote: string;
+  paperId: string; pageId?: string | null; page: number; side: "original" | "translated"; quote: string;
   anchorY: number; anchorX?: number; id?: number; label?: string; note?: string; kind?: "note" | "highlight";
 };
 export type StickyFilters = {
@@ -45,7 +45,7 @@ export function filterStickyNotes(notes: StickyNote[], paperId: string, filters:
       || a.page - b.page || a.side.localeCompare(b.side) || a.anchor_y - b.anchor_y || a.id - b.id);
 }
 
-export const noteDraft = (note: StickyNote): StickyDraft => ({ ...note, paperId: note.paper_id, anchorY: note.anchor_y, anchorX: note.anchor_x });
+export const noteDraft = (note: StickyNote): StickyDraft => ({ ...note, paperId: note.paper_id, pageId: note.page_id, anchorY: note.anchor_y, anchorX: note.anchor_x });
 
 /** Indents every line of `text` into a list item, with `prefix` ("> " for a quote) after the indent. */
 const indented = (text: string, prefix = "") => text.split("\n").map(line => `  ${prefix}${line}`.trimEnd()).join("\n");

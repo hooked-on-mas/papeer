@@ -1,3 +1,4 @@
+import { useItemCapabilities } from "@/api/hooks";
 import { useEffect, useState } from "react";
 import { api, authorizedUrl, unwrap } from "@/api/client";
 import { useStore } from "@/store";
@@ -5,7 +6,8 @@ import type { Bounds } from "./inkGeometry";
 import type { InkSide } from "./inkStore";
 import { flushInkSaves } from "./inkStore";
 
-export function InkCapture({ paperId, page, side, box, onClose }: { paperId: string; page: number; side: InkSide; box: Bounds; onClose: () => void }) {
+export function InkCapture({ paperId, page, pageId, side, box, onClose }: { paperId: string; page: number; pageId?: string; side: InkSide; box: Bounds; onClose: () => void }) {
+  const caps = useItemCapabilities(paperId);
   const [file, setFile] = useState("");
   const [error, setError] = useState("");
   const [includeInk, setIncludeInk] = useState(false);
@@ -16,11 +18,11 @@ export function InkCapture({ paperId, page, side, box, onClose }: { paperId: str
       if (includeInk) await flushInkSaves(paperId, side);
       if (!alive) return null;
       return await unwrap(api.POST("/api/papers/{paper_id}/ink-capture-v2", { params: { path: { paper_id: paperId } },
-        body: { ...box, page, side, include_ink: includeInk } })) as { file: string };
+        body: { ...box, page, page_id: pageId, side, include_ink: includeInk } })) as { file: string };
     })()
       .then(value => { if (alive && value) setFile(value.file); }).catch(e => { if (alive) setError(String(e.message)); });
     return () => { alive = false; };
-  }, [paperId, page, side, box, includeInk]);
+  }, [paperId, page, pageId, side, box, includeInk]);
   const url = file ? authorizedUrl(`/api/papers/${paperId}/${file}`) : "";
   const copy = async () => {
     try {
@@ -38,7 +40,7 @@ export function InkCapture({ paperId, page, side, box, onClose }: { paperId: str
     {!file && !error && <p>画像を作成しています…</p>}
     {file && <><img src={url} alt={`p.${page}の図・数式`} className="w-full rounded border mb-2" />
       <div className="flex gap-2"><button className="border rounded px-2 py-1" onClick={() => void copy()}>画像をコピー</button>
-        <button className="bg-primary text-primary-foreground rounded px-2 py-1" onClick={() => {
+        <button disabled={!caps.memo} className="bg-primary text-primary-foreground rounded px-2 py-1 disabled:opacity-40" onClick={() => {
           const store = useStore.getState();
           store.setNoteInsert({ paperId, text: `\n\n![p.${page} ${side === "original" ? "原文" : "日本語訳"}の図・数式](${file})\n\n[出典 p.${page}](papeer://${paperId}/${page})\n` });
           store.openSidePanel("notes"); onClose();

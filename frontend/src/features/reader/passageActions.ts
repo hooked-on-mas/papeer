@@ -14,6 +14,6 @@ export function passageActions(caps: ItemCapabilities): ReadonlySet<PassageActio
   if (caps.translate) { offered.add("fix-paragraph"); offered.add("fix-terms"); }
   if (caps.chat) { offered.add("explain"); offered.add("attach"); }
   if (caps.memo) offered.add("quote");
-  if (caps.stickyNotes) { offered.add("sticky"); offered.add("highlight"); }
+  if (caps.stickyNotes && !caps.notebook) { offered.add("sticky"); offered.add("highlight"); }
   return offered;
 }

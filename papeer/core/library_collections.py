@@ -69,6 +69,8 @@ class Collections(LibraryBase):
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             known = {path for row in db.execute("SELECT name FROM collections") for path in collection_ancestors(row[0])}
+            if any(db.execute("SELECT 1 FROM papers WHERE id=? AND parent_id IS NOT NULL", (identity,)).fetchone() for identity in targets):
+                raise Invalid("持ち物のノートは先に独立させてください。")
             current: dict[str, str] = {}
             for row in db.execute("SELECT id,collection_name FROM papers").fetchall():
                 current[row["id"]] = normalize_collection_name(row["collection_name"])

@@ -59,11 +59,11 @@ export function inkToolActive(): boolean {
   return useInkTools.getState().tool !== "select";
 }
 
-export function useInkEditor(paperId: string | undefined, side: InkSide, page: number, ratio: number) {
+export function useInkEditor(paperId: string | undefined, side: InkSide, page: number, ratio: number, pageId?: string) {
   const owner = useRef(Symbol("ink-pane"));
   const scopeRef = useRef<HTMLDivElement>(null);
   const beforeCommand = useRef<(() => void) | null>(null);
-  const ink = useInkPage(paperId, side, page);
+  const ink = useInkPage(paperId, side, page, pageId);
   const preferences = useInkPreferences();
   const clipboard = useInkClipboard();
   const { tool, setTool, lastPen, lastRange, version, listOpen, setListOpen } = useInkTools();

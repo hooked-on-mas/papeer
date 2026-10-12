@@ -14,6 +14,16 @@ from papeer.translation.translation_preview import read_preview, translated_page
 
 def reading_state(lib: Library, paper_id: str, last_page: int = 0) -> dict[str, Any]:
     """Everything the reader needs to show the original and the translation page by page."""
+    if lib.paper(paper_id)["kind"] == "notebook":
+        from papeer.core.notebook import read
+        document = read(lib, paper_id)
+        count = len(document["pages"])
+        return {"page_count": count, "source_page_count": count, "empty_pages": [],
+                "translation_required_pages": [], "ocr_pages": [], "ocr_applied": [],
+                "completed_pages": [], "preview": None, "in_progress": False, "report": None,
+                "translated_pages": {}, "page_versions": {}, "last_page": min(last_page, count-1),
+                "has_translated": False, "has_article": False, "has_interleaved": False,
+                "original_mtime": document["revision"], "outline": []}
     files = PaperFiles(lib.folder(paper_id))
     folder = files.folder
     info = lib.reading_info(paper_id)

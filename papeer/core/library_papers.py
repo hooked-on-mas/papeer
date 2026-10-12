@@ -200,6 +200,9 @@ class PaperRecords(LibraryBase):
             # Raises ValueError for anything but a code (translation_status.translation_status decides it).
             values["status"] = TranslationStatus(values["status"]).value
         with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if values.get("collection_name") and db.execute("SELECT 1 FROM papers WHERE id=? AND parent_id IS NOT NULL", (paper_id,)).fetchone():
+                raise ValueError("持ち物のノートはフォルダーに移動できません。先に独立させてください。")
             if values.get("read_status") and not db.execute(
                 "SELECT 1 FROM reading_status_choices WHERE name=?", (values["read_status"],)
             ).fetchone():
@@ -224,6 +227,14 @@ class PaperRecords(LibraryBase):
 
     def rename_paper(self, paper_id: str, name: str) -> str:
         name = nfc(name.strip())
+        with self.connection() as db:
+            row = db.execute("SELECT kind FROM papers WHERE id=?", (paper_id,)).fetchone()
+        if row is not None and row["kind"] == "notebook":
+            if not name or len(name) > 200:
+                raise ValueError("ノート名は1〜200文字で入力してください。")
+            with self.connection() as db:
+                db.execute("UPDATE papers SET original_name=?,title=? WHERE id=?", (name, name, paper_id))
+            return name
         if not name.lower().endswith(".pdf"):
             name += ".pdf"
         stem = name[:-4]
@@ -253,12 +264,15 @@ class PaperRecords(LibraryBase):
     def reading_info(self, paper_id: str) -> dict:
         """Read display metadata without migrating the extraction cache."""
         with self.connection() as db:
-            paper = db.execute("SELECT pages FROM papers WHERE id=?", (paper_id,)).fetchone()
+            paper = db.execute("SELECT pages,kind FROM papers WHERE id=?", (paper_id,)).fetchone()
             if paper is None:
                 raise NotFound("論文が見つかりません。")
             empty = [row[0] for row in db.execute(
                 "SELECT number FROM pages WHERE paper_id=? AND trim(text)='' ORDER BY number",
                 (paper_id,))]
+        if paper["kind"] == "notebook":
+            return {"page_count": paper["pages"], "empty_pages": [], "translation_required_pages": [],
+                    "ocr_pages": [], "ocr_applied": []}
         # Use the same units as translation: references, formulas and other
         # deliberately preserved content do not require a translated page, nor does a
         # page needing OCR (garbled text or a scanned image), which is listed instead.
@@ -275,6 +289,13 @@ class PaperRecords(LibraryBase):
         Shared with every caller until the file changes (shared_json): read it, never modify it in
         place; code that adjusts blocks works on its own copies (materialize_flows and the like).
         """
+        if self.paper(paper_id)["kind"] == "notebook":
+            from papeer.core.notebook import read
+            notebook = read(self, paper_id)
+            return {"title": self.paper(paper_id)["title"], "ocr_pages": [],
+                    "pages": [{"number": n, "text": "", "blocks": [],
+                               "width": page["width_mm"] * 72 / 25.4, "height": page["height_mm"] * 72 / 25.4}
+                              for n, page in enumerate(notebook["pages"], 1)]}
         folder = self.folder(paper_id)
         path = PaperFiles(folder).document_json
         document = read_shared_json(path)
@@ -317,27 +338,35 @@ class PaperRecords(LibraryBase):
             db.executemany("UPDATE pages SET text=? WHERE paper_id=? AND number=?",
                            [(page["text"], paper_id, page["number"]) for page in document["pages"]])
 
-    def delete_paper(self, paper_id: str) -> None:
+    def delete_paper(self, paper_id: str, keep_notebooks: bool = False) -> None:
         """Remove an item with everything it holds: its records and folder, and those of the notebooks held
         by it. Its memos and documents go with its folder; links to it are removed (the other ends stay).
         """
-        self.folder(paper_id)  # Checks the ID's form.
-        with self.connection() as db:
-            # Held notebooks first: papers.parent_id has no ON DELETE CASCADE (library_schema._notebook_items),
-            # so the owner's row can only go once nothing refers to it, and their folders are removed here.
-            removed = [*owned_ids(db, paper_id), paper_id]
-            folders = [self.folder(item_id) for item_id in removed]  # Before any change: a malformed ID stops it.
-            for item_id in removed:
-                forget_relations(db, item_id)
-                db.execute("DELETE FROM messages WHERE paper_id=?", (item_id,))
-                db.execute("DELETE FROM pages WHERE paper_id=?", (item_id,))
-                db.execute("DELETE FROM papers WHERE id=?", (item_id,))
-                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_glossary_domains'").fetchone():
-                    db.execute("DELETE FROM paper_glossary_domains WHERE paper_id=?", (item_id,))
-                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_glossary'").fetchone():
-                    db.execute("DELETE FROM paper_glossary WHERE paper_id=?", (item_id,))
-        for folder in folders:
-            shutil.rmtree(folder, ignore_errors=True)
+        from contextlib import ExitStack
+        from papeer.core.notebook import lock
+        with lock(self.root, "placement"), ExitStack() as locks:
+            for identity in sorted([paper_id, *self.owned_notebooks(paper_id)]):
+                locks.enter_context(lock(self.root, identity))
+            self.folder(paper_id)  # Checks the ID's form.
+            with self.connection() as db:
+                # Held notebooks first: papers.parent_id has no ON DELETE CASCADE (library_schema._notebook_items),
+                # so the owner's row can only go once nothing refers to it, and their folders are removed here.
+                db.execute("BEGIN IMMEDIATE")
+                if keep_notebooks:
+                    db.execute("UPDATE papers SET parent_id=NULL,collection_name=(SELECT collection_name FROM papers WHERE id=?) WHERE parent_id=?", (paper_id, paper_id))
+                removed = [*owned_ids(db, paper_id), paper_id]
+                folders = [self.folder(item_id) for item_id in removed]  # Before any change: a malformed ID stops it.
+                for item_id in removed:
+                    forget_relations(db, item_id)
+                    db.execute("DELETE FROM messages WHERE paper_id=?", (item_id,))
+                    db.execute("DELETE FROM pages WHERE paper_id=?", (item_id,))
+                    db.execute("DELETE FROM papers WHERE id=?", (item_id,))
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_glossary_domains'").fetchone():
+                        db.execute("DELETE FROM paper_glossary_domains WHERE paper_id=?", (item_id,))
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_glossary'").fetchone():
+                        db.execute("DELETE FROM paper_glossary WHERE paper_id=?", (item_id,))
+            for folder in folders:
+                shutil.rmtree(folder, ignore_errors=True)
 
     def page_texts(self, paper_id: str) -> list[tuple[int, str]]:
         """(page number, extracted text) of every page, in order."""
