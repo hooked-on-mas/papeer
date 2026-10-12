@@ -108,6 +108,7 @@ interface UiState {
   selectedFolder: string | null;
   librarySearch: string;
   sortOrder: number;
+  hideLibraryLinks: boolean;
   /** null until known: expand everything, as the old tree did on first launch. */
   expandedCollections: string[] | null;
   /** Library moves made during this session, newest last. */
@@ -147,6 +148,7 @@ interface UiState {
   setSelectedFolder: (folder: string | null) => void;
   setLibrarySearch: (query: string) => void;
   setSortOrder: (order: number) => void;
+  setHideLibraryLinks: (hidden: boolean) => void;
   setExpandedCollections: (paths: string[] | null) => void;
   setMoveHistory: (history: LibraryUndoRecord[]) => void;
   setChatDraft: (draft: PaperHandoff | null) => void;
@@ -186,6 +188,7 @@ export const useStore = create<UiState>()(
       selectedFolder: null,
       librarySearch: "",
       sortOrder: 0,
+      hideLibraryLinks: false,
       expandedCollections: null,
       moveHistory: [],
       uiStateLoaded: false,
@@ -238,6 +241,7 @@ export const useStore = create<UiState>()(
       setSelectedFolder: (selectedFolder) => set({ selectedFolder }),
       setLibrarySearch: (librarySearch) => set({ librarySearch }),
       setSortOrder: (sortOrder) => set({ sortOrder }),
+      setHideLibraryLinks: (hideLibraryLinks) => set({ hideLibraryLinks }),
       setExpandedCollections: (expandedCollections) => set({ expandedCollections }),
       setMoveHistory: (moveHistory) => set({ moveHistory }),
       setChatDraft: (chatDraft) => set({ chatDraft }),
@@ -268,6 +272,7 @@ export const useStore = create<UiState>()(
         pageFilter: state.pageFilter,
         sidebarWidth: state.sidebarWidth,
         sidebarCollapsed: state.sidebarCollapsed,
+        hideLibraryLinks: state.hideLibraryLinks,
         readerSplit: state.readerSplit,
         translatedOnly: state.translatedOnly,
         sidePanelWidth: state.sidePanelWidth,

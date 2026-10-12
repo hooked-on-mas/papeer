@@ -11,6 +11,8 @@ export const QK = {
   researchCapabilities: "research-capabilities",
   papers: "papers",
   attachments: "attachments",
+  itemLinks: "item-links",
+  linkedItems: "linked-items",
   notebooks: "notebooks",
   notebook: "notebook",
   memo: "memo",

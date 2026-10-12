@@ -1,4 +1,5 @@
 import { NotebookPages } from "@/features/notebooks/NotebookPages";
+import { RelatedItems } from "@/features/library/RelatedItems";
 import { useNotebook, useNotebookBusy } from "@/features/notebooks/notebooks";
 import { useInkTools } from "./useInkEditor";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -374,6 +375,7 @@ export function Reader() {
     <div ref={readerRef} className="flex flex-col h-full w-full bg-reader-bg">
       <ReaderToolbar paperId={activePaperId} search={search} setSearch={setSearch} outline={reading?.outline ?? outline} ownsKey={ownsKey} />
       {caps.notebook && notebook && <NotebookPages id={activePaperId} document={notebook} />}
+      {caps.linkNotebook && <RelatedItems key={activePaperId} paperId={activePaperId} compact />}
       <span role="status" className="sr-only">{rebuilding ? "PDFを作り直しています" : translating ? "翻訳中" : ""}</span>
       {/* data-ink-toolbar-slot: INK_TOOLBAR_SLOT, which lets the toolbar's keys through to its pane. */}
       <div id="reader-ink-tools" ref={setInkToolbarSlot} data-ink-toolbar-slot="" inert={notebookBusy} className="flex flex-col shrink-0 max-h-[40%]" />

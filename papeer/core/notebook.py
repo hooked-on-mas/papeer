@@ -256,6 +256,46 @@ def move(lib, identity: str, parent_id: str | None, collection=""):
                    (parent_id, "" if parent_id else normalize_collection_name(collection), identity))
 
 
+def link(lib, paper_id: str, target_id: str) -> bool:
+    """Link a PDF paper and a notebook, both standing on their own; whether the link is new.
+
+    Validated and written in one placement transaction (the lock and BEGIN IMMEDIATE that move and create
+    take), so a notebook cannot be put into an owner between the check and the insert. NotFound when either
+    does not exist; Invalid for an item with itself, for an item held by another, and for anything but a
+    PDF paper with a notebook.
+    """
+    with lock(lib.root, "placement"), lib.connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        rows = []
+        for identity in (paper_id, target_id):
+            row = db.execute("SELECT kind,parent_id FROM papers WHERE id=?", (identity,)).fetchone()
+            if row is None:
+                raise NotFound("項目が見つかりません。")
+            rows.append(row)
+        if paper_id == target_id:
+            raise Invalid("同じ項目どうしは紐づけられません。")
+        if any(row["parent_id"] is not None for row in rows):
+            raise Invalid("ほかの項目に入っているノートは紐づけられません。")
+        if sorted(row["kind"] for row in rows) != ["notebook", "pdf"]:
+            raise Invalid("紐づけられるのは論文とノートの組み合わせだけです。")
+        first, second = sorted((paper_id, target_id))
+        return db.execute("INSERT OR IGNORE INTO item_links(a,b) VALUES(?,?)", (first, second)).rowcount > 0
+
+
+def unlink(lib, paper_id: str, target_id: str) -> bool:
+    """Remove the link between two items that exist; whether there was one.
+
+    The pairing is not checked, so a link made before the rule (or by hand) can still be removed.
+    """
+    with lock(lib.root, "placement"), lib.connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        for identity in (paper_id, target_id):
+            if db.execute("SELECT 1 FROM papers WHERE id=?", (identity,)).fetchone() is None:
+                raise NotFound("項目が見つかりません。")
+        first, second = sorted((paper_id, target_id))
+        return db.execute("DELETE FROM item_links WHERE a=? AND b=?", (first, second)).rowcount > 0
+
+
 def request_page(lib, identity: str, page_id: str | None, number: int, side: str) -> int:
     """Resolve an admitted request under lock; a stale page number is never a notebook address."""
     if lib.paper(identity)["kind"] != "notebook":

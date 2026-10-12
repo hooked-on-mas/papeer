@@ -13,15 +13,17 @@ import { useStore } from "@/store";
 import { openPaper } from "@/features/library/selectionStore";
 import { expandMemoOwner, openMemo } from "@/features/notes/memoState";
 import { useAttachments } from "@/api/attachments";
+import { useLinkedItems } from "@/api/itemLinks";
+import { paperDisplayName } from "@/api/hooks";
 import { DEFAULT_PAPER, useNotebooks, type NotebookPaper } from "./notebooks";
 import { PaperSettings } from "./PaperSettings";
 
-type Request = { kind: "create"; owner?: PaperData } | { kind: "move"; item: PaperData } | { kind: "holdings"; owner: PaperData }
+type Request = { kind: "create"; owner?: PaperData } | { kind: "move"; item: PaperData } | { kind: "holdings"; owner: PaperData; includeLinks: boolean }
   | { kind: "delete"; message: string; children: PaperData[]; resolve: (keep: boolean | null) => void };
 const useDialog = create<{ request: Request | null }>(() => ({ request: null }));
 export const newNotebook = (owner?: PaperData) => useDialog.setState({ request: { kind: "create", owner } });
 export const moveNotebook = (item: PaperData) => useDialog.setState({ request: { kind: "move", item } });
-export const showHoldings = (owner: PaperData) => useDialog.setState({ request: { kind: "holdings", owner } });
+export const showHoldings = (owner: PaperData, includeLinks = true) => useDialog.setState({ request: { kind: "holdings", owner, includeLinks } });
 
 export async function confirmItemDeletion(ids: string[], message: string): Promise<{ keep: boolean; children: PaperData[] } | null> {
   const notebooks = await unwrap(api.GET("/api/notebooks"));
@@ -41,6 +43,7 @@ export function NotebookDialogs() {
   const { data: papers = [] } = usePaperList("", 0);
   const { data: notebooks = [] } = useNotebooks();
   const { data: attachments = [] } = useAttachments();
+  const { data: linked = [], isError: linksError, refetch: reloadLinks } = useLinkedItems(request?.kind === "holdings" && request.includeLinks ? request.owner.id : "");
   const close = () => {
     if (busy) return;
     if (request?.kind === "delete") request.resolve(null);
@@ -86,6 +89,9 @@ export function NotebookDialogs() {
       {request?.kind === "holdings" && <div className="max-h-80 overflow-auto space-y-1">
         {notebooks.filter(row => row.parent_id === request.owner.id).map(row => <Button key={row.id} variant="ghost" className="w-full justify-start" onClick={() => { useStore.getState().setActiveTab("reader"); openPaper(row.id, request.owner.collection_name); close(); }}><NotebookPen className="size-4 mr-2" />{row.title}</Button>)}
         {attachments.filter(row => row.owner_id === request.owner.id).map(row => <Button key={row.id} variant="ghost" className="w-full justify-start" onClick={() => { openPaper(request.owner.id, request.owner.collection_name); openMemo(request.owner.id, row.id); close(); }}>{row.title}</Button>)}
+        {request.includeLinks && linked.length > 0 && <p className="text-xs text-muted-foreground border-t pt-2">紐づけ（本体は元のフォルダーにあります）</p>}
+        {request.includeLinks && linksError && <p role="alert" className="text-xs">紐づけを読み込めませんでした。<button className="underline" onClick={() => void reloadLinks()}>再試行</button></p>}
+        {request.includeLinks && linked.map(row => <Button key={`link:${row.id}`} variant="ghost" className="w-full justify-start" onClick={() => { useStore.getState().setActiveTab("reader"); openPaper(row.id, row.collection_name); close(); }}>↗ {paperDisplayName(row)}</Button>)}
       </div>}
       {request?.kind === "delete" && <>
         <ul className="text-sm max-h-48 overflow-auto">{request.children.map(row => <li key={row.id}>専用ノート：{row.title}（{row.pages}ページ）</li>)}</ul>

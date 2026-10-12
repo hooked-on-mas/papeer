@@ -22,6 +22,8 @@ export function AppearanceSection() {
   const setPageFilter = useStore((s) => s.setPageFilter);
   const inkBarStart = useStore((s) => s.inkBarStart);
   const setInkBarStart = useStore((s) => s.setInkBarStart);
+  const hideLibraryLinks = useStore(s => s.hideLibraryLinks);
+  const setHideLibraryLinks = useStore(s => s.setHideLibraryLinks);
   return (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -86,6 +88,12 @@ export function AppearanceSection() {
         <p id="ink-bar-start-hint" className="text-[0.75rem] text-muted-foreground leading-relaxed">
           次回の起動から反映されます。読書中は「書き込み」ボタンでいつでも開閉できます。
         </p>
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="font-medium">ライブラリの紐づけ</h3>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={hideLibraryLinks} onChange={e => setHideLibraryLinks(e.target.checked)} />左パネルの紐づけ行を隠す</label>
+        <p className="text-xs text-muted-foreground">↗ の行と件数をまとめて隠します。画面の関連論文・関連ノートからは引き続き開けます。</p>
       </div>
 
       <p className="text-[0.75rem] text-muted-foreground">どの設定もすぐに保存され、保存ボタンを押す必要はありません。</p>

@@ -1,4 +1,5 @@
 import { NotebookDialogs, newNotebook } from "@/features/notebooks/NotebookDialogs";
+import { ItemLinkDialog } from "@/features/library/ItemLinkDialog";
 import { useSettingsNavigation } from "../features/settings/settingsNavigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
@@ -515,6 +516,7 @@ export function AppShell() {
       <PaperDetailsPanel />
       <OrganizeDialogHost />
       <NotebookDialogs />
+      <ItemLinkDialog />
       <AppDialogs />
       <Lightbox />
       <TranslationDialogHost />

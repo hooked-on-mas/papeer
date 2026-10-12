@@ -17,6 +17,7 @@ import type { PaperData } from "../../api/hooks.ts";
 import type { PendingImport } from "../../app/pendingImports.ts";
 import type { FolderNode } from "./libraryTree.ts";
 import { normalizeCollection } from "../../lib/collectionPath.ts";
+import { itemCapabilities } from "../../lib/itemKinds.ts";
 
 // The rows' keys, unique among the lines. Each kind has its own prefix, and the rows under a paper are
 // told apart by the paper they are under: the same item may be linked from several papers (and is listed
@@ -39,7 +40,7 @@ export const linkKey = (owner: string, id: string) => `link:${owner}:${id}`;
 export type PaperChild =
   | { kind: "attachment"; id: string; title: string }
   | { kind: "owned"; id: string; title: string }
-  | { kind: "link"; id: string; title: string }
+  | { kind: "link"; id: string; title: string; collection?: string }
   | { kind: "more"; id: string; title: string };
 
 /** The kinds of the rows under a paper. */
@@ -237,7 +238,9 @@ export function pinnedLines(lines: TreeLine[], index: ReadonlyMap<string, number
     const at = key == null ? undefined : index.get(key);
     if (at !== undefined) pinned.add(at);
   }
-  if (allFolders) lines.forEach((line, at) => { if (line.kind === "folder") pinned.add(at); });
+  if (allFolders) lines.forEach((line, at) => {
+    if (line.kind === "folder" || (line.kind === "paper" && itemCapabilities(line.paper).linkNotebook)) pinned.add(at);
+  });
   return [...pinned];
 }
 

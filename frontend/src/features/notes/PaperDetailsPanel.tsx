@@ -8,6 +8,7 @@ import { onAppEvent } from "@/lib/appEvents";
 import { storedStatusLabel } from "@/lib/paperStatus";
 import { itemCapabilities } from "@/lib/itemKinds";
 import { PaperMetadataForm } from "./PaperMetadataForm";
+import { RelatedItems } from "@/features/library/RelatedItems";
 
 function metaLines(paper: PaperData, reading: ReadingData | null | undefined): { text: string; title?: string }[] {
   const caps = itemCapabilities(paper);
@@ -69,6 +70,7 @@ function PaperDetails({ paperId }: { paperId: string }) {
           {metaLines(paper, reading).map(line => <div key={line.text} title={line.title}>{line.text}</div>)}
         </div>
         <PaperMetadataForm paper={paper} collections={collections} />
+        <RelatedItems paperId={paperId} />
         <section className="space-y-2 border-t pt-4">
           <h3 className="text-[0.8125rem] font-semibold">ファイル</h3>
           <div className="text-[0.75rem] text-muted-foreground space-y-0.5 break-words">

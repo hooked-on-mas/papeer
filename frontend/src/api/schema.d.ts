@@ -815,6 +815,58 @@ export interface paths {
         patch: operations["edit_memo_api_papers__paper_id__attachments__attachment_id__patch"];
         trace?: never;
     };
+    "/api/item-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Links */
+        get: operations["list_links_api_item_links_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Linked Items */
+        get: operations["linked_items_api_papers__paper_id__links_get"];
+        put?: never;
+        /** Link Item */
+        post: operations["link_item_api_papers__paper_id__links_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/links/{target_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Unlink Item */
+        delete: operations["unlink_item_api_papers__paper_id__links__target_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/notebooks": {
         parameters: {
             query?: never;
@@ -3023,6 +3075,16 @@ export interface components {
             path: string;
         };
         /**
+         * ItemLink
+         * @description One link, as the table stores it: a < b, whichever item it was made from.
+         */
+        ItemLink: {
+            /** A */
+            a: string;
+            /** B */
+            b: string;
+        };
+        /**
          * JobInfo
          * @description A job as GET /api/jobs/{job_id} tells it, running or finished (JobManager keeps the last ones).
          */
@@ -3165,6 +3227,14 @@ export interface components {
             /** Resets At */
             resets_at: number | null;
         };
+        /** LinkResult */
+        LinkResult: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "linked" | "unlinked";
+        };
         /** MapGroupDescription */
         MapGroupDescription: {
             /** Key */
@@ -3274,6 +3344,11 @@ export interface components {
             updated_at: string;
             /** Content */
             content: string;
+        };
+        /** NewLink */
+        NewLink: {
+            /** Target Id */
+            target_id: string;
         };
         /** NewMemo */
         NewMemo: {
@@ -7088,6 +7163,149 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemoContent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_links_api_item_links_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemLink"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    linked_items_api_papers__paper_id__links_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    link_item_api_papers__paper_id__links_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewLink"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unlink_item_api_papers__paper_id__links__target_id__delete: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkResult"];
                 };
             };
             /** @description Validation Error */

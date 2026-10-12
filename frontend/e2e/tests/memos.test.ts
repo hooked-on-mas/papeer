@@ -60,7 +60,13 @@ scenario("複数メモを切り替え、持ち物を開き、mdと付箋を取�
   assert.equal(await page.getByRole("tab", { name: "PDFを読む", exact: true }).getAttribute("aria-selected"), "true");
   assert.equal(await selector.inputValue(), firstId);
   await more.click();
-  assert.equal(await selector.locator("option").count(), 7);
+  const holdings = page.getByRole("dialog", { name: "持ち物", exact: true });
+  await holdings.waitFor();
+  const choices = holdings.getByRole("button", { name: /^(メモ\.md|読むポイント\.md|補足[0-4]\.md)$/ });
+  await waitFor(async () => await choices.count() === 7, "持ち物の一覧に7件のメモが並ぶこと");
+  await holdings.getByRole("button", { name: "読むポイント.md", exact: true }).click();
+  await holdings.waitFor({ state: "detached" });
+  await waitFor(async () => await selector.locator("option").count() === 7 && await selector.inputValue() === firstId, "選んだメモが右パネルで開き7件が選べること");
   await page.locator(`[data-memo-owner="${owner}"]`).last().evaluate(element => {
     const transfer = new DataTransfer();
     transfer.items.add(new File(["# 持込\n本文"], "持込.md", { type: "text/markdown" }));

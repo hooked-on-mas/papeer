@@ -8,14 +8,14 @@ const FLAGS = (caps: ItemCapabilities) => Object.entries(caps).filter(([, value]
 test("a PDF can do everything a paper could before kinds, with the .pdf renaming adds", () => {
   const pdf = kindCapabilities("pdf");
   // Listed ahead of the papers is how a kind is placed, not something a PDF can do.
-  for (const [name, value] of FLAGS(pdf)) assert.equal(value, name !== "listedFirst" && name !== "notebook", name);
+  for (const [name, value] of FLAGS(pdf)) assert.equal(value, !["listedFirst", "notebook", "linkNotebook"].includes(name), name);
   assert.equal(pdf.fileExtension, ".pdf");
 });
 
 test("a notebook is not translated and has no text: only writing, a memo and a name, listed ahead of the papers", () => {
   const notebook = kindCapabilities("notebook");
   const on = FLAGS(notebook).filter(([, value]) => value).map(([name]) => name).sort();
-  assert.deepEqual(on, ["annotate", "listedFirst", "memo", "notebook", "rename", "stickyNotes"]);
+  assert.deepEqual(on, ["annotate", "linkNotebook", "listedFirst", "memo", "notebook", "rename", "stickyNotes"]);
   for (const name of ["translate", "split", "summary", "chat", "citationMap", "bibliography", "ocr", "fullTextSearch", "organize", "originalPdf"]) {
     assert.equal(notebook[name as keyof ItemCapabilities], false, name);
   }

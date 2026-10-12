@@ -46,19 +46,22 @@ export type ItemCapabilities = {
   fileExtension: string;
   /** Listed ahead of the papers in its folder. */
   listedFirst: boolean;
+  /** Linking a paper to an independent notebook, without moving either. */
+  linkPaper: boolean;
+  linkNotebook: boolean;
 };
 
 /** What an item of a kind unknown to this app can do: nothing, so that nothing is offered that may not work. */
 const NONE: ItemCapabilities = {
   notebook: false, translate: false, split: false, summary: false, chat: false, memo: false, stickyNotes: false, citationMap: false,
   bibliography: false, ocr: false, fullTextSearch: false, organize: false, annotate: false, originalPdf: false, rename: false,
-  fileExtension: "", listedFirst: false,
+  fileExtension: "", listedFirst: false, linkPaper: false, linkNotebook: false,
 };
 
 const PDF: ItemCapabilities = {
   notebook: false, translate: true, split: true, summary: true, chat: true, memo: true, stickyNotes: true, citationMap: true,
   bibliography: true, ocr: true, fullTextSearch: true, organize: true, annotate: true, originalPdf: true, rename: true,
-  fileExtension: ".pdf", listedFirst: false,
+  fileExtension: ".pdf", listedFirst: false, linkPaper: true, linkNotebook: false,
 };
 
 /**
@@ -68,7 +71,7 @@ const PDF: ItemCapabilities = {
  * (`organize`), which the sidecar does for PDFs only.
  */
 const NOTEBOOK: ItemCapabilities = {
-  ...NONE, notebook: true, memo: true, stickyNotes: true, annotate: true, rename: true, listedFirst: true,
+  ...NONE, notebook: true, memo: true, stickyNotes: true, annotate: true, rename: true, listedFirst: true, linkNotebook: true,
 };
 
 /** A Record, so that a kind the schema gains does not typecheck until it is given its capabilities. */
@@ -92,7 +95,15 @@ export function kindCapabilities(kind: string | null | undefined): ItemCapabilit
  */
 export function itemCapabilities(item: { kind?: string | null } | null | undefined): ItemCapabilities {
   const caps = kindCapabilities(item ? item.kind : undefined);
-  return item && "parent_id" in item && item.parent_id ? { ...caps, memo: false } : caps;
+  return item && "parent_id" in item && item.parent_id ? { ...caps, memo: false, linkPaper: false, linkNotebook: false } : caps;
+}
+
+/** Only independent papers and notebooks may be linked. Missing rows cannot be drop targets. */
+export function canLinkItems(first: { kind?: string | null; parent_id?: string | null } | null | undefined,
+  second: { kind?: string | null; parent_id?: string | null } | null | undefined): boolean {
+  if (!first || !second) return false;
+  const a = itemCapabilities(first), b = itemCapabilities(second);
+  return (a.linkPaper && b.linkNotebook) || (a.linkNotebook && b.linkPaper);
 }
 
 type FlagKey = { [K in keyof ItemCapabilities]: ItemCapabilities[K] extends boolean ? K : never }[keyof ItemCapabilities];
