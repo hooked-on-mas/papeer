@@ -89,13 +89,27 @@ export function kindCapabilities(kind: string | null | undefined): ItemCapabilit
   return KINDS.get(kind) ?? NONE;
 }
 
+/** The capabilities of a kind that holds HTML documents, by the kind's own (a notebook asked about for its documents). */
+const WITH_DOCUMENTS = new WeakMap<ItemCapabilities, ItemCapabilities>();
+
 /**
  * What an item can do. Not loaded yet (no item) it is taken to be a PDF: the screens keep what they
  * showed before kinds, rather than hide their controls for the moment the row takes to load.
+ *
+ * An item that stands on its own, of a kind that has memos, and holds an HTML document (`html_document_count`
+ * of its row, 0 when unknown) can be asked about even where its pages have no text: the document's text
+ * is what the chat reads, so a notebook with one can be talked about without OCR.
  */
-export function itemCapabilities(item: { kind?: string | null } | null | undefined): ItemCapabilities {
+export function itemCapabilities(item: { kind?: string | null; parent_id?: string | null; html_document_count?: number | null } | null | undefined): ItemCapabilities {
   const caps = kindCapabilities(item ? item.kind : undefined);
-  return item && "parent_id" in item && item.parent_id ? { ...caps, memo: false, linkPaper: false, linkNotebook: false } : caps;
+  if (item && item.parent_id) return { ...caps, memo: false, linkPaper: false, linkNotebook: false };
+  if (!item || caps.chat || !caps.memo || !((item.html_document_count ?? 0) > 0)) return caps;
+  let withDocuments = WITH_DOCUMENTS.get(caps);
+  if (!withDocuments) {
+    withDocuments = { ...caps, chat: true };
+    WITH_DOCUMENTS.set(caps, withDocuments);
+  }
+  return withDocuments;
 }
 
 /** Only independent papers and notebooks may be linked. Missing rows cannot be drop targets. */

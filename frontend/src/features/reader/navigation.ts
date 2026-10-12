@@ -3,6 +3,7 @@ import { useStore, type PassageLocation } from "@/store";
 import { QK } from "@/lib/queryKeys";
 import { itemCapabilities, type ItemCapabilities } from "@/lib/itemKinds";
 import { queryClient } from "@/lib/queryClient";
+import { showReaderOf } from "@/features/documents/documentState";
 import { edgePage, steppedPage } from "./pageTurn";
 import { goBack, goForward, rememberPlace, type HistoryEntry } from "./readerHistory";
 import { summaryPlacement } from "./sidePanel";
@@ -43,10 +44,16 @@ function pageState() {
   return { current: store.currentPage, pageCount: data?.page_count ?? 0, translatedOnly: translatedOnlyFilter(), completed: data?.completed_pages ?? [] };
 }
 
-/** Opens `page`, at its start, or at its end with `toEnd` (paging back from the page after it). */
+/**
+ * Opens `page`, at its start, or at its end with `toEnd` (paging back from the page after it). Asking for
+ * a page brings the reader back from the paper's enlarged document, also when the page is the one already
+ * set (Home at the first page, → at the last): the request is to read the PDF there.
+ */
 function openPage(page: number, toEnd = false): void {
   const store = useStore.getState();
-  if (!store.activePaperId || page === store.currentPage) return;
+  if (!store.activePaperId || !Number.isFinite(page)) return;
+  showReaderOf(store.activePaperId);
+  if (page === store.currentPage) return;
   store.setCurrentPage(page);
   if (toEnd) store.setReaderJump({ paperId: store.activePaperId, page, side: "original", text: "", anchor_y: 1, toEnd: true });
 }
@@ -122,6 +129,7 @@ export function jumpToPage(page: number): void {
   if (!store.activePaperId || !Number.isFinite(page)) return;
   const count = pageCount() || page;
   if (translatedOnlyFilter()) store.setTranslatedOnly(false);
+  showReaderOf(store.activePaperId);
   store.setCurrentPage(Math.max(1, Math.min(Math.round(page), count)));
   store.setActiveTab("reader");
 }

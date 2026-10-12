@@ -651,6 +651,7 @@ mod tests {
         assert!(directives["connect-src"].contains("ws://127.0.0.1:51234"));
         assert!(directives["connect-src"].contains("ipc:"));
         assert!(directives["img-src"].contains("http://127.0.0.1:51234"));
+        assert_eq!(directives["frame-src"], "http://127.0.0.1:51234");
         assert_eq!(directives["script-src"], "'self'");
     }
 }

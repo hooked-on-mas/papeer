@@ -33,6 +33,8 @@ export default defineConfig(() => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
+    // Match the packaged window's iframe boundary, including iframe navigations in dev/E2E.
+    headers: { "Content-Security-Policy": "frame-src http://127.0.0.1:8000" },
     port: 1420,
     strictPort: true,
     host: host || false,

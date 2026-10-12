@@ -145,6 +145,9 @@ class PaperRow(BaseModel):
     # What the item holds and is linked to (item_relations.relation_counts): the memos and documents (the
     # attachments table), the notebooks held by it, and the items linked to it.
     attachment_count: int = 0
+    # How many of them are HTML documents (whose text the search and the chat read): a notebook with one
+    # can be asked about, with no OCR.
+    html_document_count: int = 0
     owned_notebook_count: int = 0
     link_count: int = 0
     # Translation progress (library_list.translation_state).

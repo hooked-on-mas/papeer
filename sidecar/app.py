@@ -21,7 +21,7 @@ from papeer import __version__
 from papeer.core.errors import AppError
 from papeer.core.paths import app_env
 from papeer.translation import translation_preview
-from sidecar import deps, instance
+from sidecar import deps, html_documents, instance
 from sidecar.errors import AnswerUnexpectedErrors, error_response, log_to_file, where
 from sidecar.instance import TrackActivity
 from sidecar.job_types import event_schemas
@@ -162,9 +162,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for module in (system, settings, papers, attachments, item_links, notebooks, ai_jobs, reading, ink, drive, ocr, research, discovery):
+for module in (system, settings, papers, attachments, html_documents, item_links, notebooks, ai_jobs, reading, ink, drive, ocr, research, discovery):
     app.include_router(module.router)
 app.include_router(system.public)
+# The document viewer takes a ticket, not the token (sidecar/html_documents.py): it admits itself.
+app.include_router(html_documents.public)
 
 
 def openapi() -> dict[str, Any]:

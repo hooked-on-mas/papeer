@@ -29,6 +29,7 @@
         "font-src": "'self' data:",
         "connect-src": "'self' ipc: http://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:*",
         "worker-src": "'self' blob:",
+        "frame-src": "http://127.0.0.1:*",
         "object-src": "'none'",
         "base-uri": "'none'",
         "form-action": "'none'",

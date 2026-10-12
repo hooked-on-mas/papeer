@@ -1,7 +1,9 @@
 import { newNotebook, moveNotebook, showHoldings } from "@/features/notebooks/NotebookDialogs";
 import { useNotebooks } from "@/features/notebooks/notebooks";
 import { useTagChoices } from "@/api/tagChoices";
-import { importMemoFiles, useAttachments } from "@/api/attachments";
+import { useAttachments, type Attachment } from "@/api/attachments";
+import { importAttachmentFiles } from "@/api/documents";
+import { openDocument } from "@/features/documents/documentState";
 import { queryClient } from "@/lib/queryClient";
 import { showError } from "@/components/errorDialog";
 import { memoChildren } from "./memoChildren";
@@ -79,7 +81,9 @@ import { isImeKey } from "@/lib/imeKeys";
 // Keep the title visible in narrow rows; author and file name remain in the full tooltip.
 const libraryPaperTitle = (paper: PaperData) => paper.title || paperDisplayName(paper);
 
-type LibraryHit = { paper_id: string; title: string; side: "metadata" | "original" | "translated"; page: number | null; snippet: string };
+/** `html`: a document the item holds (its text, read as markup); it opens that document, with no page. */
+type LibraryHit = { paper_id: string; title: string; side: "metadata" | "original" | "translated" | "html"; page: number | null; snippet: string;
+  attachment_id?: string; attachment_title?: string };
 
 // Defaults that keep their identity from one render to the next, so that the memoized list and tree hold while loading.
 const NO_PAPERS: PaperData[] = [];
@@ -257,9 +261,8 @@ export function LibrarySidebar() {
   const linksByOwner = useMemo(() => linkedItemsByOwner(itemLinks, allPapers), [itemLinks, allPapers]);
   const expandedPapers = useMemoSelection(s => s.expanded);
   const childrenByOwner = useMemo(() => {
-    const byOwner = new Map<string, { id: string; title: string }[]>();
+    const byOwner = new Map<string, Attachment[]>();
     for (const row of attachments) {
-      if (row.format !== "md") continue;
       const rows = byOwner.get(row.owner_id) ?? [];
       rows.push(row); byOwner.set(row.owner_id, rows);
     }
@@ -645,9 +648,10 @@ export function LibrarySidebar() {
               store.setActivePaperId(hit.paper_id, hit.page ?? undefined);
               store.setCurrentCollection(allPapers.find(p => p.id === hit.paper_id)?.collection_name ?? "");
               store.setActiveTab("reader");
-              if (hit.page) store.setReaderJump({ paperId: hit.paper_id, page: hit.page, side: hit.side === "translated" ? "translated" : "original", text: librarySearch, anchor_y: 0 });
+              if (hit.side === "html" && hit.attachment_id) openDocument(hit.paper_id, hit.attachment_id);
+              else if (hit.page) store.setReaderJump({ paperId: hit.paper_id, page: hit.page, side: hit.side === "translated" ? "translated" : "original", text: librarySearch, anchor_y: 0 });
             }}><span className="block font-medium truncate">{hit.title}</span>
-              <span className="text-primary">{{ metadata: "論文情報", original: "原文", translated: "訳文" }[hit.side]}{hit.page && ` p.${hit.page}`}</span>
+              <span className="text-primary">{{ metadata: "論文情報", original: "原文", translated: "訳文", html: "資料" }[hit.side]}{hit.page && ` p.${hit.page}`}{hit.side === "html" && hit.attachment_title ? `「${hit.attachment_title}」` : ""}</span>
               <span className="block text-muted-foreground line-clamp-2">{hit.snippet}</span></button>)}
             {searchResults?.limited && <p className="p-2 text-muted-foreground">先頭200件を表示しています。検索語を追加して絞り込めます。</p>}
           </div>}
@@ -956,7 +960,8 @@ function activateChild(line: ChildLine) {
   if (line.kind === "attachment") {
     if (!itemCapabilities(line.owner).memo) return;
     openPaper(line.owner.id, line.owner.collection_name);
-    openMemo(line.owner.id, line.child.id);
+    if (line.child.format === "html") openDocument(line.owner.id, line.child.id);
+    else openMemo(line.owner.id, line.child.id);
   }
 }
 
@@ -969,7 +974,7 @@ function MemoChildRow({ line }: { line: ChildLine }) {
     onFocus={e => { if (e.target === e.currentTarget) updateTreeFocus({ focused: line.key }); }} onClick={() => activateChild(line)}
     className={`flex cursor-pointer items-center gap-1.5 py-1 pr-2 text-[0.75rem] leading-5 text-muted-foreground hover:bg-muted/60 ${FOCUS_RING}`}
     style={{ paddingLeft: `${(line.level - 1) * 16 + 8}px` }} title={line.child.title}>
-    {line.kind === "link" ? <span aria-hidden="true">↗</span> : line.kind === "owned" ? <NotebookPen className="size-3 shrink-0" /> : line.kind !== "more" && <FileText className="size-3 shrink-0" />}<span className="truncate">{line.child.title}</span>
+    {line.kind === "link" ? <span aria-hidden="true">↗</span> : line.kind === "owned" ? <NotebookPen className="size-3 shrink-0" /> : line.kind === "attachment" && line.child.format === "html" ? <span aria-hidden="true">🌐</span> : line.kind !== "more" && <FileText className="size-3 shrink-0" />}<span className="truncate">{line.child.title}</span>
   </div>;
   if (line.kind !== "link") return row;
   return <ContextMenu onOpenChange={menuOpenChange(line.key)}><ContextMenuTrigger role="none">{row}</ContextMenuTrigger>
@@ -1112,7 +1117,7 @@ function PendingRow({ item, level, setSize, posInSet }: { item: PendingImport } 
  * left, and a job's progress events render its paper's row only when what the row shows changes.
  */
 const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, setSize, posInSet, collections, onTagSelect }: { paper: PaperData; expanded: boolean; expandable: boolean; collections: string[]; onTagSelect: (name: string) => void } & LinePlace) {
-  const memoCount = (useAttachments().data?.filter(row => row.owner_id === paper.id && row.format === "md").length ?? 0)
+  const memoCount = (useAttachments().data?.filter(row => row.owner_id === paper.id).length ?? 0)
     + (useNotebooks().data?.filter(row => row.parent_id === paper.id).length ?? 0);
   const hideLinks = useStore(s => s.hideLibraryLinks);
   const { data: links = [] } = useItemLinks();
@@ -1179,7 +1184,7 @@ const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, se
           onDrop={e => {
             if (!itemCapabilities(paper).memo || paper.parent_id || !e.dataTransfer.files.length) return;
             e.preventDefault(); e.stopPropagation();
-            void importMemoFiles(paper.id, Array.from(e.dataTransfer.files), queryClient).catch(error => showError(error, "メモを取り込めませんでした"));
+            void importAttachmentFiles(paper.id, Array.from(e.dataTransfer.files), queryClient).catch(error => showError(error, "メモ・資料を取り込めませんでした"));
           }}
           onFocus={(e) => { if (e.target === e.currentTarget) updateTreeFocus({ focused: key }); }}
           onClick={(e) => {

@@ -811,8 +811,62 @@ export interface paths {
         delete: operations["delete_memo_api_papers__paper_id__attachments__attachment_id__delete"];
         options?: never;
         head?: never;
-        /** Edit Memo */
+        /**
+         * Edit Memo
+         * @description Rename a memo or a document, or save a memo's text (a document's text is Invalid: 400).
+         */
         patch: operations["edit_memo_api_papers__paper_id__attachments__attachment_id__patch"];
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Document */
+        post: operations["create_document_api_papers__paper_id__documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/documents/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Document */
+        get: operations["get_document_api_papers__paper_id__documents__attachment_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/documents/{attachment_id}/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open Document */
+        post: operations["open_document_api_papers__paper_id__documents__attachment_id__view_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/item-links": {
@@ -2957,6 +3011,30 @@ export interface components {
             /** Days */
             days: number;
         };
+        /** HtmlDocument */
+        HtmlDocument: {
+            /** Id */
+            id: string;
+            /** Owner Id */
+            owner_id: string;
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "md" | "html";
+            /** Title */
+            title: string;
+            /** Source */
+            source: string;
+            /** Position */
+            position: number;
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+            /** Content Hash */
+            content_hash: string;
+        };
         /** ImportMemos */
         ImportMemos: {
             /** Paths */
@@ -3344,6 +3422,19 @@ export interface components {
             updated_at: string;
             /** Content */
             content: string;
+        };
+        /** NewDocument */
+        NewDocument: {
+            /** Title */
+            title: string;
+            /** Content */
+            content: string;
+            /**
+             * Source
+             * @default user
+             * @enum {string}
+             */
+            source?: "imported" | "user";
         };
         /** NewLink */
         NewLink: {
@@ -3781,6 +3872,11 @@ export interface components {
              */
             attachment_count?: number;
             /**
+             * Html Document Count
+             * @default 0
+             */
+            html_document_count?: number;
+            /**
              * Owned Notebook Count
              * @default 0
              */
@@ -3923,6 +4019,11 @@ export interface components {
              * @default 0
              */
             attachment_count?: number;
+            /**
+             * Html Document Count
+             * @default 0
+             */
+            html_document_count?: number;
             /**
              * Owned Notebook Count
              * @default 0
@@ -4947,6 +5048,21 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** ViewRequest */
+        ViewRequest: {
+            /**
+             * Allow Scripts
+             * @default false
+             */
+            allow_scripts?: boolean;
+            /** Content Hash */
+            content_hash: string;
+        };
+        /** ViewTicket */
+        ViewTicket: {
+            /** Path */
+            path: string;
         };
         /** WebSource */
         WebSource: {
@@ -7162,7 +7278,122 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MemoContent"];
+                    "application/json": components["schemas"]["MemoContent"] | components["schemas"]["Attachment"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_document_api_papers__paper_id__documents_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewDocument"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attachment"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_document_api_papers__paper_id__documents__attachment_id__get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HtmlDocument"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_document_api_papers__paper_id__documents__attachment_id__view_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ViewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ViewTicket"];
                 };
             };
             /** @description Validation Error */

@@ -16,6 +16,7 @@ export const QK = {
   notebooks: "notebooks",
   notebook: "notebook",
   memo: "memo",
+  htmlDocument: "html-document",
   collections: "collections",
   reading: "reading",
   article: "article",

@@ -40,7 +40,8 @@ ATTACHMENT_FORMATS = ("md", "html")
 TITLE_LIMIT = 200
 
 # What a row of the list says of an item's relations (library_list.paper_row), zero when it has none.
-NO_RELATIONS = {"attachment_count": 0, "owned_notebook_count": 0, "link_count": 0}
+# html_document_count is the HTML documents among the attachment_count (their text is searched and asked about).
+NO_RELATIONS = {"attachment_count": 0, "html_document_count": 0, "owned_notebook_count": 0, "link_count": 0}
 
 
 def owned_ids(db: sqlite3.Connection, owner_id: str) -> list[str]:
@@ -72,21 +73,25 @@ def relation_counts(db: sqlite3.Connection, ids: Iterable[str] | None = None) ->
         for item_id, count in rows:
             result.setdefault(item_id, dict(NO_RELATIONS))[name] = count
 
-    # (key of NO_RELATIONS, query with its WHERE clause as {}, the column ids are matched on, the clause without ids)
+    # (key of NO_RELATIONS, query with its WHERE clause as {}, the column ids are matched on, the condition
+    # of what is counted, or "" for all of it)
     queries = (
         ("attachment_count", "SELECT owner_id,COUNT(*) FROM attachments {} GROUP BY owner_id", "owner_id", ""),
+        ("html_document_count", "SELECT owner_id,COUNT(*) FROM attachments {} GROUP BY owner_id", "owner_id",
+         "format='html'"),
         ("owned_notebook_count", "SELECT parent_id,COUNT(*) FROM papers {} GROUP BY parent_id", "parent_id",
-         "WHERE parent_id IS NOT NULL"),
+         "parent_id IS NOT NULL"),
         ("link_count", "SELECT id,COUNT(*) FROM (SELECT a AS id FROM item_links UNION ALL SELECT b FROM item_links) {}"
                        " GROUP BY id", "id", ""),
     )
-    for name, sql, column, unfiltered in queries:
+    for name, sql, column, condition in queries:
         if wanted is None:
-            add(name, db.execute(sql.format(unfiltered)).fetchall())
+            add(name, db.execute(sql.format(f"WHERE {condition}" if condition else "")).fetchall())
             continue
         for start in range(0, len(wanted), 500):
             chunk = wanted[start:start + 500]
-            add(name, db.execute(sql.format(f"WHERE {column} IN ({','.join('?' * len(chunk))})"), chunk).fetchall())
+            where = " AND ".join(filter(None, (condition, f"{column} IN ({','.join('?' * len(chunk))})")))
+            add(name, db.execute(sql.format(f"WHERE {where}"), chunk).fetchall())
     return result
 
 
@@ -149,6 +154,17 @@ class ItemRelations(LibraryBase):
         except FileNotFoundError:
             raise NotFound("メモ・資料のファイルが見つかりません。") from None
 
+    def attachment_bytes(self, attachment_id: str) -> bytes:
+        """The exact bytes of an attachment's file (no newline translation); NotFound as attachment_text."""
+        with self.connection() as db:
+            row = db.execute("SELECT owner_id,format FROM attachments WHERE id=?", (attachment_id,)).fetchone()
+        if row is None:
+            raise NotFound("メモ・資料が見つかりません。")
+        try:
+            return PaperFiles(self.folder(row["owner_id"])).attachment(attachment_id, row["format"]).read_bytes()
+        except FileNotFoundError:
+            raise NotFound("メモ・資料のファイルが見つかりません。") from None
+
     def remove_attachment(self, attachment_id: str) -> None:
         """Remove an attachment's row and file; NotFound when it has no row."""
         with self.connection() as db:
@@ -160,30 +176,34 @@ class ItemRelations(LibraryBase):
 
     def update_attachment(self, owner_id: str, attachment_id: str, *, title: str | None = None,
                           content: str | None = None) -> dict:
-        """Save a memo's name or text. A row of another owner is never accessible."""
+        """Save a memo's name or text, or rename a document. A row of another owner is never accessible.
+
+        A document's (html) text is never edited: it is shown as it was added, so `content` is Invalid for it.
+        """
         if title is not None:
             title = " ".join(title.split())
             if not title or len(title) > TITLE_LIMIT:
                 raise Invalid(f"名前は1〜{TITLE_LIMIT}文字で入力してください。")
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT * FROM attachments WHERE id=? AND owner_id=? AND format='md'",
-                             (attachment_id, owner_id)).fetchone()
+            row = db.execute("SELECT * FROM attachments WHERE id=? AND owner_id=?", (attachment_id, owner_id)).fetchone()
             if row is None:
-                raise NotFound("メモが見つかりません。")
+                raise NotFound("メモ・資料が見つかりません。")
             if content is not None:
+                if row["format"] != "md":
+                    raise Invalid("資料の本文は編集できません。")
                 atomic_write_text(PaperFiles(self.folder(owner_id)).attachment(attachment_id, "md"), content)
             db.execute("UPDATE attachments SET title=?,updated_at=? WHERE id=?",
                        (row["title"] if title is None else title, datetime.now(timezone.utc).isoformat(), attachment_id))
             return dict(db.execute("SELECT * FROM attachments WHERE id=?", (attachment_id,)).fetchone())
 
     def reorder_attachments(self, owner_id: str, ids: list[str]) -> None:
-        """Order all the owner's md memos, refusing a stale/incomplete/foreign list."""
+        """Order all the owner's memos and documents, refusing a stale/incomplete/foreign list."""
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            current = [row[0] for row in db.execute("SELECT id FROM attachments WHERE owner_id=? AND format='md'", (owner_id,))]
+            current = [row[0] for row in db.execute("SELECT id FROM attachments WHERE owner_id=?", (owner_id,))]
             if len(ids) != len(set(ids)) or set(ids) != set(current):
-                raise Invalid("メモの一覧が変わりました。再読み込みして並べ替えてください。")
+                raise Invalid("メモ・資料の一覧が変わりました。再読み込みして並べ替えてください。")
             db.executemany("UPDATE attachments SET position=? WHERE id=?", enumerate(ids))
 
     # --- Linking ---

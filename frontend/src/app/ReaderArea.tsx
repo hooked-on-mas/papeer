@@ -7,6 +7,8 @@ import { tabAvailable } from "@/lib/itemKinds";
 import { Reader } from "../features/reader/Reader";
 import { sidePanelOpen, shownSidePanel, type SidePanel } from "../features/reader/sidePanel";
 import { ChatPane, NotesPane, SummaryPane } from "./lazyPanes";
+import { DocumentsPane } from "@/features/documents/DocumentsPane";
+import { useDocumentState } from "@/features/documents/documentState";
 
 const SIDE_PANEL_LABELS = { summary: "サマリー", chat: "チャット", notes: "メモ" } as const;
 
@@ -30,6 +32,8 @@ export function useSidePanelOpen(): boolean {
  * in focus mode and the normal view alike (see features/reader/sidePanel.ts).
  */
 export function ReaderArea() {
+  const owner = useStore(s => s.activePaperId);
+  const enlarged = useDocumentState(s => s.enlarged);
   const open = useSidePanelOpen();
   const sidePanel = useChosenSidePanel();
   const panel = useStore((s) => shownSidePanel({ activeTab: s.activeTab, sidePanel, hasPaper: !!s.activePaperId }));
@@ -43,7 +47,7 @@ export function ReaderArea() {
     <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
       {/* First and always there, so that opening the panel keeps the loaded PDFs. */}
       <ResizablePanel id="reader" minSize="320px" className="flex flex-col min-w-0">
-        <Reader />
+        {owner && enlarged === owner ? <DocumentsPane key={owner} owner={owner} enlarged /> : <Reader />}
       </ResizablePanel>
       {open && sidePanel && (
         <>

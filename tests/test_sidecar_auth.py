@@ -19,7 +19,8 @@ from sidecar.jobs import JobManager
 from sidecar.routes import system
 
 TOKEN = "correct-token"
-PUBLIC_PATHS = {"/health"}
+# /html-view/<ticket> takes a ticket from the authenticated API instead of the token (tests/test_html_documents.py).
+PUBLIC_PATHS = {"/health", "/html-view/1"}
 
 
 def _flatten(routes):

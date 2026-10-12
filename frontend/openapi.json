@@ -4073,6 +4073,7 @@
       },
       "patch": {
         "summary": "Edit Memo",
+        "description": "Rename a memo or a document, or save a memo's text (a document's text is Invalid: 400).",
         "operationId": "edit_memo_api_papers__paper_id__attachments__attachment_id__patch",
         "parameters": [
           {
@@ -4142,7 +4143,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MemoContent"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/MemoContent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Attachment"
+                    }
+                  ],
+                  "title": "Response Edit Memo Api Papers  Paper Id  Attachments  Attachment Id  Patch"
                 }
               }
             }
@@ -4220,6 +4229,257 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/papers/{paper_id}/documents": {
+      "post": {
+        "summary": "Create Document",
+        "operationId": "create_document_api_papers__paper_id__documents_post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewDocument"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attachment"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/papers/{paper_id}/documents/{attachment_id}": {
+      "get": {
+        "summary": "Get Document",
+        "operationId": "get_document_api_papers__paper_id__documents__attachment_id__get",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Attachment Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HtmlDocument"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/papers/{paper_id}/documents/{attachment_id}/view": {
+      "post": {
+        "summary": "Open Document",
+        "operationId": "open_document_api_papers__paper_id__documents__attachment_id__view_post",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Attachment Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewTicket"
+                }
               }
             }
           },
@@ -13032,6 +13292,63 @@
         ],
         "title": "HistorySettingsRequest"
       },
+      "HtmlDocument": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "owner_id": {
+            "type": "string",
+            "title": "Owner Id"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "md",
+              "html"
+            ],
+            "title": "Format"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "content_hash": {
+            "type": "string",
+            "title": "Content Hash"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "owner_id",
+          "format",
+          "title",
+          "source",
+          "position",
+          "created_at",
+          "updated_at",
+          "content_hash"
+        ],
+        "title": "HtmlDocument"
+      },
       "ImportMemos": {
         "properties": {
           "paths": {
@@ -14164,6 +14481,36 @@
         ],
         "title": "MemoContent"
       },
+      "NewDocument": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "imported",
+              "user"
+            ],
+            "title": "Source",
+            "default": "user"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "content"
+        ],
+        "title": "NewDocument"
+      },
       "NewLink": {
         "properties": {
           "target_id": {
@@ -15168,6 +15515,11 @@
             "title": "Attachment Count",
             "default": 0
           },
+          "html_document_count": {
+            "type": "integer",
+            "title": "Html Document Count",
+            "default": 0
+          },
           "owned_notebook_count": {
             "type": "integer",
             "title": "Owned Notebook Count",
@@ -15443,6 +15795,11 @@
           "attachment_count": {
             "type": "integer",
             "title": "Attachment Count",
+            "default": 0
+          },
+          "html_document_count": {
+            "type": "integer",
+            "title": "Html Document Count",
             "default": 0
           },
           "owned_notebook_count": {
@@ -17833,6 +18190,40 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "ViewRequest": {
+        "properties": {
+          "allow_scripts": {
+            "type": "boolean",
+            "title": "Allow Scripts",
+            "default": false
+          },
+          "content_hash": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Content Hash"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content_hash"
+        ],
+        "title": "ViewRequest"
+      },
+      "ViewTicket": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "ViewTicket"
       },
       "WebSource": {
         "properties": {

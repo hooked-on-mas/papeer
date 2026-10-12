@@ -25,6 +25,7 @@ import { BULK_BUSY_MESSAGE, beginBulk, isBulkRunning } from "./bulkState";
 import { withPaperCollection } from "@/lib/paperRows";
 import { applyTagChange, createTagQueue } from "@/lib/tagQueue";
 import { forgetDraftsOfPapers } from "@/lib/pendingSaves";
+import { showReaderOf } from "@/features/documents/documentState";
 
 /** Reloads the library (each paper's own query too); the promise settles once the lists shown have been fetched again. */
 export function refreshLibrary(): Promise<void> {
@@ -678,6 +679,8 @@ export async function followCitation(paperId: string, page: number): Promise<voi
     return;
   }
   store.setTranslatedOnly(false);
+  // Back from the paper's enlarged HTML document, which would otherwise keep the place of the reader.
+  showReaderOf(paperId);
   store.setActivePaperId(paperId, page);
   store.setActiveTab("reader");
   emitAppEvent("reveal-paper", { paperId, focus: false });

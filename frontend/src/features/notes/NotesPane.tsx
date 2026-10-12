@@ -3,21 +3,34 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Eye, Pencil, Plus, Trash2, Upload, ArrowUp, ArrowDown } from "lucide-react";
 import { useStore } from "@/store";
 import { api, unwrap } from "@/api/client";
-import { createMemo, importMemoFiles, importMemoPaths, memoPath, refreshAttachments, useAttachments, useMemoContent, type Attachment } from "@/api/attachments";
+import { createMemo, importMemoPaths, memoPath, refreshAttachments, useAttachments, useMemoContent, type Attachment } from "@/api/attachments";
+import { importAttachmentFiles } from "@/api/documents";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { showError } from "@/components/errorDialog";
 import { askConfirm, askText } from "@/components/AppDialogs";
 import { shell } from "@/shell";
 import { QK } from "@/lib/queryKeys";
 import { NoteTemplates } from "./NoteTemplates";
+import { DocumentsPane } from "@/features/documents/DocumentsPane";
+import { showMemos, useDocumentState, openDocument } from "@/features/documents/documentState";
+import { reorderedAttachments } from "@/features/documents/attachmentOrder";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { changeMemo, forgetMemo, hydrateMemo, saveMemo, selectMemo, useMemoDrafts, useMemoSelection } from "./memoState";
 
 const button = "inline-flex items-center gap-1 rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40";
 export function NotesPane({ compact = false }: { compact?: boolean }) {
   const owner = useStore(s => s.activePaperId);
+  const mode = useDocumentState(s => owner ? s.modes[owner] : undefined);
+  const insert = useStore(s => s.noteInsert);
+  useEffect(() => { if (owner && insert?.paperId === owner) showMemos(owner); }, [owner, insert]);
   if (!owner) return <div className="p-8 text-sm text-muted-foreground">左のライブラリから論文を選んでください。</div>;
-  return <PaperNotes key={owner} owner={owner} compact={compact} />;
+  return <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex gap-1 border-b p-2" aria-label="メモと資料の切り替え">
+      <button className={button} aria-pressed={mode !== "html"} onClick={() => showMemos(owner)}>メモ</button>
+      <button className={button} aria-pressed={mode === "html"} onClick={() => openDocument(owner)}>資料</button>
+    </div>
+    {mode === "html" ? <DocumentsPane key={owner} owner={owner} /> : <PaperNotes key={owner} owner={owner} compact={compact} />}
+  </div>;
 }
 
 function PaperNotes({ owner, compact }: { owner: string; compact: boolean }) {
@@ -68,9 +81,7 @@ function PaperNotes({ owner, compact }: { owner: string; compact: boolean }) {
   };
   const reorder = async (direction: number) => {
     if (!current) return;
-    const ids = memos.map(item => item.id), at = ids.indexOf(current.id), target = at + direction;
-    if (target < 0 || target >= ids.length) return;
-    [ids[at], ids[target]] = [ids[target], ids[at]];
+    const ids = reorderedAttachments(data ?? [], current.id, direction);
     await unwrap(api.PUT("/api/papers/{paper_id}/attachments/order", { params: { path: { paper_id: owner } }, body: { ids } }));
     await refreshAttachments(client);
   };
@@ -87,8 +98,9 @@ function PaperNotes({ owner, compact }: { owner: string; compact: boolean }) {
       event.preventDefault(); event.stopPropagation();
       const files = Array.from(event.dataTransfer.files);
       void run(async () => {
-        const rows = await importMemoFiles(owner, files, client);
-        if (rows[0]) selectMemo(owner, rows[0].id);
+        const rows = await importAttachmentFiles(owner, files, client);
+        if (rows[0]?.format === "html") openDocument(owner, rows[0].id);
+        else if (rows[0]) selectMemo(owner, rows[0].id);
       });
     }}>
     <div className="flex flex-wrap items-center gap-1.5 border-b p-2">

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { openDocument } from "@/features/documents/documentState";
 import { create } from "zustand";
 import { NotebookPen } from "lucide-react";
 import { api, unwrap } from "@/api/client";
@@ -88,7 +89,7 @@ export function NotebookDialogs() {
       </div>}
       {request?.kind === "holdings" && <div className="max-h-80 overflow-auto space-y-1">
         {notebooks.filter(row => row.parent_id === request.owner.id).map(row => <Button key={row.id} variant="ghost" className="w-full justify-start" onClick={() => { useStore.getState().setActiveTab("reader"); openPaper(row.id, request.owner.collection_name); close(); }}><NotebookPen className="size-4 mr-2" />{row.title}</Button>)}
-        {attachments.filter(row => row.owner_id === request.owner.id).map(row => <Button key={row.id} variant="ghost" className="w-full justify-start" onClick={() => { openPaper(request.owner.id, request.owner.collection_name); openMemo(request.owner.id, row.id); close(); }}>{row.title}</Button>)}
+        {attachments.filter(row => row.owner_id === request.owner.id).map(row => <Button key={row.id} variant="ghost" className="w-full justify-start" onClick={() => { openPaper(request.owner.id, request.owner.collection_name); if (row.format === "html") openDocument(request.owner.id, row.id); else openMemo(request.owner.id, row.id); close(); }}>{row.format === "html" ? "🌐 " : ""}{row.title}</Button>)}
         {request.includeLinks && linked.length > 0 && <p className="text-xs text-muted-foreground border-t pt-2">紐づけ（本体は元のフォルダーにあります）</p>}
         {request.includeLinks && linksError && <p role="alert" className="text-xs">紐づけを読み込めませんでした。<button className="underline" onClick={() => void reloadLinks()}>再試行</button></p>}
         {request.includeLinks && linked.map(row => <Button key={`link:${row.id}`} variant="ghost" className="w-full justify-start" onClick={() => { useStore.getState().setActiveTab("reader"); openPaper(row.id, row.collection_name); close(); }}>↗ {paperDisplayName(row)}</Button>)}

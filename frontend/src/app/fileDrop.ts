@@ -6,7 +6,8 @@ import { importPaths } from "./actions";
 import { importMemoPaths } from "@/api/attachments";
 import { queryClient } from "@/lib/queryClient";
 import { showError } from "@/components/errorDialog";
-import { selectMemo } from "@/features/notes/memoState";
+import { openMemo } from "@/features/notes/memoState";
+import { openDocument } from "@/features/documents/documentState";
 
 /** Folder under an OS file drag: a collection path, or null when outside the library tree. */
 export const useDropTarget = create<{ active: boolean; target: string | null }>(() => ({ active: false, target: null }));
@@ -32,16 +33,17 @@ export function useFileDrop(): void {
       return;
     }
     useDropTarget.setState({ active: false, target: null });
-    const memos = event.paths.filter(path => path.toLowerCase().endsWith(".md"));
+    const memos = event.paths.filter(path => /\.(md|html)$/i.test(path));
     if (memos.length) {
       const owner = document.elementFromPoint(event.x, event.y)?.closest("[data-memo-owner]")?.getAttribute("data-memo-owner");
       if (!owner || memos.length !== event.paths.length) {
-        useStore.getState().setStatus(".md ファイルだけを論文の行かメモ欄にドロップしてください。");
+        useStore.getState().setStatus(".md / .html ファイルだけを論文の行かメモ・資料欄にドロップしてください。");
         return;
       }
       void importMemoPaths(owner, memos, queryClient).then(rows => {
-        if (rows[0]) selectMemo(owner, rows[0].id);
-        useStore.getState().setStatus(`メモ ${rows.length}件を取り込みました。`);
+        if (rows[0]?.format === "html") openDocument(owner, rows[0].id);
+        else if (rows[0]) openMemo(owner, rows[0].id);
+        useStore.getState().setStatus(`メモ・資料 ${rows.length}件を取り込みました。`);
       }).catch(error => showError(error, "メモを取り込めませんでした"));
       return;
     }

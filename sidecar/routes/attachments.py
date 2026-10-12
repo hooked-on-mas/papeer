@@ -1,4 +1,8 @@
-"""Markdown memos held by an item (HTML documents get a separate, isolated route in stage E)."""
+"""Memos (md) and documents (html) held by an item.
+
+A document's text is never read or edited here: sidecar/html_documents.py describes it and shows it
+under a sandbox. What is common (listing, import, order, rename, delete) works on both formats.
+"""
 from pathlib import Path
 from typing import Literal
 
@@ -24,6 +28,10 @@ class Attachment(BaseModel):
 
 class MemoContent(Attachment):
     content: str
+
+
+# What a document's text is imported from, by suffix.
+IMPORT_FORMATS = {".md": "md", ".html": "html"}
 
 
 class NewMemo(BaseModel):
@@ -60,6 +68,20 @@ def memo(lib, owner: str, identity: str) -> dict:
     return row
 
 
+def attachment(lib, owner: str, identity: str) -> dict:
+    row = next((item for item in lib.attachments(owner) if item["id"] == identity), None)
+    if row is None:
+        raise NotFound("メモ・資料が見つかりません。")
+    return row
+
+
+def read_source(path: Path) -> str:
+    """A file's UTF-8 text; a document keeps its line endings as they are (a BOM aside), a memo's are the editor's."""
+    if path.suffix.lower() == ".html":
+        return path.read_bytes().decode("utf-8-sig")
+    return path.read_text("utf-8-sig")
+
+
 def changed(owner: str) -> None:
     deps.paper_changed(owner, ["attachment_count"])
 
@@ -90,16 +112,16 @@ def create_memo(paper_id: str, body: NewMemo):
 def import_memos(paper_id: str, body: ImportMemos):
     lib = library(paper_id)
     paths = [Path(path) for path in body.paths]
-    if any(path.suffix.lower() != ".md" or not path.is_file() for path in paths):
-        raise Invalid("存在する .md ファイルを選んでください。")
+    if any(path.suffix.lower() not in IMPORT_FORMATS or not path.is_file() for path in paths):
+        raise Invalid("存在する .md または .html ファイルを選んでください。")
     try:
-        contents = [(path.name, path.read_text("utf-8-sig")) for path in paths]
+        contents = [(path.name, IMPORT_FORMATS[path.suffix.lower()], read_source(path)) for path in paths]
     except UnicodeError:
-        raise Invalid("UTF-8 で保存した .md ファイルを選んでください。") from None
+        raise Invalid("UTF-8 で保存した .md または .html ファイルを選んでください。") from None
     rows = []
     try:
-        for title, content in contents:
-            rows.append(lib.add_attachment(paper_id, "md", title, content, "imported"))
+        for title, format, content in contents:
+            rows.append(lib.add_attachment(paper_id, format, title, content, "imported"))
     finally:
         if rows:
             changed(paper_id)
@@ -119,18 +141,21 @@ def get_memo(paper_id: str, attachment_id: str):
     return {**memo(lib, paper_id, attachment_id), "content": lib.attachment_text(attachment_id)}
 
 
-@router.patch("/api/papers/{paper_id}/attachments/{attachment_id}", response_model=MemoContent)
+@router.patch("/api/papers/{paper_id}/attachments/{attachment_id}", response_model=MemoContent | Attachment)
 def edit_memo(paper_id: str, attachment_id: str, body: EditMemo):
+    """Rename a memo or a document, or save a memo's text (a document's text is Invalid: 400)."""
     lib = library(paper_id)
     row = lib.update_attachment(paper_id, attachment_id, title=body.title, content=body.content)
     changed(paper_id)
+    if row["format"] != "md":
+        return row
     return {**row, "content": lib.attachment_text(attachment_id)}
 
 
 @router.delete("/api/papers/{paper_id}/attachments/{attachment_id}")
 def delete_memo(paper_id: str, attachment_id: str):
     lib = library(paper_id)
-    memo(lib, paper_id, attachment_id)
+    attachment(lib, paper_id, attachment_id)
     lib.remove_attachment(attachment_id)
     changed(paper_id)
     return {"status": "deleted"}

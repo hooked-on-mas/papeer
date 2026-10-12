@@ -20,15 +20,15 @@ test("a change of one paper refreshes the paper itself, not the library lists (p
 test("the library as a whole: folder actions, library.changed and a reconnect", () => {
   assert.deepEqual(keys({ kind: "folders" }), roots(QK.itemLinks, QK.linkedItems, QK.notebooks, QK.notebook, QK.papers, QK.collections, QK.citations, QK.research, QK.discovery));
   // An action on several papers reloads what library.changed would have (refreshAfterChanges).
-  assert.deepEqual(keys({ kind: "library" }), roots(QK.itemLinks, QK.linkedItems, QK.notebooks, QK.notebook, QK.papers, QK.attachments, QK.memo, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.discovery));
+  assert.deepEqual(keys({ kind: "library" }), roots(QK.itemLinks, QK.linkedItems, QK.notebooks, QK.notebook, QK.papers, QK.attachments, QK.memo, QK.htmlDocument, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.discovery));
   assert.deepEqual(keys({ kind: "reconnected" }), [...keys({ kind: "library" }), { queryKey: [QK.reading] }]);
   assert.deepEqual(keys({ kind: "imported" }), roots(QK.itemLinks, QK.linkedItems, QK.notebooks, QK.notebook, QK.papers, QK.citations, QK.research, QK.discovery));
 });
 
 test("papers changed as paper.changed said: the lists only when too many rows to replace", () => {
-  assert.deepEqual(keys({ kind: "papersChanged", all: false, collections: false, tags: false }), roots(QK.itemLinks, QK.linkedItems, QK.notebooks, QK.notebook, QK.attachments, QK.librarySearch, QK.citations, QK.research, QK.discovery));
+  assert.deepEqual(keys({ kind: "papersChanged", all: false, collections: false, tags: false }), roots(QK.itemLinks, QK.linkedItems, QK.notebooks, QK.notebook, QK.attachments, QK.htmlDocument, QK.librarySearch, QK.citations, QK.research, QK.discovery));
   assert.deepEqual(keys({ kind: "papersChanged", all: true, collections: true, tags: true }),
-    roots(QK.papers, QK.collections, QK.tags, QK.itemLinks, QK.linkedItems, QK.notebooks, QK.notebook, QK.attachments, QK.librarySearch, QK.citations, QK.research, QK.discovery));
+    roots(QK.papers, QK.collections, QK.tags, QK.itemLinks, QK.linkedItems, QK.notebooks, QK.notebook, QK.attachments, QK.htmlDocument, QK.librarySearch, QK.citations, QK.research, QK.discovery));
   assert.deepEqual(keys({ kind: "pageTranslated", paperId: "p1" }),
     [{ queryKey: [QK.reading, "p1"] }, { queryKey: [QK.paperSearch, "p1"] }]);
 });

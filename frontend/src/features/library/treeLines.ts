@@ -38,7 +38,7 @@ export const linkKey = (owner: string, id: string) => `link:${owner}:${id}`;
  * its own) or what is linked to it. They are given by PaperChildren; no paper has any yet.
  */
 export type PaperChild =
-  | { kind: "attachment"; id: string; title: string }
+  | { kind: "attachment"; id: string; title: string; format?: "md" | "html" }
   | { kind: "owned"; id: string; title: string }
   | { kind: "link"; id: string; title: string; collection?: string }
   | { kind: "more"; id: string; title: string };

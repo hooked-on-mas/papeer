@@ -21,6 +21,7 @@ export function useMemoContent(owner: string, id: string) {
 
 export async function refreshAttachments(client: QueryClient) {
   await Promise.all([client.invalidateQueries({ queryKey: [QK.attachments] }),
+    client.invalidateQueries({ queryKey: [QK.htmlDocument] }),
     client.invalidateQueries({ queryKey: [QK.papers] })]);
 }
 

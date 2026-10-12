@@ -10,7 +10,8 @@ import { authorizedUrl } from "@/api/client";
 import { followCitation } from "@/app/actions";
 import { normalizeMarkdown } from "@/lib/normalizeMarkdown";
 import { emitAppEvent } from "@/lib/appEvents";
-import { CITATION_URL, markdownUrlTransform, mediaRequestPath } from "@/lib/markdownUrl";
+import { CITATION_URL, documentCitation, markdownUrlTransform, mediaRequestPath } from "@/lib/markdownUrl";
+import { openDocument } from "@/features/documents/documentState";
 
 interface Props {
   content: string;
@@ -69,6 +70,20 @@ export function MarkdownRenderer({ content, className, paperId, onCitationClick,
         components={{
           a: ({ node, ...props }) => {
             const href = props.href || "";
+            // An HTML document the chat read: it opens that saved document, not a page of the paper.
+            const documentMatch = documentCitation(href);
+            if (documentMatch) {
+              return (
+                <button
+                  type="button"
+                  title="資料（HTML）を開く"
+                  onClick={() => openDocument(documentMatch.owner, documentMatch.document)}
+                  className="citation-link inline-flex items-center justify-center px-1.5 py-0.5 mx-0.5 text-[0.75rem] font-semibold leading-normal text-primary bg-primary/10 hover:bg-primary/20 rounded cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                >
+                  {props.children}
+                </button>
+              );
+            }
             const papeerMatch = href.match(CITATION_URL);
             if (papeerMatch) {
               const paperId = papeerMatch[1];
