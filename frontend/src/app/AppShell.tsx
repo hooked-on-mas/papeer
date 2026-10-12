@@ -1,5 +1,5 @@
 import { useSettingsNavigation } from "../features/settings/settingsNavigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { FilePlus2, Settings2 } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, unwrap } from "@/api/client";
 import { showToast } from "@/components/toast";
 import { usePaper } from "@/api/hooks";
+import { itemCapabilities, tabAvailable } from "@/lib/itemKinds";
 import { AppDialogs, askConfirm } from "@/components/AppDialogs";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -268,6 +269,13 @@ export function AppShell() {
   if (isSettingsOpen && !settingsMounted) setSettingsMounted(true);
   const { data: activePaper, error: activePaperError } = usePaper(activePaperId);
   const lastCollectionPaper = useRef<string | null>(null);
+  // What the open item can do (see lib/itemKinds.ts): the tabs of what it cannot are not offered. A tab
+  // it has none of, left open from the previous paper, gives way to the reader.
+  const caps = itemCapabilities(activePaper);
+  const shownTab = tabAvailable(caps, activeTab) ? activeTab : "reader";
+  useLayoutEffect(() => {
+    if (shownTab !== activeTab) useStore.getState().setActiveTab(shownTab);
+  }, [shownTab, activeTab]);
 
   useEffect(() => initUiStateSync(), []);
   useEffect(() => initPaperOpenedTracking(), []);
@@ -363,7 +371,7 @@ export function AppShell() {
   useHotkeys("f2", () => {
     const store = useStore.getState();
     if (store.selectedFolder) renameFolder(store.selectedFolder);
-    else if (store.activePaperId) renamePaperFile(store.activePaperId);
+    else if (store.activePaperId && caps.rename) renamePaperFile(store.activePaperId);
   }, hotkeyOptions);
   useHotkeys("ctrl+shift+n, meta+shift+n", () => {
     const store = useStore.getState();
@@ -381,7 +389,7 @@ export function AppShell() {
   useHotkeys("ctrl+1, ctrl+2, ctrl+3, ctrl+4, ctrl+5, ctrl+6, meta+1, meta+2, meta+3, meta+4, meta+5, meta+6", (_e, handler) => {
     // The digit alone: handler.keys holds no modifier.
     const tab = TABS[Number(handler.keys?.join("")) - 1];
-    if (!tab) return;
+    if (!tab || !tabAvailable(caps, tab)) return;
     const store = useStore.getState();
     // In focus mode Ctrl+1, or the open panel's own key, closes the side panel.
     if (store.focusMode && (tab === "reader" || store.sidePanel === tab)) store.setSidePanel(null);
@@ -449,22 +457,22 @@ export function AppShell() {
           {!focusMode && <Header />}
           <ReferenceReturnBar />
 
-          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(String(value))} className="flex-1 flex flex-col min-h-0 gap-0">
+          <Tabs value={shownTab} onValueChange={(value) => setActiveTab(String(value))} className="flex-1 flex flex-col min-h-0 gap-0">
             <div hidden={focusMode} className="border-b px-4 shrink-0 bg-background/50">
               <TabsList variant="line" className="h-10 bg-transparent border-b-0 space-x-2">
                 <TabsTrigger value="reader" title={withShortcutLabels("Ctrl+1")}>PDFを読む</TabsTrigger>
-                <TabsTrigger value="summary" title={withShortcutLabels("Ctrl+2")}>サマリー</TabsTrigger>
-                <TabsTrigger value="chat" title={withShortcutLabels("Ctrl+3")}>
+                {tabAvailable(caps, "summary") && <TabsTrigger value="summary" title={withShortcutLabels("Ctrl+2")}>サマリー</TabsTrigger>}
+                {tabAvailable(caps, "chat") && <TabsTrigger value="chat" title={withShortcutLabels("Ctrl+3")}>
                   チャット
                   {attachmentCount > 0 && (
                     <span className="min-w-4 rounded-full bg-primary px-1 text-[0.75rem] leading-4 text-primary-foreground" title={`添付 ${attachmentCount} 件`}>
                       {attachmentCount}
                     </span>
                   )}
-                </TabsTrigger>
-                <TabsTrigger value="notes" title={withShortcutLabels("Ctrl+4")}>メモ</TabsTrigger>
-                <TabsTrigger value="sticky-notes" title={withShortcutLabels("Ctrl+5")}>付箋</TabsTrigger>
-                <TabsTrigger value="references" title={withShortcutLabels("Ctrl+6")}>論文マップ</TabsTrigger>
+                </TabsTrigger>}
+                {tabAvailable(caps, "notes") && <TabsTrigger value="notes" title={withShortcutLabels("Ctrl+4")}>メモ</TabsTrigger>}
+                {tabAvailable(caps, "sticky-notes") && <TabsTrigger value="sticky-notes" title={withShortcutLabels("Ctrl+5")}>付箋</TabsTrigger>}
+                {tabAvailable(caps, "references") && <TabsTrigger value="references" title={withShortcutLabels("Ctrl+6")}>論文マップ</TabsTrigger>}
               </TabsList>
             </div>
 
@@ -476,19 +484,19 @@ export function AppShell() {
                   {/* The others unmount with their tab in the same update, never lingering beside the same
                       pane opened in the side panel (see features/reader/sidePanel.ts). */}
                   <TabsContent value="summary" className="flex-1 p-0 m-0 overflow-hidden outline-none flex data-hidden:hidden min-h-0">
-                    {activeTab === "summary" && <SummaryPane />}
+                    {shownTab === "summary" && <SummaryPane />}
                   </TabsContent>
                   <TabsContent value="chat" className="flex-1 p-0 m-0 overflow-hidden outline-none flex data-hidden:hidden min-h-0">
-                    {activeTab === "chat" && <ChatPane />}
+                    {shownTab === "chat" && <ChatPane />}
                   </TabsContent>
                   <TabsContent value="notes" className="flex-1 p-0 m-0 overflow-hidden outline-none flex data-hidden:hidden min-h-0">
-                    {activeTab === "notes" && <NotesPane />}
+                    {shownTab === "notes" && <NotesPane />}
                   </TabsContent>
                   <TabsContent value="sticky-notes" className="flex-1 p-0 m-0 overflow-hidden outline-none flex data-hidden:hidden min-h-0">
-                    {activeTab === "sticky-notes" && <StickyNotesTab />}
+                    {shownTab === "sticky-notes" && <StickyNotesTab />}
                   </TabsContent>
                   <TabsContent value="references" className="flex-1 p-0 m-0 overflow-hidden outline-none flex data-hidden:hidden min-h-0">
-                    {activeTab === "references" && <ReferencesPane />}
+                    {shownTab === "references" && <ReferencesPane />}
                   </TabsContent>
                 </>
               )}

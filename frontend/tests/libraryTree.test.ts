@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allFolderPaths, buildTree, countInFolder, filterPapers, type FolderNode } from "../src/features/library/libraryTree.ts";
+import {
+  allFolderPaths, buildTree, countInFolder, filterPapers, isHeld, revealOpenings, type FolderNode,
+} from "../src/features/library/libraryTree.ts";
 import { isInsideFolder, normalizeCollection } from "../src/lib/collectionPath.ts";
 import type { PaperData } from "../src/api/hooks.ts";
 import { paperData } from "./support/paperData.ts";
@@ -95,4 +97,49 @@ test("a folder counts the papers in it and its subfolders, but not in folders wh
 test("a folder's papers are not counted while the paper list has not loaded, so that deleting it still asks", () => {
   assert.equal(countInFolder(null, "ML"), null);
   assert.equal(countInFolder([], "ML"), 0);
+});
+
+test("notebooks are listed ahead of the papers of their folder, each group in the list's order", () => {
+  const papers = [
+    paper("p1", "F"), paper("n1", "F", { kind: "notebook" }), paper("p2", "F"), paper("n2", "F", { kind: "notebook" }),
+    paper("p3", ""), paper("n3", "", { kind: "notebook" }),
+  ];
+  const tree = buildTree([], papers, [], false);
+  assert.deepEqual(outline(tree), ["F(4): n1,n2,p1,p2", "未分類(2): n3,p3"]);
+  // The papers are the list's own objects.
+  assert.equal(tree[0].papers[0], papers[1]);
+});
+
+test("a folder without notebooks keeps the list's array, and one of only notebooks does too", () => {
+  const onlyPapers = [paper("a", "F"), paper("b", "F")];
+  assert.deepEqual(buildTree([], onlyPapers, [], false)[0].papers, onlyPapers);
+  const onlyNotebooks = [paper("a", "F", { kind: "notebook" }), paper("b", "F", { kind: "notebook" })];
+  assert.deepEqual(buildTree([], onlyNotebooks, [], false)[0].papers.map((p) => p.id), ["a", "b"]);
+});
+
+test("a row another item holds (parent_id) is not a row of a folder, nor counted in it", () => {
+  const papers = [paper("host", "F"), paper("held", "", { kind: "notebook", parent_id: "host" }), paper("other", "")];
+  const tree = buildTree([], papers, [], false);
+  assert.deepEqual(outline(tree), ["F(1): host", "未分類(1): other"]);
+  assert.equal(isHeld(papers[1]), true);
+  assert.equal(isHeld(papers[0]), false);
+  assert.equal(countInFolder(papers, ""), 1);
+  assert.equal(countInFolder(papers, "F"), 1);
+});
+
+test("an item of a kind this app does not know is listed with the papers", () => {
+  const tree = buildTree([], [paper("a", "F"), paper("x", "F", { kind: "whiteboard" as PaperData["kind"] })], [], false);
+  assert.deepEqual(outline(tree), ["F(2): a,x", "未分類(0)"]);
+});
+
+test("revealing an item opens the folders along its path, 未分類 when it has none, and the paper that holds it", () => {
+  const host = paper("host", "ML / Vision");
+  const held = paper("held", "", { kind: "notebook", parent_id: "host" });
+  const find = (id: string) => [host, held].find((p) => p.id === id);
+  assert.deepEqual(revealOpenings(host, find), { folders: ["ML", "ML / Vision"], papers: [] });
+  assert.deepEqual(revealOpenings(paper("u", ""), find), { folders: [""], papers: [] });
+  // Its own folder is '': the holder's is the one to open.
+  assert.deepEqual(revealOpenings(held, find), { folders: ["ML", "ML / Vision"], papers: ["host"] });
+  // A holder that is not known: where the item says it is.
+  assert.deepEqual(revealOpenings(held, () => undefined), { folders: [""], papers: [] });
 });

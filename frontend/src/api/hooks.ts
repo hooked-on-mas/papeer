@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, ApiError, unwrap } from "./client";
 import type { components } from "./schema";
 import { QK } from "@/lib/queryKeys";
+import { itemCapabilities, type ItemCapabilities } from "@/lib/itemKinds";
 
 type Schemas = components["schemas"];
 
@@ -60,6 +61,11 @@ export function usePaper(id: string | null) {
     enabled: !!id,
     retry: false,
   });
+}
+
+/** What the paper `id` can do (see lib/itemKinds.ts); until it has loaded, what a PDF can. */
+export function useItemCapabilities(id: string | null): ItemCapabilities {
+  return itemCapabilities(usePaper(id).data);
 }
 
 export function usePaperList(query: string, sort: number) {

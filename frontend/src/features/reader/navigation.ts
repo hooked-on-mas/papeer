@@ -1,6 +1,7 @@
-import type { ReadingData } from "@/api/hooks";
+import type { PaperData, ReadingData } from "@/api/hooks";
 import { useStore, type PassageLocation } from "@/store";
 import { QK } from "@/lib/queryKeys";
+import { itemCapabilities, type ItemCapabilities } from "@/lib/itemKinds";
 import { queryClient } from "@/lib/queryClient";
 import { edgePage, steppedPage } from "./pageTurn";
 import { goBack, goForward, rememberPlace, type HistoryEntry } from "./readerHistory";
@@ -12,6 +13,26 @@ function reading(): ReadingData | null | undefined {
   return id ? queryClient.getQueryData<ReadingData>([QK.reading, id]) : null;
 }
 
+/**
+ * Whether the 翻訳済みページのみ filter applies to the open item: not to one that is not translated
+ * (a notebook), whose pages are all there is, and which leaves the filter as it is set for the papers.
+ */
+function translatedOnlyFilter(): boolean {
+  const { translatedOnly, activePaperId } = useStore.getState();
+  if (!translatedOnly || !activePaperId) return false;
+  return activeItemCapabilities().translate;
+}
+
+/**
+ * What the open item can do, read when called (not from a render): for an event handler that runs in
+ * the tick the open item changed in, before any screen has rendered with the new one. An item whose
+ * row is not loaded is taken to be a PDF, as in useItemCapabilities.
+ */
+export function activeItemCapabilities(): ItemCapabilities {
+  const { activePaperId } = useStore.getState();
+  return itemCapabilities(activePaperId ? queryClient.getQueryData<PaperData | null>([QK.papers, activePaperId]) : null);
+}
+
 export function pageCount(): number {
   return reading()?.page_count ?? 0;
 }
@@ -19,7 +40,7 @@ export function pageCount(): number {
 function pageState() {
   const store = useStore.getState();
   const data = reading();
-  return { current: store.currentPage, pageCount: data?.page_count ?? 0, translatedOnly: store.translatedOnly, completed: data?.completed_pages ?? [] };
+  return { current: store.currentPage, pageCount: data?.page_count ?? 0, translatedOnly: translatedOnlyFilter(), completed: data?.completed_pages ?? [] };
 }
 
 /** Opens `page`, at its start, or at its end with `toEnd` (paging back from the page after it). */
@@ -71,7 +92,7 @@ export function navigateTo(target: { page: number; anchor_y?: number; side?: "or
     const here = currentPlace();
     if (here) store.setReaderHistory(rememberPlace(store.readerHistory, here));
   }
-  if (store.translatedOnly && !(reading()?.completed_pages ?? []).includes(page)) store.setTranslatedOnly(false);
+  if (translatedOnlyFilter() && !(reading()?.completed_pages ?? []).includes(page)) store.setTranslatedOnly(false);
   store.setCurrentPage(page);
   store.setReaderJump({ paperId, page, side: target.side ?? "original", text: "", anchor_y: target.anchor_y ?? 0 });
   store.setActiveTab("reader");
@@ -100,7 +121,7 @@ export function jumpToPage(page: number): void {
   const store = useStore.getState();
   if (!store.activePaperId || !Number.isFinite(page)) return;
   const count = pageCount() || page;
-  store.setTranslatedOnly(false);
+  if (translatedOnlyFilter()) store.setTranslatedOnly(false);
   store.setCurrentPage(Math.max(1, Math.min(Math.round(page), count)));
   store.setActiveTab("reader");
 }
@@ -109,7 +130,7 @@ export function jumpToPage(page: number): void {
 export function showPassage(paperId: string, passage: PassageLocation): void {
   const store = useStore.getState();
   if (store.activePaperId !== paperId) return;
-  if (store.translatedOnly && !(reading()?.completed_pages ?? []).includes(passage.page)) store.setTranslatedOnly(false);
+  if (translatedOnlyFilter() && !(reading()?.completed_pages ?? []).includes(passage.page)) store.setTranslatedOnly(false);
   store.setCurrentPage(passage.page);
   store.setReaderJump({ ...passage, paperId });
   store.setActiveTab("reader");

@@ -71,6 +71,8 @@ docs/             仕様ドキュメント
 
 フロントエンドは sidecar の REST API と WebSocket でバックエンドと通信します。本番ビルドでは Tauri が空きポートと起動ごとの認証トークンを決め、PyInstaller でフォルダー形式（onedir）にまとめた sidecar を起動します。翻訳・書き込み・同期などの仕様は [docs/](docs/) にあります。
 
+論文以外の項目（手書きノート・複数のメモ・資料）に向けた土台を入れています。ライブラリの項目は種類（`pdf`・`notebook`）を持ち、画面は種類を直接比べず `frontend/src/lib/itemKinds.ts` の「できること」（翻訳・サマリー・チャット・AIのフォルダー分けなど）で操作の出し分けを決めます。同期の確認画面とこのPCの履歴では、ノートと追加のメモ・資料を論文とは別に数えます。ノートを作る画面と、メモ・資料を足す画面はまだありません（今できる操作は変わりません）。保存先は「データの保存場所」、AIのフォルダー分けの対象は [docs/organize.md](docs/organize.md)、同期の件数は [docs/google-drive-sync.md](docs/google-drive-sync.md) を参照してください。
+
 ## 開発環境のセットアップ
 
 Windows 11 x64 を対象にしています。macOS（13.3 以上、Apple Silicon・Intel）と Linux（Ubuntu 22.04 以降、x86_64 の `.deb`）向けのビルドと検査も CI で行っていますが、実機では確かめていません（「リリース」）。次のツールを用意してください。

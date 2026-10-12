@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Virtualizer, type Range } from "@tanstack/react-virtual";
 import { buildTree } from "../src/features/library/libraryTree.ts";
-import { folderKey, paperKey, treeKeyAction, visibleRows } from "../src/features/library/treeKeys.ts";
+import { folderKey, paperKey, rowAfterRemoval, treeKeyAction, typeaheadMatch, visibleRows } from "../src/features/library/treeKeys.ts";
 import {
-  createLineSizes, estimateLineSize, isRequestedLine, LINE_REM, linesToRender, OVERSCAN, pendingKey, pinnedLines, shouldVirtualize,
-  treeLines, viewAnchors, VIRTUALIZE_FROM, type TreeLine,
+  createLineSizes, estimateLineSize, isRequestedLine, LINE_REM, lineKind, linesToRender, OVERSCAN, pendingKey, pinnedLines,
+  shouldVirtualize, treeLines, viewAnchors, VIRTUALIZE_FROM, type PaperChild, type PaperChildren, type TreeLine,
 } from "../src/features/library/treeLines.ts";
 import type { PaperData } from "../src/api/hooks.ts";
 import { paperData } from "./support/paperData.ts";
@@ -230,4 +230,109 @@ test("End moves the keys to the last row out of view, and the list scrolls to sh
   virtualizer.scrollToIndex(0, { align: "auto" });
   flush();
   assert.equal(last(scrolls), 0);
+});
+
+// What a paper holds and links to: lines for these exist only once something gives them (PaperChildren).
+const held: Record<string, PaperChild[]> = {
+  m1: [
+    { kind: "attachment", id: "a1", title: "要約メモ" },
+    { kind: "owned", id: "n9", title: "手書きノート" },
+    { kind: "link", id: "u1", title: "輪読ノート" },
+  ],
+  u1: [{ kind: "link", id: "u1", title: "同じ id の紐づけ" }],
+};
+const childrenOf = (openPapers: string[]): PaperChildren => ({
+  of: (p) => held[p.id] ?? [],
+  isOpen: (id) => openPapers.includes(id),
+});
+
+test("rows under an open paper follow it, one level in, with their own place among them and a key of their paper", () => {
+  const withChildren = treeLines(tree, (path) => open.has(path), childrenOf(["m1", "u1"]));
+  assert.deepEqual(outline(withChildren), [
+    "folder:Bio 1 1/3",
+    "folder:ML 1 2/3",
+    "folder:ML / Vision 2 1/4",
+    "pending:C:/x.pdf 2 2/4",
+    // The paper keeps its place among its siblings; what is under it is counted among those.
+    "paper:m1 2 3/4",
+    "attachment:m1:a1 3 1/3",
+    "owned:m1:n9 3 2/3",
+    "link:m1:u1 3 3/3",
+    "paper:m2 2 4/4",
+    "folder: 1 3/3",
+    "paper:u1 2 1/1",
+    // The item linked under m1 is also the paper u1 in 未分類: told apart by the paper it is under.
+    "link:u1:u1 3 1/1",
+  ]);
+  const keys = withChildren.map((line) => line.key);
+  assert.equal(new Set(keys).size, keys.length);
+  const m1 = withChildren.find((line) => line.key === "paper:m1")!;
+  assert.equal(m1.kind === "paper" && m1.expandable && m1.expanded, true);
+  const link = withChildren.find((line) => line.key === "link:m1:u1")!;
+  assert.equal(link.kind, "link");
+  assert.equal(link.kind === "link" && link.child.title, "輪読ノート");
+  assert.equal(link.parent, "paper:m1");
+  assert.equal(link.folder, "ML");
+});
+
+test("a paper that holds something has a row for it only while it is open", () => {
+  const closed = treeLines(tree, (path) => open.has(path), childrenOf([]));
+  assert.deepEqual(closed.map((line) => line.key), lines.map((line) => line.key));
+  const m1 = closed.find((line) => line.key === "paper:m1")!;
+  assert.equal(m1.kind === "paper" && m1.expandable, true);
+  assert.equal(m1.kind === "paper" && m1.expanded, false);
+  // A paper holding nothing is not expandable, open or not.
+  const m2 = closed.find((line) => line.key === "paper:m2")!;
+  assert.equal(m2.kind === "paper" && m2.expandable, false);
+  assert.equal(outline(treeLines(tree, (path) => open.has(path), childrenOf(["m2"]))).length, outline(lines).length);
+});
+
+test("the rows under a paper are in a closed folder's contents no more than the paper is", () => {
+  const closedFolder = treeLines(tree, (path) => path === "", childrenOf(["m1"]));
+  assert.deepEqual(closedFolder.map((line) => line.key), ["folder:Bio", "folder:ML", "folder:", "paper:u1"]);
+});
+
+test("the keyboard's rows include them: → opens a paper that holds something, then goes in; ← goes back out, or closes", () => {
+  const label = (p: PaperData) => p.title ?? "";
+  const closedRows = visibleRows(tree, (path) => open.has(path), label, childrenOf([]));
+  const openRows = visibleRows(tree, (path) => open.has(path), label, childrenOf(["m1"]));
+  const m1 = closedRows.find((row) => row.key === "paper:m1")!;
+  assert.deepEqual(treeKeyAction(closedRows, "paper:m1", "ArrowRight"), { type: "expand", row: m1 });
+  // A paper holding nothing stays, as before.
+  assert.deepEqual(treeKeyAction(closedRows, "paper:m2", "ArrowRight"), { type: "none" });
+  assert.deepEqual(treeKeyAction(openRows, "paper:m1", "ArrowRight"), { type: "focus", key: "attachment:m1:a1" });
+  assert.deepEqual(treeKeyAction(openRows, "attachment:m1:a1", "ArrowLeft"), { type: "focus", key: "paper:m1" });
+  assert.deepEqual(treeKeyAction(openRows, "link:m1:u1", "ArrowLeft"), { type: "focus", key: "paper:m1" });
+  assert.equal(treeKeyAction(openRows, "paper:m1", "ArrowLeft")?.type, "collapse");
+  // A row under a paper does not open further; the paper after the last of them is below it.
+  assert.deepEqual(treeKeyAction(openRows, "attachment:m1:a1", "ArrowRight"), { type: "none" });
+  assert.deepEqual(treeKeyAction(openRows, "link:m1:u1", "ArrowDown"), { type: "focus", key: "paper:m2" });
+  const action = treeKeyAction(openRows, "owned:m1:n9", "Enter");
+  assert.equal(action?.type === "activate" && action.row.kind, "owned");
+  assert.equal(action?.type === "activate" && action.row.id, "n9");
+  // Their label is what typing finds them by; none is a paper to select.
+  assert.equal(typeaheadMatch(openRows, "paper:m1", "手書"), "owned:m1:n9");
+  // Deleting the paper takes its rows with it: the keys go on to the paper after them.
+  assert.equal(rowAfterRemoval(openRows, "paper:m1"), "paper:m2");
+  assert.deepEqual(openRows.filter((row) => row.kind === "paper").map((row) => row.id), ["m1", "m2", "u1"]);
+});
+
+test("a row under a paper is as tall as one line, and is its own kind for the heights measured", () => {
+  const withChildren = treeLines(tree, (path) => open.has(path), childrenOf(["m1"]));
+  const attachment = withChildren.find((line) => line.key === "attachment:m1:a1")!;
+  assert.equal(estimateLineSize(attachment, 16), Math.round(LINE_REM.child * 16));
+  assert.equal(lineKind(attachment), "child");
+  const sizes = createLineSizes();
+  sizes.record(attachment, 30);
+  const other = withChildren.find((line) => line.key === "owned:m1:n9")!;
+  assert.equal(sizes.estimate(other, 16), 30);
+  // Papers are not estimated by it.
+  assert.equal(sizes.estimate(withChildren.find((line) => line.key === "paper:m2")!, 16), estimateLineSize(withChildren.find((line) => line.key === "paper:m2")!, 16));
+  assert.equal(isRequestedLine(attachment, "ML"), true);
+});
+
+test("a notebook listed in a folder is a row of the folder like a paper, ahead of the folder's papers", () => {
+  const items = [paper("p1", "F"), paperData({ id: "n1", collection_name: "F", kind: "notebook" }), paper("p2", "F")];
+  const nested = treeLines(buildTree([], items, [], false), () => true);
+  assert.deepEqual(outline(nested), ["folder:F 1 1/2", "paper:n1 2 1/3", "paper:p1 2 2/3", "paper:p2 2 3/3", "folder: 1 2/2"]);
 });

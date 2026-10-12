@@ -1,5 +1,6 @@
 import type { PaperData, ReadingData } from "../api/hooks";
 import type { components } from "../api/schema";
+import { itemCapabilities } from "./itemKinds.ts";
 import { wholeOcrPages } from "./translationIssues.ts";
 
 export type PaperStatus = "untranslated" | "translating" | "partial" | "paused" | "translated" | "review" | "failed" | "ocr";
@@ -20,6 +21,8 @@ export function storedStatusLabel(status: string | undefined): string {
 /**
  * Counts are translated pages, never a job's paragraph-level progress counters. `rebuilding`: the job
  * running only makes the PDF again from saved translations (rebuildJobs.ts), which is said as such.
+ * `applicable` is false for an item that is not translated at all (a notebook): there is no status to show
+ * for it, and the rest of what is returned is that of an untranslated paper.
  */
 export function paperTranslationStatus(paper: PaperData | null | undefined, translating: boolean, reading?: ReadingData | null,
   { rebuilding = false }: { rebuilding?: boolean } = {}) {
@@ -49,5 +52,6 @@ export function paperTranslationStatus(paper: PaperData | null | undefined, tran
   const ocrNote = status === "ocr" ? "文字化け・画像だけのページしかないため、このままでは翻訳できません。「翻訳の確認・修正」の OCR の欄から読めます"
     : ocrPages > 0 ? `${ocrPages}ページは要OCRのため原文のまま` : "";
   const description = `${text} · ${status === "ocr" ? `全${totalPages}ページ中${ocrPages}ページが要OCR` : pages > 0 ? `${scope}${pages}ページ中${completed}ページの訳文を保存済み` : count}${status === "review" ? "。未翻訳の段落は「翻訳の確認・修正」で確認できます" : ""}${ocrNote ? `。${ocrNote}` : ""}`;
-  return { status, text, pages, completed, count, description, progress: pages > 0 ? completed / pages * 100 : 0 };
+  return { status, text, pages, completed, count, description, progress: pages > 0 ? completed / pages * 100 : 0,
+    applicable: itemCapabilities(paper).translate };
 }

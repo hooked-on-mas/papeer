@@ -16,7 +16,7 @@ import { openSettings, useSettingsNavigation } from "./settingsNavigation";
 import { openEditLabels } from "@/lib/pendingSaves";
 import { isAppClosing } from "@/app/appClosing";
 import { PublishSchedule } from "./autoSyncSchedule";
-import { describeDifference, type Counts } from "./conflictSummary";
+import { countRows, describeDifference } from "./conflictSummary";
 import { fetchDriveFormat, fetchDriveStatus, fetchSyncCheck, removeOldSyncData, type DriveFormat, type DriveStatus, type SyncReview, type SyncWaiting } from "./driveApi";
 import { isAutoSyncFailure } from "./syncWarnings";
 import { VersionNoticeSetting } from "./VersionNoticeHost";
@@ -26,7 +26,6 @@ import { PLATFORM, syncClientNames } from "@/lib/platform";
 
 const client = syncClientNames();
 
-const COUNT_LABELS: [keyof Counts, string][] = [["papers", "論文"], ["notes", "メモ"], ["stickies", "付箋"], ["ink", "書き込み（ページ）"]];
 // Told once per launch; the settings keep showing it.
 let missingLibraryShown = false;
 let reviewShown = false;
@@ -283,7 +282,6 @@ export function DriveSection() {
 function ReviewPanel({ review, busy, onSync, onSkip, onChoose }: {
   review: SyncReview; busy: boolean; onSync: () => void; onSkip: () => void; onChoose: (choice: string) => void;
 }) {
-  const count = (counts: Counts | null, key: keyof Counts) => counts?.[key] ?? "—";
   return <div role="alert" className="space-y-2 rounded border border-amber-500 p-3">
     <p className="font-medium">要確認：同期を一時停止しています</p>
     <p>{review.message}</p>
@@ -291,12 +289,11 @@ function ReviewPanel({ review, busy, onSync, onSkip, onChoose }: {
       <thead><tr><th className="pr-4 text-left font-normal text-muted-foreground" />
         <th className="pr-4 text-right font-normal">{review.before_label}</th><th className="pr-4" />
         <th className="text-right font-normal">{review.after_label}</th></tr></thead>
-      <tbody>{COUNT_LABELS.map(([key, label]) => {
-        const before = count(review.before, key), after = count(review.after, key);
-        return <tr key={key} className={typeof before === "number" && typeof after === "number" && after < before ? "font-medium" : ""}>
-          <td className="pr-4">{label}</td><td className="pr-4 text-right">{before}</td><td className="pr-4">→</td><td className="text-right">{after}</td>
-        </tr>;
-      })}</tbody>
+      <tbody>{countRows(review.before, review.after).map(({ key, label, before, after, shrunk }) => (
+        <tr key={key} className={shrunk ? "font-medium" : ""}>
+          <td className="pr-4">{label}</td><td className="pr-4 text-right">{before ?? "—"}</td><td className="pr-4">→</td><td className="text-right">{after ?? "—"}</td>
+        </tr>
+      ))}</tbody>
     </table>
     <div className="flex flex-wrap gap-2">
       <Button disabled={busy} onClick={onSync}>このまま同期する</Button>

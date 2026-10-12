@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { useQueryClient } from "@tanstack/react-query";
 import { NotebookPen, Sparkles, StickyNote as StickyIcon, Trash2 } from "lucide-react";
 import { showError } from "@/components/errorDialog";
+import { useItemCapabilities } from "@/api/hooks";
 import { useStore } from "@/store";
 import {
   HIGHLIGHT_COLORS, highlightAt, highlightColor, rectsBounds, selectionToolbarAllowed, toolbarPlacement,
@@ -11,14 +12,17 @@ import {
   capturePassage, explainPassage, highlightPassage, quotePassageInNote, selectedRange, selectionTextBoxes,
   stickyNoteForPassage, type Passage,
 } from "./readerPassage";
+import { passageActions, type PassageAction } from "./passageActions";
 import { noteDraft, type StickyNote } from "./stickyNotes";
 import { deleteStickyNote, openStickyNote, recolorHighlight, useStickyNotes } from "./stickyNotesStore";
 
 type Target = { mode: "selection" } | { mode: "highlight"; id: number };
 
 /** The toolbar's buttons: for a selection, or for a highlight clicked on the page. */
-export function SelectionToolbarView({ mode, color, busy, style, toolbarRef, onColor, onExplain, onQuote, onSticky, onDelete }: {
+export function SelectionToolbarView({ mode, actions, color, busy, style, toolbarRef, onColor, onExplain, onQuote, onSticky, onDelete }: {
   mode: Target["mode"];
+  /** What the open item can do with a passage (see passageActions): the others have no button. */
+  actions: ReadonlySet<PassageAction>;
   /** The highlight's colour, or the one last used for a selection. */
   color: HighlightColor;
   busy?: boolean;
@@ -36,20 +40,20 @@ export function SelectionToolbarView({ mode, color, busy, style, toolbarRef, onC
   return <div ref={toolbarRef} role="toolbar" aria-label={mode === "selection" ? "選択した文章" : "ハイライト"} data-selection-toolbar=""
     className="absolute z-30 flex items-center gap-0.5 rounded-md border bg-popover p-0.5 text-popover-foreground shadow-md" style={style}
     onMouseDown={keep}>
-    <div role="group" aria-label={mode === "selection" ? "ハイライトする色" : "ハイライトの色"} className="flex items-center gap-0.5 px-0.5">
+    {actions.has("highlight") && <div role="group" aria-label={mode === "selection" ? "ハイライトする色" : "ハイライトの色"} className="flex items-center gap-0.5 px-0.5">
       {HIGHLIGHT_COLORS.map(({ id, label, rgb }) => <button key={id} type="button" disabled={busy}
         aria-label={mode === "selection" ? `ハイライト：${label}` : id === color ? "ハイライトを削除" : `色を${label}にする`}
         title={mode === "selection" ? `${label}でハイライト（同じ範囲・色なら削除）` : id === color ? "同じ色を押してハイライトを削除" : `${label}に変える`}
         aria-pressed={mode === "highlight" ? id === color : undefined}
         className={`size-6 rounded-full border-2 p-0.5 disabled:opacity-40 ${id === color ? "border-foreground/70" : "border-transparent"}`}
         onClick={() => onColor(id)}><span className="block size-full rounded-full" style={{ backgroundColor: `rgb(${rgb})` }} /></button>)}
-    </div>
-    <span className="mx-0.5 h-4 border-l" />
-    <button type="button" className={button} disabled={busy} title="チャットでこの箇所を説明してもらう" onClick={onExplain}><Sparkles className="size-3.5" />説明</button>
-    <button type="button" className={button} disabled={busy} title="メモに引用する（ページへのリンク付き）" onClick={onQuote}><NotebookPen className="size-3.5" />メモへ</button>
-    <button type="button" className={button} disabled={busy} title={mode === "selection" ? "選択した文章に付箋を貼る" : "このハイライトにメモ（付箋）を書く"} onClick={onSticky}>
-      <StickyIcon className="size-3.5" />付箋</button>
-    {onDelete && <button type="button" className={button} disabled={busy} aria-label="ハイライトを削除" title="ハイライトを削除" onClick={onDelete}><Trash2 className="size-3.5" /></button>}
+    </div>}
+    {actions.has("highlight") && (actions.has("explain") || actions.has("quote") || actions.has("sticky")) && <span className="mx-0.5 h-4 border-l" />}
+    {actions.has("explain") && <button type="button" className={button} disabled={busy} title="チャットでこの箇所を説明してもらう" onClick={onExplain}><Sparkles className="size-3.5" />説明</button>}
+    {actions.has("quote") && <button type="button" className={button} disabled={busy} title="メモに引用する（ページへのリンク付き）" onClick={onQuote}><NotebookPen className="size-3.5" />メモへ</button>}
+    {actions.has("sticky") && <button type="button" className={button} disabled={busy} title={mode === "selection" ? "選択した文章に付箋を貼る" : "このハイライトにメモ（付箋）を書く"} onClick={onSticky}>
+      <StickyIcon className="size-3.5" />付箋</button>}
+    {onDelete && actions.has("highlight") && <button type="button" className={button} disabled={busy} aria-label="ハイライトを削除" title="ハイライトを削除" onClick={onDelete}><Trash2 className="size-3.5" /></button>}
   </div>;
 }
 
@@ -75,6 +79,8 @@ export function SelectionToolbar({ container, frame, translated, highlights, ink
   placingNote: boolean;
 }) {
   const client = useQueryClient();
+  // What the open item can do with a passage: no toolbar for one that can do none of them.
+  const actions = passageActions(useItemCapabilities(useStore((s) => s.activePaperId)));
   const [target, setTarget] = useState<Target | null>(null);
   const [placement, setPlacement] = useState<{ left: number; top: number } | null>(null);
   // Bumped when the pane scrolls or resizes, to place the toolbar again.
@@ -174,7 +180,7 @@ export function SelectionToolbar({ container, frame, translated, highlights, ink
     setPlacement(box && toolbarPlacement({ ...box, left: box.left - bounds.left, top: box.top - bounds.top }, bounds, size));
   }, [target, highlight, layout, frame, container]);
 
-  if (!target || (target.mode === "highlight" && !highlight)) return null;
+  if (!actions.size || !target || (target.mode === "highlight" && !highlight)) return null;
   const run = async (action: () => Promise<unknown>, hide = true) => {
     setBusy(true);
     try { await action(); if (hide) setTarget(null); }
@@ -192,7 +198,7 @@ export function SelectionToolbar({ container, frame, translated, highlights, ink
       useStore.getState().setStatus("ハイライトを削除しました。付箋タブの「削除を取り消す」で戻せます。");
     }
   };
-  return <SelectionToolbarView mode={target.mode} color={color} busy={busy} toolbarRef={toolbarRef}
+  return <SelectionToolbarView mode={target.mode} actions={actions} color={color} busy={busy} toolbarRef={toolbarRef}
     // Measured while hidden, then placed.
     style={placement ? { left: placement.left, top: placement.top } : { left: 0, top: 0, visibility: "hidden" }}
     onColor={next => {

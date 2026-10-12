@@ -6,10 +6,15 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { onAppEvent } from "@/lib/appEvents";
 import { storedStatusLabel } from "@/lib/paperStatus";
+import { itemCapabilities } from "@/lib/itemKinds";
 import { PaperMetadataForm } from "./PaperMetadataForm";
 
 function metaLines(paper: PaperData, reading: ReadingData | null | undefined): { text: string; title?: string }[] {
-  const lines: { text: string; title?: string }[] = [{ text: `${paper.pages ?? "?"} ページ / ${storedStatusLabel(paper.status)}` }];
+  const caps = itemCapabilities(paper);
+  // The translation state is left out for an item that is not translated (a notebook).
+  const lines: { text: string; title?: string }[] = [{ text: caps.translate
+    ? `${paper.pages ?? "?"} ページ / ${storedStatusLabel(paper.status)}` : `${paper.pages ?? "?"} ページ` }];
+  if (!caps.ocr) return lines;
   if (reading?.empty_pages?.length) lines.push({ text: `文字のないページ: ${reading.empty_pages.join(", ")}` });
   const ocr = reading?.ocr_pages ?? [];
   const whole = ocr.filter(entry => entry.reason !== "partial").map(entry => entry.page);
@@ -51,6 +56,7 @@ function PaperDetails({ paperId }: { paperId: string }) {
   const { data: paper, isError, refetch } = usePaper(paperId);
   const { data: reading } = useReading(paperId);
   const { data: collections = [] } = useCollections();
+  const caps = itemCapabilities(paper);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">
@@ -66,9 +72,9 @@ function PaperDetails({ paperId }: { paperId: string }) {
         <section className="space-y-2 border-t pt-4">
           <h3 className="text-[0.8125rem] font-semibold">ファイル</h3>
           <div className="text-[0.75rem] text-muted-foreground space-y-0.5 break-words">
-            <div>{paper.original_name ?? "original.pdf"}（原文）</div>
-            <div>日本語訳：{reading?.has_translated ? (reading.in_progress ? "翻訳途中" : "あり") : "未作成"}</div>
-            <div>サマリー：{reading?.has_article ? "あり" : "未作成"}</div>
+            {caps.originalPdf && <div>{paper.original_name ?? "original.pdf"}（原文）</div>}
+            {caps.translate && <div>日本語訳：{reading?.has_translated ? (reading.in_progress ? "翻訳途中" : "あり") : "未作成"}</div>}
+            {caps.summary && <div>サマリー：{reading?.has_article ? "あり" : "未作成"}</div>}
           </div>
           <Button variant="outline" onClick={() => openPaperFolder(paperId)}>
             <FolderOpen className="w-4 h-4" /> 保存フォルダーを開く

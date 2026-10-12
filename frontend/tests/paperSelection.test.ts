@@ -140,3 +140,21 @@ test("until several are selected, Shift+↑↓ start from the row the keys were 
   // A row the keys were on that has left the screen is passed over.
   assert.deepEqual(ids(selectRange(clicked, rows, paperKey("m2"), null, { from: paperKey("b1") })), ["m1", "m2"]);
 });
+
+test("rows under a paper are not papers to select, and go with the paper that is deleted", () => {
+  const held = { m1: [{ kind: "attachment" as const, id: "a1", title: "メモ" }, { kind: "link" as const, id: "u1", title: "紐づけ" }] };
+  const withRows = visibleRows(tree, (path) => ["ML", "ML / Vision", ""].includes(path), (p) => p.title,
+    { of: (p) => held[p.id as "m1"] ?? [], isOpen: (id) => id === "m1" });
+  assert.deepEqual(withRows.slice(4, 8).map((row) => row.key), [paperKey("m1"), "attachment:m1:a1", "link:m1:u1", paperKey("m2")]);
+  // Ctrl+A and a range take the papers only.
+  assert.deepEqual(ids(selectAllPapers(NO_SELECTION, withRows)), ["m1", "m2", "u1", "u2", "v1"]);
+  assert.deepEqual(ids(selectRange(NO_SELECTION, withRows, paperKey("m2"), "m1")), ["m1", "m2"]);
+  // Clicking one of them is no paper selected.
+  assert.equal(toggleSelection(NO_SELECTION, withRows, "attachment:m1:a1", null), NO_SELECTION);
+  // m1 deleted: its rows go too, so the keys go to m2, not to one of them.
+  assert.equal(rowAfterRemovingRows(withRows, paperKey("m1"), new Set([paperKey("m1")])), paperKey("m2"));
+  // From one of its rows, as well: past the paper and what is under it.
+  assert.equal(rowAfterRemovingRows(withRows, "attachment:m1:a1", new Set([paperKey("m1")])), paperKey("m2"));
+  // Both papers deleted: the folder row is the first one left below.
+  assert.equal(rowAfterRemovingRows(withRows, paperKey("m1"), new Set([paperKey("m1"), paperKey("m2")])), folderKey(""));
+});

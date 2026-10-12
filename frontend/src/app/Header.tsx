@@ -4,7 +4,9 @@ import {
 } from "lucide-react";
 import { useStore, paperBusy } from "../store";
 import { paperBusyFor, runningPaperJob } from "@/features/jobs/jobSelectors";
-import { paperDisplayName, usePaper, useReading } from "../api/hooks";
+import { paperDisplayName, useItemCapabilities, usePaper, useReading } from "../api/hooks";
+import { activeItemCapabilities } from "@/features/reader/navigation";
+import { itemCapabilities } from "@/lib/itemKinds";
 import { PaperStatusBadge } from "../components/ui/PaperStatusBadge";
 import { paperTranslationStatus } from "@/lib/paperStatus";
 import { TranslationDialog } from "../features/reader/TranslationDialog";
@@ -34,6 +36,8 @@ export function Header() {
 
   const { data: paper } = usePaper(activePaperId);
   const { data: reading } = useReading(activePaperId);
+  // What the open item can do: the controls of what it cannot (a notebook is not translated) are not offered.
+  const caps = itemCapabilities(paper);
 
   const toggleSidebar = (
     <button
@@ -92,8 +96,10 @@ export function Header() {
         </h1>
         <div className="flex items-center gap-2 text-[0.75rem] text-muted-foreground mt-0.5 min-w-0">
           <span className="truncate" title={meta}>{meta}</span>
-          <span className="text-border">|</span>
-          <PaperStatusBadge status={status} text={`${translation.text} · ${translation.count}`} description={translation.description} hasSummary={!!paper?.has_article} className="shrink-0" />
+          {translation.applicable && <>
+            <span className="text-border">|</span>
+            <PaperStatusBadge status={status} text={`${translation.text} · ${translation.count}`} description={translation.description} hasSummary={!!paper?.has_article} className="shrink-0" />
+          </>}
         </div>
       </div>
 
@@ -104,7 +110,7 @@ export function Header() {
         >
           <FileText className="w-4 h-4" /> 論文情報・整理
         </button>
-        {translateJobId ? (
+        {!caps.translate ? null : translateJobId ? (
           <button onClick={handleCancel} className="flex items-center gap-1.5 bg-destructive text-white px-3 py-1.5 rounded-md text-[0.8125rem] font-medium hover:opacity-90 transition-opacity">
             <Square className="w-3.5 h-3.5" /> 中止
           </button>
@@ -125,13 +131,13 @@ export function Header() {
             <MoreVertical className="w-4 h-4" /> その他
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-64">
-            <DropdownMenuItem onClick={() => emitAppEvent("open-glossary-dialog")}>
+            {caps.translate && <DropdownMenuItem onClick={() => emitAppEvent("open-glossary-dialog")}>
               <BookOpen className="w-4 h-4 mr-2" /> 訳語・辞書
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={workBusy} onClick={() => generateArticle(activePaperId)}>
+            </DropdownMenuItem>}
+            {caps.summary && <DropdownMenuItem disabled={workBusy} onClick={() => generateArticle(activePaperId)}>
               <ScrollText className="w-4 h-4 mr-2" /> サマリー（解説）を作成
-            </DropdownMenuItem>
-            <DropdownMenuSub>
+            </DropdownMenuItem>}
+            {caps.translate && <DropdownMenuSub>
               <DropdownMenuSubTrigger disabled={workBusy || exportBlocked}>
                 <Download className="w-4 h-4 mr-2" /> PDFを書き出す
               </DropdownMenuSubTrigger>
@@ -140,27 +146,31 @@ export function Header() {
                 <DropdownMenuItem onClick={() => exportPdf(activePaperId, "interleaved")}>原文と訳文の交互ページ</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => exportPdf(activePaperId, "bilingual")}>原文と訳文の対訳（左右）</DropdownMenuItem>
               </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            <DropdownMenuItem disabled={!reading?.has_article} onClick={() => exportMarkdown(activePaperId)}>
+            </DropdownMenuSub>}
+            {caps.summary && <DropdownMenuItem disabled={!reading?.has_article} onClick={() => exportMarkdown(activePaperId)}>
               <FileText className="w-4 h-4 mr-2" /> サマリーをMarkdownで保存
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => openPaperFile(activePaperId, "original.pdf")}>
+            </DropdownMenuItem>}
+            {(caps.translate || caps.summary || caps.originalPdf) && <DropdownMenuSeparator />}
+            {caps.originalPdf && <DropdownMenuItem onClick={() => openPaperFile(activePaperId, "original.pdf")}>
               <ExternalLink className="w-4 h-4 mr-2" /> 原文を外部で開く
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={!reading?.has_translated} onClick={() => openPaperFile(activePaperId, "translated.pdf")}>
-              <ExternalLink className="w-4 h-4 mr-2" /> 日本語訳を外部で開く
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={!reading?.has_translated || workBusy} onClick={() => openPaperFile(activePaperId, "interleaved.pdf")}>
-              <ExternalLink className="w-4 h-4 mr-2" /> 原文・日本語訳（交互）を外部で開く
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => saveOriginal(activePaperId)}>
-              <Download className="w-4 h-4 mr-2" /> 原文PDFを名前を付けて保存…
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => renamePaperFile(activePaperId)}>
+            </DropdownMenuItem>}
+            {caps.translate && <>
+              <DropdownMenuItem disabled={!reading?.has_translated} onClick={() => openPaperFile(activePaperId, "translated.pdf")}>
+                <ExternalLink className="w-4 h-4 mr-2" /> 日本語訳を外部で開く
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={!reading?.has_translated || workBusy} onClick={() => openPaperFile(activePaperId, "interleaved.pdf")}>
+                <ExternalLink className="w-4 h-4 mr-2" /> 原文・日本語訳（交互）を外部で開く
+              </DropdownMenuItem>
+            </>}
+            {caps.originalPdf && <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => saveOriginal(activePaperId)}>
+                <Download className="w-4 h-4 mr-2" /> 原文PDFを名前を付けて保存…
+              </DropdownMenuItem>
+            </>}
+            {caps.rename && <DropdownMenuItem onClick={() => renamePaperFile(activePaperId)}>
               <Pencil className="w-4 h-4 mr-2" /> ファイル名を変更…
-            </DropdownMenuItem>
+            </DropdownMenuItem>}
             <DropdownMenuItem onClick={() => openPaperFolder(activePaperId)}>
               <FolderOpen className="w-4 h-4 mr-2" /> 保存フォルダーを開く
             </DropdownMenuItem>
@@ -181,15 +191,22 @@ export function TranslationDialogHost() {
   const currentPage = useStore((s) => s.currentPage);
   const [open, setOpen] = useState(false);
   const [initialTab, setInitialTab] = useState<"translation" | "terms" | "dictionary">("translation");
+  const translatable = useItemCapabilities(activePaperId).translate;
+  useEffect(() => {
+    if (!translatable) setOpen(false);
+  }, [translatable]);
+  // Ctrl+T and the reader's buttons open it for any open item: not for one that is not translated. Asked
+  // when the event comes, of the item open then: a failure notice's 再開 opens another paper and emits
+  // this in the same tick, before this component has rendered with it.
   useEffect(() => {
     const translation = onAppEvent("open-translate-dialog", () => {
-      if (useStore.getState().activePaperId) { setInitialTab("translation"); setOpen(true); }
+      if (useStore.getState().activePaperId && activeItemCapabilities().translate) { setInitialTab("translation"); setOpen(true); }
     });
     const dictionary = onAppEvent("open-glossary-dialog", () => {
-      if (useStore.getState().activePaperId) { setInitialTab("terms"); setOpen(true); }
+      if (useStore.getState().activePaperId && activeItemCapabilities().translate) { setInitialTab("terms"); setOpen(true); }
     });
     return () => { translation(); dictionary(); };
   }, []);
-  if (!activePaperId) return null;
+  if (!activePaperId || !translatable) return null;
   return <TranslationDialog open={open} onOpenChange={setOpen} paperId={activePaperId} currentPage={currentPage} initialTab={initialTab} />;
 }

@@ -3,6 +3,7 @@ import { Copy, Undo2 } from "lucide-react";
 import type { PaperData } from "@/api/hooks";
 import { copyBibtex } from "@/app/actions";
 import { Input } from "@/components/ui/input";
+import { itemCapabilities } from "@/lib/itemKinds";
 import { flushDraft, hideDraft, revertField, showDraft, typeField, useMetadataDraft } from "./metadataAutosave";
 import { metaValues, unsavedFields, type MetaField } from "./paperMetadata";
 import { isImeKey } from "@/lib/imeKeys";
@@ -25,6 +26,8 @@ const FIELDS: { field: MetaField; label: string; placeholder: string; maxLength?
  */
 export function PaperMetadataForm({ paper, collections }: { paper: PaperData; collections: string[] }) {
   const paperId = paper.id;
+  // Only the title for an item without a bibliography (a notebook).
+  const caps = itemCapabilities(paper);
   const server = useMemo(() => metaValues(paper), [paper]);
   const draft = useMetadataDraft(paperId);
   const [focused, setFocused] = useState<MetaField | null>(null);
@@ -99,21 +102,21 @@ export function PaperMetadataForm({ paper, collections }: { paper: PaperData; co
       <section className="space-y-3 border-t pt-3">
         <h3 className="text-[0.8125rem] font-semibold">論文情報 <span className="font-normal text-muted-foreground text-[0.75rem]">入力後に自動保存します。</span></h3>
         <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-x-2 gap-y-2 text-[0.8125rem]">
-          {FIELDS.map(({ field, label, ...props }) => (
+          {FIELDS.filter(({ field }) => caps.bibliography || field === "title").map(({ field, label, ...props }) => (
             <div key={field} className="contents">
               <label htmlFor={`${id}-${field}`}>{label}</label>
               {input(field, props)}
             </div>
           ))}
-          <details className="col-span-2 text-[0.75rem] text-muted-foreground">
+          {caps.bibliography && <details className="col-span-2 text-[0.75rem] text-muted-foreground">
             <summary className="cursor-pointer">論文情報の取得について</summary>
             <p className="mt-1">論文情報は追加時にPDFから読み取ります。設定の「論文情報の取得にAIを使う」がONの場合は、不足情報をAIと外部の書誌情報サービスで補完します。BibTeXに使います。</p>
-          </details>
+          </details>}
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className={`text-[0.75rem] ${hasProblem || draft?.failure ? "text-destructive" : "text-muted-foreground"}`}
             title={draft?.failure || undefined}>{state}</span>
-          <button
+          {caps.bibliography && <button
             type="button"
             onClick={() => void copyBibtex([paperId], flushDraft(paperId))}
             disabled={hasProblem}
@@ -121,7 +124,7 @@ export function PaperMetadataForm({ paper, collections }: { paper: PaperData; co
             className="flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border hover:bg-muted disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-ring"
           >
             <Copy className="w-4 h-4" aria-hidden="true" /> BibTeX をコピー
-          </button>
+          </button>}
         </div>
       </section>
     </div>

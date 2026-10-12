@@ -9,6 +9,7 @@
  */
 import type { OrganizeProposal } from "../../api/jobTypes.ts";
 import { folderAncestors, normalizeCollection, parentFolder, subfolderPath } from "../../lib/collectionPath.ts";
+import { itemCapabilities } from "../../lib/itemKinds.ts";
 
 /** The most papers one proposal covers (MAX_PAPERS in papeer/core/library_organize.py). */
 export const MAX_ORGANIZE_PAPERS = 300;
@@ -305,4 +306,50 @@ export function organizableIds(paperIds: readonly string[]): string[] | null {
 export function papersDirectlyIn<T extends { collection_name?: string | null }>(papers: readonly T[], source: string): T[] {
   const folder = normalizeCollection(source);
   return papers.filter((paper) => normalizeCollection(paper.collection_name || "") === folder);
+}
+
+/** The items an organization can cover: those the sidecar reads the text of to sort (not a notebook). */
+export function organizableItems<T extends { kind?: string | null }>(items: readonly T[]): T[] {
+  return items.filter((item) => itemCapabilities(item).organize);
+}
+
+/** Whether all of `items` can be organized: a selection with a notebook in it cannot (its menu entry is off; the dialog refuses it). */
+export function allOrganizable(items: readonly { kind?: string | null }[]): boolean {
+  return items.every((item) => itemCapabilities(item).organize);
+}
+
+export type OrganizeCandidates<T> = {
+  /** The papers the proposal will cover. */
+  papers: T[];
+  /** The items asked for that it cannot cover (notebooks): said in the dialog, never counted as papers. */
+  excluded: number;
+};
+
+/**
+ * What an organization of a folder (`paperIds` null: the items directly in `source`) or of a selection
+ * (`paperIds`) covers out of `items`, the library's list.
+ */
+export function organizeCandidates<T extends { id: string; collection_name?: string | null; kind?: string | null }>(
+  items: readonly T[], target: { source: string; paperIds: readonly string[] | null },
+): OrganizeCandidates<T> {
+  let asked: T[];
+  if (target.paperIds) {
+    const wanted = new Set(target.paperIds);
+    asked = items.filter((item) => wanted.has(item.id));
+  } else {
+    asked = papersDirectlyIn(items, target.source);
+  }
+  const papers = organizableItems(asked);
+  return { papers, excluded: asked.length - papers.length };
+}
+
+/** How many papers each folder ("" for 未分類) holds directly, as an organization of it would cover. */
+export function organizableCounts(items: readonly { collection_name?: string | null; kind?: string | null }[]): Map<string, number> {
+  const byFolder = new Map<string, number>();
+  for (const item of items) {
+    if (!itemCapabilities(item).organize) continue;
+    const folder = normalizeCollection(item.collection_name || "");
+    byFolder.set(folder, (byFolder.get(folder) ?? 0) + 1);
+  }
+  return byFolder;
 }

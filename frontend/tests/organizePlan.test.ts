@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { OrganizeProposal } from "../src/api/jobTypes.ts";
 import {
-  applyPayload, commonFolder, createdFolders, destinationChoices, draftEdited, draftFromProposal,
-  isMoving, movingMoves, organizableIds, organizeRows, papersDirectlyIn, proposalFromDraft, renameNewFolder, setDestination, setIncluded,
-  withAncestors, type OrganizeDraft, type OrganizeRow,
+  allOrganizable, applyPayload, commonFolder, createdFolders, destinationChoices, draftEdited, draftFromProposal,
+  isMoving, movingMoves, organizableCounts, organizableIds, organizableItems, organizeCandidates, organizeRows, papersDirectlyIn,
+  proposalFromDraft, renameNewFolder, setDestination, setIncluded, withAncestors, type OrganizeDraft, type OrganizeRow,
 } from "../src/features/library/organizePlan.ts";
+import { paperData } from "./support/paperData.ts";
 
 const proposal: OrganizeProposal = {
   source: "",
@@ -227,4 +228,45 @@ test("only a set of papers one proposal can cover is offered for organizing", ()
   assert.equal(organizableIds(ids(301)), null);
   // Counted without the repeats.
   assert.equal(organizableIds([...ids(300), "p0"])?.length, 300);
+});
+
+// A notebook has no text to sort by and the sidecar lists PDFs only, so a proposal never covers one.
+const library = [
+  paperData({ id: "p1", collection_name: "A" }),
+  paperData({ id: "n1", collection_name: "A", kind: "notebook" }),
+  paperData({ id: "p2", collection_name: "A / B" }),
+  paperData({ id: "n2", collection_name: "", kind: "notebook" }),
+  paperData({ id: "p3", collection_name: "" }),
+];
+
+test("an organization of a folder covers its PDFs, and says how many notebooks it leaves out", () => {
+  const folder = organizeCandidates(library, { source: "A", paperIds: null });
+  assert.deepEqual(folder.papers.map((p) => p.id), ["p1"]);
+  assert.equal(folder.excluded, 1);
+  // A folder of notebooks only has nothing to sort, though it lists items.
+  const notebooks = organizeCandidates(library.filter((p) => p.id !== "p3"), { source: "", paperIds: null });
+  assert.deepEqual(notebooks.papers, []);
+  assert.equal(notebooks.excluded, 1);
+});
+
+test("the count a folder is offered with is the PDFs an organization of it covers", () => {
+  const counts = organizableCounts(library);
+  assert.deepEqual(Object.fromEntries(counts), { "": 1, A: 1, "A / B": 1 });
+  for (const [folder, count] of counts) {
+    assert.equal(organizeCandidates(library, { source: folder, paperIds: null }).papers.length, count, folder);
+  }
+  assert.equal(counts.get("Missing") ?? 0, 0);
+});
+
+test("a selection with a notebook in it is not organizable, and is not counted as PDFs only", () => {
+  const mixed = library.filter((p) => ["p1", "n1", "p2"].includes(p.id));
+  assert.equal(allOrganizable(mixed), false);
+  const asked = organizeCandidates(library, { source: "", paperIds: ["p1", "n1", "p2"] });
+  assert.deepEqual(asked.papers.map((p) => p.id), ["p1", "p2"]);
+  assert.equal(asked.excluded, 1);
+  // PDFs only, and a selection not loaded yet (no items), are as before.
+  assert.equal(allOrganizable(library.filter((p) => p.kind === "pdf")), true);
+  assert.equal(allOrganizable([]), true);
+  assert.equal(organizeCandidates(library, { source: "", paperIds: ["p1", "p3"] }).excluded, 0);
+  assert.deepEqual(organizableItems([{ kind: "later" }, { kind: "pdf" }, {}]), [{ kind: "pdf" }, {}]);
 });

@@ -17,6 +17,7 @@ const tree = buildTree([], papers, [{ path: "C:/x.pdf", name: "x.pdf", collectio
 const open = new Set(["ML", ""]);
 const rows = visibleRows(tree, (path) => open.has(path), (p) => p.title ?? "");
 const keys = (list: TreeRow[]) => list.map((row) => row.key);
+const rowOf = (key: string): TreeRow => rows.find((row) => row.key === key)!;
 
 test("the rows on screen are the folders and, in open folders, their subfolders then papers, without PDFs being added", () => {
   assert.deepEqual(keys(rows), [
@@ -25,10 +26,11 @@ test("the rows on screen are the folders and, in open folders, their subfolders 
   const byKey = new Map(rows.map((row) => [row.key, row]));
   assert.deepEqual(byKey.get(folderKey("ML / Vision")), {
     key: folderKey("ML / Vision"), kind: "folder", id: "ML / Vision", folder: "ML / Vision", level: 2, parent: folderKey("ML"),
-    expanded: false, label: "Vision",
+    expandable: true, expanded: false, label: "Vision",
   });
   assert.deepEqual(byKey.get(paperKey("m1")), {
-    key: paperKey("m1"), kind: "paper", id: "m1", folder: "ML", level: 2, parent: folderKey("ML"), expanded: false, label: "Attention",
+    key: paperKey("m1"), kind: "paper", id: "m1", folder: "ML", level: 2, parent: folderKey("ML"), expandable: false, expanded: false,
+    label: "Attention",
   });
   assert.equal(byKey.get(folderKey(""))?.level, 1);
   assert.equal(byKey.get(folderKey(""))?.parent, null);
@@ -63,7 +65,7 @@ test("↑↓ move to the row above and below, Home and End to the first and last
 });
 
 test("→ opens a closed folder, then moves to its first row; on an open folder with nothing shown, or on a paper, it stays", () => {
-  assert.deepEqual(treeKeyAction(rows, folderKey("Bio"), "ArrowRight"), { type: "expand", path: "Bio" });
+  assert.deepEqual(treeKeyAction(rows, folderKey("Bio"), "ArrowRight"), { type: "expand", row: rowOf(folderKey("Bio")) });
   assert.deepEqual(treeKeyAction(rows, folderKey("ML"), "ArrowRight"), { type: "focus", key: folderKey("ML / Vision") });
   assert.deepEqual(treeKeyAction(rows, folderKey(""), "ArrowRight"), { type: "focus", key: paperKey("u1") });
   assert.deepEqual(treeKeyAction(rows, paperKey("m1"), "ArrowRight"), { type: "none" });
@@ -72,7 +74,7 @@ test("→ opens a closed folder, then moves to its first row; on an open folder 
 });
 
 test("← closes an open folder, and otherwise moves to the folder the row is in", () => {
-  assert.deepEqual(treeKeyAction(rows, folderKey("ML"), "ArrowLeft"), { type: "collapse", path: "ML" });
+  assert.deepEqual(treeKeyAction(rows, folderKey("ML"), "ArrowLeft"), { type: "collapse", row: rowOf(folderKey("ML")) });
   assert.deepEqual(treeKeyAction(rows, paperKey("m2"), "ArrowLeft"), { type: "focus", key: folderKey("ML") });
   assert.deepEqual(treeKeyAction(rows, folderKey("ML / Vision"), "ArrowLeft"), { type: "focus", key: folderKey("ML") });
   assert.deepEqual(treeKeyAction(rows, folderKey("Bio"), "ArrowLeft"), { type: "none" });

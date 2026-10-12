@@ -2,15 +2,27 @@ import { useState } from "react";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { TabsContent } from "@/components/ui/tabs";
 import { useStore } from "@/store";
+import { useItemCapabilities } from "@/api/hooks";
+import { tabAvailable } from "@/lib/itemKinds";
 import { Reader } from "../features/reader/Reader";
-import { sidePanelOpen, shownSidePanel } from "../features/reader/sidePanel";
+import { sidePanelOpen, shownSidePanel, type SidePanel } from "../features/reader/sidePanel";
 import { ChatPane, NotesPane, SummaryPane } from "./lazyPanes";
 
 const SIDE_PANEL_LABELS = { summary: "サマリー", chat: "チャット", notes: "メモ" } as const;
 
+/**
+ * The side panel's pane the store has chosen, unless the open item has none of it (a notebook has no
+ * サマリー): the choice is kept for the next paper, and the panel takes no room meanwhile.
+ */
+function useChosenSidePanel(): SidePanel | null {
+  const caps = useItemCapabilities(useStore((s) => s.activePaperId));
+  return useStore((s) => s.sidePanel !== null && tabAvailable(caps, s.sidePanel) ? s.sidePanel : null);
+}
+
 /** Whether the side panel takes room beside the reader (see sidePanelOpen). */
 export function useSidePanelOpen(): boolean {
-  return useStore((s) => sidePanelOpen({ sidePanel: s.sidePanel, hasPaper: !!s.activePaperId }));
+  const sidePanel = useChosenSidePanel();
+  return useStore((s) => sidePanelOpen({ sidePanel, hasPaper: !!s.activePaperId }));
 }
 
 /**
@@ -19,8 +31,8 @@ export function useSidePanelOpen(): boolean {
  */
 export function ReaderArea() {
   const open = useSidePanelOpen();
-  const sidePanel = useStore((s) => s.sidePanel);
-  const panel = useStore((s) => shownSidePanel({ activeTab: s.activeTab, sidePanel: s.sidePanel, hasPaper: !!s.activePaperId }));
+  const sidePanel = useChosenSidePanel();
+  const panel = useStore((s) => shownSidePanel({ activeTab: s.activeTab, sidePanel, hasPaper: !!s.activePaperId }));
   // The panel opens at the width it was last left at. Changing defaultSize while it is open would
   // re-register it and interrupt a resize, so the width is read only when it opens.
   const [openWidth, setOpenWidth] = useState<number | null>(null);

@@ -7,56 +7,124 @@
  *
  * The lines are flat, not nested in groups, since a line out of view is not in the page: each row says
  * its level and its place among its siblings itself, as the WAI-ARIA tree pattern allows.
+ *
+ * This is the one walk of the tree: the keyboard's rows (treeKeys.ts) are made from these lines, so that
+ * what the keys move over is what is on screen. A new kind of row is a new member of TreeLine, and the
+ * walk below is the one place that puts it in the order of the tree.
  */
 import type { Range } from "@tanstack/react-virtual";
 import type { PaperData } from "../../api/hooks.ts";
 import type { PendingImport } from "../../app/pendingImports.ts";
 import type { FolderNode } from "./libraryTree.ts";
 import { normalizeCollection } from "../../lib/collectionPath.ts";
-import { folderKey, paperKey } from "./treeKeys.ts";
+
+// The rows' keys, unique among the lines. Each kind has its own prefix, and the rows under a paper are
+// told apart by the paper they are under: the same item may be linked from several papers (and is listed
+// in its own folder too), so its id alone would not do. Ids hold no ":" (hashes, UUIDs).
+export const folderKey = (path: string) => `folder:${path}`;
+export const paperKey = (id: string) => `paper:${id}`;
+/** The line of a PDF still being added, which has no row for the keyboard (see treeRows). */
+export const pendingKey = (path: string) => `pending:${path}`;
+/** A memo or document the paper `owner` holds. */
+export const attachmentKey = (owner: string, id: string) => `attachment:${owner}:${id}`;
+/** A notebook the paper `owner` holds. */
+export const ownedKey = (owner: string, id: string) => `owned:${owner}:${id}`;
+/** An item linked to the paper `owner`, listed under it besides its own place. */
+export const linkKey = (owner: string, id: string) => `link:${owner}:${id}`;
+
+/**
+ * A row under a paper, shown while the paper is open: what it holds (a memo, a document, a notebook of
+ * its own) or what is linked to it. They are given by PaperChildren; no paper has any yet.
+ */
+export type PaperChild =
+  | { kind: "attachment"; id: string; title: string }
+  | { kind: "owned"; id: string; title: string }
+  | { kind: "link"; id: string; title: string };
+
+/** The kinds of the rows under a paper. */
+export type ChildKind = PaperChild["kind"];
+
+/** What the tree shows under its papers: the rows of each, and which papers are open. */
+export type PaperChildren = {
+  /** The rows under `paper`, in order; none for a paper that holds and links nothing. */
+  of(paper: PaperData): readonly PaperChild[];
+  /** Whether the paper's row is open, showing them. */
+  isOpen(paperId: string): boolean;
+};
+
+/** No paper has rows under it: the library as it is listed while papers hold nothing. */
+export const NO_CHILDREN: PaperChildren = { of: () => [], isOpen: () => false };
 
 type Place = {
-  /** Unique among the lines: the row's key (see folderKey, paperKey), or pendingKey. */
+  /** Unique among the lines: the row's key (see folderKey and the other key functions). */
   key: string;
   /** 1 for the top folders, as aria-level. */
   level: number;
-  /** The rows in its folder (subfolders, PDFs being added and papers), or the top folders; aria-setsize. */
+  /** The rows in its folder (subfolders, PDFs being added and papers), or the top folders, or the rows under its paper; aria-setsize. */
   setSize: number;
   /** Its place among them, from 1; aria-posinset. */
   posInSet: number;
+  /** The folder it is in: a folder's own path, "" for 未分類. */
+  folder: string;
+  /** The key of the line it is under: its folder's, or for a row under a paper that paper's; null for the top folders. */
+  parent: string | null;
 };
 
-export type TreeLine =
-  | Place & { kind: "folder"; node: FolderNode }
-  | Place & { kind: "pending"; item: PendingImport }
-  | Place & { kind: "paper"; paper: PaperData };
+type ChildLineOf<C extends PaperChild> = C extends unknown ? Place & { kind: C["kind"]; owner: PaperData; child: C } : never;
 
-/** The line of a PDF still being added, which has no row for the keyboard (see visibleRows). */
-export const pendingKey = (path: string) => `pending:${path}`;
+/** A row under the paper `owner`. */
+export type ChildLine = ChildLineOf<PaperChild>;
+
+export type TreeLine =
+  | Place & { kind: "folder"; node: FolderNode; expanded: boolean }
+  | Place & { kind: "pending"; item: PendingImport }
+  /** `expandable`: rows can be shown under it; `expanded`: they are. */
+  | Place & { kind: "paper"; paper: PaperData; expandable: boolean; expanded: boolean }
+  | ChildLine;
+
+/** Whether the line is a row under a paper. */
+export const isChildLine = (line: TreeLine): line is ChildLine =>
+  line.kind !== "folder" && line.kind !== "pending" && line.kind !== "paper";
+
+const childKey = (owner: string, child: PaperChild): string =>
+  child.kind === "attachment" ? attachmentKey(owner, child.id) : child.kind === "owned" ? ownedKey(owner, child.id) : linkKey(owner, child.id);
 
 /**
  * Every line on screen, top to bottom: each folder, then if it is open its subfolders, the PDFs being
- * added to it and its papers — the rows of visibleRows, and the PDFs being added.
+ * added to it and its papers, each followed, while it is open, by the rows under it.
  */
-export function treeLines(tree: FolderNode[], isExpanded: (path: string) => boolean): TreeLine[] {
+export function treeLines(tree: FolderNode[], isExpanded: (path: string) => boolean, children: PaperChildren = NO_CHILDREN): TreeLine[] {
   const lines: TreeLine[] = [];
   // `setSize`: the folders' siblings, which for subfolders include the PDFs being added and papers after them.
-  const walk = (nodes: FolderNode[], level: number, setSize: number) => {
+  const walk = (nodes: FolderNode[], level: number, setSize: number, parent: string | null) => {
     nodes.forEach((node, index) => {
-      lines.push({ kind: "folder", key: folderKey(node.path), node, level, setSize, posInSet: index + 1 });
-      if (!isExpanded(node.path)) return;
+      const key = folderKey(node.path);
+      const expanded = isExpanded(node.path);
+      lines.push({ kind: "folder", key, node, level, setSize, posInSet: index + 1, folder: node.path, parent, expanded });
+      if (!expanded) return;
       const contents = node.children.length + node.pending.length + node.papers.length;
-      walk(node.children, level + 1, contents);
+      walk(node.children, level + 1, contents, key);
       let posInSet = node.children.length;
       for (const item of node.pending) {
-        lines.push({ kind: "pending", key: pendingKey(item.path), item, level: level + 1, setSize: contents, posInSet: ++posInSet });
+        lines.push({ kind: "pending", key: pendingKey(item.path), item, level: level + 1, setSize: contents, posInSet: ++posInSet,
+          folder: node.path, parent: key });
       }
       for (const paper of node.papers) {
-        lines.push({ kind: "paper", key: paperKey(paper.id), paper, level: level + 1, setSize: contents, posInSet: ++posInSet });
+        const rows = children.of(paper);
+        const open = rows.length > 0 && children.isOpen(paper.id);
+        const paperLineKey = paperKey(paper.id);
+        lines.push({ kind: "paper", key: paperLineKey, paper, level: level + 1, setSize: contents, posInSet: ++posInSet,
+          folder: node.path, parent: key, expandable: rows.length > 0, expanded: open });
+        if (!open) continue;
+        rows.forEach((child, at) => {
+          // The kind and the child of a line go together; TypeScript does not follow that through the union.
+          lines.push({ kind: child.kind, key: childKey(paper.id, child), owner: paper, child, level: level + 2, setSize: rows.length,
+            posInSet: at + 1, folder: node.path, parent: paperLineKey } as ChildLine);
+        });
       }
     });
   };
-  walk(tree, 1, tree.length);
+  walk(tree, 1, tree.length, null);
   return lines;
 }
 
@@ -76,23 +144,25 @@ export const OVERSCAN = 10;
  * A line's height in rem, from the rows' classes in LibrarySidebar: a folder is h-[1.875rem]; a paper
  * py-1 around its title (leading-5) and its status line (mt-0.5, leading-4), and its tags' line (mt-1,
  * chips of leading-4 with a border) when it has tags; a PDF being added is laid out as a paper without
- * tags. Only an estimate for a line not yet measured (a status line can wrap in a narrow sidebar): the
- * rows are measured once rendered.
+ * tags; a row under a paper is one line (py-1 around leading-5). Only an estimate for a line not yet
+ * measured (a status line can wrap in a narrow sidebar): the rows are measured once rendered.
  */
-export const LINE_REM = { folder: 1.875, paper: 2.875, tags: 1.375 } as const;
+export const LINE_REM = { folder: 1.875, paper: 2.875, tags: 1.375, child: 1.75 } as const;
 
 /** The estimated height in px of a line, with the root font size `remPx` (設定「文字の大きさ」). */
 export function estimateLineSize(line: TreeLine, remPx: number): number {
   if (line.kind === "folder") return Math.round(LINE_REM.folder * remPx);
+  if (isChildLine(line)) return Math.round(LINE_REM.child * remPx);
   const tags = line.kind === "paper" && !!line.paper.tags?.length;
   return Math.round((LINE_REM.paper + (tags ? LINE_REM.tags : 0)) * remPx);
 }
 
-/** The kinds of line that are about as tall as each other: folders, papers with and without tags, PDFs being added. */
-export type LineKind = "folder" | "paper" | "tags" | "pending";
+/** The kinds of line that are about as tall as each other: folders, papers with and without tags, PDFs being added, rows under a paper. */
+export type LineKind = "folder" | "paper" | "tags" | "pending" | "child";
 
 export const lineKind = (line: TreeLine): LineKind =>
-  line.kind === "paper" ? (line.paper.tags?.length ? "tags" : "paper") : line.kind;
+  line.kind === "paper" ? (line.paper.tags?.length ? "tags" : "paper")
+    : line.kind === "folder" || line.kind === "pending" ? line.kind : "child";
 
 /**
  * The heights of the lines measured so far, by kind, for the lines not measured yet: in a narrow sidebar

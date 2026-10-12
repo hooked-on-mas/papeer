@@ -32,15 +32,15 @@ import { deletePapers, movePapers, movePapersToNewCollection, setPapersReadStatu
 import { useDropTarget } from "@/app/fileDrop";
 import { useShownOrganization } from "@/app/useOrganizing";
 import { usePendingImports, type PendingImport } from "@/app/pendingImports";
-import { allFolderPaths, buildTree, filterPapers, type FolderNode } from "./libraryTree";
+import { allFolderPaths, buildTree, filterPapers, revealOpenings, type FolderNode } from "./libraryTree";
 import {
   createLineSizes, isRequestedLine, linesToRender, OVERSCAN, pinnedLines, shouldVirtualize, treeLines, viewAnchors, type LineBox,
   type TreeLine,
 } from "./treeLines";
 import { useUiScale } from "@/app/uiScale";
-import { folderAncestors, normalizeCollection } from "@/lib/collectionPath";
+import { normalizeCollection } from "@/lib/collectionPath";
 import {
-  dropRowAt, folderKey, nextDropRow, paperKey, rowAfterRemoval, treeKeyAction, typeaheadMatch, visibleRows, type DropRow,
+  dropRowAt, folderKey, nextDropRow, paperKey, rowAfterRemoval, treeKeyAction, treeRows, typeaheadMatch, type DropRow,
   type TreeKeyAction,
 } from "./treeKeys";
 import { requestTreeFocus, takeTreeFocus, updateTreeFocus, useTreeFocus } from "./treeFocus";
@@ -53,6 +53,8 @@ import { LibraryTags } from "./LibraryTags";
 import { TagChip } from "@/components/ui/TagChip";
 import { PaperStatusBadge } from "@/components/ui/PaperStatusBadge";
 import { paperTranslationStatus } from "@/lib/paperStatus";
+import { itemCapabilities } from "@/lib/itemKinds";
+import { allOrganizable, organizableItems } from "./organizePlan";
 import { besideCursor } from "./dragOverlay";
 import { TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
 import { paperJobState, runningPaperJob } from "@/features/jobs/jobSelectors";
@@ -230,19 +232,16 @@ export function LibrarySidebar() {
     setExpandedCollections([...current]);
   }, [tree, setExpandedCollections]);
 
-  // The rows on screen, for the keyboard (see treeKeys.ts); none while the search's results replace the tree.
+  // The lines the tree lays out, with the PDFs being added (see treeLines.ts); none while the search's
+  // results replace the tree.
   const expandedCollections = useStore((s) => s.expandedCollections);
-  const rows = useMemo(() => {
-    if (librarySearch.trim()) return [];
-    const open = expandedCollections && new Set(expandedCollections);
-    return visibleRows(tree, (path) => filtered || !open || open.has(path), libraryPaperTitle);
-  }, [tree, expandedCollections, filtered, librarySearch]);
-  // The same rows as the tree lays them out, with the PDFs being added (see treeLines.ts).
   const lines = useMemo(() => {
     if (librarySearch.trim()) return [];
     const open = expandedCollections && new Set(expandedCollections);
     return treeLines(tree, (path) => filtered || !open || open.has(path));
   }, [tree, expandedCollections, filtered, librarySearch]);
+  // The rows on screen, for the keyboard (see treeKeys.ts): the same lines.
+  const rows = useMemo(() => treeRows(lines, libraryPaperTitle), [lines]);
   // Before paint, so that the row that takes the Tab key is right as soon as the rows are, and papers
   // that left the screen leave the selection before anything can be done to them.
   useLayoutEffect(() => {
@@ -325,10 +324,12 @@ export function LibrarySidebar() {
   };
   const applyTreeKey = (action: TreeKeyAction) => {
     if (action.type === "focus") focusRow(action.key);
-    else if (action.type === "expand" || action.type === "collapse") setExpanded(action.path, action.type === "expand");
-    else if (action.type === "activate") {
+    else if (action.type === "expand" || action.type === "collapse") {
+      // Only folders open here; a paper's rows have nothing to open them with until they are given (PaperChildren).
+      if (action.row.kind === "folder") setExpanded(action.row.id, action.type === "expand");
+    } else if (action.type === "activate") {
       if (action.row.kind === "paper") openPaper(action.row.id, action.row.folder);
-      else selectFolder(action.row.id);
+      else if (action.row.kind === "folder") selectFolder(action.row.id);
     }
   };
   const onTreeKeyDown = (e: KeyboardEvent<HTMLDivElement>, capture: boolean) => {
@@ -374,8 +375,9 @@ export function LibrarySidebar() {
       // F2 renames the row the keys are on, which may not be the selected one.
       const row = rows.find((r) => r.key === current);
       stop();
-      if (row?.kind === "paper") void renamePaperFile(row.id);
-      else if (row?.id) renameFolderRow(row.id);
+      if (row?.kind === "paper") {
+        if (itemCapabilities(allPapers.find((p) => p.id === row.id)).rename) void renamePaperFile(row.id);
+      } else if (row?.kind === "folder" && row.id) renameFolderRow(row.id);
       return;
     }
     const action = treeKeyAction(rows, current, e.key, { canCollapse: !filtered });
@@ -409,10 +411,10 @@ export function LibrarySidebar() {
       const paper = papers.find((p) => p.id === paperId);
       const expandedCollections = useStore.getState().expandedCollections;
       if (paper && expandedCollections !== null) {
-        const ancestors = folderAncestors(paper.collection_name || "");
+        // The folders to open; the paper rows it names (for an item another holds) have nothing to open them yet.
+        const { folders } = revealOpenings(paper, (id) => allPapers.find((p) => p.id === id));
         const next = new Set(expandedCollections);
-        ancestors.forEach((a) => next.add(a));
-        if (!ancestors.length) next.add("");
+        folders.forEach((folder) => next.add(folder));
         if (next.size !== expandedCollections.length) setExpandedCollections([...next]);
       }
       if (focus) requestTreeFocus(paperKey(paperId));
@@ -430,7 +432,7 @@ export function LibrarySidebar() {
       else document.getElementById("library-search")?.focus();
     });
     return () => { offReveal(); offFocus(); };
-  }, [papers, setExpandedCollections]);
+  }, [papers, allPapers, setExpandedCollections]);
 
   const clearSearch = () => {
     setSearchText("");
@@ -826,12 +828,15 @@ function TreeList({ ref, lines, scrollRef, treeRef, onKeyDown, onKeyDownCapture,
     if (added.length) scrollTo(added[added.length - 1]);
   }, [lines, scrollTo]);
 
+  // The rows under a paper (attachment, owned, link) have no component yet: none are laid out (PaperChildren).
   const row = (line: TreeLine) => line.kind === "folder"
     ? <FolderRow node={line.node} level={line.level} setSize={line.setSize} posInSet={line.posInSet} {...rowProps} />
     : line.kind === "pending"
       ? <PendingRow item={line.item} level={line.level} setSize={line.setSize} posInSet={line.posInSet} />
-      : <PaperRow paper={line.paper} level={line.level} setSize={line.setSize} posInSet={line.posInSet}
-        collections={rowProps.collections} onTagSelect={rowProps.onTagSelect} />;
+      : line.kind === "paper"
+        ? <PaperRow paper={line.paper} level={line.level} setSize={line.setSize} posInSet={line.posInSet}
+          collections={rowProps.collections} onTagSelect={rowProps.onTagSelect} />
+        : null;
 
   return (
     // The browser's scroll anchoring is off while only the rows in view render: the view's place is
@@ -943,9 +948,9 @@ function FolderRowView({ node, level, setSize, posInSet, papers, filtered, setEx
         <ContextMenuItem onClick={() => createFolder(node.path)}>
           <FolderPlus className="w-4 h-4 mr-2" /> {node.path ? "子フォルダーを作成…" : "フォルダーを作成…"}
         </ContextMenuItem>
-        {/* The papers directly in the folder (those of 未分類 for it), not its subfolders'; while searching, the
-            rows hold only the matches, so the dialog says if there are none. */}
-        <ContextMenuItem disabled={!filtered && !node.papers.length}
+        {/* The papers directly in the folder (those of 未分類 for it), not its subfolders'; a notebook is not one to
+            sort. While searching, the rows hold only the matches, so the dialog says if there are none. */}
+        <ContextMenuItem disabled={!filtered && !organizableItems(node.papers).length}
           onClick={() => emitAppEvent("open-organize-dialog", { source: node.path })}>
           <Sparkles className="w-4 h-4 mr-2" /> AIで内容別に分ける…
         </ContextMenuItem>
@@ -1076,14 +1081,17 @@ const PaperRow = memo(function PaperRow({ paper, level, setSize, posInSet, colle
           <div className="flex-1 min-w-0">
             <div className="truncate leading-5">{libraryPaperTitle(paper)}</div>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.75rem] leading-4 text-muted-foreground tabular-nums">
-              <PaperStatusBadge status={translation.status} text={translation.text} description={translation.description}
-                hasSummary={!!paper.has_article} className="gap-1 [&>span:first-child]:py-0" />
-              <span title={translation.description}>{translation.count}</span>
-              {showProgress && <div role="progressbar" aria-label="訳文を保存済みのページ" aria-valuemin={0} aria-valuemax={translation.pages}
-                aria-valuenow={translation.completed} aria-valuetext={translation.description} title={translation.description}
-                className="h-1 w-10 overflow-hidden rounded-full bg-muted-foreground/10">
-                <div className={`h-full rounded-full transition-[width] ${translating ? "bg-primary" : "bg-amber-500/60"}`} style={{ width: `${translation.progress}%` }} />
-              </div>}
+              {/* An item that is not translated (a notebook) has no translation status: its pages instead. */}
+              {translation.applicable ? <>
+                <PaperStatusBadge status={translation.status} text={translation.text} description={translation.description}
+                  hasSummary={!!paper.has_article} className="gap-1 [&>span:first-child]:py-0" />
+                <span title={translation.description}>{translation.count}</span>
+                {showProgress && <div role="progressbar" aria-label="訳文を保存済みのページ" aria-valuemin={0} aria-valuemax={translation.pages}
+                  aria-valuenow={translation.completed} aria-valuetext={translation.description} title={translation.description}
+                  className="h-1 w-10 overflow-hidden rounded-full bg-muted-foreground/10">
+                  <div className={`h-full rounded-full transition-[width] ${translating ? "bg-primary" : "bg-amber-500/60"}`} style={{ width: `${translation.progress}%` }} />
+                </div>}
+              </> : <span>{paper.pages ?? 0}ページ</span>}
               <span aria-hidden="true">·</span>
               <span>{paper.read_status || "未設定"}</span>
               {running && !translating && <span className="text-primary">· AI処理中</span>}
@@ -1117,6 +1125,7 @@ const PaperRow = memo(function PaperRow({ paper, level, setSize, posInSet, colle
  */
 function PaperMenu({ paper, collection, collections }: { paper: PaperData; collection: string; collections: string[] }) {
   const ids = useMemo(() => papersActedOn(usePaperSelection.getState(), useTreeFocus.getState().rows, paper.id), [paper.id]);
+  const caps = itemCapabilities(paper);
   if (ids.length > 1) return <SelectionMenu ids={ids} paperId={paper.id} collections={collections} />;
   return (
     <>
@@ -1140,21 +1149,23 @@ function PaperMenu({ paper, collection, collections }: { paper: PaperData; colle
       </ContextMenuSub>
       <PaperOrganizeItems paper={paper} />
       <ContextMenuSeparator />
-      <ContextMenuItem onClick={() => renamePaperFile(paper.id)}>
+      {caps.rename && <ContextMenuItem onClick={() => renamePaperFile(paper.id)}>
         <Edit2 className="w-4 h-4 mr-2" /> ファイル名を変更…
-      </ContextMenuItem>
-      <ContextMenuItem onClick={() => openPaperFile(paper.id, "original.pdf")}>
-        <ExternalLink className="w-4 h-4 mr-2" /> 原文PDFを開く
-      </ContextMenuItem>
-      <ContextMenuItem onClick={() => saveOriginal(paper.id)}>
-        <Save className="w-4 h-4 mr-2" /> 原文PDFを名前を付けて保存…
-      </ContextMenuItem>
+      </ContextMenuItem>}
+      {caps.originalPdf && <>
+        <ContextMenuItem onClick={() => openPaperFile(paper.id, "original.pdf")}>
+          <ExternalLink className="w-4 h-4 mr-2" /> 原文PDFを開く
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => saveOriginal(paper.id)}>
+          <Save className="w-4 h-4 mr-2" /> 原文PDFを名前を付けて保存…
+        </ContextMenuItem>
+      </>}
       <ContextMenuItem onClick={() => openPaperFolder(paper.id)}>
         <FolderOpen className="w-4 h-4 mr-2" /> 保存フォルダーを開く
       </ContextMenuItem>
-      <ContextMenuItem onClick={() => void copyBibtex([paper.id])}>
+      {caps.bibliography && <ContextMenuItem onClick={() => void copyBibtex([paper.id])}>
         <Copy className="w-4 h-4 mr-2" /> BibTeX をコピー
-      </ContextMenuItem>
+      </ContextMenuItem>}
       <ContextMenuSeparator />
       <ContextMenuItem onClick={() => deletePaperRow(paper.id)} className="text-destructive">
         <Trash2 className="w-4 h-4 mr-2" /> ライブラリから削除
@@ -1241,8 +1252,9 @@ function SelectionMenu({ ids, paperId, collections }: { ids: string[]; paperId: 
           <ContextMenuItem onClick={() => void movePapersToNewCollection(ids, "")}>新しい分類を入力…</ContextMenuItem>
         </ContextMenuSubContent>
       </ContextMenuSub>
-      {/* The selection as it is, from any folders; new folders go under the folder they share (organizePlan.commonFolder). */}
-      <ContextMenuItem onClick={() => emitAppEvent("open-organize-dialog", { paperIds: ids })}>
+      {/* The selection as it is, from any folders; new folders go under the folder they share (organizePlan.commonFolder).
+          Not for a selection with an item that is not sorted by what it says (a notebook), as with BibTeX below. */}
+      <ContextMenuItem disabled={!allOrganizable(selected)} onClick={() => emitAppEvent("open-organize-dialog", { paperIds: ids })}>
         <Sparkles className="w-4 h-4 mr-2" /> AIで内容別に分ける…
       </ContextMenuItem>
       <ContextMenuSub>
@@ -1285,7 +1297,8 @@ function SelectionMenu({ ids, paperId, collections }: { ids: string[]; paperId: 
           {!statuses.length && <ContextMenuItem disabled>読書状態がありません</ContextMenuItem>}
         </ContextMenuSubContent>
       </ContextMenuSub>
-      <ContextMenuItem onClick={() => void copyBibtex(ids)}>
+      {/* Not for a selection with an item that has no bibliography (a notebook). */}
+      <ContextMenuItem disabled={!selected.every((item) => itemCapabilities(item).bibliography)} onClick={() => void copyBibtex(ids)}>
         <Copy className="w-4 h-4 mr-2" /> {ids.length}件の BibTeX をコピー
       </ContextMenuItem>
       <ContextMenuSeparator />

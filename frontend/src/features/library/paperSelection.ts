@@ -92,13 +92,16 @@ export function pruneSelection(selection: PaperSelection, rows: readonly TreeRow
 /**
  * The row the keys go to once the rows `removed` (papers deleted together) are gone, so that the focus
  * does not fall out of the tree: the first row after `current` that stays, else the nearest above it.
- * As rowAfterRemoval (treeKeys.ts) for a single paper.
+ * The rows under a paper deleted go with it. As rowAfterRemoval (treeKeys.ts) for a single paper.
  */
 export function rowAfterRemovingRows(rows: readonly TreeRow[], current: string, removed: ReadonlySet<string>): string | null {
   const index = rows.findIndex((row) => row.key === current);
   if (index < 0) return null;
-  const after = rows.slice(index + 1).find((row) => !removed.has(row.key));
-  const before = rows.slice(0, index).reverse().find((row) => !removed.has(row.key));
+  // A row under a paper follows its paper, which comes before it.
+  const gone = new Set(removed);
+  for (const row of rows) if (row.parent !== null && gone.has(row.parent)) gone.add(row.key);
+  const after = rows.slice(index + 1).find((row) => !gone.has(row.key));
+  const before = rows.slice(0, index).reverse().find((row) => !gone.has(row.key));
   return (after ?? before)?.key ?? null;
 }
 

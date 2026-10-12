@@ -1,4 +1,4 @@
-import type { Counts, LibraryDifference } from "./conflictSummary";
+import { describeCounts, holdingLines, itemNoun, type Counts, type LibraryDifference } from "./conflictSummary.ts";
 
 /** One state in this PC's history of the library (papeer/core/local_history.py: entries). */
 export type HistoryEntry = {
@@ -51,18 +51,13 @@ export function groupEntries(entries: HistoryEntry[]): { group: HistoryEntry["gr
     .filter(part => part.entries.length);
 }
 
-function countsText(counts: Counts | null): string {
-  if (!counts) return "";
-  return `論文 ${counts.papers ?? "—"}件・メモ ${counts.notes ?? "—"}件・付箋 ${counts.stickies ?? "—"}件・書き込み ${counts.ink ?? "—"}ページ`;
-}
-
 /** How a state is listed: when, what kind and whose, and what it holds. */
 export function describeEntry(entry: HistoryEntry, formatDate: (iso: string) => string): { title: string; detail: string } {
   const whose = entry.kind === "set_aside"
     ? (entry.side === "remote" ? `${entry.source_device || "別のPC"} のデータ（選ばなかった側）` : "このPCのデータ（選ばなかった側）")
     : entry.kind === "pull" ? `${entry.source_device || "別のPC"} から取り込み` : KIND_LABELS[entry.kind];
   const title = `${formatDate(entry.created)}　${KIND_LABELS[entry.kind]}${entry.kind === "publish" || entry.kind === "before_restore" ? "" : `：${whose}`}`;
-  const detail = [countsText(entry.counts), formatSize(entry.size), !entry.complete && "一部のデータが見つからないため戻せません"]
+  const detail = [describeCounts(entry.counts), formatSize(entry.size), !entry.complete && "一部のデータが見つからないため戻せません"]
     .filter(Boolean).join("　");
   return { title, detail };
 }
@@ -76,8 +71,9 @@ export function validSetting(value: number, [low, high]: [number, number]): bool
 export function describeHistoryDifference(diff: LibraryDifference): string[] {
   const titles = (items: string[], count: number) => `${items.map(title => `「${title}」`).join("、")}${count > items.length ? " ほか" : ""}`;
   const lines = [`論文の数：今 ${diff.local_counts.papers ?? "—"}件、この時点 ${diff.remote_counts.papers ?? "—"}件`];
-  if (diff.remote_only) lines.push(`この時点にだけある論文（戻すと戻ります）：${diff.remote_only}件（${titles(diff.remote_titles, diff.remote_only)}）`);
-  if (diff.local_only) lines.push(`今だけある論文（戻すとなくなります）：${diff.local_only}件（${titles(diff.local_titles, diff.local_only)}）`);
+  lines.push(...holdingLines(diff, { local: "今", remote: "この時点" }));
+  if (diff.remote_only) lines.push(`この時点にだけある${itemNoun(diff)}（戻すと戻ります）：${diff.remote_only}件（${titles(diff.remote_titles, diff.remote_only)}）`);
+  if (diff.local_only) lines.push(`今だけある${itemNoun(diff)}（戻すとなくなります）：${diff.local_only}件（${titles(diff.local_titles, diff.local_only)}）`);
   const changed = [diff.notes && `メモ ${diff.notes}件`, diff.stickies && `付箋 ${diff.stickies}件`, diff.ink && `書き込み ${diff.ink}ページ`]
     .filter(Boolean);
   if (changed.length) lines.push(`両方にある論文で内容が異なるもの：${changed.join("・")}`);

@@ -4,7 +4,7 @@ import { FilePlus2, Languages, Loader2 } from "lucide-react";
 import { useStore } from "@/store";
 import { StartupReader } from "@/app/StartupReader";
 import { runningPaperJob } from "@/features/jobs/jobSelectors";
-import { useReading, type ReadingData } from "@/api/hooks";
+import { useItemCapabilities, useReading, type ReadingData } from "@/api/hooks";
 import { backendUrl } from "@/api/client";
 import { PdfPane } from "./PdfPane";
 import { ReaderToolbar } from "./ReaderToolbar";
@@ -64,7 +64,10 @@ export function Reader() {
   const zoom = useStore((s) => s.zoom);
   const readerSplit = useStore((s) => s.readerSplit);
   const setReaderSplit = useStore((s) => s.setReaderSplit);
-  const translatedOnly = useStore((s) => s.translatedOnly);
+  // What the open item can do (see lib/itemKinds.ts): an item that is not translated has no right pane
+  // and no 翻訳済みページのみ filter, whatever the filter is set to for the papers.
+  const caps = useItemCapabilities(activePaperId);
+  const translatedOnly = useStore((s) => s.translatedOnly) && caps.translate;
   const [search, setSearch] = useState<{ query: string; side: "original" | "translated" }>({ query: "", side: "original" });
   const [bookmarkTarget, setBookmarkTarget] = useState<JumpTarget | null>(null);
   const { data: bookmarks = NO_NOTES } = useQuery({
@@ -339,7 +342,7 @@ export function Reader() {
   const waiting = !!reading?.preview && !reading.preview.complete;
 
   let rightPlaceholder: React.ReactNode = null;
-  if (reading && !ref) {
+  if (caps.split && reading && !ref) {
     rightPlaceholder = waiting ? (
       <span className="inline-flex flex-col items-center gap-3">
         {translating && <Loader2 className="w-6 h-6 animate-spin text-primary" />}
@@ -371,15 +374,18 @@ export function Reader() {
         </div>
       ) : (
         <ResizablePanelGroup
+          // Another set of panels is another layout.
+          key={caps.split ? "split" : "single"}
           orientation="horizontal"
           className="flex-1 min-h-0"
           onLayoutChanged={(layout) => {
+            if (!caps.split) return;
             const left = layout.original;
             const total = (layout.original ?? 0) + (layout.translated ?? 0);
             if (left !== undefined && total > 0) setReaderSplit(left / total);
           }}
         >
-          <ResizablePanel id="original" defaultSize={`${readerSplit * 100}%`} minSize="15%" className="flex flex-col">
+          <ResizablePanel id="original" defaultSize={caps.split ? `${readerSplit * 100}%` : "100%"} minSize="15%" className="flex flex-col">
             <div className="flex-1 relative min-h-0" role="region" aria-label="原文">
               <PdfPane
                 url={leftUrl}
@@ -400,6 +406,7 @@ export function Reader() {
             </div>
           </ResizablePanel>
 
+          {caps.split && <>
           <ResizableHandle className="w-1 bg-border hover:bg-primary/60 transition-colors cursor-col-resize z-10" />
 
           <ResizablePanel id="translated" defaultSize={`${(1 - readerSplit) * 100}%`} minSize="15%" className="flex flex-col">
@@ -433,6 +440,7 @@ export function Reader() {
               />
             </div>
           </ResizablePanel>
+          </>}
         </ResizablePanelGroup>
       )}
     </div>

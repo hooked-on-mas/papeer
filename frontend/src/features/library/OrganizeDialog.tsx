@@ -8,7 +8,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { UsageLine } from "@/components/UsageLine";
 import { jobCount } from "@/features/jobs/jobSelectors";
 import { onAppEvent } from "@/lib/appEvents";
-import { folderAncestors, normalizeCollection } from "@/lib/collectionPath";
+import { folderAncestors } from "@/lib/collectionPath";
 import { isImeKey } from "@/lib/imeKeys";
 import { firstLine } from "@/lib/errorReports";
 import { useStore } from "@/store";
@@ -17,8 +17,8 @@ import {
   renameProposedFolder, restartOrganize, reviseOrganize, setOrganizeFeedback, setOrganizeInstruction, setOrganizeSource, startOrganize,
 } from "./organizeActions";
 import {
-  commonFolder, createdFolders, destinationChoices, draftEdited, MAX_ORGANIZE_PAPERS, movingMoves, organizeRows, papersDirectlyIn,
-  withAncestors, type DraftMove, type OrganizeDraft, type OrganizeRow,
+  commonFolder, createdFolders, destinationChoices, draftEdited, MAX_ORGANIZE_PAPERS, movingMoves, organizableCounts,
+  organizeCandidates, organizeRows, withAncestors, type DraftMove, type OrganizeDraft, type OrganizeRow,
 } from "./organizePlan";
 import { useOrganize } from "./organizeStore";
 
@@ -80,24 +80,13 @@ function OrganizeContent() {
   }, [collections, allPapers]);
   const existing = useMemo(() => withAncestors(folders), [folders]);
 
-  // The papers an organization of this target covers.
-  const chosen = useMemo(() => {
-    if (!target.paperIds) return papersDirectlyIn(allPapers, target.source);
-    const wanted = new Set(target.paperIds);
-    return allPapers.filter((paper) => wanted.has(paper.id));
-  }, [allPapers, target]);
+  // The papers an organization of this target covers, and the notebooks of it that it does not.
+  const { papers: chosen, excluded } = useMemo(() => organizeCandidates(allPapers, target), [allPapers, target]);
   // New folders are made under the folder that holds the selected papers (their common folder), or, for a
   // selection from different folders, under the part of the path they share, so at the top for papers of
   // unrelated folders.
   const source = target.paperIds ? commonFolder(chosen.map((paper) => paper.collection_name || "")) : target.source;
-  const counts = useMemo(() => {
-    const byFolder = new Map<string, number>();
-    for (const paper of allPapers) {
-      const folder = normalizeCollection(paper.collection_name || "");
-      byFolder.set(folder, (byFolder.get(folder) ?? 0) + 1);
-    }
-    return byFolder;
-  }, [allPapers]);
+  const counts = useMemo(() => organizableCounts(allPapers), [allPapers]);
 
   const status = busy ? (
     <div role="status" className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-[0.8125rem]">
@@ -112,30 +101,35 @@ function OrganizeContent() {
   );
 
   if (!draft) {
-    return <SetupStep papers={chosen} loaded={papers !== undefined} loadFailed={papersFailed} folders={folders} counts={counts}
-      source={source} instruction={instruction} paperTarget={!!target.paperIds} status={status} />;
+    return <SetupStep papers={chosen} excluded={excluded} loaded={papers !== undefined} loadFailed={papersFailed} folders={folders}
+      counts={counts} source={source} instruction={instruction} paperTarget={!!target.paperIds} status={status} />;
   }
   return <ProposalStep draft={draft} existing={existing} folders={folders} status={status} paperTarget={!!requested?.paperIds}
     source={requested?.source ?? draft.source} paperCount={requested?.paperIds?.length ?? 0} />;
 }
 
 /** The first step: what to organize, and the instruction. */
-function SetupStep({ papers, loaded, loadFailed, folders, counts, source, instruction, paperTarget, status }: {
-  papers: PaperData[]; loaded: boolean; loadFailed: boolean; folders: string[]; counts: Map<string, number>; source: string;
-  instruction: string; paperTarget: boolean; status: ReactNode;
+function SetupStep({ papers, excluded, loaded, loadFailed, folders, counts, source, instruction, paperTarget, status }: {
+  papers: PaperData[]; excluded: number; loaded: boolean; loadFailed: boolean; folders: string[]; counts: Map<string, number>;
+  source: string; instruction: string; paperTarget: boolean; status: ReactNode;
 }) {
   const busy = useOrganize((s) => s.busy);
   const count = papers.length;
   const tooMany = count > MAX_ORGANIZE_PAPERS;
-  const ready = loaded && count > 0 && !tooMany && !busy;
+  // A selection with a notebook in it is not organized with the notebook left out: the menu does not offer it, and so neither does this.
+  const mixed = paperTarget && excluded > 0;
+  const ready = loaded && count > 0 && !tooMany && !mixed && !busy;
   const instructionRef = useRef<HTMLTextAreaElement>(null);
   // Straight to typing the instruction; the folder is already the one asked for.
   useEffect(() => { instructionRef.current?.focus(); }, []);
+  // Notebooks are not papers to sort: a folder's are left out and said so, a selection's are refused.
+  const leftOut = !paperTarget && excluded > 0 ? `ノート${excluded}件は対象外です。` : "";
   const message = !loaded ? (loadFailed ? "論文の一覧を読み込めませんでした。" : "論文の一覧を読み込んでいます…")
-    : tooMany ? `整理できるのは${MAX_ORGANIZE_PAPERS}件までです（${count}件あります）。フォルダーや選択で絞ってください。`
-      : count === 0 ? (paperTarget ? "整理する論文がありません。" : source ? "このフォルダーに直接入っている論文がありません。" : "未分類に論文がありません。")
-        : paperTarget ? `選択した${count}件の論文を調べます。新しいフォルダーは${source ? `「${source}」の下` : "ライブラリの直下"}に作ります。`
-          : `直接入っている${count}件の論文を調べます。子フォルダーの論文は含みません。`;
+    : mixed ? "選択にノートが含まれています。AIで分けられるのは論文（PDF）だけです。論文だけを選び直してください。"
+      : tooMany ? `整理できるのは${MAX_ORGANIZE_PAPERS}件までです（${count}件あります）。フォルダーや選択で絞ってください。`
+        : count === 0 ? (paperTarget ? "整理する論文がありません。" : `${source ? "このフォルダーに直接入っている論文がありません。" : "未分類に論文がありません。"}${leftOut}`)
+          : paperTarget ? `選択した${count}件の論文を調べます。新しいフォルダーは${source ? `「${source}」の下` : "ライブラリの直下"}に作ります。`
+            : `直接入っている${count}件の論文を調べます。子フォルダーの論文は含みません。${leftOut}`;
   return (
     <>
       <DialogHeader className="shrink-0">
@@ -158,7 +152,7 @@ function SetupStep({ papers, loaded, loadFailed, folders, counts, source, instru
               ))}
             </NativeSelect>
           )}
-          <p className={`text-[0.75rem] ${tooMany || (loaded && count === 0) || loadFailed ? "text-destructive" : "text-muted-foreground"}`}>{message}</p>
+          <p className={`text-[0.75rem] ${tooMany || mixed || (loaded && count === 0) || loadFailed ? "text-destructive" : "text-muted-foreground"}`}>{message}</p>
         </div>
         <div className="grid gap-1.5">
           <label htmlFor="organize-instruction" className="text-sm font-medium">指示（任意）</label>

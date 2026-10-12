@@ -58,6 +58,8 @@ before(async () => {
     useStore: (await load("/src/store/index.ts")).useStore,
     useInkPanes: (await load("/src/features/reader/useInkEditor.ts")).useInkPanes,
     SelectionToolbarView: (await load("/src/features/reader/SelectionToolbar.tsx")).SelectionToolbarView,
+    passageActions: (await load("/src/features/reader/passageActions.ts")).passageActions,
+    kindCapabilities: (await load("/src/lib/itemKinds.ts")).kindCapabilities,
     highlightPassage: (await load("/src/features/reader/readerPassage.ts")).highlightPassage,
     useStickyNotes: (await load("/src/features/reader/stickyNotesStore.ts")).useStickyNotes,
     api: (await load("/src/api/client.ts")).api,
@@ -229,9 +231,10 @@ test("the reader tab stays laid out, invisible and inert, while another tab is s
 });
 
 test("the toolbar over a selection offers the highlight colours, 説明, メモへ and 付箋", () => {
-  const { React, SelectionToolbarView } = modules;
+  const { React, SelectionToolbarView, passageActions, kindCapabilities } = modules;
   const handlers = { onColor() {}, onExplain() {}, onQuote() {}, onSticky() {} };
-  const html = render(React.createElement(SelectionToolbarView, { mode: "selection", color: "yellow", ...handlers }));
+  const actions = passageActions(kindCapabilities("pdf"));
+  const html = render(React.createElement(SelectionToolbarView, { mode: "selection", actions, color: "yellow", ...handlers }));
   assert.match(html, /role="toolbar" aria-label="選択した文章"/);
   for (const label of ["黄", "緑", "青", "ピンク", "紫"]) assert.match(html, new RegExp(`aria-label="ハイライト：${label}"`));
   assert.match(html, />説明</);
@@ -239,10 +242,18 @@ test("the toolbar over a selection offers the highlight colours, 説明, メモ�
   assert.match(html, />付箋</);
   assert.doesNotMatch(html, /ハイライトを削除/);
   // Over a highlight: its colour is shown pressed, and it can be deleted.
-  const over = render(React.createElement(SelectionToolbarView, { mode: "highlight", color: "blue", onDelete() {}, ...handlers }));
+  const over = render(React.createElement(SelectionToolbarView, { mode: "highlight", actions, color: "blue", onDelete() {}, ...handlers }));
   assert.match(over, /aria-label="ハイライト"/);
   assert.match(over, /aria-label="ハイライトを削除"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*aria-label="ハイライトを削除"/);
   assert.match(over, /aria-label="ハイライトを削除"/);
+  // An item that has no chat, 付箋 or such has no button for them: a notebook keeps only its memo.
+  const notebook = render(React.createElement(SelectionToolbarView, { mode: "selection", actions: passageActions(kindCapabilities("notebook")),
+    color: "yellow", ...handlers }));
+  assert.match(notebook, />メモへ</);
+  assert.doesNotMatch(notebook, />説明</);
+  assert.doesNotMatch(notebook, />付箋</);
+  assert.doesNotMatch(notebook, /ハイライト/);
+  assert.doesNotMatch(notebook, /border-l/);
 });
 
 test("reselecting the same highlight deletes the same colour with undo, recolours another colour, and adds a new range", async () => {

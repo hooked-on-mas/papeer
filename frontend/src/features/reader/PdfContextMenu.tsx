@@ -4,6 +4,7 @@ import {
   StickyNote, ChevronLeft, ChevronRight, Copy, Highlighter, Languages, MoveHorizontal, NotebookPen, Paperclip, Sparkles, ZoomIn, ZoomOut, Scan,
 } from "lucide-react";
 import { useStore, ZOOM_FIT_PAGE } from "@/store";
+import { useItemCapabilities } from "@/api/hooks";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
@@ -11,6 +12,7 @@ import { showError } from "@/components/errorDialog";
 import { changeZoom, movePage } from "./navigation";
 import { attachPassage, capturePassage, explainPassage, highlightPassage, quotePassageInNote, stickyNoteForPassage, type Passage } from "./readerPassage";
 import { highlightColor } from "./highlights";
+import { passageActions } from "./passageActions";
 import { useStickyNotes } from "./stickyNotesStore";
 import { emitAppEvent } from "@/lib/appEvents";
 import { shortcutLabel } from "@/lib/platform";
@@ -27,6 +29,9 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
   // Taken when the menu opens, so the translation text is usually loaded before an item is chosen.
   const passage = useRef<Passage | null>(null);
   const lastColor = useStickyNotes(s => s.highlightColor);
+  // What the open item can do: the items of what it cannot (a notebook is not translated) are not offered.
+  const caps = useItemCapabilities(useStore((s) => s.activePaperId));
+  const can = passageActions(caps);
 
   const handleOpen = (open: boolean) => {
     if (!open) return;
@@ -55,7 +60,7 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
             <ContextMenuItem onClick={copy}>
               <Copy /> コピー <ContextMenuShortcut>{shortcutLabel("Ctrl+C")}</ContextMenuShortcut>
             </ContextMenuItem>
-            <ContextMenuItem onClick={async () => {
+            {can.has("fix-paragraph") && <ContextMenuItem onClick={async () => {
               const current = passage.current;
               if (!current) return;
               emitAppEvent("open-paragraph-editor", {
@@ -63,30 +68,30 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
               });
             }}>
               <Languages /> この段落の翻訳を修正…
-            </ContextMenuItem>
-            <ContextMenuItem onClick={withPassage(async (current) => {
+            </ContextMenuItem>}
+            {can.has("fix-terms") && <ContextMenuItem onClick={withPassage(async (current) => {
               emitAppEvent("open-term-feedback", { side: translated ? "translated" : "original", text: await current.text });
             })}>
               <Languages /> この訳語を一括修正…
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem onClick={withPassage(explainPassage)}>
+            </ContextMenuItem>}
+            {(["explain", "attach", "quote", "sticky", "highlight"] as const).some((action) => can.has(action)) && <ContextMenuSeparator />}
+            {can.has("explain") && <ContextMenuItem onClick={withPassage(explainPassage)}>
               <Sparkles /> この箇所を説明してもらう
-            </ContextMenuItem>
-            <ContextMenuItem onClick={withPassage(attachPassage)}>
+            </ContextMenuItem>}
+            {can.has("attach") && <ContextMenuItem onClick={withPassage(attachPassage)}>
               <Paperclip /> この箇所をチャットに添付
-            </ContextMenuItem>
-            <ContextMenuItem onClick={withPassage(quotePassageInNote)}>
+            </ContextMenuItem>}
+            {can.has("quote") && <ContextMenuItem onClick={withPassage(quotePassageInNote)}>
               <NotebookPen /> メモに引用
-            </ContextMenuItem>
-            <ContextMenuItem onClick={withPassage(stickyNoteForPassage)}>
+            </ContextMenuItem>}
+            {can.has("sticky") && <ContextMenuItem onClick={withPassage(stickyNoteForPassage)}>
               <StickyNote /> 選択した文章に付箋を貼る…
-            </ContextMenuItem>
-            <ContextMenuItem onClick={withPassage(async (current) => {
+            </ContextMenuItem>}
+            {can.has("highlight") && <ContextMenuItem onClick={withPassage(async (current) => {
               if (await highlightPassage(current, lastColor, queryClient)) window.getSelection()?.removeAllRanges();
             })}>
               <Highlighter /> ハイライト（{highlightColor(lastColor).label}）
-            </ContextMenuItem>
+            </ContextMenuItem>}
           </>
         ) : (
           <>
@@ -109,10 +114,12 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
             <ContextMenuItem onClick={() => useStore.getState().setZoom(ZOOM_FIT_PAGE)}>
               <Scan /> ページ全体を表示
             </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem onClick={() => emitAppEvent("open-translate-dialog")}>
-              <Languages /> 翻訳する… <ContextMenuShortcut>{shortcutLabel("Ctrl+T")}</ContextMenuShortcut>
-            </ContextMenuItem>
+            {caps.translate && <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={() => emitAppEvent("open-translate-dialog")}>
+                <Languages /> 翻訳する… <ContextMenuShortcut>{shortcutLabel("Ctrl+T")}</ContextMenuShortcut>
+              </ContextMenuItem>
+            </>}
           </>
         )}
       </ContextMenuContent>

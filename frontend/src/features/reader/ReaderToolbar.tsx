@@ -5,7 +5,8 @@ import {
 } from "lucide-react";
 import { useStore, ZOOM_LEVELS } from "@/store";
 import { useUiScale } from "@/app/uiScale";
-import { useArticle, useMessages, useReading } from "@/api/hooks";
+import { useArticle, useItemCapabilities, useMessages, useReading } from "@/api/hooks";
+import { tabAvailable } from "@/lib/itemKinds";
 import {
   DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent,
@@ -49,7 +50,9 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   const currentPage = useStore((s) => s.currentPage);
   const zoom = useStore((s) => s.zoom);
   const setZoom = useStore((s) => s.setZoom);
-  const translatedOnly = useStore((s) => s.translatedOnly);
+  // What the open item can do (see lib/itemKinds.ts): the controls of what it cannot are not offered.
+  const caps = useItemCapabilities(paperId);
+  const translatedOnly = useStore((s) => s.translatedOnly) && caps.translate;
   const setTranslatedOnly = useStore((s) => s.setTranslatedOnly);
   const focusMode = useStore((s) => s.focusMode);
   const setFocusMode = useStore((s) => s.setFocusMode);
@@ -58,8 +61,8 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   const canGoBack = useStore((s) => s.readerHistory.back.length > 0);
   const { data: reading } = useReading(paperId);
   // Load what the side panels show, so opening one doesn't flash a loading state first.
-  useArticle(paperId);
-  useMessages(paperId);
+  useArticle(caps.summary ? paperId : null);
+  useMessages(caps.chat ? paperId : null);
   const [searchOpen, setSearchOpen] = useState(false);
 
   const count = reading?.page_count ?? 0;
@@ -112,7 +115,8 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   const shown = (id: string) => (fit[id] ?? -1) >= 0;
   const full = (id: string) => (fit[id] ?? -1) >= 1;
   const panelTitle = (label: string, key: string) => `${label}を右に表示${focusMode ? `（${withShortcutLabels(key)}）` : ""}`;
-  const panelLabel = SIDE_PANEL_BUTTONS.find(({ tab }) => tab === sidePanel)?.label ?? "右パネル";
+  const panelButtons = SIDE_PANEL_BUTTONS.filter(({ tab }) => tabAvailable(caps, tab));
+  const panelLabel = panelButtons.find(({ tab }) => tab === sidePanel)?.label ?? "右パネル";
 
   const setPageFilter = (value: string) => {
     const only = value === "translated";
@@ -189,7 +193,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
           {shown("label") ? pageLabel : null}
         </span>
 
-        <ReaderInkButton />
+        {caps.annotate && <ReaderInkButton />}
         {shown("outline") && (
           <DropdownMenu>
             <DropdownMenuTrigger className={`${labeled} disabled:opacity-40`} aria-label="目次" title={outlineTitle} disabled={!outline?.length}>
@@ -198,7 +202,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             <DropdownMenuContent align="start" className={outlineMenuClass}>{outlineItems}</DropdownMenuContent>
           </DropdownMenu>
         )}
-        {shown("search") && <button className={labeled} aria-label="論文内検索" aria-pressed={searchOpen} title={withShortcutLabels("論文内検索（Ctrl+F）")} onClick={() => setSearchOpen(!searchOpen)}>
+        {caps.fullTextSearch && shown("search") && <button className={labeled} aria-label="論文内検索" aria-pressed={searchOpen} title={withShortcutLabels("論文内検索（Ctrl+F）")} onClick={() => setSearchOpen(!searchOpen)}>
           <Search className="size-3.5" />{full("search") && "検索"}
         </button>}
         {shown("zoom") && <div className="ml-1.5 flex items-center gap-1 shrink-0">
@@ -227,12 +231,12 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             </button>
           )}
         </div>}
-        {focusMode && shown("sticky") && (
+        {caps.stickyNotes && focusMode && shown("sticky") && (
           <button onClick={() => useStore.getState().setActiveTab("sticky-notes")} className={`${button} ml-1.5`} title={withShortcutLabels("付箋タブへ（Ctrl+5）")} aria-label="付箋タブへ">
             <StickyNote className="w-4 h-4" />
           </button>
         )}
-        {shown("panels") && !focusMode && (
+        {panelButtons.length > 0 && shown("panels") && !focusMode && (
           <DropdownMenu>
             <DropdownMenuTrigger className={`${chip(!!sidePanel)} ml-1.5`} aria-label="右パネルを選択"
               title={sidePanel ? `${panelLabel}を右に表示中` : "サマリー・チャット・メモを右に表示"}>
@@ -241,7 +245,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
               <ChevronDown className="size-3" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
-              {SIDE_PANEL_BUTTONS.map(({ tab, label, icon: Icon, key }) => (
+              {panelButtons.map(({ tab, label, icon: Icon, key }) => (
                 <DropdownMenuCheckboxItem key={tab} checked={sidePanel === tab} closeOnClick
                   aria-label={`${label}を右に表示`} title={panelTitle(label, key)}
                   onCheckedChange={() => setSidePanel(sidePanel === tab ? null : tab)}>
@@ -253,9 +257,9 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        {shown("panels") && focusMode && (
+        {panelButtons.length > 0 && shown("panels") && focusMode && (
           <div className="ml-1.5 flex items-center gap-1 shrink-0">
-            {SIDE_PANEL_BUTTONS.map(({ tab, label, icon: Icon, key }) => (
+            {panelButtons.map(({ tab, label, icon: Icon, key }) => (
               <button
                 key={tab}
                 onClick={() => setSidePanel(sidePanel === tab ? null : tab)}
@@ -289,17 +293,17 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
             <MoreHorizontal className="w-4 h-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-auto min-w-56 max-w-[calc(100vw-2rem)]">
-            <DropdownMenuItem onClick={() => useStore.getState().setActiveTab("references")}><Network /> 論文マップ</DropdownMenuItem>
+            {caps.citationMap && <DropdownMenuItem onClick={() => useStore.getState().setActiveTab("references")}><Network /> 論文マップ</DropdownMenuItem>}
             <DropdownMenuGroup>
               <DropdownMenuLabel className="tabular-nums">{pageLabel}</DropdownMenuLabel>
-              {version && (
+              {caps.translate && version && (
                 <DropdownMenuLabel className="font-normal" title="このページを翻訳したときの翻訳キー（接続先・モデル・プロンプトなどから計算）とモデル">
                   翻訳時SHA：{version.sha} ({version.model})
                 </DropdownMenuLabel>
               )}
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            {!shown("search") && (
+            {caps.fullTextSearch && !shown("search") && (
               <DropdownMenuItem onClick={() => setSearchOpen(true)}><Search /> {withShortcutLabels("論文内検索（Ctrl+F）")}</DropdownMenuItem>
             )}
             {!shown("back") && (
@@ -311,18 +315,18 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
                 <DropdownMenuSubContent className={outlineMenuClass}>{outlineItems}</DropdownMenuSubContent>
               </DropdownMenuSub>
             )}
-            <DropdownMenuItem title={reviewLabel} onClick={() => emitAppEvent("open-translation-review")}>
+            {caps.translate && <DropdownMenuItem title={reviewLabel} onClick={() => emitAppEvent("open-translation-review")}>
               <ClipboardCheck /> 翻訳の確認・修正{reviewCount ? `（${reviewCount}）` : ""}
-            </DropdownMenuItem>
+            </DropdownMenuItem>}
             {focusMode && <DropdownMenuItem onClick={() => emitAppEvent("open-paper-details", { paperId })}>
               <FileText /> 論文情報・整理
             </DropdownMenuItem>}
-            {!shown("panels") && SIDE_PANEL_BUTTONS.map(({ tab, label, icon: Icon, key }) => (
+            {!shown("panels") && panelButtons.map(({ tab, label, icon: Icon, key }) => (
               <DropdownMenuCheckboxItem key={tab} checked={sidePanel === tab} closeOnClick onCheckedChange={() => setSidePanel(sidePanel === tab ? null : tab)}>
                 <Icon /> {panelTitle(label, key)}
               </DropdownMenuCheckboxItem>
             ))}
-            {focusMode && !shown("sticky") && (
+            {caps.stickyNotes && focusMode && !shown("sticky") && (
               <DropdownMenuItem onClick={() => useStore.getState().setActiveTab("sticky-notes")}><StickyNote /> {withShortcutLabels("付箋タブへ（Ctrl+5）")}</DropdownMenuItem>
             )}
             {!full("zoom") && <>
@@ -340,17 +344,17 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
                 </DropdownMenuRadioGroup>
               </DropdownMenuGroup>
             )}
-            <DropdownMenuGroup>
+            {caps.translate && <DropdownMenuGroup>
               <DropdownMenuLabel>表示するページ</DropdownMenuLabel>
               <DropdownMenuRadioGroup value={translatedOnly ? "translated" : "all"} onValueChange={(value) => setPageFilter(String(value))}>
                 <DropdownMenuRadioItem value="all">全ページ</DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="translated">翻訳済みページのみ</DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
-            </DropdownMenuGroup>
+            </DropdownMenuGroup>}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <ReaderSearch paperId={paperId} search={search} setSearch={setSearch} ownsKey={ownsKey} open={searchOpen} setOpen={setSearchOpen} />
+      <ReaderSearch paperId={paperId} search={search} setSearch={setSearch} ownsKey={ownsKey} open={searchOpen && caps.fullTextSearch} setOpen={setSearchOpen} />
       <TranslationReview paperId={paperId} />
     </div>
   );

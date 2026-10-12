@@ -12,6 +12,7 @@ import { addPendingImports, removePendingImports, usePendingImports } from "./pe
 import { showSaved } from "./savedNotice";
 import { emitAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
+import { itemCapabilities } from "@/lib/itemKinds";
 import { queryClient } from "@/lib/queryClient";
 import { summaryQuestionKey, summaryStartQuestion } from "@/features/summary/summaryStart";
 import { countInFolder } from "@/features/library/libraryTree";
@@ -474,7 +475,9 @@ export async function renamePaperFile(paperId: string): Promise<void> {
     showError(error);
     return;
   }
-  const name = await askText("ファイル名を変更", "新しいファイル名（.pdfは自動で付きます）", current.original_name || current.title);
+  const { fileExtension } = itemCapabilities(current);
+  const name = await askText("ファイル名を変更", `新しいファイル名${fileExtension ? `（${fileExtension}は自動で付きます）` : ""}`,
+    current.original_name || current.title);
   if (name === null) return;
   try {
     const result = await unwrap(api.POST("/api/papers/{paper_id}/rename", { params: { path: { paper_id: paperId } }, body: { new_title: name } }));

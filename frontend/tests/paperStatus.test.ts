@@ -98,3 +98,12 @@ test("a run that only makes the PDF again from saved translations is not called 
   assert.equal(result.text, "PDF作り直し中");
   assert.equal(paperTranslationStatus({ ...paper, translated_count: 12 }, true).text, "翻訳中");
 });
+
+test("a notebook has no translation status to show, and other kinds that are not translated do not either", () => {
+  assert.equal(paperTranslationStatus(paper, false).applicable, true);
+  // A row from before kinds is a PDF; a paper not loaded yet is shown as one.
+  assert.equal(paperTranslationStatus({ ...paper, kind: undefined } as unknown as PaperData, false).applicable, true);
+  assert.equal(paperTranslationStatus(null, false).applicable, true);
+  assert.equal(paperTranslationStatus({ ...paper, kind: "notebook" }, false).applicable, false);
+  assert.equal(paperTranslationStatus({ ...paper, kind: "later" as PaperData["kind"] }, false).applicable, false);
+});
