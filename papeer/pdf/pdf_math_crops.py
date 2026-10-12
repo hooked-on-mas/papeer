@@ -1,5 +1,6 @@
 """Use Type 1 glyph outlines to avoid copying neighboring lines into math."""
 from functools import lru_cache
+import unicodedata
 
 import pymupdf as fitz
 from fontTools import t1Lib
@@ -34,6 +35,7 @@ def page_glyph_bounds(page):
                 # Unsupported font programs retain the original crop bounds.
                 continue
     result = {}
+    combining = []
     for span in page.get_texttrace():
         bounds = fonts.get(span["font"].split("+")[-1])
         if bounds is None or tuple(span["dir"]) != (1, 0):
@@ -43,9 +45,33 @@ def page_glyph_bounds(page):
                 continue
             x0, y0, x1, y1 = bounds[glyph]
             scale = span["size"] / 1000
-            result[(round(origin[0], 2), round(origin[1], 2))] = fitz.Rect(
+            box = fitz.Rect(
                 origin[0] + x0 * scale, origin[1] - y1 * scale,
                 origin[0] + x1 * scale, origin[1] - y0 * scale)
+            key = (round(origin[0], 2), round(origin[1], 2))
+            # A negation slash and '=' can have the same trace origin.
+            result[key] = result[key] | box if key in result else box
+            if unicodedata.combining(chr(code)):
+                combining.append((chr(code), origin, box, span["size"]))
+    if combining:
+        # MuPDF's rawdict can shift a zero-advance combining mark left of
+        # its texttrace origin. Alias that position to the actual outline;
+        # otherwise one missing origin makes the entire crop fall back to
+        # a font box tall enough to include the following prose row.
+        for item in page.get_text("rawdict", flags=fitz.TEXTFLAGS_RAWDICT & ~fitz.TEXT_PRESERVE_IMAGES)["blocks"]:
+            for line in item.get("lines", []):
+                for span in line["spans"]:
+                    for char in span["chars"]:
+                        if not unicodedata.combining(char["c"]):
+                            continue
+                        x, y = char["origin"]
+                        candidates = [(abs(x - origin[0]), box) for code, origin, box, size in combining
+                                      if char["c"] == code and abs(y - origin[1]) < .1
+                                      and abs(x - origin[0]) <= size]
+                        if candidates:
+                            box = min(candidates, key=lambda candidate: candidate[0])[1]
+                            key = (round(x, 2), round(y, 2))
+                            result[key] = result[key] | box if key in result else box
     return result
 
 

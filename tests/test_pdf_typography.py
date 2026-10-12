@@ -9,6 +9,15 @@ from papeer.pdf.pdf_typography import FONT_DIRECTORY, TextStyle, first_line_inde
 
 
 class TypographyTests(unittest.TestCase):
+    def test_lettered_subsections_use_heading_typography(self):
+        for text in ("A. Partitioning scheme", "B. Problem formulation"):
+            block = dict(text=text, bbox=[40, 90, 180, 101], font_size=10, formulas=[])
+            self.assertEqual(text_style(block, 10, 792).role, "subsection")
+        for label in ("I.", "V.", "X.", "III."):
+            block = dict(text=label + " Uncertainty partitioning", bbox=[40, 90, 280, 101],
+                         font_size=10, formulas=[])
+            self.assertEqual(text_style(block, 10, 792).role, "section")
+
     def test_wrapped_paper_title_is_sent_as_one_phrase(self):
         lines = ['Uncertainty Partitioning with Probabilistic',
                  'Feasibility and Performance Guarantees for',

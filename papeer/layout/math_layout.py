@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 import pymupdf as fitz
 
 
-LAYOUT_VERSION = 23
+LAYOUT_VERSION = 24
 MATH_TOKEN = re.compile(r"\[\[PD_MATH_[A-Za-z0-9_]+\]\]")
 _MATH_FONT = re.compile(r"(?:CMMI|CMSY|CMEX|MSAM|MSBM|CMBSY|CMMIB|Math|Symbol|MTMI|MTSY|MTEX|rsfs|AdvPSMP)", re.I)
 _SYMBOL = re.compile(r"[=+−×÷∑∏∫√∞≤≥≠≈∂∇∈∉⊂⊆∀∃∥⊤⊥α-ωΑ-Ω]|[\U0001d400-\U0001d7ff]")
@@ -133,6 +133,59 @@ def _merge_inline_fragments(lines: list[dict]) -> list[dict]:
     return sorted([*merged.values(), *standalone], key=lambda line: (line["bbox"][1], line["bbox"][0]))
 
 
+def merge_inline_items(items: list[dict]) -> list[dict]:
+    """Reunite PDF blocks split in the middle of a row by tall inline math.
+
+    Classifying each item first can mistake a formula-only prefix of a prose
+    row for display math. Require overlapping column boxes and adjacent glyphs
+    on the same baseline; vertical overlap alone also occurs between paragraphs.
+    """
+    result = []
+    rows = []
+    for item in items:
+        lines = None if item.get("type") == 0 and not item.get("algorithm") else []
+        matches = []
+        for index, previous in enumerate(result):
+            if lines == [] or rows[index] == []:
+                continue
+            overlap = fitz.Rect(previous["bbox"]) & fitz.Rect(item["bbox"])
+            if overlap.is_empty or overlap.width < 20:
+                continue
+            # Most items never overlap. Normalize only candidate pairs, so
+            # ordinary pages do not pay for a second pass over every glyph.
+            if lines is None:
+                lines = _merge_inline_fragments(item["lines"])
+            if rows[index] is None:
+                rows[index] = _merge_inline_fragments(previous["lines"])
+            for a in rows[index]:
+                for b in lines:
+                    size = max(s["size"] for s in a["spans"] + b["spans"])
+                    gap = max(a["bbox"][0], b["bbox"][0]) - min(a["bbox"][2], b["bbox"][2])
+                    if (-size < gap < size * 1.5
+                            and abs(_prose_baseline(a) - _prose_baseline(b)) < 1
+                            and (_prose_words(a) or _prose_words(b))):
+                        matches.append(index)
+                        break
+                if matches and matches[-1] == index:
+                    break
+        if not matches:
+            result.append(dict(item))
+            rows.append(lines)
+            continue
+        first = matches[0]
+        members = [result[index] for index in matches] + [item]
+        box = fitz.Rect(item["bbox"])
+        for member in members:
+            box |= fitz.Rect(member["bbox"])
+        result[first] = dict(result[first], bbox=list(box),
+                             lines=[line for member in members for line in member["lines"]])
+        rows[first] = _merge_inline_fragments(result[first]["lines"])
+        for index in reversed(matches[1:]):
+            del result[index]
+            del rows[index]
+    return result
+
+
 def _math_ranges(chars: list[dict]) -> list[tuple[int, int]]:
     text = "".join(c["c"] for c in chars)
     selected = [False] * len(chars)
@@ -188,6 +241,12 @@ def _math_ranges(chars: list[dict]) -> list[tuple[int, int]]:
                 and not _MATH_FONT.search(chars[i]["font"])
                 and (not previous or previous[-1] in ".:;" or any(selected[:i]))):
             selected[i] = False
+
+    # An italic subsection label ("A. Partitioning scheme") is text, not
+    # a mathematical variable. Keep actual expressions such as "A. x = 2".
+    if (re.fullmatch(r"[A-Z]\.\s+[A-Z][A-Za-z]+(?:[ -][A-Za-z]+)*\s*", text)
+            and not _MATH_FONT.search(chars[0]["font"])):
+        selected[0] = False
 
     # Require a two-to-four digit year, so intervals such as [x+2] stay math.
     for match in re.finditer(r"\[[A-Za-z][A-Za-z0-9+., –-]{0,60}\d{2,4}[a-z]?\]", text):

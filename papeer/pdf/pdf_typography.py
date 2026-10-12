@@ -27,7 +27,7 @@ FONT_CSS = """
 html, body { margin: 0; padding: 0; }
 body { padding: 1pt; }
 """
-_NUMBERED = re.compile(r"^(\d+(?:\.\d+)*\.?|[IVX]+\.)\s+(.+)$", re.S)
+_NUMBERED = re.compile(r"^(\d+(?:\.\d+)*\.?|[IVX]+\.|[A-Z]\.)\s+(.+)$", re.S)
 _NAMED_HEADINGS = {"abstract", "introduction", "background", "methods", "method", "results",
                    "discussion", "conclusion", "conclusions", "references", "acknowledgments",
                    "acknowledgements", "appendix", "results and limitations"}
@@ -196,7 +196,8 @@ def text_style(block: dict, body_size: float, page_height: float, *, footnote: b
         return TextStyle("runin", body_size, 1.4)
     if short and not re.search(r"[。!?]$", text) and (
             (numbered and not text.endswith(".")) or text.lower().rstrip(":") in _NAMED_HEADINGS):
-        if numbered and "." in numbered[1].rstrip("."):
+        if numbered and ("." in numbered[1].rstrip(".")
+                         or (re.fullmatch(r"[A-Z]\.", numbered[1]) and numbered[1][0] not in "IVX")):
             return TextStyle("subsection", body_size * 1.18, 1.2)
         return TextStyle("section", body_size * 1.34, 1.2)
     if short and block["font_size"] >= body_size * 1.5:

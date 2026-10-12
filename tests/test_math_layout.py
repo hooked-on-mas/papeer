@@ -6,7 +6,7 @@ import unittest
 
 import pymupdf as fitz
 
-from papeer.layout.math_layout import LAYOUT_VERSION, MATH_TOKEN, _math_ranges, annotate_math_fonts, formula_only_block, layout_blocks, merge_overlapping_prose
+from papeer.layout.math_layout import LAYOUT_VERSION, MATH_TOKEN, _math_ranges, annotate_math_fonts, formula_only_block, layout_blocks, merge_inline_items, merge_overlapping_prose
 from papeer.pdf.pdf_engine import build_translated_pdf, extract_pdf, translation_units
 from papeer.core.service import PaperService
 from papeer.translation.translation import validate_translations
@@ -40,6 +40,44 @@ def make_math_pdf(path, rotation=0):
 
 
 class MathLayoutTests(unittest.TestCase):
+    def test_wrapped_inline_math_split_between_pdf_items_stays_in_prose(self):
+        with fitz.open() as pdf:
+            page = pdf.new_page(width=420, height=420)
+            page.insert_text((40, 70), ["Assumption 2: The partition contains a set of values",
+                                       "for every pair of indices in the domain",
+                                       "x = 1, y = 2, and"], fontname="tiit", fontsize=10)
+            # Force the publisher's grouping: the prefix and suffix of the
+            # third row belong to different rawdict items.
+            items = page.get_text("rawdict", sort=True)["blocks"]
+            baseline = items[0]["lines"][-1]["spans"][0]["origin"][1]
+            for x, y, text, font in ((110, baseline, "z = 3. The sets are known.", "tiit"),
+                                     (40, 130, "We observe two aspects in this assumption.", "helv"),
+                                     (300, baseline, "The other column.", "helv")):
+                with fitz.open() as fragment:
+                    fragment_page = fragment.new_page(width=420, height=420)
+                    fragment_page.insert_text((x, y), text, fontname=font, fontsize=10)
+                    items.extend(fragment_page.get_text("rawdict")["blocks"])
+            annotate_math_fonts(items)
+            before = [b for item in items for b in layout_blocks(item, 1, 1)]
+            self.assertTrue(any(b["kind"] == "formula" and "x = 1" in b["text"] for b in before))
+            merged = merge_inline_items(items)
+            blocks = [b for item in merged for b in layout_blocks(item, 1, 1)]
+            assumption = next(b for b in blocks if "Assumption 2:" in b["text"])
+            self.assertEqual(assumption["kind"], "text")
+            self.assertIn("x = 1, y = 2, and z = 3. The sets are known.", assumption["text"])
+            self.assertNotIn("We observe", assumption["text"])
+            self.assertNotIn("other column", assumption["text"])
+            self.assertFalse(any(b["kind"] == "formula" for b in blocks))
+            self.assertTrue(any("x = 1" in f["text"] for f in assumption["formulas"]))
+
+    def test_italic_lettered_heading_is_text_but_variables_stay_math(self):
+        for text in ("A. Partitioning scheme", "B. Problem formulation"):
+            chars = [dict(c=c, font="Times-Italic", flags=6, size=10, math_font=False) for c in text]
+            self.assertEqual(_math_ranges(chars), [])
+        text = "A. x = 2"
+        chars = [dict(c=c, font="Times-Italic", flags=6, size=10, math_font=False) for c in text]
+        self.assertTrue(any("x = 2" in text[a:b] for a, b in _math_ranges(chars)))
+
     def test_short_prose_row_with_tall_math_does_not_absorb_next_row(self):
         with fitz.open() as pdf:
             page = pdf.new_page()

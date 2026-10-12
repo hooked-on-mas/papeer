@@ -10,7 +10,7 @@ from typing import Callable
 
 import pymupdf as fitz
 
-from papeer.layout.math_layout import LAYOUT_VERSION, MATH_TOKEN, annotate_math_fonts, formula_only_block, layout_blocks, merge_overlapping_prose, merge_continued_prose
+from papeer.layout.math_layout import LAYOUT_VERSION, MATH_TOKEN, annotate_math_fonts, formula_only_block, layout_blocks, merge_inline_items, merge_overlapping_prose, merge_continued_prose
 from papeer.core.bibliography import extract_bibliography
 from papeer.core.fileio import atomic_output
 from papeer.layout.reference_layout import mark_references
@@ -225,6 +225,7 @@ def _text_pages(document: fitz.Document) -> tuple[list[list[dict]], list[dict], 
         figures += diagram_regions(page, figures + tables + algorithm_regions)
         items, tables = separate_tables(items, tables, number + 1)
         items, figures = separate_tables(items, figures, number + 1, kind="figure")
+        items = merge_inline_items(items)
         for item in items:
             if item.get("type") != 0:
                 continue
