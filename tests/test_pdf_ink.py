@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests._memos import read_memo, set_memo
 
 import io
 import json
@@ -308,7 +309,7 @@ def test_summary_regeneration_replaces_only_its_figures_and_keeps_note_captures(
     files = PaperFiles(lib.folder(identity))
     capture = files.folder / file
     assert capture.parent == files.media and capture.name.startswith("ink-capture-")
-    lib.update(identity, note=f"![切り抜き]({file})")
+    set_memo(lib, identity, note=f"![切り抜き]({file})")
     stale = files.media / "p9i1.png"  # a figure of a previous summary that this PDF no longer yields
     stale.write_bytes(capture.read_bytes())
     assert files.summary_images() == [stale]
@@ -329,7 +330,7 @@ def test_summary_regeneration_replaces_only_its_figures_and_keeps_note_captures(
     assert not stale.exists()
     assert files.summary_images() == [figure]
     assert capture.is_file() and client.get(f"/api/papers/{identity}/{file}").status_code == 200
-    assert lib.paper(identity)["note"] == f"![切り抜き]({file})"
+    assert read_memo(lib, identity) == f"![切り抜き]({file})"
 
 
 def test_locked_old_summary_figure_does_not_fail_the_summary(ink_env, monkeypatch):

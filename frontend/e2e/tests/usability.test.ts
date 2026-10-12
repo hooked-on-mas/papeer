@@ -1,3 +1,4 @@
+import { firstMemoContent } from "../lib/ui.ts";
 // Native-use findings: cancellation, keyboard focus and retained context must survive a fresh launch.
 import assert from "node:assert/strict";
 import { scenario } from "../lib/app.ts";
@@ -25,7 +26,7 @@ scenario("検索語だけの解除、一覧のタイトル移動、ページ入�
   await waitForLibrary(page, ["Stochastic Gradient", "Robust Observer"]);
 
   const id = paperIds["gradient.pdf"];
-  await api.call("PATCH", `/api/papers/${id}`, { first_author: "Taro Yamada" });
+  await api.call("PATCH", `/api/papers/${id}`, { author: "Taro Yamada" });
   const gradient = libraryRow(page, "Stochastic Gradient");
   await waitFor(async () => (await gradient.getAttribute("title"))?.includes("Taro Yamada"), "著者を含む説明が更新されること");
   assert.match(await gradient.innerText(), /^Stochastic Gradient/);
@@ -78,24 +79,22 @@ scenario("メモの編集位置を保ち、長いタイトルと未分類への�
   await waitForLibrary(page, ["Stochastic Gradient"]);
   await openPaper(page, "Stochastic Gradient");
   await page.getByRole("tab", { name: "メモ", exact: true }).click();
-  await page.getByRole("button", { name: "プレビュー", exact: true }).click();
-  await page.getByText("メモはまだありません。「編集」で書き始めるか、テンプレートを追加してください。", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "編集", exact: true }).click();
+  await page.getByRole("button", { name: "新規メモ", exact: true }).click();
   const memo = page.getByRole("textbox", { name: "論文のメモ", exact: true });
-  await waitFor(async () => await memo.evaluate(el => el === document.activeElement), "編集ボタンから入力欄に戻ること");
+  await memo.click();
   const longNote = Array.from({ length: 80 }, (_, i) => `メモの行 ${i + 1}`).join("\n");
   await page.keyboard.insertText(longNote);
   await memo.press("Control+End");
-  const before = await memo.evaluate((el: HTMLTextAreaElement) => ({ start: el.selectionStart, end: el.selectionEnd, top: el.scrollTop }));
+  const before = await memo.evaluate(el => ({ start: document.getSelection()?.anchorOffset, text: document.getSelection()?.anchorNode?.textContent, top: el.closest(".cm-editor")!.querySelector(".cm-scroller")!.scrollTop }));
   assert.ok(before.top > 100);
   await page.getByRole("button", { name: "プレビュー", exact: true }).click();
   await page.getByRole("button", { name: "編集", exact: true }).click();
   await waitFor(async () => await memo.evaluate(el => el === document.activeElement), "再編集でフォーカスが戻ること");
-  const after = await memo.evaluate((el: HTMLTextAreaElement) => ({ start: el.selectionStart, end: el.selectionEnd, top: el.scrollTop }));
+  const after = await memo.evaluate(el => ({ start: document.getSelection()?.anchorOffset, text: document.getSelection()?.anchorNode?.textContent, top: el.closest(".cm-editor")!.querySelector(".cm-scroller")!.scrollTop }));
   assert.deepEqual(after, before, "カーソルとスクロールを保つこと");
   await page.keyboard.insertText("\n最後に追記");
   const id = paperIds["gradient.pdf"];
-  await waitFor(async () => (await api.call("GET", `/api/papers/${id}`)).note === `${longNote}\n最後に追記`, "編集を続けた内容が保存されること");
+  await waitFor(async () => (await firstMemoContent(api, id)) === `${longNote}\n最後に追記`, "編集を続けた内容が保存されること");
 
   await page.getByRole("button", { name: "論文情報・整理", exact: true }).click();
   const panel = page.getByRole("dialog", { name: "論文情報・整理", exact: true });
@@ -109,7 +108,7 @@ scenario("メモの編集位置を保ち、長いタイトルと未分類への�
   await waitFor(async () => !(await api.call("GET", `/api/papers/${id}`)).collection_name, "未分類への移動が保存されること");
   assert.equal(await panel.getByLabel("フォルダー", { exact: true }).inputValue(), "");
   await panel.getByRole("button", { name: "閉じる", exact: true }).click();
-  assert.equal(await memo.inputValue(), `${longNote}\n最後に追記`);
+  assert.equal(await memo.innerText(), `${longNote}\n最後に追記`);
   assert.deepEqual(consoleErrors.filter(e => e.startsWith("[pageerror]")), []);
 });
 

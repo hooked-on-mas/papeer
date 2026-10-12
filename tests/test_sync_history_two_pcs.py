@@ -5,6 +5,7 @@ that each sync records: set-aside libraries go there instead of ZIPs beside the 
 taken in no longer leaves the one it replaced in a folder beside it, unless the history cannot stand for it.
 """
 from __future__ import annotations
+from tests._memos import read_memo, set_memo
 
 import hashlib
 from pathlib import Path
@@ -101,12 +102,16 @@ def edit(pc: PC, identity: str, **values) -> None:
         if article is not None:
             (lib.folder(identity) / "article.md").write_text(article, "utf-8")
         if values:
-            lib.update(identity, **values)
+            memo = values.pop("note", None)
+            if memo is not None:
+                set_memo(lib, identity, note=memo, **values)
+            else:
+                lib.update(identity, **values)
 
 
 def note(pc: PC, identity: str) -> str:
     with pc as lib:
-        return lib.paper(identity)["note"]
+        return read_memo(lib, identity)
 
 
 def test_each_pc_records_what_it_syncs_and_moves_nothing_aside(pcs, tmp_path):
@@ -132,7 +137,7 @@ def test_each_pc_records_what_it_syncs_and_moves_nothing_aside(pcs, tmp_path):
     pdf = [name for name in a.blobs() if not name.endswith(".z")]
     assert len(pdf) == 1
     # The newest states hold what each sync settled on.
-    assert a.state(a.history()[1]["id"], tmp_path / "a-state").paper(identity)["note"] == "a2"
+    assert read_memo(a.state(a.history()[1]["id"], tmp_path / "a-state"), identity) == "a2"
 
 
 def test_a_choice_keeps_the_other_side_in_the_history_of_the_pc_that_chose(pcs, tmp_path):
@@ -151,7 +156,7 @@ def test_a_choice_keeps_the_other_side_in_the_history_of_the_pc_that_chose(pcs, 
     assert chosen["set_aside"] and chosen["not_set_aside"] == []
     kept = [entry for entry in b.history() if entry["kind"] == "set_aside"]
     assert [entry["side"] for entry in kept] == ["remote"] and kept[0]["revision"] in heads
-    assert b.state(kept[0]["id"], tmp_path / "kept").paper(identity)["note"] == "from a"
+    assert read_memo(b.state(kept[0]["id"], tmp_path / "kept"), identity) == "from a"
     assert sync.side_backups(b.root) == []
     # a takes b's choice in; its own library (the state it last synced) is in its history.
     transfer(b, a)
@@ -278,7 +283,7 @@ def test_a_choice_over_a_damaged_blob_keeps_this_pcs_library_beside_it(pcs):
     assert note(b, identity) == "from a" and result["set_aside"]
     assert result["previous_path"] and Path(result["previous_path"]).is_dir()
     with b:
-        assert Library(Path(result["previous_path"])).paper(identity)["note"] == "from b (unpublished)"
+        assert read_memo(Library(Path(result["previous_path"])), identity) == "from b (unpublished)"
 
 
 def test_the_state_that_stands_for_the_replaced_library_outlives_the_clean_up(pcs, tmp_path):
@@ -293,7 +298,7 @@ def test_the_state_that_stands_for_the_replaced_library_outlives_the_clean_up(pc
     assert result["reloaded"] is True and result["previous_path"] is None
     # recent=1 keeps only the newest, but the state the folder was removed for stays until the next sync.
     replaced = next(entry for entry in b.history() if entry["hash"] == before_hash)
-    assert b.state(replaced["id"], tmp_path / "replaced").paper(identity)["note"] == ""
+    assert read_memo(b.state(replaced["id"], tmp_path / "replaced"), identity) == ""
 
 
 def test_a_history_that_cannot_be_read_back_just_now_keeps_the_folder(pcs, monkeypatch):

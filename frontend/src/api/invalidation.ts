@@ -30,8 +30,6 @@ export type DataChange =
   | { kind: "paper"; paperId: string; collection?: boolean }
   /** A tag put on a paper or taken off: a new name becomes one of the tag choices. */
   | { kind: "paperTags" }
-  /** A memo saved: the library's search finds its text (the memo pane keeps the paper's query itself). */
-  | { kind: "note" }
   /** A choice of paper tag, reading status or sticky-note label added or deleted (設定 → タグ). */
   | { kind: "tagChoice"; tagKind: "paper" | "status" | "sticky"; removed: boolean }
   /** A sticky note or highlight added, edited, recoloured, deleted or put back. */
@@ -62,22 +60,20 @@ export function invalidationsFor(change: DataChange): StaleQuery[] {
     case "folders":
       return roots(QK.papers, QK.collections, QK.citations, QK.research, QK.discovery);
     case "library":
-      return roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.discovery);
+      return roots(QK.papers, QK.attachments, QK.memo, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.discovery);
     case "reconnected":
-      return roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.discovery, QK.reading);
+      return roots(QK.papers, QK.attachments, QK.memo, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.discovery, QK.reading);
     case "imported":
       return roots(QK.papers, QK.citations, QK.research, QK.discovery);
     case "papersChanged":
       return [...(change.all ? roots(QK.papers) : []), ...(change.collections ? roots(QK.collections) : []),
-        ...(change.tags ? roots(QK.tags) : []), ...roots(QK.librarySearch, QK.citations, QK.research, QK.discovery)];
+        ...(change.tags ? roots(QK.tags) : []), ...roots(QK.attachments, QK.librarySearch, QK.citations, QK.research, QK.discovery)];
     case "pageTranslated":
       return [{ queryKey: [QK.reading, change.paperId] }, { queryKey: [QK.paperSearch, change.paperId] }];
     case "paper":
       return [{ queryKey: [QK.papers, change.paperId], exact: true }, ...(change.collection ? roots(QK.collections) : []), ...roots(QK.citations, QK.research, QK.discovery)];
     case "paperTags":
       return roots(QK.tags);
-    case "note":
-      return roots(QK.librarySearch);
     case "tagChoice":
       switch (change.tagKind) {
         // Deleting a tag takes it off every paper; the others stay on the papers and notes that have them.

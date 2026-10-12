@@ -1,5 +1,6 @@
 """Stopping a sync, backup or restore, and shutting the sidecar down without leaving work half done."""
 from __future__ import annotations
+from tests._memos import read_memo, set_memo
 
 import os
 from pathlib import Path
@@ -348,12 +349,12 @@ def test_cancelled_restore_keeps_the_library(library, tmp_path):
     lib, identity = library
     archive = tmp_path / "backup.zip"
     create_backup(lib, archive)
-    lib.update(identity, note="after backup")
+    set_memo(lib, identity, note="after backup")
     cancel = threading.Event()
     cancel.set()
     with pytest.raises(Cancelled):
         restore_backup(lib, archive, cancel)
-    assert lib.paper(identity)["note"] == "after backup"
+    assert read_memo(lib, identity) == "after backup"
     assert sorted(p.name for p in lib.root.parent.iterdir()) == ["backup.zip", "library"]
 
 

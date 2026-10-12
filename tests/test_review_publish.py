@@ -148,11 +148,11 @@ class ReviewPublishTests(unittest.TestCase):
                 # 3 and 7 failed (staging kept for diagnosis, no receipt).
                 if n not in (3,7): (folder/'review-backups'/name/'receipt.json').write_text('{}','utf8')
                 names.append(name)
-            (folder/'review-backups'/'notes').mkdir()
+            (folder/'review-backups'/"attachments").mkdir()
             prune_review_backups(folder,keep=5)
             kept=sorted(p.name for p in (folder/'review-backups').iterdir())
             # Applied: 0 1 2 4 5 6 8 -> the newest five start at 2; failed 3 and 7 are newer and stay.
-            self.assertEqual(kept,sorted(names[2:]+['notes']))
+            self.assertEqual(kept,sorted(names[2:]+["attachments"]))
             prune_review_backups(folder,keep=5)
             self.assertEqual(sorted(p.name for p in (folder/'review-backups').iterdir()),kept)
 

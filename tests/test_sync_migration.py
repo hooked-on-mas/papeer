@@ -7,6 +7,7 @@ reads the database version of a revision (T09 and later) runs, but for what its 
 format; the last test runs b0b0280 itself.
 """
 from __future__ import annotations
+from tests._memos import read_memo, set_memo
 
 from datetime import timedelta
 import os
@@ -98,11 +99,11 @@ class PC:
 
     def note(self, identity: str) -> str:
         with self as lib:
-            return lib.paper(identity)["note"]
+            return read_memo(lib, identity)
 
     def edit(self, identity: str, note: str) -> None:
         with self as lib:
-            lib.update(identity, note=note)
+            set_memo(lib, identity, note=note)
 
     def history(self) -> list[dict]:
         with self:
@@ -287,7 +288,7 @@ def test_a_revision_an_earlier_papeer_published_is_offered_and_can_be_taken(sync
     assert result["status"] == "conflict"
     offered = {item["id"]: item for item in result["conflicts"]}
     assert offered[revision]["legacy"] is True and offered[revision]["device"] == "PC-B"
-    assert offered[revision]["diff"]["notes"] == 1
+    assert offered[revision]["diff"]["attachments"] == 1
     assert "PC-B の古いバージョンのPapeerで保存された同期データがあります" in a.state()["error"]
     assert a.note(identity) == "first"
     result = a.sync(choice=revision, expected_heads=sorted(offered))
@@ -955,4 +956,4 @@ def test_the_earlier_papeer_itself_keeps_no_side_backup_of_the_marker(earlier_pa
     result = a.sync()
     assert result["status"] == "conflict"
     [offered] = [item for item in result["conflicts"] if item["legacy"]]
-    assert offered["id"] == kept["base"] and offered["old_papeer"] is True and offered["diff"]["notes"] == 1
+    assert offered["id"] == kept["base"] and offered["old_papeer"] is True and offered["diff"]["attachments"] == 1

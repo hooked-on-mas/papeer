@@ -22,7 +22,6 @@ export function withPaperRow(rows: PaperData[], paperId: string, paper: PaperDat
   if (orderFields(sort).some((field) => (rows[index][field] ?? null) !== (paper[field] ?? null))) return null;
   // The list rows leave out the memo (papeer/core/library_list.py, paper_row).
   const row: PaperData = { ...paper };
-  delete row.note;
   return rows.map((current, i) => (i === index ? row : current));
 }
 
@@ -53,7 +52,7 @@ export type PaperChangeEffects = {
 export function paperChangeEffects(fields: string[] | undefined): PaperChangeEffects {
   if (fields === undefined) return { row: true, collections: true, tags: true };
   return {
-    row: fields.some((name) => name !== "note"),
+    row: fields.length > 0,
     collections: fields.includes("collection_name"),
     tags: fields.includes("tags"),
   };

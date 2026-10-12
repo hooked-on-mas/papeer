@@ -17,6 +17,7 @@ own transaction; the mixin's methods are the Library's own.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime, timezone
 import sqlite3
 import uuid
 
@@ -154,8 +155,36 @@ class ItemRelations(LibraryBase):
             row = db.execute("SELECT owner_id,format FROM attachments WHERE id=?", (attachment_id,)).fetchone()
             if row is None:
                 raise NotFound("メモ・資料が見つかりません。")
+            PaperFiles(self.folder(row["owner_id"])).attachment(attachment_id, row["format"]).unlink(missing_ok=True)
             db.execute("DELETE FROM attachments WHERE id=?", (attachment_id,))
-        PaperFiles(self.folder(row["owner_id"])).attachment(attachment_id, row["format"]).unlink(missing_ok=True)
+
+    def update_attachment(self, owner_id: str, attachment_id: str, *, title: str | None = None,
+                          content: str | None = None) -> dict:
+        """Save a memo's name or text. A row of another owner is never accessible."""
+        if title is not None:
+            title = " ".join(title.split())
+            if not title or len(title) > TITLE_LIMIT:
+                raise Invalid(f"名前は1〜{TITLE_LIMIT}文字で入力してください。")
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM attachments WHERE id=? AND owner_id=? AND format='md'",
+                             (attachment_id, owner_id)).fetchone()
+            if row is None:
+                raise NotFound("メモが見つかりません。")
+            if content is not None:
+                atomic_write_text(PaperFiles(self.folder(owner_id)).attachment(attachment_id, "md"), content)
+            db.execute("UPDATE attachments SET title=?,updated_at=? WHERE id=?",
+                       (row["title"] if title is None else title, datetime.now(timezone.utc).isoformat(), attachment_id))
+            return dict(db.execute("SELECT * FROM attachments WHERE id=?", (attachment_id,)).fetchone())
+
+    def reorder_attachments(self, owner_id: str, ids: list[str]) -> None:
+        """Order all the owner's md memos, refusing a stale/incomplete/foreign list."""
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = [row[0] for row in db.execute("SELECT id FROM attachments WHERE owner_id=? AND format='md'", (owner_id,))]
+            if len(ids) != len(set(ids)) or set(ids) != set(current):
+                raise Invalid("メモの一覧が変わりました。再読み込みして並べ替えてください。")
+            db.executemany("UPDATE attachments SET position=? WHERE id=?", enumerate(ids))
 
     # --- Linking ---
 

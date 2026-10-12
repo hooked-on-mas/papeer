@@ -136,12 +136,12 @@ test("papers changed in quick succession are reloaded together, once", () => {
   gate.paperChanged("b", paperChangeEffects(["tags"]), (changes) => flushed.push(changes));
   advance(300);
   // A memo only: nothing but the library's search to reload for it.
-  gate.paperChanged("c", paperChangeEffects(["note"]), (changes) => flushed.push(changes));
+  gate.paperChanged("c", paperChangeEffects(["attachment_count"]), (changes) => flushed.push(changes));
   gate.paperChanged("a", paperChangeEffects(["collection_name"]), (changes) => flushed.push(changes));
   advance(399);
   assert.equal(flushed.length, 0);
   advance(1);
-  assert.deepEqual(flushed, [{ rows: ["a", "b"], collections: true, tags: true }]);
+  assert.deepEqual(flushed, [{ rows: ["a", "b", "c"], collections: true, tags: true }]);
   advance(1000);
   assert.equal(flushed.length, 1);
 });

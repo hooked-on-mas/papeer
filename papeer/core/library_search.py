@@ -1,4 +1,4 @@
-"""Search across the library: metadata, memos, pages and translated sections, with the index (search_index)."""
+"""Search across the library: metadata, pages and translated sections, with the index (search_index)."""
 from __future__ import annotations
 
 import sqlite3
@@ -17,16 +17,16 @@ def _metadata_text(paper: dict) -> str:
 
 def library_search(lib: Library, query: str, limit: int = 200) -> dict:
     """Where `query` occurs across the library (casefolded, as a whole): at most `limit` places, one for each
-    paper's metadata, memo, page ("original") and translated section that contains it.
+    paper's metadata, page ("original") and translated section that contains it.
 
     What was kept decomposed (NFD: names from macOS, before they were composed) is found as well: a place
     counts if it contains the composed form of `query` or the decomposed one (dropped when it is over 200
     characters, which only the composed form is held to).
 
     The most relevant papers come first, as `limit` may cut the rest: those whose metadata contain it, then
-    those whose memo does, then the others; within each group those with more pages and sections containing
+    the others; within each group those with more pages and sections containing
     it first (a term shorter than a trigram is not counted), then in the library's order (newest first).
-    Within a paper: metadata, memo, pages, sections. The index (search_index) says where to look; each place
+    Within a paper: metadata, pages, sections. The index (search_index) says where to look; each place
     is checked against the text itself, and papers it does not cover yet are looked through whole.
     """
     forms = search_forms(query)
@@ -35,8 +35,8 @@ def library_search(lib: Library, query: str, limit: int = 200) -> dict:
     if len(forms[0]) > 200:
         raise ValueError("検索語は200文字までです。")
     terms = [form.casefold() for form in forms if len(form) <= 200]
-    # Every item the library lists: a notebook is found by its name, tags and memo, and by its pages' text
-    # once OCR has read them. The hit is opened in the reader by its paper_id whatever its kind.
+    # Every item the library lists: metadata/tags and pages' text (after OCR for a notebook).
+    # Memo search is a later stage. The hit opens in the reader by paper_id whatever its kind.
     papers = lib.items()
     index = search_index.SearchIndex(lib.root)
     try:
@@ -51,12 +51,10 @@ def library_search(lib: Library, query: str, limit: int = 200) -> dict:
             for position, paper in enumerate(papers):
                 metadata = _metadata_text(paper).casefold()
                 in_metadata = any(term in metadata for term in terms)
-                note = paper["note"].casefold()
-                in_note = any(term in note for term in terms)
                 count = counts.get(paper["id"], 0)
                 # A short term is not counted: any paper may have it, and each is checked in turn.
-                if in_metadata or in_note or count or not counted or paper["id"] in unindexed:
-                    candidates.append((0 if in_metadata else 1 if in_note else 2, -count, position, paper))
+                if in_metadata or count or not counted or paper["id"] in unindexed:
+                    candidates.append((0 if in_metadata else 1, -count, position, paper))
             candidates.sort(key=lambda candidate: candidate[:3])
 
             def places(paper):
@@ -87,7 +85,6 @@ def _search_places(lib: Library, terms: list[str], limit: int, candidates) -> di
     with lib.connection() as db:
         for paper, places in candidates:
             add(paper, "metadata", None, _metadata_text(paper))
-            add(paper, "note", None, paper["note"])
             pages = None if places is None else {page for side, page, _ in places if side == "original"}
             if pages is None or pages:
                 for number, text in db.execute("SELECT number,text FROM pages WHERE paper_id=? ORDER BY number", (paper["id"],)):

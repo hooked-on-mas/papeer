@@ -182,8 +182,8 @@ def start_new_library(root: Path) -> dict:
 # (held ones included) and "attachments" the memo and document files items hold (library_schema._notebook_items),
 # so removing memos is not reported as papers lost. A revision or state recorded by an earlier Papeer
 # lacks the last two: a kind missing on either side is not compared (shrunk_kinds).
-COUNT_LABELS = {"papers": "論文", "notes": "メモ", "stickies": "付箋", "ink": "書き込み",
-                "notebooks": "ノート", "attachments": "追加のメモ・資料"}
+COUNT_LABELS = {"papers": "論文", "stickies": "付箋", "ink": "書き込み",
+                "notebooks": "ノート", "attachments": "メモ・資料"}
 # "Far fewer" is at least SHRINK_MIN_ITEMS items and at least half of a kind. The absolute floor keeps
 # ordinary deletions in a small library (1 of 2 papers) from stopping sync; the ratio keeps a clean-up
 # in a large one (30 of 300) from doing so. Losing every paper always asks: an empty library is how a
@@ -206,7 +206,6 @@ def _database_counts(db: sqlite3.Connection, schema: str = "main") -> dict[str, 
     # Before library_schema._notebook_items every row of papers is a PDF paper.
     kinds = {row[1] for row in db.execute(f"PRAGMA {schema}.table_info(papers)")}
     return {"papers": count("papers", "WHERE kind='pdf'" if "kind" in kinds else ""),
-            "notes": count("papers", "WHERE trim(note)<>''"),
             "stickies": count("bookmarks"), "ink": count("pdf_ink", "WHERE strokes NOT IN ('','[]')"),
             "notebooks": count("papers", "WHERE kind='notebook'") if "kind" in kinds else 0,
             "attachments": count("attachments")}
@@ -311,21 +310,20 @@ def library_difference(local: Path, other: Path) -> dict:
                 f"SELECT title FROM {mine}.papers WHERE {listed(mine)} AND id NOT IN (SELECT id FROM {theirs}.papers)"
                 " ORDER BY title")]
         local_only, remote_only = titles("main", "theirs"), titles("theirs", "main")
-        notes = db.execute("SELECT COUNT(*) FROM main.papers AS a JOIN theirs.papers AS b ON a.id = b.id"
-                           " WHERE a.note IS NOT b.note").fetchone()[0]
+        attachments = _differing_rows(db, "attachments", ("id",), owner_column="owner_id")
         stickies = _differing_rows(db, "bookmarks", ("id",))
         ink = _differing_rows(db, "pdf_ink", ("paper_id", "side", "page"), "strokes NOT IN ('', '[]')")
         counts = [_database_counts(db, "main"), _database_counts(db, "theirs")]
     return {"local_only": len(local_only), "remote_only": len(remote_only),
             "local_titles": local_only[:DIFF_TITLES], "remote_titles": remote_only[:DIFF_TITLES],
-            "notes": notes, "stickies": stickies, "ink": ink, "local_counts": counts[0], "remote_counts": counts[1]}
+            "attachments": attachments, "stickies": stickies, "ink": ink, "local_counts": counts[0], "remote_counts": counts[1]}
 
 
 def _quoted(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def _differing_rows(db: sqlite3.Connection, table: str, key: tuple[str, ...], where: str = "") -> int:
+def _differing_rows(db: sqlite3.Connection, table: str, key: tuple[str, ...], where: str = "", owner_column: str = "paper_id") -> int:
     """How many keys of `table`, among the papers both libraries have, have a row on one side only or rows
     that differ, comparing the columns both sides have (all of one side's when the other lacks the table)."""
     columns = {schema: [row[1] for row in db.execute(f"PRAGMA {schema}.table_info({table})")]
@@ -336,7 +334,7 @@ def _differing_rows(db: sqlite3.Connection, table: str, key: tuple[str, ...], wh
     names = [name for name in columns["main"] if name in columns["theirs"]] if both \
         else columns["main"] or columns["theirs"]
     selected = ",".join(_quoted(name) for name in names)
-    condition = "paper_id IN common" + (f" AND {where}" if where else "")
+    condition = f"{owner_column} IN common" + (f" AND {where}" if where else "")
 
     def rows(schema: str) -> str:
         if columns[schema]:

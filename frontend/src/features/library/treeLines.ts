@@ -39,7 +39,8 @@ export const linkKey = (owner: string, id: string) => `link:${owner}:${id}`;
 export type PaperChild =
   | { kind: "attachment"; id: string; title: string }
   | { kind: "owned"; id: string; title: string }
-  | { kind: "link"; id: string; title: string };
+  | { kind: "link"; id: string; title: string }
+  | { kind: "more"; id: string; title: string };
 
 /** The kinds of the rows under a paper. */
 export type ChildKind = PaperChild["kind"];
@@ -87,7 +88,7 @@ export const isChildLine = (line: TreeLine): line is ChildLine =>
   line.kind !== "folder" && line.kind !== "pending" && line.kind !== "paper";
 
 const childKey = (owner: string, child: PaperChild): string =>
-  child.kind === "attachment" ? attachmentKey(owner, child.id) : child.kind === "owned" ? ownedKey(owner, child.id) : linkKey(owner, child.id);
+  child.kind === "more" ? `more:${owner}` : child.kind === "attachment" ? attachmentKey(owner, child.id) : child.kind === "owned" ? ownedKey(owner, child.id) : linkKey(owner, child.id);
 
 /**
  * Every line on screen, top to bottom: each folder, then if it is open its subfolders, the PDFs being

@@ -138,3 +138,5 @@ class Library(PaperRecords, ItemRelations, Collections, Annotations, Choices, Co
         if version < SCHEMA_VERSION:
             with _SCHEMA_LOCK:
                 migrate_database(root)
+        from papeer.core.memo_migration import migrate_memos
+        migrate_memos(root)

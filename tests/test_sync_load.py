@@ -1,4 +1,5 @@
 """Keeping sync and backup cheap: remembered file digests, stored PDFs, free space, the revision listing."""
+from tests._memos import set_memo
 from contextlib import closing
 import hashlib
 import json
@@ -26,7 +27,7 @@ SAMPLE = Path(__file__).parent / "fixtures/sample.pdf"
 def lib(tmp_path):
     library = Library(tmp_path / "data")
     identity, _ = library.import_pdf(SAMPLE)
-    library.update(identity, note="メモ")
+    set_memo(library, identity, note="メモ")
     (library.folder(identity) / "article.md").write_text("サマリー", "utf-8")
     (library.root / "prompts").mkdir()
     (library.root / "prompts" / "chat.txt").write_text("prompt", "utf-8")
@@ -196,7 +197,7 @@ def test_backup_stores_pdfs_and_images_and_still_restores(lib, tmp_path):
     assert methods[f"papers/{identity}/media/figure.PNG"] == zipfile.ZIP_STORED
     assert methods["library.sqlite3"] == methods[f"papers/{identity}/article.md"] == zipfile.ZIP_DEFLATED
     expected = sync.fingerprint(lib)
-    lib.update(identity, note="後で変えた")
+    set_memo(lib, identity, note="後で変えた")
     restore_backup(lib, archive_path)
     assert sync.fingerprint(Library(lib.root)) == expected
 
@@ -278,7 +279,7 @@ def test_revisions_are_read_once(lib, tmp_path, monkeypatch):
     assert sync.FolderDrive(folder).revisions() == first
     assert opened == []
     # A new revision is read; one that disappeared is no longer listed.
-    lib.update(lib.papers()[0]["id"], note="変更")
+    set_memo(lib, lib.papers()[0]["id"], note="変更")
     monkeypatch.setattr(sync.zipfile, "ZipFile", original)
     sync.sync(lib, remote, threading.Event(), lambda _: None)
     monkeypatch.setattr(sync.zipfile, "ZipFile", counting)

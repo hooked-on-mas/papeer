@@ -1,5 +1,6 @@
 """The library list (GET /api/papers): rows, order, the pages kept per PC, and what changes announce."""
 from __future__ import annotations
+from tests._memos import read_memo, set_memo
 
 from contextlib import closing
 import json
@@ -167,7 +168,7 @@ def test_removed_papers_are_forgotten_once_the_whole_library_is_listed(library, 
 
 def test_rows_leave_out_the_memo_and_follow_the_chosen_order(library, tmp_path):
     ids = [_add(library, tmp_path, name, title) for name, title in (("a", "beta"), ("b", "Alpha"), ("c", "gamma"))]
-    library.update(ids[0], note="長いメモ" * 100)
+    set_memo(library, ids[0], note="長いメモ" * 100)
     with TestClient(app) as client:
         rows = client.get("/api/papers").json()
         assert all("note" not in row for row in rows)
@@ -179,7 +180,7 @@ def test_rows_leave_out_the_memo_and_follow_the_chosen_order(library, tmp_path):
         assert client.get(f"/api/papers?sort={len(LibrarySort)}").status_code == 400
         assert client.get("/api/papers?sort=-1").status_code == 400
         # The memo pane reads the paper itself.
-        assert client.get(f"/api/papers/{ids[0]}").json()["note"] == "長いメモ" * 100
+        assert read_memo(library, ids[0]) == "長いメモ" * 100
 
 
 def test_translation_state_counts_the_saved_pages(library, tmp_path):
@@ -218,12 +219,12 @@ def test_changing_one_paper_announces_only_that_paper(library, tmp_path):
     events: list[dict] = []
     with TestClient(app) as client, patch.object(job_manager, "broadcast",
                                                           side_effect=lambda event: events.append(event.model_dump())):
-        assert client.patch(f"/api/papers/{paper_id}", json={"note": "メモ"}).status_code == 200
+        assert client.post(f"/api/papers/{paper_id}/attachments", json={"content": "メモ"}).status_code == 200
         assert client.patch(f"/api/papers/{paper_id}", json={"tags": ["制御"], "collection": "論文"}).status_code == 200
         assert client.patch(f"/api/papers/{paper_id}", json={}).status_code == 200
         assert client.post(f"/api/papers/{paper_id}/rename", json={"new_title": "renamed"}).status_code == 200
     assert events == [
-        {"type": "paper.changed", "paper_id": paper_id, "fields": ["note"]},
+        {"type": "paper.changed", "paper_id": paper_id, "fields": ["attachment_count"]},
         {"type": "paper.changed", "paper_id": paper_id, "fields": ["collection_name", "tags"]},
         {"type": "paper.changed", "paper_id": paper_id, "fields": ["original_name", "title"]},
     ]

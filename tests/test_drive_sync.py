@@ -1,3 +1,4 @@
+from tests._memos import read_memo, set_memo
 from contextlib import contextmanager
 from copy import deepcopy
 import hashlib
@@ -81,7 +82,7 @@ def moved_aside(lib):
 def test_all_data_roundtrip_and_noop(pair):
     a, b, identity, remote = pair
     a.save_ink(identity, "original", 1, [{"id": "stroke", "points": [[1, 2]]}])
-    a.update(identity, note="読書メモ", tags=["研究"])
+    set_memo(a, identity, note="読書メモ", tags=["研究"])
     a.add_exchange(identity, "question", "answer")
     a.save_note_template("custom", "template")
     folder = a.folder(identity)
@@ -93,7 +94,7 @@ def test_all_data_roundtrip_and_noop(pair):
     connect_pair(a, b, remote)
     assert sync.fingerprint(a) == sync.fingerprint(b)
     assert b.ink(identity, "original", 1)[0]["id"] == "stroke"
-    assert b.paper(identity)["note"] == "読書メモ"
+    assert read_memo(b, identity) == "読書メモ"
     assert (b.folder(identity) / "article.md").read_text("utf-8") == "サマリー"
     assert (b.root / "ui-state.json").read_bytes() == (a.root / "ui-state.json").read_bytes()
     assert sync.state_path(a.root).is_relative_to(a.root) is False
@@ -106,17 +107,17 @@ def test_all_data_roundtrip_and_noop(pair):
 def test_edit_and_delete_propagate_without_losing_previous_copy(pair):
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="new note")
+    set_memo(a, identity, note="new note")
     run(a, remote)
     before = moved_aside(b)
     result = run(b, remote)
     assert result["reloaded"]
-    assert b.paper(identity)["note"] == "new note"
+    assert read_memo(b, identity) == "new note"
     # The library as it was is in this PC's history (the state last synced), so no folder is moved aside.
     assert result["previous_path"] is None and moved_aside(b) == before
     pulled, previous = local_history.entries(b.root)[:2]
     assert (pulled["kind"], pulled["hash"]) == ("pull", sync.fingerprint(b))
-    assert recorded_state(b, previous["id"]).paper(identity)["note"] == ""
+    assert read_memo(recorded_state(b, previous["id"]), identity) == ""
     a.delete_paper(identity)
     # Deleting the last paper empties the library, which both sides confirm (see test_shrunk_library_*).
     assert run(a, remote)["status"] == "review"
@@ -129,26 +130,26 @@ def test_edit_and_delete_propagate_without_losing_previous_copy(pair):
 def test_conflicting_edits_require_choice_and_preserve_both(pair):
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
-    b.update(identity, note="B")
+    set_memo(a, identity, note="A")
+    set_memo(b, identity, note="B")
     run(a, remote)
     heads = [item["id"] for item in sync.revision_heads(remote.items)]
     assert run(b, remote)["status"] == "conflict"
-    assert b.paper(identity)["note"] == "B"
+    assert read_memo(b, identity) == "B"
     with pytest.raises(ValueError, match="別のPC"):
         run(b, remote, choice="local", expected_heads=["stale"])
     result = run(b, remote, choice=heads[0], expected_heads=heads)
-    assert b.paper(identity)["note"] == "A"
+    assert read_memo(b, identity) == "A"
     assert result["previous_path"] is None
     [kept] = result["set_aside"]
-    assert recorded_state(b, kept).paper(identity)["note"] == "B"
+    assert read_memo(recorded_state(b, kept), identity) == "B"
     assert len(sync.revision_heads(remote.items)) == 1
 
 
 def test_failed_upload_and_corrupt_download_leave_local_unchanged(pair):
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     before = sync.read_state(a.root)
     remote.fail = True
     with pytest.raises(OSError):
@@ -160,27 +161,27 @@ def test_failed_upload_and_corrupt_download_leave_local_unchanged(pair):
     remote.data[head["id"]] = b"corrupt"
     with pytest.raises(ValueError, match="検証"):
         run(b, remote)
-    assert b.paper(identity)["note"] == ""
+    assert read_memo(b, identity) == ""
 
 
 def test_failed_resolution_upload_does_not_replace_local(pair):
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
-    b.update(identity, note="B")
+    set_memo(a, identity, note="A")
+    set_memo(b, identity, note="B")
     run(a, remote)
     head = sync.revision_heads(remote.items)[0]["id"]
     remote.fail = True
     with pytest.raises(OSError):
         run(b, remote, choice=head, expected_heads=[head])
-    assert b.paper(identity)["note"] == "B"
+    assert read_memo(b, identity) == "B"
 
 
 def test_concurrent_publications_remain_branches(pair):
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
-    b.update(identity, note="B")
+    set_memo(a, identity, note="A")
+    set_memo(b, identity, note="B")
     observed = remote.revisions()
     run(a, remote)
     original = remote.revisions
@@ -251,7 +252,7 @@ def test_cancel_during_the_final_replacement_keeps_the_library_and_retries_next_
     from papeer.providers import Cancelled
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     run(a, remote)
     state = sync.read_state(b.root)
     folders = sorted(b.root.parent.iterdir())
@@ -266,11 +267,11 @@ def test_cancel_during_the_final_replacement_keeps_the_library_and_retries_next_
     monkeypatch.setattr(sync, "restore_backup", restore)
     with pytest.raises(Cancelled):
         sync.sync(b, remote, cancel, lambda _: None)
-    assert b.paper(identity)["note"] != "A"
+    assert read_memo(b, identity) != "A"
     assert sync.read_state(b.root) == state
     assert sorted(b.root.parent.iterdir()) == folders  # no half-restored or moved-aside folder
     assert run(b, remote)["reloaded"] is True
-    assert Library(b.root).paper(identity)["note"] == "A"
+    assert read_memo(Library(b.root), identity) == "A"
 
 
 def test_cancel_after_publishing_a_choice_offers_the_choice_again(pair, monkeypatch):
@@ -278,9 +279,9 @@ def test_cancel_after_publishing_a_choice_offers_the_choice_again(pair, monkeypa
     from papeer.providers import Cancelled
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     run(a, remote)
-    b.update(identity, note="B")
+    set_memo(b, identity, note="B")
     assert run(b, remote)["status"] == "conflict"
     head = sync.revision_heads(remote.items)[0]["id"]
     cancel = threading.Event()
@@ -294,7 +295,7 @@ def test_cancel_after_publishing_a_choice_offers_the_choice_again(pair, monkeypa
     monkeypatch.setattr(remote, "upload", upload_then_cancel)
     with pytest.raises(Cancelled):
         sync.sync(b, remote, cancel, lambda _: None, choice=head, expected_heads=[head])
-    assert b.paper(identity)["note"] == "B"
+    assert read_memo(b, identity) == "B"
     # The choice is already published, so the library it left out stays kept.
     assert [item["side"] for item in set_aside_entries(b)] == ["local"]
     monkeypatch.setattr(remote, "upload", upload)
@@ -302,7 +303,7 @@ def test_cancel_after_publishing_a_choice_offers_the_choice_again(pair, monkeypa
     assert result["status"] == "conflict"
     merged = result["conflicts"][0]["id"]
     assert run(b, remote, choice=merged, expected_heads=[merged])["reloaded"] is True
-    assert Library(b.root).paper(identity)["note"] == "A"
+    assert read_memo(Library(b.root), identity) == "A"
 
 
 def publish_old_revision(remote, tmp_path):
@@ -374,12 +375,12 @@ def add_stickies(lib, identity, count):
 
 def test_revisions_record_what_the_library_holds(pair):
     a, _, identity, remote = pair
-    a.update(identity, note="メモ")
+    set_memo(a, identity, note="メモ")
     add_stickies(a, identity, 2)
     a.save_ink(identity, "original", 1, [{"id": "stroke"}])
     a.save_ink(identity, "original", 2, [])  # A page whose ink was erased is not counted.
     run(a, remote)
-    assert remote.items[0]["counts"] == {"papers": 1, "notes": 1, "stickies": 2, "ink": 1, "notebooks": 0, "attachments": 0}
+    assert remote.items[0]["counts"] == {"papers": 1,  "stickies": 2, "ink": 1, "notebooks": 0, "attachments": 1}
     assert sync.read_state(a.root)["counts"] == remote.items[0]["counts"]
 
 
@@ -389,7 +390,7 @@ def test_revisions_record_what_the_library_holds(pair):
     ({"stickies": 4}, {"stickies": 0}, []),              # fewer than 5 items
     ({"papers": 300}, {"papers": 270}, []),              # a clean-up in a large library
     ({"papers": 2}, {"papers": 0}, ["papers"]),          # emptied: always asks
-    ({"papers": 2, "notes": 8}, {"papers": 1, "notes": 1}, ["notes"]),
+    ({"papers": 2, "attachments": 8}, {"papers": 1, "attachments": 1}, ["attachments"]),
     (None, {"papers": 0}, []),                           # nothing to compare with
 ])
 def test_what_counts_as_a_large_decrease(before, after, shrunk):
@@ -486,7 +487,7 @@ def test_restored_backup_is_published_only_after_confirmation(pair, tmp_path):
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
     create_backup(a, tmp_path / "old.zip")
-    a.update(identity, note="newer")
+    set_memo(a, identity, note="newer")
     run(a, remote)
     run(b, remote)
     restore_backup(a, tmp_path / "old.zip")
@@ -499,7 +500,7 @@ def test_restored_backup_is_published_only_after_confirmation(pair, tmp_path):
     assert run(a, remote, confirm=True)["status"] == "synced"
     assert sync.status(a.root)["restored"] is False
     run(b, remote)
-    assert Library(b.root).paper(identity)["note"] == ""
+    assert read_memo(Library(b.root), identity) == ""
 
 
 def test_restore_marks_the_library_for_review_only_once_it_was_synced(pair):
@@ -662,7 +663,7 @@ def test_pcs_updated_to_the_same_migration_do_not_conflict(pair, monkeypatch):
     assert len(remote.items) == count + 1
     assert sync.read_state(b.root)["base"] == remote.items[-1]["id"]
     # Later edits flow as usual.
-    b.update(identity, note="after the update")
+    set_memo(b, identity, note="after the update")
     run(b, remote)
     assert run(a, remote)["reloaded"] is True
 
@@ -728,14 +729,14 @@ def test_restored_backup_can_be_dropped_for_the_sync_folders(pair, tmp_path):
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
     create_backup(a, tmp_path / "old.zip")
-    a.update(identity, note="newer")
+    set_memo(a, identity, note="newer")
     run(a, remote)
     restore_backup(a, tmp_path / "old.zip")
     sync.mark_restored(a.root)
     review = run(a, remote)["review"]
     assert review["reason"] == "restored"
     assert run(a, remote, choice=review["heads"][0], expected_heads=review["heads"])["reloaded"] is True
-    assert Library(a.root).paper(identity)["note"] == "newer"
+    assert read_memo(Library(a.root), identity) == "newer"
     assert sync.status(a.root)["restored"] is False
 
 
@@ -793,12 +794,12 @@ def test_check_tells_what_an_automatic_sync_would_do(pair, settled):
     a.save_note_template("custom", "template")
     # A change to the database alone is hashed from the records.
     assert sync.check(a.root, remote) == {"action": "quiet", "local_version": sync.fingerprint(a)}
-    a.update(identity, note="A")  # note.md changes too: the check leaves the hashing to the sync
+    set_memo(a, identity, note="A")  # note.md changes too: the check leaves the hashing to the sync
     assert sync.check(a.root, remote)["action"] == "quiet"
     run(a, remote)
     assert sync.check(a.root, remote)["action"] == "none"
     assert sync.check(b.root, remote)["action"] == "pull"
-    b.update(identity, note="B")
+    set_memo(b, identity, note="B")
     assert sync.check(b.root, remote)["action"] == "quiet"  # a conflict: recorded without touching the library
 
 
@@ -816,14 +817,14 @@ def test_the_first_check_after_launch_trusts_no_record(pair, settled):
 def test_background_sync_publishes_but_leaves_taking_in_to_a_later_sync(pair):
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     assert run(a, remote, background=True)["status"] == "synced"
     state = sync.read_state(b.root)
     count = len(remote.items)
     assert run(b, remote, background=True) == {"status": "deferred", "reloaded": False, "previous_path": None}
-    assert b.paper(identity)["note"] == "" and sync.read_state(b.root) == state and len(remote.items) == count
+    assert read_memo(b, identity) == "" and sync.read_state(b.root) == state and len(remote.items) == count
     assert run(b, remote)["reloaded"] is True
-    assert Library(b.root).paper(identity)["note"] == "A"
+    assert read_memo(Library(b.root), identity) == "A"
 
 
 def test_a_wrong_recorded_hash_never_reaches_the_sync_folder(pair, settled):
@@ -877,7 +878,7 @@ def test_check_api_and_background_flag(pair, monkeypatch, settled):
     monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     monkeypatch.setattr(deps, "job_manager", JobManager())
     monkeypatch.setattr(sync, "FolderDrive", lambda _: remote)
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     run(a, remote)
     monkeypatch.setattr(deps, "get_data_dir", lambda: b.root)
     with TestClient(app) as client:
@@ -887,7 +888,7 @@ def test_check_api_and_background_flag(pair, monkeypatch, settled):
         while deps.job_manager.get_job(job_id).running and time.monotonic() < deadline:
             time.sleep(0.01)
         assert deps.job_manager.get_job(job_id).result.status == "deferred"
-        assert b.paper(identity)["note"] == ""
+        assert read_memo(b, identity) == ""
 
         def unreachable(_):
             raise ValueError("同期フォルダーが見つかりません。")
@@ -904,14 +905,14 @@ def test_a_newer_revision_at_launch_is_taken_in_by_the_first_sync(pair, settled)
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
     run(b, remote)
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     run(a, remote)
     sync._VERIFIED.clear()  # as after a restart of the sidecar
     assert sync.check(b.root, remote) == {"action": "quiet", "local_version": None}
     # A background sync could only defer it (see autoSyncSchedule.ts: the take-in then runs at once).
     assert run(b, remote, background=True)["status"] == "deferred"
     assert run(b, remote)["reloaded"] is True
-    assert Library(b.root).paper(identity)["note"] == "A"
+    assert read_memo(Library(b.root), identity) == "A"
 
 
 # --- Choosing between two libraries: what differs, and the side left out ---
@@ -927,10 +928,10 @@ def test_conflict_shows_what_differs_from_each_head(pair, tmp_path):
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
     other, _ = a.import_pdf(another_pdf(tmp_path))
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     add_stickies(a, identity, 2)
     a.save_ink(identity, "original", 1, [{"id": "stroke"}])
-    b.update(identity, note="B")
+    set_memo(b, identity, note="B")
     b.save_ink(identity, "original", 2, [])  # An emptied page holds no ink.
     run(a, remote)
     result = run(b, remote)
@@ -939,7 +940,7 @@ def test_conflict_shows_what_differs_from_each_head(pair, tmp_path):
     assert (diff["local_only"], diff["remote_only"]) == (0, 1)
     assert (diff["local_titles"], diff["remote_titles"]) == ([], [a.paper(other)["title"]])
     # Counted among the papers both sides have; the other paper's contents are not counted again.
-    assert (diff["notes"], diff["stickies"], diff["ink"]) == (1, 2, 1)
+    assert (diff["attachments"], diff["stickies"], diff["ink"]) == (2, 2, 1)
     assert (diff["local_counts"]["papers"], diff["remote_counts"]["papers"]) == (1, 2)
     assert sync.status(b.root)["conflicts"][0]["diff"] == diff
 
@@ -947,7 +948,7 @@ def test_conflict_shows_what_differs_from_each_head(pair, tmp_path):
 def test_what_differs_leaves_out_what_an_older_database_lacks(pair, tmp_path):
     import sqlite3
     a, _, identity, _ = pair
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     a.save_ink(identity, "original", 1, [{"id": "stroke"}])
     older = tmp_path / "older.sqlite3"
     with sqlite3.connect(older) as db:
@@ -958,15 +959,15 @@ def test_what_differs_leaves_out_what_an_older_database_lacks(pair, tmp_path):
     a.add_bookmark(identity, 1, "original", "quote 0")
     diff = sync.library_difference(a.root / "library.sqlite3", older)
     # The sticky note matches on the columns both have; the ink has no table to match on the other side.
-    assert (diff["notes"], diff["stickies"], diff["ink"]) == (0, 0, 1)
-    assert diff["remote_counts"] == {"papers": 1, "notes": 1, "stickies": 1, "ink": 0, "notebooks": 0, "attachments": 0}
+    assert (diff["attachments"], diff["stickies"], diff["ink"]) == (1, 0, 1)
+    assert diff["remote_counts"] == {"papers": 1,  "stickies": 1, "ink": 0, "notebooks": 0, "attachments": 0}
 
 
 def test_conflict_is_offered_even_when_what_differs_cannot_be_read(pair, monkeypatch):
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
-    b.update(identity, note="B")
+    set_memo(a, identity, note="A")
+    set_memo(b, identity, note="B")
     run(a, remote)
 
     @contextmanager
@@ -982,9 +983,9 @@ def test_conflict_is_offered_even_when_what_differs_cannot_be_read(pair, monkeyp
 def test_choice_keeps_the_side_left_out_in_this_pcs_history(pair):
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     run(a, remote)
-    b.update(identity, note="B")
+    set_memo(b, identity, note="B")
     assert run(b, remote)["status"] == "conflict"
     head = sync.revision_heads(remote.items)[0]
     result = run(b, remote, choice="local", expected_heads=[head["id"]])
@@ -994,22 +995,22 @@ def test_choice_keeps_the_side_left_out_in_this_pcs_history(pair):
     assert (kept[0]["counts"], kept[0]["hash"], kept[0]["revision"]) == (head["counts"], head["hash"], head["id"])
     assert kept[0]["complete"]
     # Recorded from the revision's archive: the same library, file for file.
-    assert recorded_state(b, kept[0]["id"]).paper(identity)["note"] == "A"
+    assert read_memo(recorded_state(b, kept[0]["id"]), identity) == "A"
     assert sync.fingerprint(b.root.parent / ("state-" + kept[0]["id"])) == head["hash"]
     # No ZIP beside the library any more.
     assert sync.side_backups(b.root) == [] and not sync.side_backup_folder(b.root).exists()
 
     # Taking the sync folder's library keeps this PC's.
-    b.update(identity, note="B2")
+    set_memo(b, identity, note="B2")
     run(b, remote)
-    a.update(identity, note="A2")
+    set_memo(a, identity, note="A2")
     assert run(a, remote)["status"] == "conflict"
     head = sync.revision_heads(remote.items)[0]
     result = run(a, remote, choice=head["id"], expected_heads=[head["id"]])
-    assert Library(a.root).paper(identity)["note"] == "B2"
+    assert read_memo(Library(a.root), identity) == "B2"
     local = set_aside_entries(a)[0]
     assert (local["side"], local["counts"]["papers"]) == ("local", 1)
-    assert recorded_state(a, local["id"]).paper(identity)["note"] == "A2"
+    assert read_memo(recorded_state(a, local["id"]), identity) == "A2"
     # This PC's library is in the history, so the folder the swap moved aside is gone.
     assert result["previous_path"] is None and moved_aside(a) == []
 
@@ -1053,9 +1054,9 @@ def test_side_backups_api_and_restore(pair, monkeypatch):
 
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     run(a, remote)
-    b.update(identity, note="B")
+    set_memo(b, identity, note="B")
     # A ZIP an earlier version set aside.
     folder = sync.side_backup_folder(b.root)
     folder.mkdir()
@@ -1075,7 +1076,7 @@ def test_side_backups_api_and_restore(pair, monkeypatch):
         while deps.job_manager.get_job(job_id).running and time.monotonic() < deadline:
             time.sleep(0.01)
         assert deps.job_manager.get_job(job_id).status == "succeeded"
-    assert Library(b.root).paper(identity)["note"] == "A"
+    assert read_memo(Library(b.root), identity) == "A"
     assert sync.status(b.root)["restored"] is True
 
 
@@ -1083,9 +1084,9 @@ def test_a_choice_stopped_before_publishing_keeps_nothing_set_aside(pair, monkey
     from papeer.providers import Cancelled
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     run(a, remote)
-    b.update(identity, note="B")
+    set_memo(b, identity, note="B")
     assert run(b, remote)["status"] == "conflict"
     head = sync.revision_heads(remote.items)[0]["id"]
 
@@ -1097,15 +1098,15 @@ def test_a_choice_stopped_before_publishing_keeps_nothing_set_aside(pair, monkey
         run(b, remote, choice=head, expected_heads=[head])
     # Offered again, and set aside anew then.
     assert set_aside_entries(b) == []
-    assert b.paper(identity)["note"] == "B"
+    assert read_memo(b, identity) == "B"
 
 
 def test_this_pcs_library_can_be_chosen_over_a_damaged_revision(pair):
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     run(a, remote)
-    b.update(identity, note="B")
+    set_memo(b, identity, note="B")
     assert run(b, remote)["status"] == "conflict"
     head = sync.revision_heads(remote.items)[0]
     remote.data[head["id"]] = b"damaged"
@@ -1115,7 +1116,7 @@ def test_this_pcs_library_can_be_chosen_over_a_damaged_revision(pair):
     assert result["not_set_aside"] == expected
     assert sync.status(b.root)["not_set_aside"] == expected
     assert set_aside_entries(b) == []
-    assert Library(b.root).paper(identity)["note"] == "B"
+    assert read_memo(Library(b.root), identity) == "B"
     assert sync.revision_heads(remote.items)[0]["parents"] == [head["id"]]
     # Cleared by the next sync.
     run(b, remote)
@@ -1126,9 +1127,9 @@ def test_a_full_drive_stops_setting_aside(pair, monkeypatch):
     from papeer.core.fileio import InsufficientSpaceError
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     run(a, remote)
-    b.update(identity, note="B")
+    set_memo(b, identity, note="B")
     run(b, remote)
     head = sync.revision_heads(remote.items)[0]["id"]
 
@@ -1147,9 +1148,9 @@ def conflicted_pair(pair):
     """b chose nothing yet between its note B and a's revision with note A."""
     a, b, identity, remote = pair
     connect_pair(a, b, remote)
-    a.update(identity, note="A")
+    set_memo(a, identity, note="A")
     run(a, remote)
-    b.update(identity, note="B")
+    set_memo(b, identity, note="B")
     assert run(b, remote)["status"] == "conflict"
     return b, identity, remote, sync.revision_heads(remote.items)[0]
 

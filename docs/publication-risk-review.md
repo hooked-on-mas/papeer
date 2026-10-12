@@ -29,13 +29,13 @@ README は本体を `AGPL-3.0-or-later` と記載し、ルートの `LICENSE` �
 | 領域 | ロックされた主要直接依存とライセンス |
 | --- | --- |
 | Python 本番 14 件 | `PyMuPDF 1.28.2` AGPL-3.0/商用（OCR に使う Tesseract を内蔵）、`pypdfium2 5.13.0` BSD-3-Clause/Apache-2.0 と内蔵依存、`fonttools 4.65.0` MIT、`Pillow 12.3.0` MIT-CMU、`FastAPI 0.141.1` MIT、`uvicorn 0.53.0` BSD-3-Clause、`pydantic 2.13.5` MIT。Windows だけで入る pywinrt（Windows.Media.Ocr を呼ぶ）の `winrt-runtime` と `winrt-Windows.Foundation`・`.Foundation.Collections`・`.Globalization`・`.Graphics.Imaging`・`.Media.Ocr`・`.Storage.Streams`（いずれも 3.2.1）の 7 件はすべて MIT。macOS だけで入る `pyobjc-framework-Vision` と、それが引く `pyobjc-core`・`pyobjc-framework-Cocoa`・`-Quartz`・`-CoreML`（12.2.2、MIT）は Windows の配布物には入らない（台帳では other-platform-in-lock）。 |
-| JavaScript 本番 27 件 | React/React DOM、Mermaid、KaTeX、React PDF、React Markdown、TanStack Query・TanStack Virtual、Zustand などの多くが MIT。`pdfjs-dist` と `class-variance-authority` は Apache-2.0、`lucide-react` は ISC、`@fontsource-variable/geist` は OFL-1.1、Tauri JS パッケージ群は MIT/Apache-2.0 の選択。正確な版と 27 件すべては別紙一覧を参照。 |
+| JavaScript 本番 32 件 | React/React DOM、Mermaid、KaTeX、React PDF、React Markdown、TanStack Query・TanStack Virtual、Zustand などの多くが MIT。`pdfjs-dist` と `class-variance-authority` は Apache-2.0、`lucide-react` は ISC、`@fontsource-variable/geist` は OFL-1.1、Tauri JS パッケージ群は MIT/Apache-2.0 の選択。正確な版と 32 件すべては別紙一覧を参照。 |
 | Rust 直接依存 | Tauri 2 と各プラグイン、Serde 系は主に MIT/Apache-2.0 の選択。Windows 向け間接依存には MPL-2.0 の 5 crate がある。 |
 | フォント・PDF 表示データ | 源ノ明朝・源ノ角ゴシックと Geist は OFL-1.1。PDF.js の CMap は同梱 LICENSE、Foxit フォントは BSD 系、Liberation フォントは GPLv2 とフォント埋込み例外の条件がある。 |
 
 JavaScript の直接依存を固定版でさらに示すと、MIT は `@base-ui/react 1.8.0`、`@dnd-kit/core 6.3.1`、`@tanstack/react-query 5.103.2`、`@tanstack/react-virtual 3.14.13`、`cn 0.4.0`、`katex 0.18.7`、`mermaid 12.0.0`、`openapi-fetch 0.17.0`、`react 19.3.0`、`react-dom 19.3.0`、`react-hotkeys-hook 5.3.3`、`react-markdown 10.1.0`、`react-pdf 11.0.0`、`react-resizable-panels 4.13.2`、`rehype-katex 7.0.1`、`remark-gfm 4.0.1`、`remark-math 6.0.0`、`zustand 5.0.15` の 18 件。Apache-2.0 は `class-variance-authority 0.7.1` と `pdfjs-dist 6.3.289`、ISC は `lucide-react 1.47.0`、OFL-1.1 は `@fontsource-variable/geist 5.3.0`。`@tauri-apps/api 2.11.1`、`plugin-dialog 2.7.3`、`plugin-notification 2.4.0`、`plugin-opener 2.5.5`、`plugin-process 2.3.1` は Apache-2.0/MIT の選択である。開発専用依存と間接依存は別紙に分けている。
 
-ロックファイル上の Python 外部依存は開発・ビルド込み **55 件**（Windows 実行時 **29 件**、macOS だけで入る Vision 関連 5 件を含む）、JavaScript 本番依存閉包は **297 個の name@version**（うち **287 個**が Windows x64 に該当して手元にインストール、残り 10 個は他 OS/CPU 向け optional バイナリ）、Windows 対象の Rust 外部 crate は **256 件**である。Windows x64 に該当する一覧行にはライセンス不明がない。全件の固定版・ライセンスは[依存ライセンス一覧](dependency-license-inventory.json)を参照する。これは**利用者がインストールする依存と、将来ビルドを再配布する場合の調査資料**であり、一覧の全パッケージを作者がソースリポジトリに同梱するという意味ではない。ロックを変えた場合、Windows の台帳は Windows で `just licenses` により再生成する（台帳に記録したロックファイルの sha256 との一致をテストで検査する）。macOS・Linux の台帳は各 OS の上でしか作れないため、CI の手動実行（`licenses`）で作り、古くなっても警告にとどめる。
+ロックファイル上の Python 外部依存は開発・ビルド込み **55 件**（Windows 実行時 **29 件**、macOS だけで入る Vision 関連 5 件を含む）、JavaScript 本番依存閉包は **321 個の name@version**（うち **311 個**が Windows x64 に該当して手元にインストール、残り 10 個は他 OS/CPU 向け optional バイナリ）、Windows 対象の Rust 外部 crate は **256 件**である。Windows x64 に該当する一覧行にはライセンス不明がない。全件の固定版・ライセンスは[依存ライセンス一覧](dependency-license-inventory.json)を参照する。これは**利用者がインストールする依存と、将来ビルドを再配布する場合の調査資料**であり、一覧の全パッケージを作者がソースリポジトリに同梱するという意味ではない。ロックを変えた場合、Windows の台帳は Windows で `just licenses` により再生成する（台帳に記録したロックファイルの sha256 との一致をテストで検査する）。macOS・Linux の台帳は各 OS の上でしか作れないため、CI の手動実行（`licenses`）で作り、古くなっても警告にとどめる。
 
 ### 特に検討が必要な依存
 
@@ -108,3 +108,7 @@ Papeer 固有の新技術を出願する意向があるなら、**GitHub でソ�
 6. **利用者が実行するコードの安全性を別途点検**する。ローカル API トークンは起動ごとに OS の乱数生成器で作る 256 bit の値に改め、トークンなしでは sidecar が起動せず、URL クエリに載る分もアクセスログに出さないようにした（2026-09）。Tauri には CSP を設定済みで、スクリプトはアプリ自身のもののみ、通信先は IPC と起動時に決めた sidecar のポート（`127.0.0.1` の 1 ポート）に限る。Mermaid は `securityLevel: "strict"` で描画し、解説・メモの Markdown は `file:` などのリンクを表示しない。sidecar の CORS は本番では Tauri のオリジンだけを許可し、書き出し・バックアップ・辞書の保存先にライブラリ内は選べない（2026-09）。ソース公開のライセンス義務ではないが、利用者の PDF を扱うツールとして今後も点検を続ける。[Tauri の CSP 説明](https://tauri.app/security/csp/)、[OWASP のトークン指針](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
 
 この文書の現状確認は Git 追跡ファイル、コード、ロックファイル、手元のビルド成果物と公開資料による。GitHub Release 等で後にバイナリを追加した場合、この結論はそのまま適用できない。
+
+### 2026-10-12: 複数メモの入力欄
+
+CodeMirror 6 を追加。直接依存は `codemirror 6.0.2`、`@codemirror/lang-markdown 6.5.2`、`@codemirror/search 6.7.2`、`@codemirror/state 6.7.6`、`@codemirror/view 6.43.14` の5件で、いずれも MIT。インストール済みの正確な版の package.json と LICENSE を確認し、台帳を再生成しました。[CodeMirror のライセンス](https://github.com/codemirror/dev/blob/main/LICENSE)。Markdown の色分け、リスト継続、検索・置換は端末内で処理し、本文を外部へ送りません。

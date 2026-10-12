@@ -307,7 +307,7 @@ def test_counts_tell_papers_notebooks_and_memos_apart(lib):
 
 
 def test_removing_memos_is_not_reported_as_papers_lost():
-    before = {"papers": 20, "notes": 3, "stickies": 0, "ink": 0, "notebooks": 4, "attachments": 30}
+    before = {"papers": 20,  "stickies": 0, "ink": 0, "notebooks": 4, "attachments": 30}
     after = {**before, "attachments": 0}
     assert sync.shrunk_kinds(before, after) == ["attachments"]
     assert "論文" not in sync._kinds_text(sync.shrunk_kinds(before, after))

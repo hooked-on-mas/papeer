@@ -5,21 +5,21 @@
  * lacks the last two, and a library of papers only has 0 of them: they are left out of what is said, not
  * shown as 0 (see HELD_COUNTS).
  */
-export type Counts = Partial<Record<"papers" | "notes" | "stickies" | "ink" | "notebooks" | "attachments", number>>;
+export type Counts = Partial<Record<"papers" | "stickies" | "ink" | "notebooks" | "attachments", number>>;
 
 /** The counts' labels in the table a sync review shows (drive_sync.COUNT_LABELS, with the unit of a page of ink). */
 export const COUNT_LABELS: [keyof Counts, string][] = [
-  ["papers", "論文"], ["notes", "メモ"], ["stickies", "付箋"], ["ink", "書き込み（ページ）"],
-  ["notebooks", "ノート"], ["attachments", "追加のメモ・資料"],
+  ["papers", "論文"], ["stickies", "付箋"], ["ink", "書き込み（ページ）"],
+  ["notebooks", "ノート"], ["attachments", "メモ・資料"],
 ];
 
 /**
  * The counts that are told only where there is something to tell: the notebooks and the memos and documents,
- * which a library of papers only has none of. The first four are always told, 0 or not.
+ * which a library of papers only has none of. The first three are always told, 0 or not.
  */
 const HELD_COUNTS: ReadonlySet<keyof Counts> = new Set(["notebooks", "attachments"]);
 
-/** Whether a count is told: always for the four every library has, for the others when it is above 0. */
+/** Whether a count is told: always for the three every library has, for the others when it is above 0. */
 function told(key: keyof Counts, ...values: (number | undefined)[]): boolean {
   return !HELD_COUNTS.has(key) || values.some((value) => (value ?? 0) > 0);
 }
@@ -42,7 +42,7 @@ export type LibraryDifference = {
   /** Papers only this PC has, and only the revision has, with a few of their titles. */
   local_only: number; remote_only: number; local_titles: string[]; remote_titles: string[];
   /** Among the papers both have: memos, sticky notes and pages of ink that differ. */
-  notes: number; stickies: number; ink: number;
+  attachments: number; stickies: number; ink: number;
   local_counts: Counts; remote_counts: Counts;
 };
 
@@ -65,7 +65,7 @@ export function itemNoun(diff: LibraryDifference): string {
  * when either side has some, so that a library of papers only says nothing of them.
  */
 export function holdingLines(diff: LibraryDifference, names: { local: string; remote: string }): string[] {
-  return ([["notebooks", "ノート"], ["attachments", "追加のメモ・資料"]] as const).flatMap(([key, label]) => {
+  return ([["notebooks", "ノート"], ["attachments", "メモ・資料"]] as const).flatMap(([key, label]) => {
     const [local, remote] = [diff.local_counts[key], diff.remote_counts[key]];
     return (local ?? 0) > 0 || (remote ?? 0) > 0
       ? [`${label}の数：${names.local} ${local ?? "—"}件、${names.remote} ${remote ?? "—"}件`] : [];
@@ -84,7 +84,7 @@ export function describeDifference(diff: LibraryDifference | null | undefined): 
   lines.push(...holdingLines(diff, { local: "このPC", remote: "同期フォルダー" }));
   if (diff.remote_only) lines.push(papers("同期フォルダー", diff.remote_only, diff.remote_titles, itemNoun(diff)));
   if (diff.local_only) lines.push(papers("このPC", diff.local_only, diff.local_titles, itemNoun(diff)));
-  const changed = [diff.notes && `メモ ${diff.notes}件`, diff.stickies && `付箋 ${diff.stickies}件`, diff.ink && `書き込み ${diff.ink}ページ`]
+  const changed = [diff.attachments && `メモ・資料 ${diff.attachments}件`, diff.stickies && `付箋 ${diff.stickies}件`, diff.ink && `書き込み ${diff.ink}ページ`]
     .filter(Boolean);
   if (changed.length) lines.push(`両方にある論文で内容が異なるもの：${changed.join("・")}`);
   if (!diff.remote_only && !diff.local_only && !changed.length)
@@ -96,8 +96,8 @@ export function describeDifference(diff: LibraryDifference | null | undefined): 
 export function describeCounts(value: Counts | null): string {
   if (!value) return "";
   const held = [told("notebooks", value.notebooks) && `ノート ${value.notebooks}件`,
-    told("attachments", value.attachments) && `追加のメモ・資料 ${value.attachments}件`];
-  return [`論文 ${value.papers ?? "—"}件`, `メモ ${value.notes ?? "—"}件`, `付箋 ${value.stickies ?? "—"}件`,
+    told("attachments", value.attachments) && `メモ・資料 ${value.attachments}件`];
+  return [`論文 ${value.papers ?? "—"}件`, `付箋 ${value.stickies ?? "—"}件`,
     `書き込み ${value.ink ?? "—"}ページ`, ...held].filter(Boolean).join("・");
 }
 

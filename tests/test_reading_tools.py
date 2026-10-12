@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests._memos import read_memo, set_memo
 
 import json
 from pathlib import Path
@@ -101,7 +102,7 @@ def test_delete_tag_preserves_papers_notes_and_other_tags(library, tmp_path, mon
     other_pdf.write_bytes(FIXTURE.read_bytes() + b"\n% second paper\n")
     other_id, _ = lib.import_pdf(other_pdf)
     tag = "研究/制御 #1 & '引用'"
-    lib.update(identity, tags=[tag, tag + "a", "残す"], note="大切な読書メモ", read_status="読了")
+    set_memo(lib, identity, tags=[tag, tag + "a", "残す"], note="大切な読書メモ", read_status="読了")
     lib.update(other_id, tags=[tag, "別のタグ"])
     monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
     monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
@@ -117,9 +118,9 @@ def test_delete_tag_preserves_papers_notes_and_other_tags(library, tmp_path, mon
         assert client.delete("/api/tags").status_code == 422
     assert lib.paper(identity)["tags"] == [tag + "a", "残す"]
     assert lib.paper(other_id)["tags"] == ["別のタグ"]
-    assert lib.paper(identity)["note"] == "大切な読書メモ"
+    assert read_memo(lib, identity) == "大切な読書メモ"
     assert lib.paper(identity)["read_status"] == "読了"
-    assert (lib.folder(identity) / "note.md").read_text("utf-8") == "大切な読書メモ"
+    assert not (lib.folder(identity) / "note.md").exists()
     assert (lib.folder(other_id) / "original.pdf").is_file()
 
 
@@ -197,10 +198,11 @@ def test_delete_tag_requires_authentication(library, monkeypatch):
 
 def test_search_translation_note_and_literal_query(library):
     lib, identity = library
-    lib.update(identity, note="次の実験で検証したい。", tags=["検証"])
+    set_memo(lib, identity, note="次の実験で検証したい。", tags=["検証"])
     (lib.folder(identity) / "translation.md").write_text("# 翻訳\n\n## p.1 / b1\n\nむだ時間を考慮します。", encoding="utf-8")
     assert library_search(lib, "むだ時間")["results"][0]["side"] == "translated"
-    assert library_search(lib, "検証")["results"][1]["side"] == "note"
+    assert [hit["side"] for hit in library_search(lib, "検証")["results"]] == ["metadata"]
+    assert library_search(lib, "次の実験")["results"] == []
     assert library_search(lib, "%' OR 1=1 --")["results"] == []
 
 
@@ -262,15 +264,15 @@ def test_revision_preserves_math_token_multiplicity():
 
 def test_backup_restore_keeps_current_data_and_rejects_bad_archive(library, tmp_path):
     lib, identity = library
-    lib.update(identity, tags=["日本語"], read_status="読了", note="バックアップ時のメモ")
+    set_memo(lib, identity, tags=["日本語"], read_status="読了", note="バックアップ時のメモ")
     with lib.connection() as db:
         db.execute("INSERT INTO note_templates VALUES('自分用', '## 結果')")
     backup = tmp_path / "snapshot.zip"
     create_backup(lib, backup)
-    lib.update(identity, note="新しいメモ")
+    set_memo(lib, identity, note="新しいメモ")
     previous = restore_backup(lib, backup)
-    assert Library(lib.root).paper(identity)["note"] == "バックアップ時のメモ"
-    assert Library(previous).paper(identity)["note"] == "新しいメモ"
+    assert read_memo(Library(lib.root), identity) == "バックアップ時のメモ"
+    assert read_memo(Library(previous), identity) == "新しいメモ"
     assert Library(lib.root).paper(identity)["tags"] == ["日本語"]
     invalid = tmp_path / "bad.zip"
     with zipfile.ZipFile(invalid, "w") as archive:
@@ -278,7 +280,7 @@ def test_backup_restore_keeps_current_data_and_rejects_bad_archive(library, tmp_
     with pytest.raises(ValueError):
         restore_backup(Library(lib.root), invalid)
     assert not (tmp_path / "outside.txt").exists()
-    assert Library(lib.root).paper(identity)["note"] == "バックアップ時のメモ"
+    assert read_memo(Library(lib.root), identity) == "バックアップ時のメモ"
     assert not list(tmp_path.glob("data-restore-*"))
 
 
@@ -391,7 +393,7 @@ def test_snapshot_api_and_write_guard(library, tmp_path, monkeypatch):
         assert response.status_code == 200
         wait(response.json()["job_id"])
         assert backup.is_file()
-        lib.update(identity, note="復元前のメモ")
+        set_memo(lib, identity, note="復元前のメモ")
         response = client.post("/api/restore", json={"path": str(backup)})
         assert response.status_code == 200
         job = wait(response.json()["job_id"])
@@ -400,8 +402,8 @@ def test_snapshot_api_and_write_guard(library, tmp_path, monkeypatch):
         [before] = local_history.entries(lib.root)
         assert before["kind"] == "before_restore"
         local_history.materialize(lib.root, before["id"], tmp_path / "before")
-        assert Library(tmp_path / "before").paper(identity)["note"] == "復元前のメモ"
-        assert client.get(f"/api/papers/{identity}").json()["note"] == ""
+        assert read_memo(Library(tmp_path / "before"), identity) == "復元前のメモ"
+        assert client.get(f"/api/papers/{identity}/attachments").json() == []
 
 
 def test_chat_explicit_reference_pages(library):

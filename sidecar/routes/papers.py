@@ -172,7 +172,7 @@ def get_paper(paper_id: str) -> dict[str, Any]:
     lib = deps.get_library()
     lib.paper_folder(paper_id)
     paper = lib.paper(paper_id)
-    return {**paper_row(lib, paper), "note": paper["note"]}
+    return paper_row(lib, paper)
 
 
 @router.patch("/api/papers/{paper_id}")
@@ -183,7 +183,7 @@ def update_paper(paper_id: str, body: UpdatePaperRequest) -> dict[str, str]:
         raise Invalid("タイトルを入力してください。")
     fields = {"title": body.title.strip() if body.title is not None else None, "first_author": body.author,
               "publication_year": str(body.year) if body.year is not None else None,
-              "collection_name": body.collection, "note": body.note, "tags": body.tags, "read_status": body.read_status,
+              "collection_name": body.collection, "tags": body.tags, "read_status": body.read_status,
               "doi": body.doi, "arxiv_id": body.arxiv_id, "venue": body.venue}
     updates = {key: value for key, value in fields.items() if value is not None}
     if updates:

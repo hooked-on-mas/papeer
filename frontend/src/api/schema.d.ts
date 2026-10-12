@@ -727,6 +727,94 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/papers/{paper_id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Attachments */
+        get: operations["list_attachments_api_papers__paper_id__attachments_get"];
+        put?: never;
+        /** Create Memo */
+        post: operations["create_memo_api_papers__paper_id__attachments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** All Attachments */
+        get: operations["all_attachments_api_attachments_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/attachments/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Memos */
+        post: operations["import_memos_api_papers__paper_id__attachments_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/attachments/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Order Memos */
+        put: operations["order_memos_api_papers__paper_id__attachments_order_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/attachments/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Memo */
+        get: operations["get_memo_api_papers__paper_id__attachments__attachment_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Memo */
+        delete: operations["delete_memo_api_papers__paper_id__attachments__attachment_id__delete"];
+        options?: never;
+        head?: never;
+        /** Edit Memo */
+        patch: operations["edit_memo_api_papers__paper_id__attachments__attachment_id__patch"];
+        trace?: never;
+    };
     "/api/papers/{paper_id}/translate": {
         parameters: {
             query?: never;
@@ -2110,6 +2198,28 @@ export interface components {
             answer: string;
             usage?: components["schemas"]["Usage"] | null;
         };
+        /** Attachment */
+        Attachment: {
+            /** Id */
+            id: string;
+            /** Owner Id */
+            owner_id: string;
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "md" | "html";
+            /** Title */
+            title: string;
+            /** Source */
+            source: string;
+            /** Position */
+            position: number;
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+        };
         /** BackupRequest */
         BackupRequest: {
             /** Path */
@@ -2497,6 +2607,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** EditMemo */
+        EditMemo: {
+            /** Title */
+            title?: string | null;
+            /** Content */
+            content?: string | null;
+        };
         /** ExportRequest */
         ExportRequest: {
             /**
@@ -2681,6 +2798,11 @@ export interface components {
             recent: number;
             /** Days */
             days: number;
+        };
+        /** ImportMemos */
+        ImportMemos: {
+            /** Paths */
+            paths: string[];
         };
         /** ImportRequest */
         ImportRequest: {
@@ -3019,6 +3141,49 @@ export interface components {
             /** Canceled */
             canceled: number;
         };
+        /** MemoContent */
+        MemoContent: {
+            /** Id */
+            id: string;
+            /** Owner Id */
+            owner_id: string;
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "md" | "html";
+            /** Title */
+            title: string;
+            /** Source */
+            source: string;
+            /** Position */
+            position: number;
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+            /** Content */
+            content: string;
+        };
+        /** NewMemo */
+        NewMemo: {
+            /**
+             * Title
+             * @default メモ.md
+             */
+            title?: string;
+            /**
+             * Content
+             * @default
+             */
+            content?: string;
+            /**
+             * Source
+             * @default user
+             * @enum {string}
+             */
+            source?: "user" | "imported";
+        };
         /**
          * OcrApplied
          * @description A page whose text was read by OCR (pdf_engine.extract_pdf): which engines ("tesseract", "windows",
@@ -3147,6 +3312,11 @@ export interface components {
             /** Auto Sync */
             auto_sync: boolean;
         };
+        /** OrderMemos */
+        OrderMemos: {
+            /** Ids */
+            ids: string[];
+        };
         /** OrganizeFolder */
         OrganizeFolder: {
             /** Name */
@@ -3231,7 +3401,7 @@ export interface components {
         };
         /**
          * Paper
-         * @description GET /api/papers/{paper_id}: the paper's row with its memo, which the list leaves out.
+         * @description GET /api/papers/{paper_id}: the item; memos have their own attachment routes.
          */
         Paper: {
             /** Id */
@@ -3331,8 +3501,6 @@ export interface components {
              * @default false
              */
             translation_in_progress?: boolean;
-            /** Note */
-            note: string;
         };
         /** PaperDomainsRequest */
         PaperDomainsRequest: {
@@ -4402,8 +4570,6 @@ export interface components {
             year?: string | null;
             /** Collection */
             collection?: string | null;
-            /** Note */
-            note?: string | null;
             /** Tags */
             tags?: string[] | null;
             /** Read Status */
@@ -6382,6 +6548,303 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_attachments_api_papers__paper_id__attachments_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attachment"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_memo_api_papers__paper_id__attachments_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewMemo"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoContent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    all_attachments_api_attachments_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attachment"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_memos_api_papers__paper_id__attachments_import_post: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportMemos"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attachment"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    order_memos_api_papers__paper_id__attachments_order_put: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderMemos"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_memo_api_papers__paper_id__attachments__attachment_id__get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoContent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_memo_api_papers__paper_id__attachments__attachment_id__delete: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_memo_api_papers__paper_id__attachments__attachment_id__patch: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditMemo"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoContent"];
                 };
             };
             /** @description Validation Error */

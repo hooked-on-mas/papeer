@@ -18,7 +18,8 @@ scenario("メモと整理を別に開き、整理の保存先と読書位置を�
   const pdf = await page.locator("[data-page-number] canvas").first().elementHandle();
 
   await page.getByRole("tab", { name: "メモ", exact: true }).click();
-  const memo = page.getByPlaceholder("論文に関するメモを自由に記述できます…");
+  await page.getByRole("button", { name: "新規メモ", exact: true }).click();
+  const memo = page.getByRole("textbox", { name: "論文のメモ", exact: true });
   await memo.fill("読みながら書いたメモを維持する");
   assert.equal(await page.getByLabel("出版年", { exact: true }).count(), 0);
   await page.getByRole("button", { name: "論文情報・整理", exact: true }).click();
@@ -27,7 +28,7 @@ scenario("メモと整理を別に開き、整理の保存先と読書位置を�
   await panel.getByRole("button", { name: "閉じる", exact: true }).click();
   await panel.waitFor({ state: "detached" });
   assert.equal(await page.getByRole("tab", { name: "メモ", exact: true }).getAttribute("aria-selected"), "true");
-  assert.equal(await memo.inputValue(), "読みながら書いたメモを維持する");
+  assert.equal(await memo.innerText(), "読みながら書いたメモを維持する");
   await waitFor(async () => (await api.call("GET", `/api/papers/${currentId}`)).first_author === "Current Author",
     "閉じたパネルの書誌情報が保存されること");
 
@@ -52,7 +53,7 @@ scenario("メモと整理を別に開き、整理の保存先と読書位置を�
       && paper.read_status === "読了" && paper.tags.includes("比較対象");
   }, "別の論文の整理と書誌情報がその論文に保存されること");
   assert.equal((await api.call("GET", `/api/papers/${currentId}`)).first_author, "Current Author");
-  assert.equal(await memo.inputValue(), "読みながら書いたメモを維持する");
+  assert.equal(await memo.innerText(), "読みながら書いたメモを維持する");
 
   await page.getByRole("tab", { name: "PDFを読む", exact: true }).click();
   assert.deepEqual(await readingPlace(page), place);

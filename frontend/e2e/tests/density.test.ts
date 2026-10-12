@@ -28,17 +28,18 @@ scenario("必要時の取り消しと説明、メモのテンプレート、サ�
   await waitFor(async () => await folderOfRow(page, "Stochastic Gradient") === "未分類", "取り消しで未分類に戻ること");
   assert.equal(await undo.count(), 0);
 
-  await api.call("PATCH", `/api/papers/${paperIds["gradient.pdf"]}`, { first_author: "Taro Yamada" });
+  await api.call("PATCH", `/api/papers/${paperIds["gradient.pdf"]}`, { author: "Taro Yamada" });
   await openPaper(page, "Stochastic Gradient");
   assert.equal(await page.locator("h1").innerText(), "Stochastic Gradient Networks");
   await page.getByRole("tab", { name: "メモ", exact: true }).click();
+  await page.getByRole("button", { name: "新規メモ", exact: true }).click();
   await page.getByRole("button", { name: "テンプレートを使う", exact: true }).click();
   const template = page.getByRole("dialog", { name: "テンプレートを使う", exact: true });
   await template.getByRole("button", { name: "この内容をメモに追加", exact: true }).click();
   await template.waitFor({ state: "detached" });
   await page.getByText(/をメモの末尾に追加しました。/).waitFor();
   const memo = page.getByRole("textbox", { name: "論文のメモ", exact: true });
-  assert.ok((await memo.inputValue()).includes("#"));
+  assert.ok((await memo.innerText()).includes("#"));
   const note = Array.from({ length: 30 }, (_, i) => `メモ ${i + 1}`).join("\n");
   await memo.fill(note);
   assert.ok((await memo.boundingBox())!.height >= 400, "30行のメモに十分な編集領域があること");
@@ -53,7 +54,7 @@ scenario("必要時の取り消しと説明、メモのテンプレート、サ�
   await help.locator("summary").click();
   assert.equal(await help.getByText(/論文情報は追加時にPDFから/).isVisible(), true);
   await panel.getByRole("button", { name: "閉じる", exact: true }).click();
-  assert.equal(await memo.inputValue(), note);
+  assert.equal(await memo.innerText(), note);
   await page.getByRole("tab", { name: "サマリー", exact: true }).click();
   const article = page.getByRole("article", { name: "論文のサマリー", exact: true });
   await article.getByRole("heading", { name: "結果と限界", exact: true }).waitFor();

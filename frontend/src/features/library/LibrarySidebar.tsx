@@ -1,4 +1,9 @@
 import { useTagChoices } from "@/api/tagChoices";
+import { importMemoFiles, useAttachments } from "@/api/attachments";
+import { queryClient } from "@/lib/queryClient";
+import { showError } from "@/components/errorDialog";
+import { memoChildren } from "./memoChildren";
+import { expandMemoOwner, openMemo, useMemoSelection } from "@/features/notes/memoState";
 import {
   memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject,
 } from "react";
@@ -35,7 +40,7 @@ import { usePendingImports, type PendingImport } from "@/app/pendingImports";
 import { allFolderPaths, buildTree, filterPapers, revealOpenings, type FolderNode } from "./libraryTree";
 import {
   createLineSizes, isRequestedLine, linesToRender, OVERSCAN, pinnedLines, shouldVirtualize, treeLines, viewAnchors, type LineBox,
-  type TreeLine,
+  type TreeLine, type ChildLine,
 } from "./treeLines";
 import { useUiScale } from "@/app/uiScale";
 import { normalizeCollection } from "@/lib/collectionPath";
@@ -69,7 +74,7 @@ import { isImeKey } from "@/lib/imeKeys";
 // Keep the title visible in narrow rows; author and file name remain in the full tooltip.
 const libraryPaperTitle = (paper: PaperData) => paper.title || paperDisplayName(paper);
 
-type LibraryHit = { paper_id: string; title: string; side: "metadata" | "note" | "original" | "translated"; page: number | null; snippet: string };
+type LibraryHit = { paper_id: string; title: string; side: "metadata" | "original" | "translated"; page: number | null; snippet: string };
 
 // Defaults that keep their identity from one render to the next, so that the memoized list and tree hold while loading.
 const NO_PAPERS: PaperData[] = [];
@@ -235,11 +240,24 @@ export function LibrarySidebar() {
   // The lines the tree lays out, with the PDFs being added (see treeLines.ts); none while the search's
   // results replace the tree.
   const expandedCollections = useStore((s) => s.expandedCollections);
+  const { data: attachments = [] } = useAttachments();
+  const expandedPapers = useMemoSelection(s => s.expanded);
+  const childrenByOwner = useMemo(() => {
+    const byOwner = new Map<string, { id: string; title: string }[]>();
+    for (const row of attachments) {
+      if (row.format !== "md") continue;
+      const rows = byOwner.get(row.owner_id) ?? [];
+      rows.push(row); byOwner.set(row.owner_id, rows);
+    }
+    return byOwner;
+  }, [attachments]);
   const lines = useMemo(() => {
     if (librarySearch.trim()) return [];
     const open = expandedCollections && new Set(expandedCollections);
-    return treeLines(tree, (path) => filtered || !open || open.has(path));
-  }, [tree, expandedCollections, filtered, librarySearch]);
+    return treeLines(tree, (path) => filtered || !open || open.has(path), {
+      of: paper => memoChildren(childrenByOwner.get(paper.id) ?? []), isOpen: id => expandedPapers.includes(id),
+    });
+  }, [tree, expandedCollections, expandedPapers, childrenByOwner, filtered, librarySearch]);
   // The rows on screen, for the keyboard (see treeKeys.ts): the same lines.
   const rows = useMemo(() => treeRows(lines, libraryPaperTitle), [lines]);
   // Before paint, so that the row that takes the Tab key is right as soon as the rows are, and papers
@@ -327,9 +345,14 @@ export function LibrarySidebar() {
     else if (action.type === "expand" || action.type === "collapse") {
       // Only folders open here; a paper's rows have nothing to open them with until they are given (PaperChildren).
       if (action.row.kind === "folder") setExpanded(action.row.id, action.type === "expand");
+      else if (action.row.kind === "paper") expandMemoOwner(action.row.id, action.type === "expand");
     } else if (action.type === "activate") {
       if (action.row.kind === "paper") openPaper(action.row.id, action.row.folder);
       else if (action.row.kind === "folder") selectFolder(action.row.id);
+      else {
+        const line = lines.find(line => line.key === action.row.key);
+        if (line && line.kind !== "folder" && line.kind !== "paper" && line.kind !== "pending") activateChild(line);
+      }
     }
   };
   const onTreeKeyDown = (e: KeyboardEvent<HTMLDivElement>, capture: boolean) => {
@@ -412,7 +435,8 @@ export function LibrarySidebar() {
       const expandedCollections = useStore.getState().expandedCollections;
       if (paper && expandedCollections !== null) {
         // The folders to open; the paper rows it names (for an item another holds) have nothing to open them yet.
-        const { folders } = revealOpenings(paper, (id) => allPapers.find((p) => p.id === id));
+        const { folders, papers: owners } = revealOpenings(paper, (id) => allPapers.find((p) => p.id === id));
+        owners.forEach(id => expandMemoOwner(id, true));
         const next = new Set(expandedCollections);
         folders.forEach((folder) => next.add(folder));
         if (next.size !== expandedCollections.length) setExpandedCollections([...next]);
@@ -486,9 +510,9 @@ export function LibrarySidebar() {
             <input
               id="library-search"
               type="text"
-              placeholder="タイトル・本文・メモを検索"
+              placeholder="タイトル・本文を検索"
               aria-label="ライブラリを検索"
-              title={withShortcutLabels("タイトル・ファイル名・本文・メモ・フォルダー名を検索（Ctrl+Shift+F）")}
+              title={withShortcutLabels("タイトル・ファイル名・本文・フォルダー名を検索（Ctrl+Shift+F）")}
               className="w-full h-8 pl-8 pr-7 rounded-md bg-background border text-[0.8125rem] focus:outline-none focus:ring-2 focus:ring-ring"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
@@ -578,10 +602,10 @@ export function LibrarySidebar() {
               const store = useStore.getState(); store.setSelectedFolder(null); store.setTranslatedOnly(false);
               store.setActivePaperId(hit.paper_id, hit.page ?? undefined);
               store.setCurrentCollection(allPapers.find(p => p.id === hit.paper_id)?.collection_name ?? "");
-              store.setActiveTab(hit.side === "note" ? "notes" : "reader");
+              store.setActiveTab("reader");
               if (hit.page) store.setReaderJump({ paperId: hit.paper_id, page: hit.page, side: hit.side === "translated" ? "translated" : "original", text: librarySearch, anchor_y: 0 });
             }}><span className="block font-medium truncate">{hit.title}</span>
-              <span className="text-primary">{{ metadata: "論文情報", note: "メモ", original: "原文", translated: "訳文" }[hit.side]}{hit.page && ` p.${hit.page}`}</span>
+              <span className="text-primary">{{ metadata: "論文情報", original: "原文", translated: "訳文" }[hit.side]}{hit.page && ` p.${hit.page}`}</span>
               <span className="block text-muted-foreground line-clamp-2">{hit.snippet}</span></button>)}
             {searchResults?.limited && <p className="p-2 text-muted-foreground">先頭200件を表示しています。検索語を追加して絞り込めます。</p>}
           </div>}
@@ -834,9 +858,9 @@ function TreeList({ ref, lines, scrollRef, treeRef, onKeyDown, onKeyDownCapture,
     : line.kind === "pending"
       ? <PendingRow item={line.item} level={line.level} setSize={line.setSize} posInSet={line.posInSet} />
       : line.kind === "paper"
-        ? <PaperRow paper={line.paper} level={line.level} setSize={line.setSize} posInSet={line.posInSet}
+        ? <PaperRow paper={line.paper} expanded={line.expanded} expandable={line.expandable} level={line.level} setSize={line.setSize} posInSet={line.posInSet}
           collections={rowProps.collections} onTagSelect={rowProps.onTagSelect} />
-        : null;
+        : <MemoChildRow line={line} />;
 
   return (
     // The browser's scroll anchoring is off while only the rows in view render: the view's place is
@@ -878,6 +902,27 @@ type RowProps = {
 
 /** The row's place in the tree, for assistive technology (see treeLines). */
 type LinePlace = { level: number; setSize: number; posInSet: number };
+
+function activateChild(line: ChildLine) {
+  if (line.kind === "attachment" || line.kind === "more") {
+    if (!itemCapabilities(line.owner).memo) return;
+    openPaper(line.owner.id, line.owner.collection_name);
+    openMemo(line.owner.id, line.kind === "attachment" ? line.child.id : undefined);
+  }
+}
+
+function MemoChildRow({ line }: { line: ChildLine }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const tabStop = useTreeFocus(s => s.tabStop === line.key);
+  useFocusRequest(ref, useTreeFocus(s => s.pending?.key === line.key));
+  return <div ref={ref} role="treeitem" data-tree-key={line.key} aria-level={line.level}
+    aria-setsize={line.setSize} aria-posinset={line.posInSet} aria-selected={false} tabIndex={tabStop ? 0 : -1}
+    onFocus={e => { if (e.target === e.currentTarget) updateTreeFocus({ focused: line.key }); }} onClick={() => activateChild(line)}
+    className={`flex cursor-pointer items-center gap-1.5 py-1 pr-2 text-[0.75rem] leading-5 text-muted-foreground hover:bg-muted/60 ${FOCUS_RING}`}
+    style={{ paddingLeft: `${(line.level - 1) * 16 + 8}px` }} title={line.child.title}>
+    {line.kind !== "more" && <FileText className="size-3 shrink-0" />}<span className="truncate">{line.child.title}</span>
+  </div>;
+}
 
 function FolderRowView({ node, level, setSize, posInSet, papers, filtered, setExpanded }: { node: FolderNode } & LinePlace & RowProps) {
   const { setNodeRef } = useDroppable({ id: `folder:${node.path}` });
@@ -1009,7 +1054,8 @@ function PendingRow({ item, level, setSize, posInSet }: { item: PendingImport } 
  * Memoized, with values selected for this paper only: opening a paper renders its row and the one
  * left, and a job's progress events render its paper's row only when what the row shows changes.
  */
-const PaperRow = memo(function PaperRow({ paper, level, setSize, posInSet, collections, onTagSelect }: { paper: PaperData; collections: string[]; onTagSelect: (name: string) => void } & LinePlace) {
+const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, setSize, posInSet, collections, onTagSelect }: { paper: PaperData; expanded: boolean; expandable: boolean; collections: string[]; onTagSelect: (name: string) => void } & LinePlace) {
+  const memoCount = useAttachments().data?.filter(row => row.owner_id === paper.id && row.format === "md").length ?? 0;
   const [allTags, setAllTags] = useState(false);
   // A treeitem, not dnd-kit's default button; the row itself starts a drag from the keyboard, not a button in it.
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({ id: paper.id, attributes: { role: "treeitem" } });
@@ -1052,10 +1098,18 @@ const PaperRow = memo(function PaperRow({ paper, level, setSize, posInSet, colle
           aria-setsize={setSize}
           aria-posinset={posInSet}
           aria-selected={selected}
+          aria-expanded={expandable ? expanded : undefined}
           aria-current={isActive ? "true" : undefined}
           tabIndex={tabStop ? 0 : -1}
           data-tree-key={key}
           data-drop-collection={collection}
+          data-memo-owner={itemCapabilities(paper).memo && !paper.parent_id ? paper.id : undefined}
+          onDragOver={e => { if (itemCapabilities(paper).memo && !paper.parent_id && e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
+          onDrop={e => {
+            if (!itemCapabilities(paper).memo || paper.parent_id || !e.dataTransfer.files.length) return;
+            e.preventDefault(); e.stopPropagation();
+            void importMemoFiles(paper.id, Array.from(e.dataTransfer.files), queryClient).catch(error => showError(error, "メモを取り込めませんでした"));
+          }}
           onFocus={(e) => { if (e.target === e.currentTarget) updateTreeFocus({ focused: key }); }}
           onClick={(e) => {
             // Ctrl toggles the paper in the selection, Shift selects from the anchor (Ctrl+Shift adds
@@ -1077,6 +1131,11 @@ const PaperRow = memo(function PaperRow({ paper, level, setSize, posInSet, colle
           style={{ paddingLeft: `${(level - 1) * 16 + 8}px`, paddingRight: "8px" }}
           title={`${paperDisplayName(paper)}\nファイル名：${paper.original_name ?? ""}`}
         >
+          {expandable && <button tabIndex={-1} aria-label={expanded ? "持ち物を閉じる" : "持ち物を開く"} aria-expanded={expanded}
+            className="mt-0.5 shrink-0 rounded hover:bg-muted" onPointerDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); expandMemoOwner(paper.id, !expanded); }}>
+            {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+          </button>}
           <FileText className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="truncate leading-5">{libraryPaperTitle(paper)}</div>
@@ -1103,6 +1162,7 @@ const PaperRow = memo(function PaperRow({ paper, level, setSize, posInSet, colle
                 {allTags ? "閉じる" : `+${paper.tags.length - 2}`}</button>}
             </div>}
           </div>
+          {expandable && <span className="ml-1 mt-0.5 text-xs text-muted-foreground" aria-label={`持ち物 ${memoCount}件`}>{memoCount}</span>}
           {running && !translating && <Loader2 className="w-3.5 h-3.5 ml-1 mt-0.5 animate-spin text-primary shrink-0" />}
           {failure && <button type="button" className="ml-1 mt-0.5 shrink-0 rounded text-destructive hover:bg-destructive/10"
             title={`${failure.title}（クリックで詳細）`} aria-label={`${failure.title}。詳細を表示`}

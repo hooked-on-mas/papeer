@@ -5,6 +5,7 @@ The stand-in delivers the files one PC wrote to the other's folder when asked: a
 its own device folder (LOCALAPPDATA), so its own sync state and history.
 """
 from __future__ import annotations
+from tests._memos import read_memo, set_memo
 
 from datetime import timedelta
 import gzip
@@ -86,14 +87,14 @@ class PC:
 
     def note(self, identity: str) -> str:
         with self as lib:
-            return lib.paper(identity)["note"]
+            return read_memo(lib, identity)
 
     def edit(self, identity: str, *, note: str | None = None, article: str | None = None) -> None:
         with self as lib:
             if article is not None:
                 (lib.folder(identity) / "article.md").write_text(article, "utf-8")
             if note is not None:
-                lib.update(identity, note=note)
+                set_memo(lib, identity, note=note)
 
     def files(self, place: str) -> set[str]:
         folder = self.drive / "v2" / place
@@ -354,14 +355,14 @@ def test_both_pcs_publishing_at_once_offer_a_choice_that_keeps_the_other_side(pc
     result = a.sync()
     assert result["status"] == "conflict" and len(result["conflicts"]) == 2
     ids = [item["id"] for item in result["conflicts"]]
-    other = next(item for item in result["conflicts"] if item["device"] and item["diff"] and item["diff"]["notes"])
-    assert other["diff"]["notes"] == 1
+    other = next(item for item in result["conflicts"] if item["device"] and item["diff"] and item["diff"]["attachments"])
+    assert other["diff"]["attachments"] == 2  # Each PC created its own attachment ID.
     chosen = a.sync(choice="local", expected_heads=ids)
     assert chosen["status"] == "synced" and len(chosen["set_aside"]) == 1 and chosen["not_set_aside"] == []
     kept = next(entry for entry in a.history() if entry["kind"] == "set_aside")
     with a:
         local_history.materialize(a.root, kept["id"], tmp_path / "kept")
-        assert Library(tmp_path / "kept").paper(identity)["note"] == "from b"
+        assert read_memo(Library(tmp_path / "kept"), identity) == "from b"
     # The merge takes over both heads.
     generation = a.store().view().generations[heads(a)[0]]
     assert sorted(generation["parents"]) == sorted(ids)
@@ -747,7 +748,7 @@ def test_any_order_of_arrival_loses_nothing_and_ends_alike(pcs, seed, tmp_path):
             target = tmp_path / f"{pc.name}-{entry['id']}"
             with pc:
                 local_history.materialize(pc.root, entry["id"], target)
-                kept.add(Library(target).paper(identity)["note"])
+                kept.add(read_memo(Library(target), identity))
     assert {f"a{seed}", f"b{seed}"} <= kept
 
 
@@ -957,7 +958,7 @@ def arrive_in_any_order(pcs, seed: int, tmp_path: Path, *, by_file: bool = False
             target = tmp_path / f"{pc.name}-{entry['id']}"
             with pc:
                 local_history.materialize(pc.root, entry["id"], target)
-                kept.add(Library(target).paper(identity)["note"])
+                kept.add(read_memo(Library(target), identity))
     assert {f"a{seed}-1", f"b{seed}-1"} <= kept
     # Everything delivered: the two sync folders hold the same, and what they keep is whole.
     for _round in range(3):

@@ -1,5 +1,6 @@
 """The library's full-text index (search_index) and the library search that uses it (reading_tools.library_search)."""
 from __future__ import annotations
+from tests._memos import set_memo
 
 from contextlib import closing
 import hashlib
@@ -58,7 +59,7 @@ def looked_through(lib: Library, query: str) -> set[tuple]:
         add(paper, "metadata", None, " ".join([paper["title"], paper["first_author"], paper["publication_year"],
                                               paper["original_name"], paper["collection_name"], paper["venue"],
                                               paper["doi"], paper["arxiv_id"], *paper["tags"]]))
-        add(paper, "note", None, paper["note"])
+
         for number, text in lib.page_texts(paper["id"]):
             add(paper, "original", number, text)
         for page, _, text in PaperFiles(lib.folder(paper["id"])).translation_sections():
@@ -113,7 +114,7 @@ def test_papers_come_by_relevance(lib):
     assert order[1] == many
     assert [titles[paper_id] for paper_id in order[2:]] == ["Adaptive Control", "No translation"]
     notes = list(dict.fromkeys(hit["paper_id"] for hit in library_search(lib, "ネットワーク")["results"]))
-    assert titles[notes[0]] == "No translation"  # Its memo, before pages and translations.
+    assert titles[notes[0]] == "Adaptive Control"  # Memos are not searched in stage B.
 
 
 def test_the_index_follows_changes(lib):
@@ -126,8 +127,8 @@ def test_the_index_follows_changes(lib):
     assert library_search(lib, "書き直した")["results"]
     PaperFiles(lib.folder(paper_id)).translation_md.unlink()
     assert not library_search(lib, "書き直した")["results"]
-    lib.update(paper_id, note="新しいメモ")
-    assert [hit["side"] for hit in library_search(lib, "新しいメモ")["results"]] == ["note"]
+    set_memo(lib, paper_id, note="新しいメモ")
+    assert library_search(lib, "新しいメモ")["results"] == []
     lib.delete_paper(paper_id)
     assert not library_search(lib, "theory")["results"]
     with sqlite3.connect(search_index_path(lib.root)) as db:

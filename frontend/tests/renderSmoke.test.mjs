@@ -63,6 +63,8 @@ before(async () => {
     highlightPassage: (await load("/src/features/reader/readerPassage.ts")).highlightPassage,
     useStickyNotes: (await load("/src/features/reader/stickyNotesStore.ts")).useStickyNotes,
     api: (await load("/src/api/client.ts")).api,
+    memoState: await load("/src/features/notes/memoState.ts"),
+    queryClient: (await load("/src/lib/queryClient.ts")).queryClient,
     StickyNotesTab: (await load("/src/features/reader/StickyNotesTab.tsx")).StickyNotesTab,
     glossaryEditor: await load("/src/features/reader/GlossaryEditor.tsx"),
     LibrarySidebar: (await load("/src/features/library/LibrarySidebar.tsx")).LibrarySidebar,
@@ -79,6 +81,52 @@ before(async () => {
 
 after(async () => {
   await server?.close();
+});
+
+test("memo saves serialize each ID and keep edits retryable after failure or leaving the pane", async () => {
+  const { api, memoState: { hydrateMemo, changeMemo, saveMemo, forgetMemo, useMemoDrafts } } = modules;
+  const original = api.PATCH;
+  const memo = { id: "memo-test", owner_id: "owner-test", format: "md", title: "test.md", source: "user", position: 0,
+    created_at: "now", updated_at: "now", content: "initial" };
+  const calls = [];
+  let release;
+  const saves = [];
+  api.PATCH = async (_path, options) => {
+    calls.push(options);
+    if (calls.length === 1) await new Promise(resolve => { release = resolve; });
+    return { data: { ...memo, content: options.body.content }, response: new Response(null, { status: 200 }) };
+  };
+  try {
+    hydrateMemo(memo);
+    changeMemo(memo.id, "first");
+    const first = saveMemo(memo.id);
+    saves.push(first);
+    await new Promise(resolve => setImmediate(resolve));
+    changeMemo(memo.id, "second");
+    const second = saveMemo(memo.id);
+    saves.push(second);
+    assert.equal(calls.length, 1);
+    release();
+    await Promise.all([first, second]);
+    assert.deepEqual(calls.map(call => [call.params.path.attachment_id, call.body.content]), [[memo.id, "first"], [memo.id, "second"]]);
+    assert.equal(useMemoDrafts.getState().drafts[memo.id].saved, "second");
+    changeMemo(memo.id, "unsaved after leaving");
+    api.PATCH = async () => { throw new Error("offline"); };
+    await assert.rejects(saveMemo(memo.id), /offline/);
+    hydrateMemo({ ...memo, content: "older server text" });
+    assert.equal(useMemoDrafts.getState().drafts[memo.id].text, "unsaved after leaving");
+    api.PATCH = async (_path, options) => ({ data: { ...memo, content: options.body.content }, response: new Response(null, { status: 200 }) });
+    await saveMemo(memo.id);
+    assert.equal(useMemoDrafts.getState().drafts[memo.id].saved, "unsaved after leaving");
+  } finally {
+    // Let the held request and the saves queued behind it finish against the mock (a failed assertion above
+    // must not leave them pending or send them to the network), then forget the draft as the app does.
+    release?.();
+    await Promise.allSettled(saves);
+    forgetMemo(memo.id);
+    api.PATCH = original;
+    modules.queryClient.clear();
+  }
 });
 
 test("paper metadata AI is a separate opt-in checkbox with an explanation of automatic work", () => {

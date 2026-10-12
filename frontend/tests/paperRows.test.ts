@@ -9,8 +9,8 @@ const rows: PaperData[] = [
   paperData({ id: "b", title: "Beta", translated_count: 0 }),
 ];
 
-test("a changed paper replaces its row in place, without the memo", () => {
-  const next = withPaperRow(rows, "b", paperData({ id: "b", title: "Beta", translated_count: 3, note: "memo" }), "", 0);
+test("a changed paper replaces its row in place", () => {
+  const next = withPaperRow(rows, "b", paperData({ id: "b", title: "Beta", translated_count: 3 }), "", 0);
   assert.deepEqual(next, [rows[0], paperData({ id: "b", title: "Beta", translated_count: 3 })]);
   assert.equal(next?.[0], rows[0]);
 });
@@ -39,9 +39,9 @@ test("a removed paper leaves the list", () => {
   assert.equal(withPaperRow(rows, "c", null, "", 0), rows);
 });
 
-test("a memo saved as it is typed reloads no row", () => {
-  assert.deepEqual(paperChangeEffects(["note"]), { row: false, collections: false, tags: false });
-  assert.deepEqual(paperChangeEffects(["note", "tags"]), { row: true, collections: false, tags: true });
+test("attachment changes refresh the item count", () => {
+  assert.deepEqual(paperChangeEffects(["attachment_count"]), { row: true, collections: false, tags: false });
+  assert.deepEqual(paperChangeEffects(["attachment_count", "tags"]), { row: true, collections: false, tags: true });
   assert.deepEqual(paperChangeEffects(["collection_name"]), { row: true, collections: true, tags: false });
   assert.deepEqual(paperChangeEffects(undefined), { row: true, collections: true, tags: true });
 });

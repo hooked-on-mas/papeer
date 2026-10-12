@@ -45,11 +45,11 @@ class BookmarkEditRequest(BaseModel):
 
 
 class UpdatePaperRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     title: str | None = None
     author: str | None = None
     year: str | None = None  # "" clears it; otherwise four digits
     collection: str | None = None
-    note: str | None = None
     tags: list[str] | None = None
     read_status: str | None = None
     doi: str | None = Field(default=None, max_length=500)  # "" clears it; a doi.org link is kept bare
@@ -157,8 +157,7 @@ class PaperRow(BaseModel):
 
 
 class Paper(PaperRow):
-    """GET /api/papers/{paper_id}: the paper's row with its memo, which the list leaves out."""
-    note: str
+    """GET /api/papers/{paper_id}: the item; memos have their own attachment routes."""
 
 
 class PaperOpened(BaseModel):

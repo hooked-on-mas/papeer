@@ -20,21 +20,20 @@ test("a change of one paper refreshes the paper itself, not the library lists (p
 test("the library as a whole: folder actions, library.changed and a reconnect", () => {
   assert.deepEqual(keys({ kind: "folders" }), roots(QK.papers, QK.collections, QK.citations, QK.research, QK.discovery));
   // An action on several papers reloads what library.changed would have (refreshAfterChanges).
-  assert.deepEqual(keys({ kind: "library" }), roots(QK.papers, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.discovery));
+  assert.deepEqual(keys({ kind: "library" }), roots(QK.papers, QK.attachments, QK.memo, QK.collections, QK.librarySearch, QK.tags, QK.citations, QK.research, QK.discovery));
   assert.deepEqual(keys({ kind: "reconnected" }), [...keys({ kind: "library" }), { queryKey: [QK.reading] }]);
   assert.deepEqual(keys({ kind: "imported" }), roots(QK.papers, QK.citations, QK.research, QK.discovery));
 });
 
 test("papers changed as paper.changed said: the lists only when too many rows to replace", () => {
-  assert.deepEqual(keys({ kind: "papersChanged", all: false, collections: false, tags: false }), roots(QK.librarySearch, QK.citations, QK.research, QK.discovery));
+  assert.deepEqual(keys({ kind: "papersChanged", all: false, collections: false, tags: false }), roots(QK.attachments, QK.librarySearch, QK.citations, QK.research, QK.discovery));
   assert.deepEqual(keys({ kind: "papersChanged", all: true, collections: true, tags: true }),
-    roots(QK.papers, QK.collections, QK.tags, QK.librarySearch, QK.citations, QK.research, QK.discovery));
+    roots(QK.papers, QK.collections, QK.tags, QK.attachments, QK.librarySearch, QK.citations, QK.research, QK.discovery));
   assert.deepEqual(keys({ kind: "pageTranslated", paperId: "p1" }),
     [{ queryKey: [QK.reading, "p1"] }, { queryKey: [QK.paperSearch, "p1"] }]);
 });
 
 test("a memo and the tags on a paper", () => {
-  assert.deepEqual(keys({ kind: "note" }), roots(QK.librarySearch));
   assert.deepEqual(keys({ kind: "paperTags" }), roots(QK.tags));
 });
 
@@ -72,7 +71,7 @@ test("every key the table names is one of QK's", () => {
   const changes: DataChange[] = [
     { kind: "folders" }, { kind: "library" }, { kind: "reconnected" }, { kind: "imported" },
     { kind: "papersChanged", all: true, collections: true, tags: true }, { kind: "pageTranslated", paperId: "p" },
-    { kind: "paper", paperId: "p", collection: true }, { kind: "paperTags" }, { kind: "note" },
+    { kind: "paper", paperId: "p", collection: true }, { kind: "paperTags" },
     { kind: "tagChoice", tagKind: "paper", removed: true }, { kind: "tagChoice", tagKind: "status", removed: true },
     { kind: "tagChoice", tagKind: "sticky", removed: false }, { kind: "stickyNote" }, { kind: "stickyNoteMoved" },
     { kind: "glossary" }, { kind: "glossaryDomains", paperId: "p" }, { kind: "translationRevised", paperId: "p" }, { kind: "noteTemplates" }, { kind: "settings" },

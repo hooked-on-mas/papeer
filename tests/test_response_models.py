@@ -73,7 +73,7 @@ def test_paper_rows_keep_every_key(library):
 
     paper = client.get(f"/api/papers/{paper_id}").json()
     stored = lib.paper(paper_id)
-    assert paper == _as_json({**paper_row(lib, stored), "note": stored["note"]})
+    assert paper == _as_json(paper_row(lib, stored))
     assert set(paper) <= set(Paper.model_fields) and "note" not in full
     assert client.get("/api/papers", params={"query": "no such paper"}).json() == []
 

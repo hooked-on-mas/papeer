@@ -1,4 +1,5 @@
 """This PC's history of the library (papeer/core/local_history.py): blobs, entries, what is kept, earlier leftovers."""
+from tests._memos import read_memo, set_memo
 from datetime import date, datetime, timedelta
 import gzip
 import hashlib
@@ -28,7 +29,7 @@ SAMPLE = Path(__file__).parent / "fixtures/sample.pdf"
 def lib(tmp_path):
     lib = Library(tmp_path / "library")
     identity, _ = lib.import_pdf(SAMPLE)
-    lib.update(identity, note="first")
+    set_memo(lib, identity, note="first")
     lib.save_ink(identity, "original", 1, [{"id": "stroke"}])
     (lib.folder(identity) / "article.md").write_text("サマリー", "utf-8")
     (lib.root / "ui-state.json").write_text('{"last_paper":"' + identity + '"}')
@@ -57,7 +58,7 @@ def test_a_recorded_state_comes_back_whole(lib, tmp_path):
     assert sync.fingerprint(target) == entry["hash"]
     # The window state travels with a snapshot as in a backup, though it is not part of the hash.
     assert (target / "ui-state.json").read_bytes() == (lib.root / "ui-state.json").read_bytes()
-    assert Library(target).paper(lib.identity)["note"] == "first"
+    assert read_memo(Library(target), lib.identity) == "first"
     # In this PC's device folder: neither synced nor backed up with the library.
     assert history_directory(lib.root).is_relative_to(device_directory())
     assert not history_directory(lib.root).is_relative_to(lib.root.resolve())
@@ -76,7 +77,7 @@ def test_each_content_is_stored_once_and_named_by_it(lib):
     assert record(lib) is None
     assert blobs(lib.root) == stored and len(history.entries(lib.root)) == 1
     # A memo edited: only database chunks are new, no file is stored again.
-    lib.update(lib.identity, note="second")
+    set_memo(lib, lib.identity, note="second")
     record(lib)
     added = blobs(lib.root) - stored
     assert added and all(name.endswith(".z") for name in added)
@@ -91,7 +92,7 @@ def test_an_edit_changes_only_a_few_database_chunks(lib):
         db.executemany("INSERT INTO filler (body) VALUES (?)", [(os.urandom(500).hex(),) for _ in range(3000)])
     record(lib)
     [first] = history._read_entries(history_directory(lib.root))[0]
-    lib.update(lib.identity, note="changed")
+    set_memo(lib, lib.identity, note="changed")
     record(lib)
     second = history._read_entries(history_directory(lib.root))[0][-1]
     chunks = second["db"]["chunks"]
@@ -187,7 +188,7 @@ def test_an_uncompressed_blob_of_another_size_counts_as_missing(lib):
     (history_directory(lib.root) / "blobs" / pdf).write_bytes(b"cut short")
     assert history.entries(lib.root)[0]["complete"] is False
     # And it is written again by the next recording of the same file.
-    lib.update(lib.identity, note="again")
+    set_memo(lib, lib.identity, note="again")
     record(lib)
     assert [entry["complete"] for entry in history.entries(lib.root)] == [True, True]
 
@@ -205,7 +206,7 @@ def test_a_damaged_compressed_blob_is_found_by_reading_and_moved_aside(lib, tmp_
     assert history.entries(lib.root)[0]["complete"] is False
     assert history.verify_entry(lib.root, entry_id) is False
     # The next recording of the same content stores it anew, and the state can be written out again.
-    lib.update(lib.identity, note="again")
+    set_memo(lib, lib.identity, note="again")
     record(lib)
     assert history.verify_entry(lib.root, entry_id) is True
     history.materialize(lib.root, entry_id, tmp_path / "state")
@@ -314,7 +315,7 @@ def test_set_aside_and_before_restore_keep_their_own_newest_three():
 def test_days_are_counted_on_this_pcs_clock(lib, monkeypatch):
     for moment in (datetime(2026, 9, 1, 23, 59), datetime(2026, 9, 2, 0, 1)):
         monkeypatch.setattr(history, "_now", lambda moment=moment: moment.astimezone())
-        lib.update(lib.identity, note=str(moment))
+        set_memo(lib, lib.identity, note=str(moment))
         record(lib)
     assert [item["day"] for item in history.entries(lib.root)] == ["2026-09-02", "2026-09-01"]
 
@@ -359,7 +360,7 @@ def test_an_entry_that_cannot_be_read_costs_only_itself(lib, damage):
         else:
             data = bytearray(gzip.compress(b"{not json"))
         victim.write_bytes(bytes(data))
-    lib.update(lib.identity, note="after the damage")
+    set_memo(lib, lib.identity, note="after the damage")
     # Listing, recording and the clean-up go on; the entry that cannot be read is counted.
     assert record(lib) is not None
     listed = history.entries(lib.root)
@@ -377,7 +378,7 @@ def test_another_process_holding_the_history_is_waited_for(lib, monkeypatch):
     other = history._acquire_file_lock(folder / ".lock")  # As another Papeer would hold it.
     monkeypatch.setattr(history, "LOCK_WAIT", 0.3)
     try:
-        lib.update(lib.identity, note="while held")
+        set_memo(lib, lib.identity, note="while held")
         with pytest.raises(history.HistoryBusy):
             record(lib)
         with pytest.raises(history.HistoryBusy):
@@ -397,7 +398,7 @@ def test_a_large_recording_is_told(lib, monkeypatch):
     history.record_folder(lib.root, lib.root, kind="publish", library_hash=library_hash, counts={}, files=files,
                           progress=told.append)
     assert told and "初回は時間がかかります" in told[0]
-    lib.update(lib.identity, note="small")
+    set_memo(lib, lib.identity, note="small")
     told.clear()
     monkeypatch.setattr(history, "LARGE_RECORDING", 64 * 1024**2)
     record(lib, progress=told.append)
@@ -420,7 +421,7 @@ def test_settings_belong_to_this_pc_and_are_checked(lib):
 def test_preview_tells_what_other_settings_would_remove(lib):
     ids = []
     for n in range(3):
-        lib.update(lib.identity, note=f"note {n}")
+        set_memo(lib, lib.identity, note=f"note {n}")
         ids.append(record(lib))
     assert [item["id"] for item in history.preview_settings(lib.root, 1, 0)] == [ids[1], ids[0]]
     assert history.preview_settings(lib.root, 5, 3) == []

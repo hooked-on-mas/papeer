@@ -74,7 +74,7 @@ export function describeHistoryDifference(diff: LibraryDifference): string[] {
   lines.push(...holdingLines(diff, { local: "今", remote: "この時点" }));
   if (diff.remote_only) lines.push(`この時点にだけある${itemNoun(diff)}（戻すと戻ります）：${diff.remote_only}件（${titles(diff.remote_titles, diff.remote_only)}）`);
   if (diff.local_only) lines.push(`今だけある${itemNoun(diff)}（戻すとなくなります）：${diff.local_only}件（${titles(diff.local_titles, diff.local_only)}）`);
-  const changed = [diff.notes && `メモ ${diff.notes}件`, diff.stickies && `付箋 ${diff.stickies}件`, diff.ink && `書き込み ${diff.ink}ページ`]
+  const changed = [diff.attachments && `メモ・資料 ${diff.attachments}件`, diff.stickies && `付箋 ${diff.stickies}件`, diff.ink && `書き込み ${diff.ink}ページ`]
     .filter(Boolean);
   if (changed.length) lines.push(`両方にある論文で内容が異なるもの：${changed.join("・")}`);
   if (!diff.remote_only && !diff.local_only && !changed.length)

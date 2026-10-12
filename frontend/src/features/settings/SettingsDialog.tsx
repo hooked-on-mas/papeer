@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { BookOpen, FileText, Keyboard, LayoutTemplate, Palette, PlugZap, ScanText, StickyNote, Tags, type LucideIcon } from "lucide-react";
 import { cn } from "cn";
 import { useSaveSettings } from "../../api/mutations";
-import { usePaper, useSettings } from "../../api/hooks";
+import { useSettings } from "../../api/hooks";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../../components/ui/dialog";
 import { Button } from "../../components/ui/button";
 import { askConfirm } from "../../components/AppDialogs";
@@ -43,8 +43,6 @@ const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon; descript
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const saveSettings = useSaveSettings();
   const { section, setSection, templateNote } = useSettingsNavigation();
-  const activePaperId = useStore(s => s.activePaperId);
-  const { data: paper } = usePaper(activePaperId);
   const templateGuard = useRef<TemplateLeaveGuard>(null);
   const [saving, setSaving] = useState(false);
   const confirming = useRef(false);
@@ -139,7 +137,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   {section === "reading-status" && <TagManager key="status" kind="status" />}
                   {section === "tags" && <TagManager key="paper" kind="paper" />}
                   {section === "sticky-labels" && <TagManager key="sticky" kind="sticky" />}
-                  {open && section === "note-templates" && <NoteTemplates embedded leaveRef={templateGuard} note={templateNote ?? paper?.note ?? ""} onInsert={() => undefined} />}
+                  {open && section === "note-templates" && <NoteTemplates embedded leaveRef={templateGuard} note={templateNote ?? ""} onInsert={() => undefined} />}
                   {section === "backup" && <BackupSection />}
                   {section === "drive" && <DriveSection />}
                   {section === "ocr" && <OcrSection />}

@@ -57,4 +57,6 @@ class LibraryBase:
     @staticmethod
     def _paper(row: sqlite3.Row | dict) -> dict:
         """A papers row as the API returns it, its translation state always a code (see _status_codes)."""
-        return dict(row, tags=json.loads(row["tags"]), status=stored_status(row["status"]).value)
+        result = dict(row, tags=json.loads(row["tags"]), status=stored_status(row["status"]).value)
+        result.pop("note", None)  # A retired storage column, only read by the one-way memo migration.
+        return result

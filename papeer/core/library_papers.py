@@ -13,7 +13,7 @@ import uuid
 from papeer.core.bibliography import clean_arxiv_id, typed_doi
 from papeer.core.collection_paths import in_collection, normalize_collection_name
 from papeer.core.errors import NotFound
-from papeer.core.fileio import atomic_write_json, atomic_write_text
+from papeer.core.fileio import atomic_write_json
 from papeer.core.item_relations import LISTED_ITEMS, PDF_PAPERS, forget_relations, owned_ids
 from papeer.core.library_base import LibraryBase
 from papeer.core.ocr import load_readings, save_readings
@@ -121,7 +121,7 @@ class PaperRecords(LibraryBase):
         arguments = []
         if query.strip():
             # Both the composed (NFC) and decomposed (NFD) forms are looked for: names kept before nfc() may be NFD.
-            one = """(instr(lower(p.title),lower(?))>0 OR instr(lower(p.note),lower(?))>0
+            one = """(instr(lower(p.title),lower(?))>0
                 OR instr(lower(p.first_author),lower(?))>0 OR instr(p.publication_year,?)>0
                 OR instr(lower(p.collection_name),lower(?))>0 OR instr(lower(p.original_name),lower(?))>0
                 OR instr(lower(p.tags),lower(?))>0 OR EXISTS
@@ -129,7 +129,7 @@ class PaperRecords(LibraryBase):
             forms = search_forms(query)
             sql += " AND (" + " OR ".join([one] * len(forms)) + ")"
             for form in forms:
-                arguments += [form] * 8
+                arguments += [form] * 7
         sql += " ORDER BY created_at DESC, id"
         with self.connection() as db:
             return [self._paper(row) for row in db.execute(sql, arguments)]
@@ -167,7 +167,7 @@ class PaperRecords(LibraryBase):
         return self._oldest_first([row for row in rows if in_collection(row["collection_name"], path)])
 
     def update(self, paper_id: str, **values) -> None:
-        if not values or not set(values) <= {"title", "status", "collection_name", "note", "first_author", "publication_year",
+        if not values or not set(values) <= {"title", "status", "collection_name", "first_author", "publication_year",
                                              "tags", "read_status", "doi", "arxiv_id", "venue"}:
             raise ValueError("Invalid fields")
         tags: list[str] = []
@@ -208,8 +208,6 @@ class PaperRecords(LibraryBase):
             db.execute(f"UPDATE papers SET {fields} WHERE id=?", [*values.values(), paper_id])
             if "tags" in values:
                 db.executemany("INSERT OR IGNORE INTO tag_choices VALUES('paper',?)", [(name,) for name in tags])
-        if "note" in values:
-            atomic_write_text(PaperFiles(self.folder(paper_id)).note_md, values["note"])
 
     def start_reading(self, paper_id: str) -> bool:
         """An unread paper (未読) becomes 読書中 when opened; whether it changed.

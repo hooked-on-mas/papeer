@@ -1,186 +1,154 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Eye, NotebookPen, Pencil } from "lucide-react";
+import { Eye, Pencil, Plus, Trash2, Upload, ArrowUp, ArrowDown } from "lucide-react";
 import { useStore } from "@/store";
-import { invalidate, patchPaper } from "@/api/mutations";
-import { usePaper, type PaperData } from "@/api/hooks";
+import { api, unwrap } from "@/api/client";
+import { createMemo, importMemoFiles, importMemoPaths, memoPath, refreshAttachments, useAttachments, useMemoContent, type Attachment } from "@/api/attachments";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { showError } from "@/components/errorDialog";
-import { NoteTemplates } from "./NoteTemplates";
-import { registerPendingSaves } from "@/lib/pendingSaves";
+import { askConfirm, askText } from "@/components/AppDialogs";
+import { shell } from "@/shell";
 import { QK } from "@/lib/queryKeys";
+import { NoteTemplates } from "./NoteTemplates";
+import { MarkdownEditor } from "./MarkdownEditor";
+import { changeMemo, forgetMemo, hydrateMemo, saveMemo, selectMemo, useMemoDrafts, useMemoSelection } from "./memoState";
 
-/** Memo saves of the open panes, flushed before closing or backing up. */
-const pendingNoteSaves = new Set<() => Promise<void>>();
-registerPendingSaves(async () => {
-  const results = await Promise.allSettled([...pendingNoteSaves].map((save) => save()));
-  const failed = results.find((result) => result.status === "rejected");
-  if (failed) throw failed.reason;
-}, "メモを保存できませんでした。内容を確認してください。");
-
-/** `compact` shortens the header hint in the reader's side panel. */
+const button = "inline-flex items-center gap-1 rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40";
 export function NotesPane({ compact = false }: { compact?: boolean }) {
-  const activePaperId = useStore((state) => state.activePaperId);
-  if (!activePaperId) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8 h-full">
-        <p className="text-[0.9375rem] font-medium mb-1 text-foreground">論文が選択されていません</p>
-        <p className="text-[0.8125rem]">左のライブラリから論文を選ぶか、PDF を追加してください</p>
-      </div>
-    );
-  }
-  // Keyed so switching papers saves the old memo and never writes it into the new paper.
-  return <PaperNotes key={activePaperId} paperId={activePaperId} compact={compact} />;
+  const owner = useStore(s => s.activePaperId);
+  if (!owner) return <div className="p-8 text-sm text-muted-foreground">左のライブラリから論文を選んでください。</div>;
+  return <PaperNotes key={owner} owner={owner} compact={compact} />;
 }
 
-function PaperNotes({ paperId, compact }: { paperId: string; compact: boolean }) {
-  const queryClient = useQueryClient();
-  const { data: paper } = usePaper(paperId);
-
-  const [note, setNote] = useState<string | null>(null);
-  const [noteState, setNoteState] = useState<"saved" | "saving" | "dirty">("saved");
-  const [preview, setPreview] = useState(false);
-  const savedNote = useRef<string | null>(null);
-  const latestNote = useRef<string | null>(null);
-  const savingNote = useRef<Promise<void>>(Promise.resolve());
-  const noteRef = useRef<HTMLTextAreaElement>(null);
-  const editPlace = useRef({ start: 0, end: 0, top: 0 });
-  const noteInsert = useStore((state) => state.noteInsert);
-
+function PaperNotes({ owner, compact }: { owner: string; compact: boolean }) {
+  const client = useQueryClient();
+  const { data, isError, refetch } = useAttachments(owner);
+  const memos = data?.filter(item => item.format === "md") ?? [];
+  const selected = useMemoSelection(s => s.selected[owner]);
+  const current = memos.find(item => item.id === selected) ?? memos[0];
+  const [busy, setBusy] = useState(false);
+  const creating = useRef(false);
+  const insert = useStore(s => s.noteInsert);
+  const run = async (action: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    try { await action(); } catch (error) { showError(error, "メモを更新できませんでした"); }
+    finally { setBusy(false); }
+  };
+  const add = async () => {
+    if (current) await saveMemo(current.id);
+    const row = await createMemo(owner);
+    hydrateMemo(row); selectMemo(owner, row.id);
+    await refreshAttachments(client);
+  };
+  // A quote needs a destination even when the paper has no memos yet. StrictMode shares this guard.
   useEffect(() => {
-    if (paper && note === null) {
-      // From the cache rather than this render: a pane closing in the same commit (entering or
-      // leaving focus mode) has just put its unsaved text there.
-      const text = queryClient.getQueryData<PaperData | null>([QK.papers, paperId])?.note ?? paper.note ?? "";
-      setNote(text);
-      savedNote.current = text;
-      latestNote.current = text;
-    }
-  }, [paper, note, paperId, queryClient]);
-
-  // A quote from the reader's context menu goes at the end, once the memo has loaded.
-  useEffect(() => {
-    // Read from the store so a StrictMode rerun cannot add the quote twice.
-    const insert = useStore.getState().noteInsert;
-    if (!insert || note === null) return;
-    useStore.getState().setNoteInsert(null);
-    if (insert.paperId !== paperId) return;
-    const current = note.trimEnd();
-    setNote(`${current ? current + "\n\n" : ""}${insert.text}\n\n`);
-    setPreview(false);
-    requestAnimationFrame(() => {
-      const el = noteRef.current;
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(el.value.length, el.value.length);
-      el.scrollTop = el.scrollHeight;
-    });
-  }, [noteInsert, note, paperId]);
-
-  const saveNote = useRef(() => {
-    const task = savingNote.current.catch(() => undefined).then(async () => {
-      const text = latestNote.current;
-      if (text === null || text === savedNote.current) return;
-      setNoteState("saving");
-      // Update the cache first so reopening the tab mid-save shows the new text.
-      queryClient.setQueryData<PaperData | null>([QK.papers, paperId], (old) => old ? { ...old, note: text } : old);
-      try {
-        await patchPaper(paperId, { note: text });
-        void invalidate({ kind: "note" }, queryClient);
-        savedNote.current = text;
-        if (latestNote.current === text) setNoteState("saved");
-      } catch (error) {
-        setNoteState("dirty");
-        showError(error, "メモを保存できませんでした");
-        throw error;
-      }
-    });
-    savingNote.current = task;
-    return task;
-  }).current;
-
-  useEffect(() => {
-    if (note === null) return;
-    latestNote.current = note;
-    if (note === savedNote.current) return;
-    setNoteState("dirty");
-    const timer = setTimeout(() => void saveNote().catch(() => undefined), 600);
-    return () => clearTimeout(timer);
-  }, [note, saveNote]);
-
-  useEffect(() => {
-    pendingNoteSaves.add(saveNote);
-    return () => {
-      pendingNoteSaves.delete(saveNote);
-      // Synchronously, so that a pane opening in the same commit starts from this text.
-      const text = latestNote.current;
-      if (text !== null && text !== savedNote.current) {
-        queryClient.setQueryData<PaperData | null>([QK.papers, paperId], (old) => old ? { ...old, note: text } : old);
-      }
-      void saveNote().catch(() => undefined);
-    };
-  }, [saveNote, paperId, queryClient]);
-
-  return (
-    <div className="flex h-full w-full bg-background overflow-hidden">
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Never wrapped a character at a time in a narrow pane (a small window, a large 文字の大きさ): the
-            hint is cut short first, then the buttons go to a second line, then the button keeps its icon only. */}
-        <div className="@container min-h-11 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-1.5 border-b shrink-0">
-          <h3 className="min-w-0 flex-[1_1_3.5rem] text-[0.8125rem] font-semibold flex items-center gap-2 whitespace-nowrap">
-            <NotebookPen className="w-4 h-4 shrink-0 text-muted-foreground" />
-            <span className="shrink-0">メモ</span>
-            {!compact && <span className="min-w-0 truncate font-normal text-muted-foreground text-[0.75rem]" title="Markdownで記入できます。入力後に自動保存します。">
-              Markdownで記入できます。入力後に自動保存します。</span>}
-          </h3>
-          <div className="ml-auto min-w-0 flex items-center gap-3 whitespace-nowrap">
-            <span className="min-w-0 truncate text-[0.75rem] text-muted-foreground">
-              {noteState === "saving" ? "保存中…" : noteState === "dirty" ? "未保存" : "自動保存済み ✓"}
-            </span>
-            <button
-              onClick={() => {
-                if (!preview && noteRef.current) {
-                  const el = noteRef.current;
-                  editPlace.current = { start: el.selectionStart, end: el.selectionEnd, top: el.scrollTop };
-                }
-                setPreview(!preview);
-                if (preview) requestAnimationFrame(() => {
-                  const el = noteRef.current;
-                  if (!el) return;
-                  el.focus({ preventScroll: true });
-                  el.setSelectionRange(editPlace.current.start, editPlace.current.end);
-                  el.scrollTop = editPlace.current.top;
-                });
-              }}
-              title={preview ? "編集" : "プレビュー"}
-              className="shrink-0 flex items-center gap-1 h-7 px-2 rounded border text-[0.75rem] hover:bg-muted"
-            >
-              {preview ? <Pencil className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              <span className="@max-[14rem]:sr-only">{preview ? "編集" : "プレビュー"}</span>
-            </button>
-          </div>
-        </div>
-        {note !== null && <NoteTemplates note={note} onInsert={content => { setNote(current => `${current?.trimEnd() ?? ""}${current?.trim() ? "\n\n" : ""}${content}\n`); setPreview(false); }} />}
-        <div className="flex-1 p-2 flex flex-col min-h-0">
-          {preview ? (
-            <div className="flex-1 overflow-y-auto border rounded-lg p-3">
-              {note?.trim() ? <MarkdownRenderer content={note} paperId={paperId} />
-                : <p className="text-[0.8125rem] text-muted-foreground">メモはまだありません。「編集」で書き始めるか、テンプレートを追加してください。</p>}
-            </div>
-          ) : (
-            <textarea
-              ref={noteRef}
-              aria-label="論文のメモ"
-              value={note ?? ""}
-              disabled={note === null}
-              onChange={(e) => setNote(e.target.value)}
-              onBlur={() => void saveNote().catch(() => undefined)}
-              placeholder="論文に関するメモを自由に記述できます…"
-              className="flex-1 w-full p-3 text-[0.875rem] leading-relaxed resize-none border rounded-lg focus:outline-none focus:ring-1 focus:ring-ring bg-transparent font-mono"
-            />
-          )}
-        </div>
-      </div>
+    if (!data || current || !insert || insert.paperId !== owner || creating.current) return;
+    creating.current = true;
+    void add().catch(error => showError(error, "引用先のメモを作れませんでした")).finally(() => { creating.current = false; });
+    // The operation belongs to the loaded empty list and handoff, not render-local callbacks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, current?.id, insert, owner]);
+  const rename = async () => {
+    if (!current) return;
+    const title = await askText("メモの名前を変更", "名前", current.title);
+    if (title === null) return;
+    await saveMemo(current.id);
+    await unwrap(api.PATCH("/api/papers/{paper_id}/attachments/{attachment_id}", { params: { path: memoPath(owner, current.id) }, body: { title } }));
+    await refreshAttachments(client);
+  };
+  const remove = async () => {
+    if (!current || !await askConfirm("メモを削除", `「${current.title}」を削除します。`, "削除する", true)) return;
+    await saveMemo(current.id);
+    await unwrap(api.DELETE("/api/papers/{paper_id}/attachments/{attachment_id}", { params: { path: memoPath(owner, current.id) } }));
+    forgetMemo(current.id);
+    client.removeQueries({ queryKey: [QK.memo, owner, current.id] });
+    selectMemo(owner, memos.find(item => item.id !== current.id)?.id ?? "");
+    await refreshAttachments(client);
+  };
+  const reorder = async (direction: number) => {
+    if (!current) return;
+    const ids = memos.map(item => item.id), at = ids.indexOf(current.id), target = at + direction;
+    if (target < 0 || target >= ids.length) return;
+    [ids[at], ids[target]] = [ids[target], ids[at]];
+    await unwrap(api.PUT("/api/papers/{paper_id}/attachments/order", { params: { path: { paper_id: owner } }, body: { ids } }));
+    await refreshAttachments(client);
+  };
+  const importPaths = async () => {
+    const paths = await shell.openFiles([{ name: "Markdown メモ", extensions: ["md"] }]);
+    if (!paths.length) return;
+    const rows = await importMemoPaths(owner, paths, client);
+    if (rows[0]) selectMemo(owner, rows[0].id);
+  };
+  return <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-background" data-memo-owner={owner} aria-busy={busy}
+    onDragOver={event => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.stopPropagation(); } }}
+    onDrop={event => {
+      if (!event.dataTransfer.files.length) return;
+      event.preventDefault(); event.stopPropagation();
+      const files = Array.from(event.dataTransfer.files);
+      void run(async () => {
+        const rows = await importMemoFiles(owner, files, client);
+        if (rows[0]) selectMemo(owner, rows[0].id);
+      });
+    }}>
+    <div className="flex flex-wrap items-center gap-1.5 border-b p-2">
+      <span className="text-sm font-semibold">メモ{memos.length ? ` (${memos.length})` : ""}</span>
+      <button className={button} disabled={busy || !data} onClick={() => void run(add)}><Plus className="size-3" />新規メモ</button>
+      <button className={button} disabled={busy || !data} onClick={() => void run(importPaths)}><Upload className="size-3" />.md を取り込む</button>
+      {!compact && <span className="text-xs text-muted-foreground">入力後に自動保存します。</span>}
+      {!!memos.length && <div className="flex w-full min-w-0 flex-wrap items-center gap-1">
+        <select aria-label="メモを選択" className="min-w-0 flex-1 rounded border bg-background p-1 text-sm" value={current?.id ?? ""} disabled={busy}
+          onChange={e => { const id = e.target.value; void run(async () => { if (current) await saveMemo(current.id); selectMemo(owner, id); }); }}>
+          {memos.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+        </select>
+        <button className={button} disabled={busy} aria-label="メモの名前を変更" onClick={() => void run(rename)}><Pencil className="size-3" /></button>
+        <button className={button} disabled={busy || current?.id === memos[0]?.id} aria-label="メモを前へ" onClick={() => void run(() => reorder(-1))}><ArrowUp className="size-3" /></button>
+        <button className={button} disabled={busy || current?.id === memos[memos.length - 1]?.id} aria-label="メモを後ろへ" onClick={() => void run(() => reorder(1))}><ArrowDown className="size-3" /></button>
+        <button className={button} disabled={busy} aria-label="メモを削除" onClick={() => void run(remove)}><Trash2 className="size-3" /></button>
+      </div>}
     </div>
-  );
+    {busy && <p role="status" className="px-3 py-1 text-xs text-muted-foreground">メモを更新中…</p>}
+    <div className="flex min-h-0 flex-1 flex-col" inert={busy}>
+    {isError ? <div role="alert" className="p-3 text-sm">メモを読み込めませんでした。<button onClick={() => void refetch()}>再読み込み</button></div>
+      : current ? <MemoEditor key={current.id} memo={current} />
+        : <p className="p-4 text-sm text-muted-foreground">{data ? "「新規メモ」で書き始めるか、.md ファイルを取り込んでください。" : "メモを読み込み中…"}</p>}
+    </div>
+  </div>;
+}
+
+function MemoEditor({ memo }: { memo: Attachment }) {
+  const { data, isError, refetch } = useMemoContent(memo.owner_id, memo.id);
+  const draft = useMemoDrafts(s => s.drafts[memo.id]);
+  const insert = useStore(s => s.noteInsert);
+  const [preview, setPreview] = useState(false);
+  const dirty = !!draft && draft.text !== draft.saved;
+  const text = draft?.text;
+  useEffect(() => { if (data) hydrateMemo(data); }, [data]);
+  useEffect(() => {
+    const handoff = useStore.getState().noteInsert;
+    if (!draft || !handoff || handoff.paperId !== memo.owner_id) return;
+    useStore.getState().setNoteInsert(null);
+    changeMemo(memo.id, `${draft.text.trimEnd()}${draft.text.trim() ? "\n\n" : ""}${handoff.text}\n\n`);
+    setPreview(false);
+  }, [draft, insert, memo.id, memo.owner_id]);
+  useEffect(() => {
+    if (!dirty) return;
+    const timer = setTimeout(() => void saveMemo(memo.id).catch(() => undefined), 600);
+    return () => clearTimeout(timer);
+  }, [dirty, text, memo.id]);
+  useEffect(() => () => { void saveMemo(memo.id).catch(() => undefined); }, [memo.id]);
+  if (isError && !draft) return <div role="alert" className="p-3">メモを読み込めませんでした。<button onClick={() => void refetch()}>再読み込み</button></div>;
+  if (!draft) return <p className="p-3 text-sm">メモを読み込み中…</p>;
+  return <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex items-center justify-between gap-2 px-3 py-1 text-xs text-muted-foreground">
+      <span role="status">{draft.saving ? "保存中…" : draft.text !== draft.saved ? "未保存" : "自動保存済み ✓"}</span>
+      <button className={button} onClick={() => setPreview(!preview)}>{preview ? <Pencil className="size-3" /> : <Eye className="size-3" />}{preview ? "編集" : "プレビュー"}</button>
+    </div>
+    {draft.error && <div role="alert" className="px-3 text-xs text-destructive">{draft.error}<button className={button} onClick={() => void saveMemo(memo.id).catch(() => undefined)}>保存を再試行</button></div>}
+    <NoteTemplates note={draft.text} onInsert={content => { changeMemo(memo.id, `${draft.text.trimEnd()}${draft.text.trim() ? "\n\n" : ""}${content}\n`); setPreview(false); }} />
+    <div className="flex min-h-0 flex-1 flex-col p-2">
+      {preview && <div className="min-h-0 flex-1 overflow-auto rounded-lg border p-3"><MarkdownRenderer content={draft.text} paperId={memo.owner_id} /></div>}
+      <MarkdownEditor value={draft.text} visible={!preview} onChange={text => changeMemo(memo.id, text)} onBlur={() => void saveMemo(memo.id).catch(() => undefined)} />
+    </div>
+  </div>;
 }

@@ -1,6 +1,13 @@
 /** Finding things on the app's screen: shared by the scenarios in e2e/tests. */
 import type { Locator, Page } from "playwright-core";
 import { waitFor } from "./processes.ts";
+import type { Api } from "./app.ts";
+
+export async function firstMemoContent(api: Api, owner: string): Promise<string> {
+  const rows = await api.call("GET", `/api/papers/${owner}/attachments`);
+  const memo = rows.find((row: { format: string }) => row.format === "md");
+  return memo ? (await api.call("GET", `/api/papers/${owner}/attachments/${memo.id}`)).content : "";
+}
 
 /** A paper's (or folder's) row in the library tree. */
 export function libraryRow(page: Page, text: string): Locator {

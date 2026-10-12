@@ -7,11 +7,10 @@ import { itemCapabilities, type ItemCapabilities } from "@/lib/itemKinds";
 type Schemas = components["schemas"];
 
 /**
- * A paper's row as GET /api/papers lists it (PaperRow in sidecar/schemas/papers.py), with the memo
- * when it comes from GET /api/papers/{id} (Paper): the list rows leave the memo out.
+ * An item as GET /api/papers lists it and GET /api/papers/{id} returns it. Memos are attachments.
  * status is the stored translation state, a code that storedStatusLabel (lib/paperStatus.ts) shows.
  */
-export type PaperData = Schemas["PaperRow"] & { note?: string };
+export type PaperData = Schemas["PaperRow"];
 
 export type TranslatedPageRef = Schemas["TranslatedPageRef"] | null;
 

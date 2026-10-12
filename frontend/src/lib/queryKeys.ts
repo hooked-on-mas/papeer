@@ -10,6 +10,8 @@ export const QK = {
   research: "research",
   researchCapabilities: "research-capabilities",
   papers: "papers",
+  attachments: "attachments",
+  memo: "memo",
   collections: "collections",
   reading: "reading",
   article: "article",

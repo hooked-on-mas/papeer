@@ -1,3 +1,4 @@
+import { firstMemoContent } from "../lib/ui.ts";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { scenario } from "../lib/app.ts";
@@ -73,6 +74,7 @@ scenario("付箋検索の解除、テンプレート挿入、OCRと指示文と�
   await notes.getByRole("button", { name: "条件をクリア", exact: true }).click();
   assert.equal(await notes.getByRole("status").innerText(), "0件");
   await page.getByRole("tab", { name: "メモ", exact: true }).click();
+  await page.getByRole("button", { name: "新規メモ", exact: true }).click();
   await page.getByRole("button", { name: "テンプレートを使う", exact: true }).click();
   const template = page.getByRole("dialog", { name: "テンプレートを使う", exact: true });
   const readingNote = template.getByRole("navigation", { name: "保存済みテンプレート", exact: true }).getByRole("button", { name: "読書メモ", exact: true });
@@ -80,7 +82,7 @@ scenario("付箋検索の解除、テンプレート挿入、OCRと指示文と�
   const preview = template.getByRole("region", { name: "テンプレートのプレビュー", exact: true });
   assert.ok((await preview.boundingBox())!.width > 400);
   await template.getByRole("button", { name: "この内容をメモに追加", exact: true }).click();
-  await waitFor(async () => (await api.call("GET", `/api/papers/${app.paperIds["gradient.pdf"]}`)).note.includes("何を解決する論文"), "テンプレートがメモに保存されること");
+  await waitFor(async () => (await firstMemoContent(api, app.paperIds["gradient.pdf"])).includes("何を解決する論文"), "テンプレートがメモに保存されること");
 
   await page.getByRole("button", { name: "接続・設定", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "設定", exact: true });

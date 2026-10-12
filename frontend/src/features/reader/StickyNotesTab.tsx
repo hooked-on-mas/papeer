@@ -4,7 +4,7 @@ import { ArrowUpRight, ChevronDown, NotebookPen, Search, StickyNote as StickyIco
 import { api, unwrap } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useTagChoices } from "@/api/tagChoices";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useStore } from "@/store";
 import {
   filterStickyNotes, isHighlight, noteDraft, stickyColors, stickyNotesMarkdown, stickyQuote, stickyTitle, type StickyFilters, type StickyNote,
@@ -91,6 +91,7 @@ export function StickyNotesTab() {
           <NotebookPen className="size-3.5" />メモに書き出す<ChevronDown className="size-3" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-56">
+          <DropdownMenuGroup>
           <DropdownMenuLabel className="text-xs text-muted-foreground">
             {filtering ? "表示中の付箋をメモの末尾に追記" : "この論文の付箋をメモの末尾に追記"}
           </DropdownMenuLabel>
@@ -100,6 +101,7 @@ export function StickyNotesTab() {
           <DropdownMenuItem disabled={!visible.some(item => !isHighlight(item))} onClick={() => exportToMemo(paperId, visible, false)}>
             付箋だけ（{visible.filter(item => !isHighlight(item)).length}件）
           </DropdownMenuItem>
+          </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>}
     </header>

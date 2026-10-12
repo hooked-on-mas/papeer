@@ -1,5 +1,6 @@
 """Explicit schema versions: every earlier library reaches the current one, all steps or none,
 and data written by a newer Papeer (its library, backups and sync revisions) is refused."""
+from tests._memos import read_memo
 from contextlib import closing
 import json
 from pathlib import Path
@@ -102,7 +103,7 @@ def test_libraries_from_before_versioning_reach_the_current_schema(tmp_path, sta
     assert database_version(root / "library.sqlite3") == SCHEMA_VERSION
     assert columns(root) == expected
     paper = lib.paper(identity)
-    assert (paper["title"], paper["note"], paper["bibliography_version"]) == ("Legacy paper", "古いメモ", 1)
+    assert (paper["title"], read_memo(lib, identity), paper["bibliography_version"]) == ("Legacy paper", "古いメモ", 1)
     assert lib.messages(identity) == [{"role": "user", "content": "古い質問"}]
     assert lib.bookmarks(identity)[0]["quote"] == "quote"
     assert (lib.bookmarks(identity)[0]["anchor_x"], lib.bookmarks(identity)[0]["anchor_y"]) == (0, 0)
@@ -161,7 +162,9 @@ def test_later_columns_lists_what_the_steps_after_the_baseline_add(tmp_path, mon
 def test_a_library_before_notebooks_gets_kinds_and_empty_relations(tmp_path):
     lib = Library(tmp_path / "library")
     identity, _ = lib.import_pdf(SAMPLE_PDF)
-    lib.update(identity, note="読書メモ", collection_name="研究")
+    lib.update(identity, collection_name="研究")
+    with lib.connection() as db:
+        db.execute("UPDATE papers SET note=? WHERE id=?", ("読書メモ", identity))
     set_version(lib.root, storage.MIGRATIONS.index(storage._notebook_items))
     assert not {"kind", "parent_id"} & columns(lib.root)["papers"]
     assert {"attachments", "item_links"}.isdisjoint(columns(lib.root))
@@ -170,9 +173,9 @@ def test_a_library_before_notebooks_gets_kinds_and_empty_relations(tmp_path):
     assert columns(lib.root) == columns(Library(tmp_path / "fresh").root)
     # Every row that was there is a PDF paper that stands on its own, listed as before.
     paper = reopened.paper(identity)
-    assert (paper["kind"], paper["parent_id"], paper["note"], paper["collection_name"]) == ("pdf", None, "読書メモ", "研究")
+    assert (paper["kind"], paper["parent_id"], read_memo(reopened, identity), paper["collection_name"]) == ("pdf", None, "読書メモ", "研究")
     assert [row["id"] for row in reopened.papers()] == [row["id"] for row in reopened.items()] == [identity]
-    assert reopened.attachments(identity) == [] and reopened.linked_ids(identity) == []
+    assert len(reopened.attachments(identity)) == 1 and reopened.linked_ids(identity) == []
     with reopened.connection() as db:
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
     before = dump(lib.root)
