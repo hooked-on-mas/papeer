@@ -1062,6 +1062,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/papers/{paper_id}/summary-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Summary Plan */
+        get: operations["get_summary_plan_api_papers__paper_id__summary_plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/papers/{paper_id}/messages": {
         parameters: {
             query?: never;
@@ -2320,6 +2337,16 @@ export interface components {
             content: string;
             /** Usage */
             usage: components["schemas"]["Usage"] | null;
+        };
+        /** ArticleRequest */
+        ArticleRequest: {
+            /** Pages */
+            pages?: string | null;
+            /**
+             * Full Document
+             * @default false
+             */
+            full_document?: boolean;
         };
         /** ArticleResult */
         ArticleResult: {
@@ -4678,6 +4705,26 @@ export interface components {
                 number
             ][];
         };
+        /** SummaryChapter */
+        SummaryChapter: {
+            /** Title */
+            title: string;
+            /** Depth */
+            depth: number;
+            /** Start Page */
+            start_page: number;
+            /** End Page */
+            end_page: number;
+        };
+        /** SummaryPlan */
+        SummaryPlan: {
+            /** Page Count */
+            page_count: number;
+            /** Requires Selection */
+            requires_selection: boolean;
+            /** Chapters */
+            chapters: components["schemas"]["SummaryChapter"][];
+        };
         /** SyncRequest */
         SyncRequest: {
             /** Choice */
@@ -6418,7 +6465,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ArticleRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -7911,6 +7962,41 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_summary_plan_api_papers__paper_id__summary_plan_get: {
+        parameters: {
+            query?: {
+                token?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryPlan"];
                 };
             };
             /** @description Validation Error */

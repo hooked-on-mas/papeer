@@ -15,14 +15,17 @@
  *   The held ones stay in the line and come back when the closing is called off.
  */
 
+import type { SummaryPlan } from "../features/summary/summaryStart.ts";
+
 export type DialogRequest =
   | { kind: "text"; title: string; label: string; defaultValue: string }
+  | { kind: "summary"; title: string; plan: SummaryPlan }
   /** cancelLabel: the other button's label, キャンセル when left out; either way it answers false. */
   | { kind: "confirm"; title: string; message: string; okLabel: string; destructive: boolean; cancelLabel?: string }
   | { kind: "message"; title: string; message: string };
 
 export type DialogAnswer<R extends DialogRequest> =
-  R extends { kind: "text" } ? string | null : R extends { kind: "confirm" } ? boolean : undefined;
+  R extends { kind: "text" | "summary" } ? string | null : R extends { kind: "confirm" } ? boolean : undefined;
 
 export type DialogOptions = {
   /** Asked at most once at a time; see the module comment. */
@@ -40,12 +43,12 @@ export type QueuedDialog = {
 
 /** The answer a question gets when it is dismissed (Esc, キャンセル, the × button, or asked twice). */
 export function cancelAnswer(kind: DialogRequest["kind"]): string | boolean | null | undefined {
-  return kind === "text" ? null : kind === "confirm" ? false : undefined;
+  return kind === "text" || kind === "summary" ? null : kind === "confirm" ? false : undefined;
 }
 
 /** `value` as the answer to a question of `kind`: text gives a string or null, confirm a boolean. */
 export function normalizeAnswer(kind: DialogRequest["kind"], value: unknown): string | boolean | null | undefined {
-  if (kind === "text") return typeof value === "string" ? value : null;
+  if (kind === "text" || kind === "summary") return typeof value === "string" ? value : null;
   if (kind === "confirm") return value === true;
   return undefined;
 }

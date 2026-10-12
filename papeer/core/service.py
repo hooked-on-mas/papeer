@@ -20,6 +20,7 @@ from papeer.core.summary_figures import summary_figures
 from papeer.core import prompts
 from papeer.core.terminology import apply_glossary, glossary_for_folder
 from papeer.core.translation_run import TranslationRun
+from papeer.core.summary_scope import page_ranges, validate_summary_pages
 
 
 # Given to the model with HTML documents as evidence (the prompt may be the user's own, without it).
@@ -173,16 +174,22 @@ class PaperService:
         return TranslationRun(self.library, self.provider, self.cancel, paper_id, pages, replacements,
                               progress=self.progress, page_ready=self.page_ready, usage=self.usage).run()
 
-    def article(self, paper_id: str) -> str:
+    def article(self, paper_id: str, pages: set[int] | None = None) -> str:
         folder = self.library.folder(paper_id)
         files = PaperFiles(folder)
         document = self.library.document(paper_id)
+        validate_summary_pages(document, pages)
+        selected = set(range(1, document["page_count"] + 1)) if pages is None else pages
+        partial = len(selected) < document["page_count"]
+        scope = (f"サマリー対象：PDF p.{page_ranges(selected)}（全{document['page_count']}ページ中{len(selected)}ページ）。"
+                 "選択範囲だけを要約しています。") if partial else ""
 
         # Text-only generation receives only crops bound to source captions.
         figures_by_page = {}
         figure_images = {}
         with PDF_LOCK, fitz.open(files.original_pdf) as pdf:
-            for number in range(1, len(pdf) + 1):
+            for number in sorted(selected):
+                check_cancel(self.cancel)
                 page = pdf[number - 1]
                 page.set_rotation(0)
                 for figure in summary_figures(page, document.get("blocks", []), number):
@@ -197,6 +204,8 @@ class PaperService:
         page_units = []
         images = []
         for page in document["pages"]:
+            if page["number"] not in selected:
+                continue
             page_text = page["text"]
             for offset in range(0, max(1, len(page_text)), 10000):
                 page_units.append({"id": f"p{page['number']}-{offset}", "page": page["number"],
@@ -215,16 +224,22 @@ class PaperService:
             check_cancel(self.cancel)
             self.progress(f"サマリーの資料を整理 {index + 1}/{len(chunks)}")
             data = "\n\n".join(f"[{paper_id}:p{x['page']}]\n{x['text']}" for x in chunk)
+            if partial:
+                data = scope + "\n\n" + data
             note = self.provider.generate(prompts.expand(prompts.load("summary_notes")), data)
             notes.append(note)
         check_cancel(self.cancel)
         self.progress("日本語のサマリー記事を作成しています…")
         # The notes stage may still drop images, so the article stage also gets the full list.
         catalog = "\n\n## Available images\n" + "\n".join(images) if images else ""
-        article = self.provider.generate(
-            prompts.expand(prompts.load("summary_article")),
-            "\n\n".join(notes) + catalog)
+        instruction = prompts.expand(prompts.load("summary_article"))
+        if partial:
+            instruction += ("\nSummarize only the selected pages. This is a partial-document summary; "
+                            "do not claim to cover the whole paper or fill in sections absent from the evidence.")
+        article = self.provider.generate(instruction, (scope + "\n\n" if partial else "") + "\n\n".join(notes) + catalog)
         article = link_citations(article, {paper_id: document["page_count"]})
+        if partial:
+            article = f"> {scope}\n\n{article}"
         atomic_write_text(files.article_md, article)
         for image in files.summary_images():
             if image.name not in figure_images:

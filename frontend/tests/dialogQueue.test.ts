@@ -33,6 +33,10 @@ test("answers are shaped by the kind of question; dismissing gives the cancel an
   assert.equal(cancelAnswer("text"), null);
   assert.equal(cancelAnswer("confirm"), false);
   assert.equal(cancelAnswer("message"), undefined);
+  assert.equal(cancelAnswer("summary"), null);
+  assert.equal(normalizeAnswer("summary", ""), ""); // Explicit whole-document selection.
+  assert.equal(normalizeAnswer("summary", "3,4"), "3,4");
+  assert.equal(normalizeAnswer("summary", null), null);
 });
 
 test("a question asked while one is on screen waits its turn, and every caller gets its own answer", async () => {

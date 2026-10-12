@@ -723,6 +723,22 @@ def test_manual_pdf_import_needs_no_search_or_translation(api_env):
     assert client.get(f"/api/papers/{source}/reference-research").json()[0]["paper_id"] == target
 
 
+def test_long_reference_import_defers_summary_until_scope_is_chosen(api_env):
+    client, lib, source, entry, provider, candidate = api_env
+    with fitz.open(candidate) as document:
+        for number in range(2, 31):
+            document.new_page().insert_text((50, 50), f"Page {number}: Scientific methods and detailed original results.")
+        document.saveIncr()
+    job = import_reference(client, source, web_research.reference_key(entry["raw"]),
+                           local_path=str(candidate), create_summary=True)
+    assert job.status == "succeeded", job.error
+    record = job.result["record"]
+    assert record["paper_id"] and not record["has_summary"]
+    assert "章・ページ範囲を選んで" in record["summary_error"]
+    assert PaperFiles(lib.paper_folder(record["paper_id"])).original_pdf.is_file()
+    assert not provider.normal
+
+
 def test_already_registered_reference_gets_a_summary_without_downloading(api_env, monkeypatch):
     client, lib, source, _, _, candidate = api_env
     target, _ = lib.import_pdf(candidate)

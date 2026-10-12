@@ -9,6 +9,8 @@ import { errorAdvice, firstLine, reportDetails, type ErrorAction, type ErrorRepo
 import { openSettings } from "@/features/settings/settingsNavigation";
 import { isAppClosing, onAppClosingChange } from "@/app/appClosing";
 import { createDialogQueue, type DialogOptions, type QueuedDialog } from "@/lib/dialogQueue";
+import { initialSummaryChoice, type SummaryChoice, type SummaryPlan } from "@/features/summary/summaryStart";
+import { SummaryScopeForm } from "@/features/summary/SummaryScopeForm";
 
 const dialogs = createDialogQueue();
 // Once the closing is confirmed, a question from before would start work in the middle of it: those
@@ -39,6 +41,11 @@ export function showMessage(title: string, message: string, options: DialogOptio
   return dialogs.ask({ kind: "message", title, message }, withDefaults(options));
 }
 
+/** null cancels; an empty string explicitly selects the whole document. */
+export function askSummaryScope(plan: SummaryPlan, options: DialogOptions = {}): Promise<string | null> {
+  return dialogs.ask({ kind: "summary", title: "サマリーを作成", plan }, withDefaults(options));
+}
+
 /** The questions, one at a time in the order of lib/dialogQueue.ts; a new one waits instead of replacing the one on screen. */
 function PromptDialogs() {
   const current = useSyncExternalStore(dialogs.subscribe, dialogs.getShown);
@@ -50,6 +57,8 @@ function PromptDialogs() {
   const [value, setValue] = useState("");
   // What was typed into a question that an urgent one pushed back, for when it comes back.
   const drafts = useRef(new Map<number, string>());
+  const summaryDrafts = useRef(new Map<number, SummaryChoice>());
+  const [, redrawSummary] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const okRef = useRef<HTMLButtonElement>(null);
@@ -78,6 +87,7 @@ function PromptDialogs() {
   const finish = (result: unknown) => {
     if (!current) return;
     drafts.current.delete(current.id);
+    summaryDrafts.current.delete(current.id);
     dialogs.answer(current.id, result);
   };
   const cancel = () => finish(null);
@@ -88,13 +98,17 @@ function PromptDialogs() {
 
   return (
     <Dialog open={!!current} onOpenChange={(open) => { if (!open) cancel(); }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className={request?.kind === "summary" ? "sm:max-w-lg max-h-[85vh] overflow-y-auto" : "sm:max-w-md"}>
         <DialogHeader>
           <DialogTitle>{request?.title}</DialogTitle>
-          {request && request.kind !== "text" && (
+          {request && (request.kind === "message" || request.kind === "confirm") && (
             <DialogDescription className="whitespace-pre-wrap">{request.message}</DialogDescription>
           )}
         </DialogHeader>
+        {request?.kind === "summary" && entry && (
+          <SummaryScopeForm plan={request.plan} choice={summaryDrafts.current.get(entry.id) ?? initialSummaryChoice(request.plan)}
+            onChange={(choice) => { summaryDrafts.current.set(entry.id, choice); redrawSummary((value) => value + 1); }} onFinish={finish} />
+        )}
         {request?.kind === "text" && (
           <form
             className="grid gap-2"
@@ -107,7 +121,7 @@ function PromptDialogs() {
             <Input ref={inputRef} value={value} onChange={(e) => edit(e.target.value)} />
           </form>
         )}
-        <DialogFooter>
+        {request?.kind !== "summary" && <DialogFooter>
           {request?.kind === "message" ? (
             <Button ref={okRef} onClick={() => finish(null)}>OK</Button>
           ) : (
@@ -123,7 +137,7 @@ function PromptDialogs() {
               </Button>
             </>
           )}
-        </DialogFooter>
+        </DialogFooter>}
       </DialogContent>
     </Dialog>
   );

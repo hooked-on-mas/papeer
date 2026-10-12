@@ -11,6 +11,7 @@ from papeer.core.collection_paths import normalize_collection_name
 from papeer.core.paths import PaperFiles
 from papeer.core.reference_pdf import download_pdf, validate_pdf, validate_reference_identity
 from papeer.core.service import PaperService
+from papeer.core.summary_scope import SUMMARY_SELECTION_THRESHOLD
 from papeer.providers import Cancelled, check_cancel, spec_for
 from sidecar import deps
 from sidecar.job_types import JobKind, JobStarted
@@ -154,6 +155,8 @@ def start_import(paper_id: str, key: str, body: ResearchImportRequest) -> JobSta
         if body.create_summary and not files.article_md.is_file():
             if record["needs_ocr"]:
                 record["summary_error"] = "文字の読み取りが必要です。PDFを開き、OCR後にサマリーを作成してください。"
+            elif lib.document(target)["page_count"] >= SUMMARY_SELECTION_THRESHOLD:
+                record["summary_error"] = "PDFは取り込み済みです。30ページ以上の資料は、サマリー画面で章・ページ範囲を選んで作成してください。"
             else:
                 try:
                     # The target may already be registered and busy with another operation.

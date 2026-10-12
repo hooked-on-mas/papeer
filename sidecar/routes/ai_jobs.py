@@ -12,11 +12,12 @@ from papeer.core.errors import Invalid
 from papeer.core.paths import PaperFiles
 from papeer.core.service import PaperService
 from papeer.core.translation_plan import translation_plan as plan_translation
+from papeer.core.summary_scope import summary_plan, validate_summary_pages
 from papeer.layout.page_selection import parse_page_selection
 from papeer.providers import spec_for
 from sidecar import deps
 from sidecar.job_types import JobKind, JobStarted
-from sidecar.schemas.ai_jobs import AskRequest, ChatMessage, ExportRequest, TranslateRequest
+from sidecar.schemas.ai_jobs import ArticleRequest, AskRequest, ChatMessage, ExportRequest, SummaryPlan, TranslateRequest
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
@@ -63,15 +64,35 @@ def translation_plan(paper_id: str, pages: str = "", model: str | None = None) -
     return plan_translation(lib, paper_id, deps.settings_for_run(model, None), selected_pages)
 
 
-@router.post("/api/papers/{paper_id}/article")
-def generate_article(paper_id: str) -> JobStarted:
+@router.get("/api/papers/{paper_id}/summary-plan", response_model=SummaryPlan)
+def get_summary_plan(paper_id: str) -> dict:
     lib = deps.get_library()
     lib.paper_folder(paper_id)
+    return summary_plan(lib, paper_id)
+
+
+@router.post("/api/papers/{paper_id}/article")
+def generate_article(paper_id: str, body: ArticleRequest | None = None) -> JobStarted:
+    lib = deps.get_library()
+    lib.paper_folder(paper_id)
+    body = body or ArticleRequest()
+    document = lib.document(paper_id)
+    if body.pages is not None and body.full_document:
+        raise Invalid("ページ範囲と全文は同時に指定できません。")
+    selected_pages = None
+    if body.pages is not None:
+        try:
+            selected_pages = parse_page_selection(body.pages, document["page_count"])
+        except ValueError as exc:
+            raise Invalid(str(exc).replace("翻訳する", "サマリーの対象")) from exc
+    elif body.full_document:
+        selected_pages = set(range(1, document["page_count"] + 1))
+    validate_summary_pages(document, selected_pages)
     settings = deps.get_settings()
 
     def action(cancel: threading.Event, progress: Any, _page_ready: Any) -> dict:
         service = PaperService(lib, deps.provider_for(settings, cancel), cancel, progress=progress)
-        result = service.article(paper_id)
+        result = service.article(paper_id, pages=selected_pages)
         deps.paper_changed(paper_id)
         return {"content": result, "usage": service.usage()}
 

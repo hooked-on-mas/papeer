@@ -16,6 +16,24 @@ class TranslateRequest(BaseModel):
     effort: str | None = None
 
 
+class ArticleRequest(BaseModel):
+    pages: str | None = None
+    full_document: bool = False
+
+
+class SummaryChapter(BaseModel):
+    title: str
+    depth: int
+    start_page: int
+    end_page: int
+
+
+class SummaryPlan(BaseModel):
+    page_count: int
+    requires_selection: bool
+    chapters: list[SummaryChapter]
+
+
 class AskAttachment(BaseModel):
     """A passage selected in the PDF and attached to a chat message."""
     page: int

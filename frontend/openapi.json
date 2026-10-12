@@ -2450,6 +2450,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ArticleRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -5566,6 +5583,77 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Translation Plan Api Papers  Paper Id  Translation Plan Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/papers/{paper_id}/summary-plan": {
+      "get": {
+        "summary": "Get Summary Plan",
+        "operationId": "get_summary_plan_api_papers__paper_id__summary_plan_get",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryPlan"
                 }
               }
             }
@@ -11541,6 +11629,28 @@
         "title": "Article",
         "description": "GET /api/papers/{paper_id}/article: the summary article, and what generating it used (None if unknown)."
       },
+      "ArticleRequest": {
+        "properties": {
+          "pages": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages"
+          },
+          "full_document": {
+            "type": "boolean",
+            "title": "Full Document",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ArticleRequest"
+      },
       "ArticleResult": {
         "properties": {
           "content": {
@@ -17184,6 +17294,60 @@
           "rects"
         ],
         "title": "StickyNote"
+      },
+      "SummaryChapter": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "depth": {
+            "type": "integer",
+            "title": "Depth"
+          },
+          "start_page": {
+            "type": "integer",
+            "title": "Start Page"
+          },
+          "end_page": {
+            "type": "integer",
+            "title": "End Page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "depth",
+          "start_page",
+          "end_page"
+        ],
+        "title": "SummaryChapter"
+      },
+      "SummaryPlan": {
+        "properties": {
+          "page_count": {
+            "type": "integer",
+            "title": "Page Count"
+          },
+          "requires_selection": {
+            "type": "boolean",
+            "title": "Requires Selection"
+          },
+          "chapters": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryChapter"
+            },
+            "type": "array",
+            "title": "Chapters"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_count",
+          "requires_selection",
+          "chapters"
+        ],
+        "title": "SummaryPlan"
       },
       "SyncRequest": {
         "properties": {

@@ -2,7 +2,7 @@ import { confirmItemDeletion } from "@/features/notebooks/NotebookDialogs";
 import { api, ApiError, unwrap } from "@/api/client";
 import { getPaper, type PaperData, type ReadingData } from "@/api/hooks";
 import { invalidate, patchPaper } from "@/api/mutations";
-import { askConfirm, askText, showMessage } from "@/components/AppDialogs";
+import { askConfirm, askSummaryScope, askText, showMessage } from "@/components/AppDialogs";
 import { showStartedJob, startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { clearJobFailure } from "@/features/jobs/jobFailures";
@@ -655,14 +655,25 @@ export async function exportMarkdown(paperId: string): Promise<void> {
 }
 
 /** Make the paper's サマリー; one that exists is replaced only after a confirmation (features/summary/summaryStart.ts). */
+const startingSummaries = new Set<string>();
+
 export async function generateArticle(paperId: string): Promise<void> {
-  const hasSummary = await paper(paperId).then((target) => !!target.has_article, () => null);
-  const question = summaryStartQuestion(hasSummary);
-  if (question && !await askConfirm(question.title, question.message, question.okLabel, false, { key: summaryQuestionKey(paperId) })) return;
+  if (startingSummaries.has(paperId)) return;
+  startingSummaries.add(paperId);
   try {
-    await startJob(`/api/papers/${paperId}/article`, {}, { kind: "article", paperId });
+    const [target, plan] = await Promise.all([
+      paper(paperId), unwrap(api.GET("/api/papers/{paper_id}/summary-plan", { params: { path: { paper_id: paperId } } })),
+    ]);
+    const pages = await askSummaryScope(plan, { key: summaryQuestionKey(paperId) });
+    if (pages === null) return;
+    const body = pages === "" ? { full_document: true } : { pages };
+    const question = summaryStartQuestion(!!target.has_article);
+    if (question && !await askConfirm(question.title, question.message, question.okLabel, false, { key: summaryQuestionKey(paperId) })) return;
+    await startJob(`/api/papers/${paperId}/article`, body, { kind: "article", paperId });
   } catch (error) {
     showError(error, "サマリーを作成できませんでした");
+  } finally {
+    startingSummaries.delete(paperId);
   }
 }
 
