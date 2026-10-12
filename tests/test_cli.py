@@ -253,6 +253,20 @@ def test_ls_prints_a_table(api):
     assert "1 件" in stderr
 
 
+def test_ls_lists_a_notebook_with_its_kind(api):
+    transport, lib, _ = api
+    notebook = "f" * 32
+    with lib.connection() as db:
+        db.execute("INSERT INTO papers(id,sha256,title,original_name,pages,kind) VALUES(?,?,?,?,1,'notebook')",
+                   (notebook, "notebook:" + notebook, "輪読ノート", "notebook.pdf"))
+    code, stdout, _ = run(["ls", "--json"], transport)
+    row = next(row for row in json.loads(stdout) if row["id"] == notebook)
+    assert code == 0 and (row["kind"], row["parent_id"], row["link_count"]) == ("notebook", None, 0)
+    code, stdout, _ = run(["ls", ""], transport)
+    line = next(line for line in stdout.splitlines() if "輪読ノート" in line)
+    assert code == 0 and line.rstrip().endswith("ノート")
+
+
 def test_folder_create_rename_delete_and_restore(api):
     transport, lib, _ = api
     assert run(["folder", "create", "新規"], transport)[0] == 0

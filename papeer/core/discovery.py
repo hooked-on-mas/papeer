@@ -149,7 +149,7 @@ def build(lib, source: str, origin: str = "", cache: dict | None = None) -> dict
     cache = read_cache(lib, source, origin) if cache is None else cache
     origin = cache.get("origin_aliases", {}).get(origin, origin)
     graph = citations.citation_graph(lib)
-    papers = {p["id"]: p for p in lib.papers()}
+    papers = {p["id"]: p for p in lib.papers()}  # PDF papers: the map's nodes of the library.
     nodes = {n["id"]: {**n, "doi": "", "arxiv_id": "", "first_author": "", "abstract": ""} for n in graph["nodes"]}
     for key, paper in papers.items():
         if key in nodes:

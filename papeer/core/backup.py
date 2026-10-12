@@ -24,6 +24,7 @@ from papeer import __version__
 from papeer.core import storage
 from papeer.core.destinations import inside_library
 from papeer.core.fileio import atomic_output, ensure_free_space, is_temporary
+from papeer.core.item_relations import ATTACHMENT_FORMATS, KIND_NOTEBOOK, KIND_PDF
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library, NewerSchemaError, newer_papeer
 
@@ -152,8 +153,13 @@ def restore_backup(lib: Library, source: Path, cancel: threading.Event | None = 
 def validate_library(folder: Path, cancel: threading.Event | None = None, *, schema_version: int = 0,
                      app_version: object = None) -> None:
     """Refuse a library folder about to replace the library unless it is whole: a database this Papeer can
-    open (not from a newer one) that passes SQLite's own checks, and every paper's original PDF matching
-    the SHA-256 the database records. `schema_version` and `app_version` are what the copy says of itself.
+    open (not from a newer one) that passes SQLite's own checks, and the files of every item: a PDF paper's
+    original PDF matching the SHA-256 the database records, a notebook's notebook.json and original.pdf
+    (made from it, with no recorded digest), and the file of every memo and document an item holds.
+    `schema_version` and `app_version` are what the copy says of itself.
+
+    The database may be of an older schema: before papers.kind every row is a PDF paper, and a library
+    without the attachments table holds none.
     """
     database = folder / "library.sqlite3"
     if not database.is_file():
@@ -166,13 +172,29 @@ def validate_library(folder: Path, cancel: threading.Event | None = None, *, sch
                                    "Papeerを最新版に更新してから、もう一度お試しください。")
         if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or db.execute("PRAGMA foreign_key_check").fetchall():
             raise ValueError("バックアップのデータベースが破損しています。")
-        for paper_id, digest in db.execute("SELECT id,sha256 FROM papers"):
+        has_kind = "kind" in {row[1] for row in db.execute("PRAGMA table_info(papers)")}
+        for paper_id, digest, kind in db.execute(f"SELECT id,sha256,{'kind' if has_kind else repr(KIND_PDF)} FROM papers"):
             _stop_if_cancelled(cancel)
-            if not re.fullmatch(r"[0-9a-f]{32}", paper_id) or not (PaperFiles(folder / "papers" / paper_id).original_pdf).is_file():
+            files = PaperFiles(folder / "papers" / paper_id)
+            if not re.fullmatch(r"[0-9a-f]{32}", paper_id) or not files.original_pdf.is_file():
                 raise ValueError("バックアップの論文ファイルが不足しています。")
-            with (PaperFiles(folder / "papers" / paper_id).original_pdf).open("rb") as stream:
-                if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
-                    raise ValueError("バックアップの原文PDFが破損しています。")
+            if kind == KIND_PDF:
+                with files.original_pdf.open("rb") as stream:
+                    if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
+                        raise ValueError("バックアップの原文PDFが破損しています。")
+            elif kind == KIND_NOTEBOOK:
+                # sha256 of a notebook is not a digest of its PDF, which is made again whenever its pages change.
+                if not files.notebook_json.is_file():
+                    raise ValueError("バックアップのノートのファイルが不足しています。")
+            else:
+                raise ValueError("バックアップのデータベースが破損しています。")
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='attachments'").fetchone():
+            for attachment_id, owner_id, format in db.execute("SELECT id,owner_id,format FROM attachments"):
+                _stop_if_cancelled(cancel)
+                if (not re.fullmatch(r"[0-9a-f]{32}", attachment_id) or not re.fullmatch(r"[0-9a-f]{32}", owner_id)
+                        or format not in ATTACHMENT_FORMATS
+                        or not PaperFiles(folder / "papers" / owner_id).attachment(attachment_id, format).is_file()):
+                    raise ValueError("バックアップのメモ・資料のファイルが不足しています。")
 
 
 def _staging_names(root: Path) -> tuple[Path, Path]:

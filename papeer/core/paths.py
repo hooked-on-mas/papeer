@@ -182,6 +182,16 @@ class PaperFiles:
     # What OCR read on the pages that needed it (papeer.core.ocr: kept so that extracting again reads nothing).
     @property
     def ocr_text(self) -> Path: return self.folder / "ocr-text.json"
+    # A handwritten notebook (papers.kind 'notebook'): its pages are kept here, and original.pdf is made from them.
+    @property
+    def notebook_json(self) -> Path: return self.folder / "notebook.json"
+    # What the paper (or notebook) holds besides its own files: memos and documents (the attachments table).
+    @property
+    def attachments(self) -> Path: return self.folder / "attachments"
+
+    def attachment(self, attachment_id: str, format: str) -> Path:
+        """The file of one attachment: attachments/<id>.md or attachments/<id>.html."""
+        return self.attachments / f"{attachment_id}.{format}"
 
     # Translation
     @property

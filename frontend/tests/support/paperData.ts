@@ -8,6 +8,7 @@ export function paperData(values: Pick<PaperData, "id"> & Partial<PaperData>): P
   return {
     sha256: "", title: values.id, original_name: "", pages: 1, status: "not_translated", collection_name: "", created_at: "",
     tags: [], read_status: "", first_author: "", publication_year: "", bibliography_version: 1, doi: "", arxiv_id: "", venue: "",
+    kind: "pdf", parent_id: null,
     ...values,
   };
 }

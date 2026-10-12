@@ -3265,6 +3265,13 @@ export interface components {
             arxiv_id: string;
             /** Venue */
             venue: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "pdf" | "notebook";
+            /** Parent Id */
+            parent_id: string | null;
             /** Last Opened At */
             last_opened_at?: string | null;
             /**
@@ -3277,6 +3284,21 @@ export interface components {
              * @default false
              */
             has_article?: boolean;
+            /**
+             * Attachment Count
+             * @default 0
+             */
+            attachment_count?: number;
+            /**
+             * Owned Notebook Count
+             * @default 0
+             */
+            owned_notebook_count?: number;
+            /**
+             * Link Count
+             * @default 0
+             */
+            link_count?: number;
             /**
              * Translated Count
              * @default 0
@@ -3347,7 +3369,8 @@ export interface components {
         };
         /**
          * PaperRow
-         * @description A paper as GET /api/papers lists it: its papers row (Library._paper) and what library_list.paper_row adds.
+         * @description An item as GET /api/papers lists it (a PDF paper or a notebook): its papers row (Library._paper) and what
+         *     library_list.paper_row adds.
          *
          *     Answered with response_model_exclude_unset, so a row keeps exactly the keys it was given: the fields
          *     with defaults are the ones a row may lack. What paper_row adds is missing from the row of a paper whose
@@ -3387,6 +3410,13 @@ export interface components {
             arxiv_id: string;
             /** Venue */
             venue: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "pdf" | "notebook";
+            /** Parent Id */
+            parent_id: string | null;
             /** Last Opened At */
             last_opened_at?: string | null;
             /**
@@ -3399,6 +3429,21 @@ export interface components {
              * @default false
              */
             has_article?: boolean;
+            /**
+             * Attachment Count
+             * @default 0
+             */
+            attachment_count?: number;
+            /**
+             * Owned Notebook Count
+             * @default 0
+             */
+            owned_notebook_count?: number;
+            /**
+             * Link Count
+             * @default 0
+             */
+            link_count?: number;
             /**
              * Translated Count
              * @default 0

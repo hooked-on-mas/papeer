@@ -35,7 +35,9 @@ def library_search(lib: Library, query: str, limit: int = 200) -> dict:
     if len(forms[0]) > 200:
         raise ValueError("検索語は200文字までです。")
     terms = [form.casefold() for form in forms if len(form) <= 200]
-    papers = lib.papers()
+    # Every item the library lists: a notebook is found by its name, tags and memo, and by its pages' text
+    # once OCR has read them. The hit is opened in the reader by its paper_id whatever its kind.
+    papers = lib.items()
     index = search_index.SearchIndex(lib.root)
     try:
         unindexed = index.refresh(lib, search_index.BUILD_SECONDS)

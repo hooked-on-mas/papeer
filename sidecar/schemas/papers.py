@@ -108,7 +108,8 @@ class ApplyMovesResult(BaseModel):
 
 
 class PaperRow(BaseModel):
-    """A paper as GET /api/papers lists it: its papers row (Library._paper) and what library_list.paper_row adds.
+    """An item as GET /api/papers lists it (a PDF paper or a notebook): its papers row (Library._paper) and what
+    library_list.paper_row adds.
 
     Answered with response_model_exclude_unset, so a row keeps exactly the keys it was given: the fields
     with defaults are the ones a row may lack. What paper_row adds is missing from the row of a paper whose
@@ -132,10 +133,19 @@ class PaperRow(BaseModel):
     doi: str  # For citing it (BibTeX); "" when unknown, as arxiv_id and venue.
     arxiv_id: str
     venue: str
+    # What the item is: the viewer, and which features apply, follow from it (papeer/core/item_relations.py).
+    kind: Literal["pdf", "notebook"]
+    # The item a notebook is held by; None for an item that stands on its own (every PDF paper).
+    parent_id: str | None
     # When it was last opened on this PC, UTC ISO text; None if never.
     last_opened_at: str | None = None
     folder_path: str = ""
     has_article: bool = False
+    # What the item holds and is linked to (item_relations.relation_counts): the memos and documents (the
+    # attachments table), the notebooks held by it, and the items linked to it.
+    attachment_count: int = 0
+    owned_notebook_count: int = 0
+    link_count: int = 0
     # Translation progress (library_list.translation_state).
     translated_count: int = 0
     translation_required_count: int = 0

@@ -89,6 +89,7 @@ papeer-cli ls ""
 ```
 
 `FOLDER` を指定するとそのフォルダーに直接入っている論文だけ（`""` で未分類）、`--all` でサブフォルダーの論文も含めます。`-q` はタイトルなどの検索です。
+手書きノートも一覧に並び、「翻訳」の列には「ノート」と出ます。`--json` の各項目には `kind`（`pdf` または `notebook`）、`parent_id`、持っているメモ・資料の数（`attachment_count`）・専用ノートの数（`owned_notebook_count`）・紐づけの数（`link_count`）が入ります。
 
 ### folder：フォルダー
 

@@ -35,6 +35,14 @@ def dump(root: Path) -> list[str]:
 
 def set_version(root: Path, version: int) -> None:
     with closing(sqlite3.connect(root / "library.sqlite3")) as db:
+        if version < 8:
+            # Version 8 (storage._notebook_items): items of other kinds, what they hold, and links.
+            db.execute("DROP TABLE IF EXISTS item_links")
+            db.execute("DROP TABLE IF EXISTS attachments")
+            db.execute("DROP INDEX IF EXISTS papers_parent")
+            for column in ("parent_id", "kind"):
+                if column in {row[1] for row in db.execute("PRAGMA table_info(papers)")}:
+                    db.execute(f"ALTER TABLE papers DROP COLUMN {column}")
         if version < 7:
             db.execute("DROP TABLE IF EXISTS paper_discovery")
         if version < 6:
@@ -148,6 +156,28 @@ def test_later_columns_lists_what_the_steps_after_the_baseline_add(tmp_path, mon
     expected = {table: set(names) for table, names in LATER_COLUMNS.items()}
     expected.update(LATER_TABLES)
     assert {table: names for table, names in added.items() if names} == expected
+
+
+def test_a_library_before_notebooks_gets_kinds_and_empty_relations(tmp_path):
+    lib = Library(tmp_path / "library")
+    identity, _ = lib.import_pdf(SAMPLE_PDF)
+    lib.update(identity, note="読書メモ", collection_name="研究")
+    set_version(lib.root, storage.MIGRATIONS.index(storage._notebook_items))
+    assert not {"kind", "parent_id"} & columns(lib.root)["papers"]
+    assert {"attachments", "item_links"}.isdisjoint(columns(lib.root))
+    reopened = Library(lib.root)
+    assert database_version(lib.root / "library.sqlite3") == SCHEMA_VERSION
+    assert columns(lib.root) == columns(Library(tmp_path / "fresh").root)
+    # Every row that was there is a PDF paper that stands on its own, listed as before.
+    paper = reopened.paper(identity)
+    assert (paper["kind"], paper["parent_id"], paper["note"], paper["collection_name"]) == ("pdf", None, "読書メモ", "研究")
+    assert [row["id"] for row in reopened.papers()] == [row["id"] for row in reopened.items()] == [identity]
+    assert reopened.attachments(identity) == [] and reopened.linked_ids(identity) == []
+    with reopened.connection() as db:
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+    before = dump(lib.root)
+    Library(lib.root)
+    assert dump(lib.root) == before
 
 
 def test_sticky_notes_of_the_first_version_become_notes_beside_highlights(tmp_path):

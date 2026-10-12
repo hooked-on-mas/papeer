@@ -696,7 +696,7 @@ def _set_aside(lib: Library, store: GenerationStore, view: View, ids: list[str],
     for identity in ids:
         generation = view.generations.get(identity)
         if identity == choice or (generation is not None and (
-                generation["hash"] == chosen_hash or (generation.get("counts") or {}).get("papers") == 0)):
+                generation["hash"] == chosen_hash or drive_sync.holds_no_items(generation.get("counts")))):
             continue
         check_cancel(cancel)
         progress("選ばなかったデータを退避しています…")
@@ -715,7 +715,7 @@ def _set_aside(lib: Library, store: GenerationStore, view: View, ids: list[str],
                             "created": generation["created"] if generation else None})
             continue
         recorded.append(entry)
-    if choice != "local" and library_hash != chosen_hash and counts.get("papers"):
+    if choice != "local" and library_hash != chosen_hash and drive_sync.holds_items(counts):
         check_cancel(cancel)
         progress("選ばなかったデータを退避しています…")
         entry = local_history.record_folder(lib.root, lib.root, kind="set_aside", library_hash=library_hash,

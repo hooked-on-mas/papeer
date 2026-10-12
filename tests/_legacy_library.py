@@ -105,14 +105,20 @@ def legacy_backup(root: Path, destination: Path) -> None:
 # Columns that schema versions after the baseline add (storage.MIGRATIONS[1:]), by table. A database
 # saved before schema versioning never had them; add a later step's columns here (test_schema_migration
 # checks that this list is complete).
-LATER_COLUMNS = {"bookmarks": ("kind", "color", "rects"), "papers": ("doi", "arxiv_id", "venue"),
+LATER_COLUMNS = {"bookmarks": ("kind", "color", "rects"), "papers": ("doi", "arxiv_id", "venue", "kind", "parent_id"),
                  "messages": ("research",)}
-LATER_TABLES = {"reference_research": {"source", "key", "data"}, "paper_discovery": {"source", "origin", "data"}}
+LATER_TABLES = {"reference_research": {"source", "key", "data"}, "paper_discovery": {"source", "origin", "data"},
+                "attachments": {"id", "owner_id", "format", "title", "source", "position", "created_at", "updated_at"},
+                "item_links": {"a", "b"}}
+# Indexes on the columns above: a column cannot be dropped while one uses it.
+LATER_INDEXES = ("papers_parent",)
 
 
 def mark_unversioned(db: sqlite3.Connection) -> None:
     """Make a current library database look saved before schema versioning: user_version 0, without the
     columns later versions added (a test drops the baseline's own columns it wants migrated first)."""
+    for index in LATER_INDEXES:
+        db.execute(f"DROP INDEX {index}")
     for table, names in LATER_COLUMNS.items():
         for name in names:
             db.execute(f"ALTER TABLE {table} DROP COLUMN {name}")

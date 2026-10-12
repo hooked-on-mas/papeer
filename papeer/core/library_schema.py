@@ -18,6 +18,45 @@ from papeer.core.translation_status import stored_status
 from papeer.pdf.pdf_engine import PDF_LOCK
 
 
+def _notebook_items(db: sqlite3.Connection, _root: Path) -> None:
+    """Version 8: items that are not PDFs, what an item holds, and the links between items.
+
+    papers.kind is 'pdf' or 'notebook'; the rows of both are what the library lists. parent_id names the
+    item a row belongs to (a notebook made inside a paper); items listed on their own, PDFs included,
+    have none. It is a foreign key without ON DELETE CASCADE on purpose: a cascade would remove the
+    row and leave papers/<id>/ behind, still synced, so Library.delete_paper removes what an item holds
+    itself (rows and folders), and the key makes the database refuse an owner removed any other way.
+
+    attachments are memos (md) and documents (html), each a file in the owner's own folder
+    (papers/<owner>/attachments/<id>.<format>), so the cascade is enough for them: the row goes with
+    the owner and so does the folder. They are not papers rows: backup validation requires an
+    original.pdf of every paper, and a paper's sha256 is unique.
+
+    item_links joins two items that stand on their own (a paper and a notebook); a < b keeps a pair
+    one row whichever way it was made. Either end's removal removes the link.
+
+    A new kind must raise the schema version as well, so that an older Papeer refuses the library
+    instead of treating the rows as PDFs.
+    """
+    db.execute("ALTER TABLE papers ADD COLUMN kind TEXT NOT NULL DEFAULT 'pdf'")
+    db.execute("ALTER TABLE papers ADD COLUMN parent_id TEXT REFERENCES papers(id)")
+    db.execute("CREATE INDEX papers_parent ON papers(parent_id) WHERE parent_id IS NOT NULL")
+    db.execute("""CREATE TABLE attachments (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+        format TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'user',
+        position INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""")
+    db.execute("CREATE INDEX attachments_owner ON attachments(owner_id, position)")
+    db.execute("""CREATE TABLE item_links (
+        a TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+        b TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+        PRIMARY KEY(a, b), CHECK (a < b)
+    )""")
+    db.execute("CREATE INDEX item_links_b ON item_links(b)")
+
+
 def _paper_discovery(db: sqlite3.Connection, _root: Path) -> None:
     db.execute("""CREATE TABLE paper_discovery (
         source TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,

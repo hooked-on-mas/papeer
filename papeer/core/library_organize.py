@@ -97,7 +97,7 @@ def propose_organization(lib, provider, cancel, progress, *, source: str, instru
     from papeer.providers import check_cancel, parse_json_answer
 
     source = normalize_collection_name(source)
-    papers = lib.papers()
+    papers = lib.papers()  # PDF papers: a notebook has no text for the AI to read (yet), so it is not offered.
     candidates = organize_candidates(lib, source, paper_ids, papers)
     check_cancel(cancel)
     progress("論文の内容を読み込んでいます…")

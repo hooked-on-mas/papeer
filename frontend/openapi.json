@@ -12984,6 +12984,25 @@
             "type": "string",
             "title": "Venue"
           },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "pdf",
+              "notebook"
+            ],
+            "title": "Kind"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
           "last_opened_at": {
             "anyOf": [
               {
@@ -13004,6 +13023,21 @@
             "type": "boolean",
             "title": "Has Article",
             "default": false
+          },
+          "attachment_count": {
+            "type": "integer",
+            "title": "Attachment Count",
+            "default": 0
+          },
+          "owned_notebook_count": {
+            "type": "integer",
+            "title": "Owned Notebook Count",
+            "default": 0
+          },
+          "link_count": {
+            "type": "integer",
+            "title": "Link Count",
+            "default": 0
           },
           "translated_count": {
             "type": "integer",
@@ -13069,6 +13103,8 @@
           "doi",
           "arxiv_id",
           "venue",
+          "kind",
+          "parent_id",
           "note"
         ],
         "title": "Paper",
@@ -13230,6 +13266,25 @@
             "type": "string",
             "title": "Venue"
           },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "pdf",
+              "notebook"
+            ],
+            "title": "Kind"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
           "last_opened_at": {
             "anyOf": [
               {
@@ -13250,6 +13305,21 @@
             "type": "boolean",
             "title": "Has Article",
             "default": false
+          },
+          "attachment_count": {
+            "type": "integer",
+            "title": "Attachment Count",
+            "default": 0
+          },
+          "owned_notebook_count": {
+            "type": "integer",
+            "title": "Owned Notebook Count",
+            "default": 0
+          },
+          "link_count": {
+            "type": "integer",
+            "title": "Link Count",
+            "default": 0
           },
           "translated_count": {
             "type": "integer",
@@ -13310,10 +13380,12 @@
           "bibliography_version",
           "doi",
           "arxiv_id",
-          "venue"
+          "venue",
+          "kind",
+          "parent_id"
         ],
         "title": "PaperRow",
-        "description": "A paper as GET /api/papers lists it: its papers row (Library._paper) and what library_list.paper_row adds.\n\nAnswered with response_model_exclude_unset, so a row keeps exactly the keys it was given: the fields\nwith defaults are the ones a row may lack. What paper_row adds is missing from the row of a paper whose\nID is not a folder's name (a hand-edited database), except last_opened_at: library_rows gives every row\nthat one, None when the paper was never opened on this PC (papeer/core/opened_papers.py).\nThe row's columns have no default, so a column added to the papers table fails the tests until named here."
+        "description": "An item as GET /api/papers lists it (a PDF paper or a notebook): its papers row (Library._paper) and what\nlibrary_list.paper_row adds.\n\nAnswered with response_model_exclude_unset, so a row keeps exactly the keys it was given: the fields\nwith defaults are the ones a row may lack. What paper_row adds is missing from the row of a paper whose\nID is not a folder's name (a hand-edited database), except last_opened_at: library_rows gives every row\nthat one, None when the paper was never opened on this PC (papeer/core/opened_papers.py).\nThe row's columns have no default, so a column added to the papers table fails the tests until named here."
       },
       "PdfCandidate": {
         "properties": {

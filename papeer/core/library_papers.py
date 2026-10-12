@@ -14,6 +14,7 @@ from papeer.core.bibliography import clean_arxiv_id, typed_doi
 from papeer.core.collection_paths import in_collection, normalize_collection_name
 from papeer.core.errors import NotFound
 from papeer.core.fileio import atomic_write_json, atomic_write_text
+from papeer.core.item_relations import LISTED_ITEMS, PDF_PAPERS, forget_relations, owned_ids
 from papeer.core.library_base import LibraryBase
 from papeer.core.ocr import load_readings, save_readings
 from papeer.core.paths import PaperFiles
@@ -95,7 +96,28 @@ class PaperRecords(LibraryBase):
         return paper_id, True
 
     def papers(self, query: str = "") -> list[dict]:
-        sql = "SELECT p.* FROM papers p WHERE 1=1"
+        """The PDF papers (kind 'pdf', held by no other item), newest first, those matching `query` if given.
+
+        The default for every whole-library process (citation map, BibTeX, AI folder organization, chat
+        over a folder, ...), which read a PDF's text and layout: a notebook is not among them. What the
+        library lists is items().
+        """
+        return self._listed(query, PDF_PAPERS)
+
+    def items(self, query: str = "") -> list[dict]:
+        """What the library lists, newest first: the PDF papers and the notebooks that stand on their own.
+
+        Not the rows of notebooks held by another item (papers.parent_id): the item that holds them shows them.
+        """
+        return self._listed(query, LISTED_ITEMS)
+
+    def all_ids(self) -> set[str]:
+        """The ID of every row of the papers table, whatever its kind or owner (what exists on this PC)."""
+        with self.connection() as db:
+            return {row[0] for row in db.execute("SELECT id FROM papers")}
+
+    def _listed(self, query: str, condition: str) -> list[dict]:
+        sql = f"SELECT p.* FROM papers p WHERE {condition}"
         arguments = []
         if query.strip():
             # Both the composed (NFC) and decomposed (NFD) forms are looked for: names kept before nfc() may be NFD.
@@ -120,7 +142,8 @@ class PaperRecords(LibraryBase):
         return [cls._paper({k: row[k] for k in row.keys() if k != "insert_order"}) for row in rows]
 
     def papers_by_id(self, paper_ids: list[str]) -> list[dict]:
-        """The papers `paper_ids`, oldest first (_oldest_first); raises NotFound (a KeyError) for a missing one."""
+        """The PDF papers `paper_ids`, oldest first (_oldest_first); raises NotFound (a KeyError) for a missing
+        one, and for an ID of another kind (a notebook has no bibliography to cite)."""
         wanted = list(dict.fromkeys(paper_ids))
         for paper_id in wanted:
             self.folder(paper_id)  # Checks the ID's form.
@@ -128,19 +151,19 @@ class PaperRecords(LibraryBase):
         with self.connection() as db:
             for start in range(0, len(wanted), 500):
                 chunk = wanted[start:start + 500]
-                rows += db.execute(f"SELECT rowid AS insert_order,* FROM papers WHERE id IN ({','.join('?' * len(chunk))})",
-                                   chunk).fetchall()
+                rows += db.execute(f"SELECT rowid AS insert_order,* FROM papers WHERE {PDF_PAPERS}"
+                                   f" AND id IN ({','.join('?' * len(chunk))})", chunk).fetchall()
         if len(rows) != len(wanted):
             raise NotFound("論文が見つかりません。")
         return self._oldest_first(rows)
 
     def collection_papers(self, path: str) -> list[dict]:
-        """The papers in folder `path` and its subfolders, oldest first (_oldest_first)."""
+        """The PDF papers in folder `path` and its subfolders, oldest first (_oldest_first)."""
         path = normalize_collection_name(path)
         if not path:
             raise ValueError("フォルダーを指定してください。")
         with self.connection() as db:
-            rows = db.execute("SELECT rowid AS insert_order,* FROM papers").fetchall()
+            rows = db.execute(f"SELECT rowid AS insert_order,* FROM papers WHERE {PDF_PAPERS}").fetchall()
         return self._oldest_first([row for row in rows if in_collection(row["collection_name"], path)])
 
     def update(self, paper_id: str, **values) -> None:
@@ -297,17 +320,25 @@ class PaperRecords(LibraryBase):
                            [(page["text"], paper_id, page["number"]) for page in document["pages"]])
 
     def delete_paper(self, paper_id: str) -> None:
-        """Remove a paper, its records and its folder."""
-        folder = self.folder(paper_id)
+        """Remove an item with everything it holds: its records and folder, and those of the notebooks held
+        by it. Its memos and documents go with its folder; links to it are removed (the other ends stay).
+        """
+        self.folder(paper_id)  # Checks the ID's form.
         with self.connection() as db:
-            db.execute("DELETE FROM messages WHERE paper_id=?", (paper_id,))
-            db.execute("DELETE FROM pages WHERE paper_id=?", (paper_id,))
-            db.execute("DELETE FROM papers WHERE id=?", (paper_id,))
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_glossary_domains'").fetchone():
-                db.execute("DELETE FROM paper_glossary_domains WHERE paper_id=?", (paper_id,))
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_glossary'").fetchone():
-                db.execute("DELETE FROM paper_glossary WHERE paper_id=?", (paper_id,))
-        if folder.exists():
+            # Held notebooks first: papers.parent_id has no ON DELETE CASCADE (library_schema._notebook_items),
+            # so the owner's row can only go once nothing refers to it, and their folders are removed here.
+            removed = [*owned_ids(db, paper_id), paper_id]
+            folders = [self.folder(item_id) for item_id in removed]  # Before any change: a malformed ID stops it.
+            for item_id in removed:
+                forget_relations(db, item_id)
+                db.execute("DELETE FROM messages WHERE paper_id=?", (item_id,))
+                db.execute("DELETE FROM pages WHERE paper_id=?", (item_id,))
+                db.execute("DELETE FROM papers WHERE id=?", (item_id,))
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_glossary_domains'").fetchone():
+                    db.execute("DELETE FROM paper_glossary_domains WHERE paper_id=?", (item_id,))
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_glossary'").fetchone():
+                    db.execute("DELETE FROM paper_glossary WHERE paper_id=?", (item_id,))
+        for folder in folders:
             shutil.rmtree(folder, ignore_errors=True)
 
     def page_texts(self, paper_id: str) -> list[tuple[int, str]]:

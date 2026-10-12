@@ -1,7 +1,8 @@
 """What every group of Library's methods builds on: the database connection and the papers' folders and rows.
 
 storage.Library joins the groups (library_papers, library_collections, library_annotations, library_choices,
-library_conversations); each is a mixin of LibraryBase and imports none of the others.
+library_conversations, item_relations); each is a mixin of LibraryBase and imports none of the others, except
+that library_papers uses item_relations' functions (removing an item removes what it holds and its links).
 """
 from __future__ import annotations
 

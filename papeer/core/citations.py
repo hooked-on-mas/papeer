@@ -133,6 +133,7 @@ def citation_graph(lib: Library) -> dict:
     from papeer.core.web_research import reference_key
     from papeer.core.reference_catalog import merged
 
+    # Library.papers() lists the PDF papers only: a notebook has no bibliography to match and no references.
     papers = [{**p, "doi": clean_doi(p.get("doi", "")).casefold(),
                "arxiv_id": clean_arxiv_id(p.get("arxiv_id", "") or p.get("doi", "")).casefold()} for p in lib.papers()]
     identifiers: dict[tuple[str, str], set[str]] = {}

@@ -379,7 +379,7 @@ def test_revisions_record_what_the_library_holds(pair):
     a.save_ink(identity, "original", 1, [{"id": "stroke"}])
     a.save_ink(identity, "original", 2, [])  # A page whose ink was erased is not counted.
     run(a, remote)
-    assert remote.items[0]["counts"] == {"papers": 1, "notes": 1, "stickies": 2, "ink": 1}
+    assert remote.items[0]["counts"] == {"papers": 1, "notes": 1, "stickies": 2, "ink": 1, "notebooks": 0, "attachments": 0}
     assert sync.read_state(a.root)["counts"] == remote.items[0]["counts"]
 
 
@@ -428,6 +428,27 @@ def test_shrunk_library_is_neither_published_nor_taken_in_without_confirmation(p
     assert len(Library(b.root).bookmarks(identity)) == 4
     # Settled: later syncs compare with the new counts.
     assert run(a, remote)["status"] == run(b, remote)["status"] == "synced"
+
+
+def test_removing_memos_asks_about_memos_and_not_about_papers(pair):
+    a, b, identity, remote = pair
+    connect_pair(a, b, remote)
+    memos = [a.add_attachment(identity, "md", f"memo {n}", "x")["id"] for n in range(10)]
+    run(a, remote)
+    run(b, remote)
+    for memo in memos[:6]:
+        a.remove_attachment(memo)
+    result = run(a, remote)
+    review = result["review"]
+    assert (result["status"], review["reason"]) == ("review", "shrunk")
+    assert (review["before"]["attachments"], review["after"]["attachments"]) == (10, 4)
+    assert review["before"]["papers"] == review["after"]["papers"] == 1
+    assert "メモ・資料" in review["message"] and "論文" not in review["message"]
+    # The other PC takes the removal in with the same question, and its memos' files go with the rows.
+    assert run(a, remote, confirm=True)["status"] == "synced"
+    assert run(b, remote)["review"]["reason"] == "remote_shrunk"
+    assert run(b, remote, confirm=True)["reloaded"] is True
+    assert len(Library(b.root).attachments(identity)) == 4
 
 
 def test_confirmation_applies_only_to_what_was_shown(pair):
@@ -938,7 +959,7 @@ def test_what_differs_leaves_out_what_an_older_database_lacks(pair, tmp_path):
     diff = sync.library_difference(a.root / "library.sqlite3", older)
     # The sticky note matches on the columns both have; the ink has no table to match on the other side.
     assert (diff["notes"], diff["stickies"], diff["ink"]) == (0, 0, 1)
-    assert diff["remote_counts"] == {"papers": 1, "notes": 1, "stickies": 1, "ink": 0}
+    assert diff["remote_counts"] == {"papers": 1, "notes": 1, "stickies": 1, "ink": 0, "notebooks": 0, "attachments": 0}
 
 
 def test_conflict_is_offered_even_when_what_differs_cannot_be_read(pair, monkeypatch):

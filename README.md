@@ -370,6 +370,8 @@ Papeer/
     glossary.json               旧辞書の移行元（用語辞書はlibrary.sqlite3に保存）
     article.md                解説
     note.md                   メモ
+    notebook.json             手書きノートのページの構成（ノートの項目だけ。original.pdf はこれから作る）
+    attachments/<ID>.md|.html 論文・ノートが持つメモ（md）・資料（html）。ID は library.sqlite3 の attachments の行
 
 Papeer-sync-backups/          以前のバージョンが残した、フォルダー同期で選ばなかったライブラリのZIP（今は PapeerSync/history/ に残す。
                               設定のバックアップの「以前のデータ」から削除できる）

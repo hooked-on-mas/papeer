@@ -17,7 +17,7 @@ DEFAULT_TEMPLATE_NAME = "読書メモ"
 def all_tags(lib: Library) -> list[str]:
     """Every paper tag the UI offers: the saved choices and the tags papers carry, in case-insensitive order."""
     names = set(lib.tag_choices("paper"))
-    return sorted(names | {tag for paper in lib.papers() for tag in paper["tags"]}, key=str.casefold)
+    return sorted(names | {tag for paper in lib.items() for tag in paper["tags"]}, key=str.casefold)
 
 
 def choice_name(kind: str, value: str) -> str:

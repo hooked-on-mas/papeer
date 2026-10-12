@@ -7,7 +7,7 @@ import re
 import threading
 import time
 import uuid
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 from pydantic import BaseModel
 
@@ -38,8 +38,8 @@ class JobManager:
         self._listeners: set[asyncio.Queue] = set()
         self._loop = event_loop
         self._closed = False
-        # The changes running under idle(): the paper each one waits on, None for the whole library.
-        self._holds: dict[object, str | None] = {}
+        # The changes running under idle(): the papers each one waits on, None for the whole library.
+        self._holds: dict[object, frozenset[str] | None] = {}
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -111,21 +111,24 @@ class JobManager:
         return not any(thread.is_alive() for thread in threads)
 
     @contextmanager
-    def idle(self, message: str, paper_id: str | None = None, *, ignore: frozenset[JobKind] = frozenset()) -> Iterator[None]:
+    def idle(self, message: str, paper_id: str | Iterable[str] | None = None, *,
+             ignore: frozenset[JobKind] = frozenset()) -> Iterator[None]:
         """Run a change that must not overlap a job: ConcurrencyConflict(message) if one is running.
 
-        With `paper_id`, only that paper's jobs count. Checked under the lock, and until the change is
+        With `paper_id`, only that paper's jobs count (or the jobs of any of several papers: an item and
+        the notebooks it holds, removed together). Checked under the lock, and until the change is
         over no job it waits on may start (submit_job refuses it), so none starts between the check and
         the change, as it could when a route looked at get_jobs() first. A sync, backup or restore still
         starts, and waits for the request making the change to finish before it touches the library.
         `ignore` permits independent jobs already running; the hold still prevents new submissions.
         """
         hold = object()
+        scope = None if paper_id is None else frozenset([paper_id] if isinstance(paper_id, str) else paper_id)
         with self._lock:
-            if any(job.running and job.kind not in ignore and (paper_id is None or job.paper_id == paper_id)
+            if any(job.running and job.kind not in ignore and (scope is None or job.paper_id in scope)
                    for job in self._jobs.values()):
                 raise ConcurrencyConflict(message)
-            self._holds[hold] = paper_id
+            self._holds[hold] = scope
         try:
             yield
         finally:
@@ -145,7 +148,7 @@ class JobManager:
             # A sync, backup or restore need not be refused: it waits for the admitted requests anyway
             # (deps.wait_for_library_requests), the one running the change included. Refusing it would
             # report an automatic sync that happened to start then as failed.
-            if kind not in SNAPSHOT_KINDS and any(held is None or held == paper_id for held in self._holds.values()):
+            if kind not in SNAPSHOT_KINDS and any(held is None or paper_id in held for held in self._holds.values()):
                 raise ConcurrencyConflict("別の変更を処理しています。終わってからやり直してください。")
             # Check concurrency constraints
             if any(j.running and j.kind in SNAPSHOT_KINDS for j in self._jobs.values()):

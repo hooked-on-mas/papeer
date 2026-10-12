@@ -11,6 +11,7 @@ from urllib.parse import quote, urlsplit
 
 from papeer.core.bibliography import clean_arxiv_id, clean_doi, clean_venue, first_author
 from papeer.core import scholarly_lookup
+from papeer.core.item_relations import PDF_PAPERS
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library
 from papeer.providers import ProviderBackend, check_cancel, parse_json_answer
@@ -190,7 +191,8 @@ def records(lib: Library, source: str) -> list[dict]:
         target = record.get("paper_id")
         if target:
             with lib.connection() as db:
-                exists = db.execute("SELECT 1 FROM papers WHERE id=?", (target,)).fetchone()
+                # A PDF paper: what a reference is matched with is read as one (its summary, its OCR pages).
+                exists = db.execute(f"SELECT 1 FROM papers WHERE id=? AND {PDF_PAPERS}", (target,)).fetchone()
             if exists:
                 files = PaperFiles(lib.paper_folder(target))
                 record["has_summary"] = files.article_md.is_file()

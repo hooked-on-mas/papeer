@@ -213,9 +213,10 @@ def rename_paper(paper_id: str, body: RenamePaperRequest) -> dict[str, str]:
 
 @router.delete("/api/papers/{paper_id}")
 def delete_paper(paper_id: str) -> dict[str, str]:
-    with deps.job_manager.idle("処理中のジョブがあるため削除できません。", paper_id):
-        lib = deps.get_library()
-        lib.paper_folder(paper_id)
+    lib = deps.get_library()
+    lib.paper_folder(paper_id)
+    # The notebooks it holds go with it, so a job on any of them also prevents the removal.
+    with deps.job_manager.idle("処理中のジョブがあるため削除できません。", {paper_id, *lib.owned_notebooks(paper_id)}):
         lib.delete_paper(paper_id)
     deps.library_changed()
     return {"status": "deleted"}

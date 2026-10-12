@@ -29,6 +29,7 @@ from papeer import __version__
 from papeer.core import local_history, sync_store
 from papeer.core.errors import Invalid
 from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
+from papeer.core.item_relations import LISTED_ITEMS
 from papeer.core.paths import fingerprint_cache_path, sync_state_path
 from papeer.core.backup import create_backup, restore_backup
 from papeer.core.storage import (SCHEMA_VERSION, Library, NewerSchemaError, database_version, library_missing,
@@ -177,8 +178,12 @@ def start_new_library(root: Path) -> dict:
 # Each revision records how much the library holds, and this PC remembers the counts it last synced.
 # A sync that would publish, or take in, a library with far fewer items stops and asks first.
 # "stickies" counts the rows of bookmarks: sticky notes and highlights of selected text alike
-# (library_schema._highlights).
-COUNT_LABELS = {"papers": "論文", "notes": "メモ", "stickies": "付箋", "ink": "書き込み"}
+# (library_schema._highlights). "papers" counts PDF papers only, "notebooks" the handwritten notebooks
+# (held ones included) and "attachments" the memo and document files items hold (library_schema._notebook_items),
+# so removing memos is not reported as papers lost. A revision or state recorded by an earlier Papeer
+# lacks the last two: a kind missing on either side is not compared (shrunk_kinds).
+COUNT_LABELS = {"papers": "論文", "notes": "メモ", "stickies": "付箋", "ink": "書き込み",
+                "notebooks": "ノート", "attachments": "追加のメモ・資料"}
 # "Far fewer" is at least SHRINK_MIN_ITEMS items and at least half of a kind. The absolute floor keeps
 # ordinary deletions in a small library (1 of 2 papers) from stopping sync; the ratio keeps a clean-up
 # in a large one (30 of 300) from doing so. Losing every paper always asks: an empty library is how a
@@ -187,7 +192,8 @@ SHRINK_MIN_ITEMS = 5
 
 
 def library_counts(root: Path) -> dict[str, int]:
-    """Papers, papers with a memo, sticky notes and pages with ink: a few COUNTs, without migrating the database."""
+    """Papers, papers with a memo, sticky notes, pages with ink, notebooks and the memos and documents items
+    hold (COUNT_LABELS): a few COUNTs, without migrating the database."""
     with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db:
         return _database_counts(db)
 
@@ -197,8 +203,24 @@ def _database_counts(db: sqlite3.Connection, schema: str = "main") -> dict[str, 
 
     def count(table: str, where: str = "") -> int:
         return db.execute(f"SELECT COUNT(*) FROM {schema}.{table} {where}").fetchone()[0] if table in tables else 0
-    return {"papers": count("papers"), "notes": count("papers", "WHERE trim(note)<>''"),
-            "stickies": count("bookmarks"), "ink": count("pdf_ink", "WHERE strokes NOT IN ('','[]')")}
+    # Before library_schema._notebook_items every row of papers is a PDF paper.
+    kinds = {row[1] for row in db.execute(f"PRAGMA {schema}.table_info(papers)")}
+    return {"papers": count("papers", "WHERE kind='pdf'" if "kind" in kinds else ""),
+            "notes": count("papers", "WHERE trim(note)<>''"),
+            "stickies": count("bookmarks"), "ink": count("pdf_ink", "WHERE strokes NOT IN ('','[]')"),
+            "notebooks": count("papers", "WHERE kind='notebook'") if "kind" in kinds else 0,
+            "attachments": count("attachments")}
+
+
+def holds_items(counts: dict | None) -> bool:
+    """Whether recorded counts say the library had a paper or a notebook (an empty one has nothing to go back to)."""
+    return bool(counts) and bool(counts.get("papers") or counts.get("notebooks"))
+
+
+def holds_no_items(counts: dict | None) -> bool:
+    """Whether recorded counts say the library had no paper and no notebook; False when they say nothing
+    (a revision of an earlier Papeer has no counts of notebooks, which it could not have)."""
+    return bool(counts) and counts.get("papers") == 0 and not counts.get("notebooks")
 
 
 def shrunk_kinds(before: dict | None, after: dict) -> list[str]:
@@ -210,7 +232,7 @@ def shrunk_kinds(before: dict | None, after: dict) -> list[str]:
         old, new = before.get(kind), after.get(kind)
         if type(old) is not int or type(new) is not int:
             continue
-        if (old - new >= SHRINK_MIN_ITEMS and new * 2 <= old) or (kind == "papers" and old > 0 and new == 0):
+        if (old - new >= SHRINK_MIN_ITEMS and new * 2 <= old) or (kind in ("papers", "notebooks") and old > 0 and new == 0):
             result.append(kind)
     return result
 
@@ -269,8 +291,8 @@ def _revision_database(remote, revision: str, directory: Path, cancel) -> Path:
 def library_difference(local: Path, other: Path) -> dict:
     """What differs between this PC's database and another library's, shown before choosing one of them.
 
-    The papers only one side has (how many, and a few titles), and among the papers both have, how many
-    memos, sticky notes and pages of ink differ. Without the common ancestor the direction of a change is
+    The items only one side has (how many, and a few titles: the PDF papers and notebooks the library lists,
+    not what an item holds), and among the papers both have, how many memos, sticky notes and pages of ink differ. Without the common ancestor the direction of a change is
     unknown (added on one side, or deleted on the other), so each side's own papers are told apart instead.
     Sticky notes are matched by their ID, which each PC numbers on its own: two notes added separately on
     two PCs may share one and count as a single difference, so that count is a guide.
@@ -280,9 +302,14 @@ def library_difference(local: Path, other: Path) -> dict:
     with closing(sqlite3.connect(local, timeout=30)) as db:
         db.execute("ATTACH DATABASE ? AS theirs", (str(other),))
 
+        def listed(schema: str) -> str:
+            columns = {row[1] for row in db.execute(f"PRAGMA {schema}.table_info(papers)")}
+            return LISTED_ITEMS if {"kind", "parent_id"} <= columns else "1"
+
         def titles(mine: str, theirs: str) -> list[str]:
             return [str(title) for (title,) in db.execute(
-                f"SELECT title FROM {mine}.papers WHERE id NOT IN (SELECT id FROM {theirs}.papers) ORDER BY title")]
+                f"SELECT title FROM {mine}.papers WHERE {listed(mine)} AND id NOT IN (SELECT id FROM {theirs}.papers)"
+                " ORDER BY title")]
         local_only, remote_only = titles("main", "theirs"), titles("theirs", "main")
         notes = db.execute("SELECT COUNT(*) FROM main.papers AS a JOIN theirs.papers AS b ON a.id = b.id"
                            " WHERE a.note IS NOT b.note").fetchone()[0]
@@ -379,7 +406,7 @@ def _set_aside(lib: Library, remote, heads: list[dict], choice: str, library_has
     the choice.
     """
     skipped = set_aside_revisions(lib, remote, heads, choice, chosen_hash, cancel, progress, recorded)
-    if choice != "local" and library_hash != chosen_hash and counts.get("papers"):
+    if choice != "local" and library_hash != chosen_hash and holds_items(counts):
         check_cancel(cancel)
         progress("選ばなかったデータを退避しています…")
         entry = local_history.record_folder(lib.root, lib.root, kind="set_aside", library_hash=library_hash,
@@ -396,7 +423,7 @@ def set_aside_revisions(lib: Library, remote, heads: list[dict], choice: str, ch
     out, drive_sync_v2): each recorded from its archive, those that could not be read returned."""
     skipped = []
     for head in heads:
-        if head["id"] == choice or head["hash"] == chosen_hash or head.get("counts", {}).get("papers") == 0:
+        if head["id"] == choice or head["hash"] == chosen_hash or holds_no_items(head.get("counts")):
             continue
         check_cancel(cancel)
         progress("選ばなかったデータを退避しています…")

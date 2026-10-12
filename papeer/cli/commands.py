@@ -78,6 +78,8 @@ def resolve_paper(rows: list[dict[str, Any]], spec: str) -> dict[str, Any]:
 
 
 def translation_label(row: dict[str, Any]) -> str:
+    if row.get("kind") == "notebook":  # No translation to speak of: `ls` tells what it is instead.
+        return "ノート"
     if row.get("translation_in_progress"):
         return "翻訳中"
     required = int(row.get("translation_required_count") or 0)
