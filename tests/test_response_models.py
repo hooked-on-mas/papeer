@@ -138,6 +138,36 @@ def test_the_reader_state_passes_stored_files_on(library, monkeypatch):
     assert answer["report"] is None and answer["preview"] is None
 
 
+@pytest.mark.parametrize("state", ["in_progress", "complete", "report_only"])
+@pytest.mark.parametrize("failed", [False, True], ids=["unselected", "pdf_failed"])
+def test_reader_does_not_display_originals_as_untranslated_pages(library, state, failed):
+    client, lib, paper_id = library
+    files = PaperFiles(lib.folder(paper_id))
+    # The assembled file retains both pages, including the untranslated original.
+    shutil.copyfile(files.original_pdf, files.translated_pdf)
+    report = {"pages": 2, "translated_pages": [1], "untranslated_pages": [2],
+              "skipped_pages": [2] if failed else [],
+              "page_errors": {"2": "本文と数式の領域を分離できませんでした。"} if failed else {}}
+    files.translation_report.write_text(json.dumps(report), "utf-8")
+    run = "a" * 32
+    if state != "report_only":
+        files.translation_preview.write_text(json.dumps({
+            "run_id": run, "complete": state == "complete", "pages": [1], "total_pages": 2,
+            "target_pages": [1, 2] if failed else [1],
+            "skipped_pages": report["skipped_pages"], "page_errors": report["page_errors"],
+        }), "utf-8")
+        page = files.translation_pages / run / "page-1.pdf"
+        page.parent.mkdir(parents=True)
+        shutil.copyfile(files.original_pdf, page)
+
+    answer = client.get(f"/api/papers/{paper_id}/reading").json()
+    assert answer["completed_pages"] == [1]
+    assert answer["translated_pages"]["2"] is None
+    assert answer["translated_pages"]["1"]["file"] == (
+        f"translation-pages/{run}/page-1.pdf" if state == "in_progress" else "translated.pdf")
+    assert answer["report"]["page_errors"] == report["page_errors"]
+
+
 def test_the_article_passes_its_usage_on(library):
     client, lib, paper_id = library
     files = PaperFiles(lib.folder(paper_id))

@@ -278,7 +278,7 @@ class ReadingState(BaseModel):
     preview: Stored[TranslationPreview | None]
     in_progress: bool
     report: Stored[TranslationReport | None]
-    translated_pages: dict[str, TranslatedPageRef | None]  # By page number; None while the page waits.
+    translated_pages: dict[str, TranslatedPageRef | None]  # By page number; None unless a translated page is ready.
     page_versions: dict[str, PageVersion]
     last_page: int
     has_translated: bool

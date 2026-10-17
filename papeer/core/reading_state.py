@@ -29,21 +29,23 @@ def reading_state(lib: Library, paper_id: str, last_page: int = 0) -> dict[str, 
     info = lib.reading_info(paper_id)
     page_count = info["page_count"]
     preview = read_preview(folder)
-    completed = translated_page_numbers(folder, page_count)
     report = files.read_json(files.translation_report)
     in_progress = bool(preview and not preview["complete"])
     if report and not in_progress:
         # Papers translated before page alignment may have more translated pages.
         page_count = max(page_count, int(report.get("pages") or 0))
+    completed = translated_page_numbers(folder, page_count)
 
-    # Where the right pane finds each page: a per-page preview while translating,
-    # the original for pages outside the request, or nothing while it waits.
+    # Only completed pages belong in the right pane. The assembled PDF also
+    # contains originals for failed/unselected pages to preserve page numbering.
     # Asked again whenever a page is ready: each file (translated.pdf for every page once complete)
     # is looked up once, not once per page.
     files_seen: dict[Path, tuple[str, int] | None] = {}
     translated_pages: dict[str, dict[str, Any] | None] = {}
+    completed_set = set(completed)
     for index in range(page_count):
-        path, page_index = translated_page(folder, index, preview)
+        path, page_index = (translated_page(folder, index, preview)
+                            if index + 1 in completed_set else (None, 0))
         if path is not None and path not in files_seen:
             try:
                 found_file = path.stat()

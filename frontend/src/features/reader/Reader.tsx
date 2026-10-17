@@ -47,18 +47,16 @@ function viewAnchor(pane: HTMLElement | null): number | null {
   return Math.max(0, Math.min(1, (pane.scrollTop + pane.clientHeight * 0.25 - top) / page.clientHeight));
 }
 
-/** Caption for the translation pane, following the old reader's rules. */
+/** Only completed translations are displayed in this pane. */
 function translatedCaption(reading: ReadingData | null | undefined, page: number, rebuilding = false): string {
   const preview = reading?.preview;
   const completed = reading?.completed_pages ?? [];
-  if (preview?.skipped_pages?.includes(page)) return "原文（PDF生成をスキップ）";
   if (completed.includes(page)) return "日本語訳";
-  if (preview && (preview.complete || !(preview.target_pages ?? []).includes(page))) {
-    // Without target_pages every page was requested.
-    if (preview.complete || preview.target_pages) return "原文（未翻訳）";
+  if ((preview ?? reading?.report)?.skipped_pages?.includes(page)) return "日本語訳（PDF生成に失敗）";
+  if (preview && !preview.complete && (preview.target_pages?.includes(page) ?? true)) {
+    return rebuilding ? "日本語訳（PDF作り直し中）" : "日本語訳（翻訳待ち）";
   }
-  if (!preview && !reading?.has_translated) return "日本語訳";
-  return rebuilding ? "日本語訳（PDF作り直し中）" : "日本語訳（翻訳待ち）";
+  return "日本語訳（未翻訳）";
 }
 
 export function Reader() {
@@ -348,7 +346,11 @@ export function Reader() {
   const ref = reading?.translated_pages?.[String(currentPage)];
   const rightUrl = ref ? fileUrl(ref.file, ref.mtime) : null;
   const caption = translatedCaption(reading, currentPage, rebuilding);
-  const waiting = !!reading?.preview && !reading.preview.complete;
+  const result = reading?.preview ?? reading?.report;
+  const failed = !!result?.skipped_pages?.includes(currentPage);
+  const pageError = result?.page_errors?.[String(currentPage)];
+  const waiting = !!reading?.preview && !reading.preview.complete && !failed
+    && (reading.preview.target_pages?.includes(currentPage) ?? true);
 
   let rightPlaceholder: React.ReactNode = null;
   if (caps.split && reading && !ref) {
@@ -359,12 +361,13 @@ export function Reader() {
       </span>
     ) : (
       <span className="inline-flex flex-col items-center gap-3">
-        まだ翻訳していません。「翻訳する」で訳文を作成します。
+        {failed ? "このページの日本語PDFを作成できませんでした。" : "このページは未翻訳です。「翻訳する」で訳文を作成します。"}
+        {failed && pageError && <span className="max-w-md px-4 text-center text-[0.75rem]">{pageError}</span>}
         <button
           onClick={() => emitAppEvent("open-translate-dialog")}
           className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[0.8125rem] font-medium hover:opacity-90"
         >
-          <Languages className="w-4 h-4" /> 翻訳する
+          <Languages className="w-4 h-4" /> {failed ? "再試行する" : "翻訳する"}
         </button>
       </span>
     );
