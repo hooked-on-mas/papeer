@@ -364,7 +364,8 @@ def validate_translations(answer: str, expected: list[dict]) -> dict[str, str]:
     if set(result) != {unit["id"] for unit in expected}:
         raise ValueError("翻訳の一部が欠落しました。")
     for unit in expected:
-        text = result[unit["id"]]
+        text = _algorithm_condition(result[unit["id"]], unit.get("text", ""))
+        result[unit["id"]] = text
         if (Counter(MATH_TOKEN.findall(unit.get("text", ""))) != Counter(MATH_TOKEN.findall(text))
                 or _RESERVED.search(MATH_TOKEN.sub("", text))):
             raise ValueError("訳文中の数式の目印が欠落・変更・重複しています。")
@@ -374,6 +375,27 @@ def validate_translations(answer: str, expected: list[dict]) -> dict[str, str]:
                 and not re.search(r"[\u3040-\u30ff\u3400-\u9fff]", text)):
             raise ValueError("本文が日本語に翻訳されていません。")
     return result
+
+
+def _algorithm_condition(text: str, source: str) -> str:
+    """Finish mixed Japanese/English numbered conditions without moving math.
+
+    Models sometimes retain pseudocode's if/then even when the surrounding
+    instruction has been translated. Only that explicit, numbered syntax is
+    rewritten; program identifiers and entirely foreign-language text stay put.
+    """
+    label = r"\d+(?:\.[a-z])?[.)]\s*"
+    if not re.match(r"^" + label + r"If\s+", source, re.I) or not re.search(r"[\u3040-\u30ff\u3400-\u9fff]", text):
+        return text
+    match = re.match(r"^(" + label + r")if\s+(.+?)\s*[,，]\s*then\s+(?:set\s+)?(.+)$", text, re.I | re.S)
+    if not match:
+        return text
+    condition = re.sub(r"\band\b", "かつ", match[2], flags=re.I)
+    condition = re.sub(r"\bor\b", "または", condition, flags=re.I)
+    action = match[3].rstrip(";,；，")
+    if not re.search(r"[\u3040-\u30ff\u3400-\u9fff]", action):
+        action += "と設定する"
+    return match[1] + condition + "の場合、" + action + ("" if action.endswith("。") else "。")
 
 
 def _normalize_markers(text: str, source: str) -> str:
