@@ -219,6 +219,8 @@ class PaperFiles:
     @property
     def article_usage(self) -> Path: return self.folder / "article-usage.json"
     @property
+    def article_review(self) -> Path: return self.folder / "article-review.json"
+    @property
     def media(self) -> Path: return self.folder / "media"
 
     # media/ holds two kinds of image, told apart by name. Region captures that the reader pastes into

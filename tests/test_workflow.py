@@ -6,6 +6,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
 from pathlib import Path
+
+from _summary_responses import clean_summary_response
 import sys
 import tempfile
 import threading
@@ -41,6 +43,8 @@ class FakeProvider:
             raise Cancelled("test interruption")
         if schema:
             units = json.loads(data)
+            if "edits" in schema.get("properties", {}):
+                return clean_summary_response(data)
             if isinstance(units, dict) and "blocks" in units:  # The first request of a batch.
                 units = units["blocks"]
             if isinstance(units, dict) and "source_parts" in units:

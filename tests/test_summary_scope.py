@@ -1,5 +1,7 @@
 """Long summaries require a choice; only selected text and figures reach the provider."""
 import threading
+
+from _summary_responses import clean_summary_response
 import time
 
 from fastapi.testclient import TestClient
@@ -19,9 +21,11 @@ class RecordingProvider:
     def __init__(self):
         self.calls = []
 
-    def generate(self, instruction, data):
+    def generate(self, instruction, data, schema=None):
+        if schema:
+            return clean_summary_response(data)
         self.calls.append((instruction, data))
-        return data
+        return data.split("\n\n## Available images")[0]
 
 
 @pytest.fixture

@@ -7,6 +7,8 @@ import math
 import sys
 import threading
 
+from _summary_responses import clean_summary_response
+
 from fastapi.testclient import TestClient
 from PIL import Image
 import pymupdf as fitz
@@ -299,7 +301,9 @@ class SummaryProvider:
     def generate(self, instruction, data, schema=None):
         if self.fail:
             raise RuntimeError("summary failed")
-        return "# サマリー\n\n" + data
+        if schema:
+            return clean_summary_response(data)
+        return "# サマリー\n\n" + data.split("\n\n## Available images")[0]
 
 
 def test_summary_regeneration_replaces_only_its_figures_and_keeps_note_captures(ink_env):
@@ -320,10 +324,12 @@ def test_summary_regeneration_replaces_only_its_figures_and_keeps_note_captures(
         pdf[0].insert_text((50, 278), "Figure 1: Controller architecture.", fontsize=9)
         pdf.saveIncr()
     figure = files.media / "p1i1.png"
+    figure.write_bytes(b"Previous accepted figure bytes")
 
     with pytest.raises(RuntimeError):
         PaperService(lib, SummaryProvider(fail=True), threading.Event()).article(identity)
     assert stale.is_file(), "the current summary keeps its images until a new one replaces it"
+    assert figure.read_bytes() == b"Previous accepted figure bytes", "rejected generation cannot overwrite previous images"
     for _ in range(2):
         article = PaperService(lib, SummaryProvider(), threading.Event()).article(identity)
         assert "(media/p1i1.png)" in article

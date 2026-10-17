@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -17,10 +18,13 @@ from papeer.layout.math_layout import restore_formula_text
 from papeer.translation.translation import same_page_source
 from papeer.layout.reading_flow import unit_pages, materialize_flows, join_unit_translations, resolve_unit_joins
 from papeer.core.summary_figures import summary_figures
+from papeer.core.summary_source import summary_source_text
 from papeer.core import prompts
 from papeer.core.terminology import apply_glossary, glossary_for_folder
 from papeer.core.translation_run import TranslationRun
 from papeer.core.summary_scope import page_ranges, validate_summary_pages
+from papeer.core.summary_review import normalize_citation_code, reference_issues
+from papeer.core.summary_quality import finalize_article
 
 
 # Given to the model with HTML documents as evidence (the prompt may be the user's own, without it).
@@ -187,26 +191,28 @@ class PaperService:
         # Text-only generation receives only crops bound to source captions.
         figures_by_page = {}
         figure_images = {}
+        source_texts = {}
+        cached_pages = {page["number"]: page["text"] for page in document["pages"]}
         with PDF_LOCK, fitz.open(files.original_pdf) as pdf:
             for number in sorted(selected):
                 check_cancel(self.cancel)
                 page = pdf[number - 1]
                 page.set_rotation(0)
-                for figure in summary_figures(page, document.get("blocks", []), number):
+                figures = summary_figures(page, document.get("blocks", []), number)
+                source_texts[number] = summary_source_text(page, cached_pages[number], document.get("blocks", []),
+                                                          number, figures)
+                for figure in figures:
                     figure_images[f"{figure['id']}.png"] = page.get_pixmap(clip=figure["rect"], dpi=150).tobytes("png")
                     figures_by_page.setdefault(number, []).append(figure)
-        # Same-named figures are overwritten in place, so the current article.md keeps its images
-        # even if this run fails; captures pasted into notes share media/ and are never touched.
-        files.media.mkdir(exist_ok=True)
-        for name, data in figure_images.items():
-            atomic_write_bytes(files.media / name, data)
+        # Keep newly rendered figures in memory until quality acceptance. A rejected
+        # generation must not overwrite the images used by the previous article.
 
         page_units = []
         images = []
         for page in document["pages"]:
             if page["number"] not in selected:
                 continue
-            page_text = page["text"]
+            page_text = source_texts[page["number"]]
             for offset in range(0, max(1, len(page_text)), 10000):
                 page_units.append({"id": f"p{page['number']}-{offset}", "page": page["number"],
                                    "text": page_text[offset:offset + 10000]})
@@ -237,9 +243,44 @@ class PaperService:
             instruction += ("\nSummarize only the selected pages. This is a partial-document summary; "
                             "do not claim to cover the whole paper or fill in sections absent from the evidence.")
         article = self.provider.generate(instruction, (scope + "\n\n" if partial else "") + "\n\n".join(notes) + catalog)
-        article = link_citations(article, {paper_id: document["page_count"]})
+        def link(text: str) -> str:
+            return normalize_citation_code(link_citations(text, {paper_id: document["page_count"]}))
+
+        assets = {f"media/{name}" for name in figure_images}
+        def validate(text: str) -> list[str]:
+            return reference_issues(text, paper_id, selected, assets, files.media, pending_assets=assets)
+
+        article = link(article)
+        issues = validate(article)
+        if issues:
+            check_cancel(self.cancel)
+            self.progress("サマリーの画像・引用・書式を修正しています…")
+            article = link(self.provider.generate(
+                "Repair only the listed reference/format errors and internal-process commentary in this Japanese summary. Return the complete Markdown. "
+                "Remove remarks about supplied notes, input chunks and extraction. Do not treat their boundaries as missing paper content. "
+                "Use only available images and page markers; do not invent paths, omit main results or change factual claims.",
+                json.dumps({"article": article, "issues": issues, "available_images": images,
+                            "paper_id": paper_id, "allowed_pages": sorted(selected)}, ensure_ascii=False)))
+            issues = validate(article)
+            if issues:
+                raise ValueError("サマリーの画像・引用を確認できませんでした: " + "; ".join(issues))
         if partial:
             article = f"> {scope}\n\n{article}"
+        article, review = finalize_article(article, paper_id, [x for x in page_units if re.fullmatch(r"p\d+-\d+", x["id"])],
+                                          self.provider, self.cancel, self.progress, link,
+                                          validate)
+        issues = validate(article)
+        if issues:
+            raise ValueError("内容レビュー後の画像・引用を確認できませんでした: " + "; ".join(issues))
+        check_cancel(self.cancel)
+        files.media.mkdir(exist_ok=True)
+        for name, data in figure_images.items():
+            atomic_write_bytes(files.media / name, data)
+        review["available_images"] = sorted(assets)
+        review["reference_checks"] = "passed"
+        # The report identifies its exact article, including when an interrupted write leaves an older report.
+        review["article_sha256"] = hashlib.sha256(article.encode("utf-8")).hexdigest()
+        atomic_write_json(files.article_review, review)
         atomic_write_text(files.article_md, article)
         for image in files.summary_images():
             if image.name not in figure_images:

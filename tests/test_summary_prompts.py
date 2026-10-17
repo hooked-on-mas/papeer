@@ -1,6 +1,8 @@
 """Writing guidance reaches every notes chunk and the article, respecting custom prompts."""
 import copy
 from pathlib import Path
+
+from _summary_responses import clean_summary_response
 import threading
 from unittest.mock import patch
 
@@ -26,12 +28,14 @@ def test_summary_sends_expanded_guidance_to_every_stage(tmp_path, custom):
         def __init__(self):
             self.calls = []
 
-        def generate(self, instruction, data):
+        def generate(self, instruction, data, schema=None):
+            if schema:
+                return clean_summary_response(data)
             self.calls.append((instruction, data))
             return f"確認した結果。 [{paper_id}:p1]"
 
     provider = Provider()
-    with patch.object(library, "document", return_value=document):
+    with patch.object(library, "document", return_value=document), patch("papeer.core.service.summary_figures", return_value=[]):
         article = PaperService(library, provider, threading.Event()).article(paper_id)
 
     assert len(provider.calls) >= 3
