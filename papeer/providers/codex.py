@@ -117,7 +117,9 @@ class CodexProvider(CliBackend, ProviderBackend):
         return self._run(wrap_document_prompt(instruction, "The document data is the attached images."), schema, images)
 
     def _run(self, prompt: str, schema: dict | None, images: list[bytes] | None = None, *, web_search: bool = False) -> str:
-        with tempfile.TemporaryDirectory(prefix="papeer-") as directory:
+        # A CLI helper can briefly retain its working directory on Windows after
+        # the answer is complete. Cleanup failure must not discard a paid response.
+        with tempfile.TemporaryDirectory(prefix="papeer-", ignore_cleanup_errors=True) as directory:
             root = Path(directory)
             output = root / "answer.txt"
             attached = []

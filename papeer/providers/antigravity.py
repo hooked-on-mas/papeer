@@ -75,6 +75,13 @@ def agy_cli_failure(detail: str, evidence: str | None = None, *, known_temporary
     )):
         return AnswerRejected("Antigravity (agy)の回答を使えませんでした。AIのツール呼び出し形式が不正です。\n"
                               + detail[-1800:])
+    if "exceeded the output token limit" in text.lower():
+        return AnswerRejected("Antigravity (agy)の回答が出力上限で途切れました。回答を短くして再確認してください。\n"
+                              + detail[-1800:])
+    if "the stream was interrupted" in text.lower():
+        # A disconnected response is retryable. Quota/login/settings errors still
+        # take precedence in cli_failure, and explicit cancellation never comes here.
+        return cli_failure("Antigravity (agy)", detail, evidence, known_temporary_only=False)
     return cli_failure("Antigravity (agy)", detail, evidence, known_temporary_only=known_temporary_only)
 
 

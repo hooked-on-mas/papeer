@@ -1365,16 +1365,26 @@ class UnusableAnswerTests(unittest.TestCase):
         self.assertIs(type(error), RuntimeError)
         self.assertEqual(runs, 1)
         for value, message in (("UNAVAILABLE", "try later"), ("ERROR", "503 Service Unavailable"),
-                               ("DEADLINE_EXCEEDED", "")):
+                               ("DEADLINE_EXCEEDED", ""),
+                               ("ERROR", "The stream was interrupted. Please continue the task you were working on.")):
             with self.subTest(status=value):
                 error, runs = self.claude((0, status(value, message), ""), (0, success, ""),
                                           provider_id="antigravity", cls=AntigravityProvider)
                 self.assertIsNone(error)
                 self.assertEqual(runs, 2)
+        error, runs = self.claude((0, status("ERROR", "The stream was interrupted: quota exceeded"), ""),
+                                  (0, success, ""), provider_id="antigravity", cls=AntigravityProvider)
+        self.assertIs(type(error), RuntimeError)
+        self.assertEqual(runs, 1)
         error, runs = self.claude((0, [{"event": "result", "result": {"status": "SUCCESS", "response": " "}}], ""),
                                   provider_id="antigravity", cls=AntigravityProvider)
         self.assertIsInstance(error, AnswerRejected)
         self.assertEqual(runs, 1)
+
+        error, runs = self.claude((0, status("ERROR", "Your previous response was cut off because it exceeded the output token limit"), ""),
+                                  provider_id="antigravity", cls=AntigravityProvider)
+        self.assertIsInstance(error, AnswerRejected)
+        self.assertEqual(runs, 1)  # A shorter repair is needed; resending the same request cannot help.
 
     def test_codex_without_answer_file_is_an_unusable_answer(self):
         runs = []
@@ -1387,6 +1397,30 @@ class UnusableAnswerTests(unittest.TestCase):
             with self.assertRaisesRegex(AnswerRejected, "回答ファイル"):
                 create_provider(Settings(), threading.Event()).generate("Translate", "data")
         self.assertEqual(len(runs), 1)
+
+    @unittest.skipUnless(os.name == "nt", "Windows file sharing semantics")
+    def test_codex_completed_answer_survives_a_locked_temporary_output(self):
+        held = []
+
+        def popen(command, cwd=None, **kwargs):
+            output = Path(command[command.index("--output-last-message") + 1])
+            output.write_text("Completed answer", "utf-8")
+            # A lingering helper may hold an output file after its parent exits.
+            # Windows permits another reader, but refuses deletion until it closes.
+            held.append((Path(cwd), output, output.open("rb")))
+            return Mock(poll=Mock(return_value=0), returncode=0)
+
+        try:
+            with cli(CodexProvider), patch(POPEN, side_effect=popen):
+                answer = CodexProvider(Settings()).generate("Summarize", "Evidence")
+            self.assertEqual(answer, "Completed answer")
+            self.assertTrue(held[0][1].is_file(), "the file lock must actually prevent cleanup")
+        finally:
+            for root, output, handle in held:
+                handle.close()
+                output.unlink(missing_ok=True)
+                if root.exists():
+                    root.rmdir()  # Only this now-empty test directory, no recursive deletion.
 
     def test_api_answer_cut_off_or_empty_is_an_unusable_answer(self):
         for choice in ({"finish_reason": "length", "message": {"content": "途中"}},
