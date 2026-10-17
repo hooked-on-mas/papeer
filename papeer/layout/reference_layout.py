@@ -32,6 +32,7 @@ _YEAR = re.compile(r"\b(?:18|19|20)\d{2}[a-z]?\b")
 _AUTHOR = re.compile(r"(?:\b[A-Z]\.(?:\s*[A-Z]\.)*\s*[^\W\d_][\w’'\-]+|\b[^\W\d_][\w’'\-]+,\s*[A-Z]\.)")
 _VENUE = re.compile(r"\b(?:journal|proceedings|conference|transactions|press|springer|elsevier|wiley|automatica|arxiv|vol\.|pp\.|IEEE|LNCS)\b", re.I)
 _PAGES = re.compile(r"\b\d+\s*[–−-]\s*\d+\b|\b\d+\s*\(\d+\)\s*[:,]")
+_PAGE_FRAGMENT = re.compile(r"^(?:pp?\.\s*)?\d+\s*[–−-]\s*\d+(?:,\s*(?:18|19|20)\d{2})?\.?$", re.I)
 _DOI = re.compile(r"\b10\.\d{4,9}/\S+", re.I)
 _PROSE = re.compile(r"\b(?:we (?:show|prove|use|propose|consider)|this (?:paper|section|result)|is currently|received the|research interests)\b", re.I)
 _QUOTED = re.compile(r'"[^"\n]{2,}"|“[^”]{2,}”|「[^」]{2,}」')
@@ -55,7 +56,11 @@ def reference_evidence(text: str) -> list[str]:
     if any(m.group(1) or m.group(2) for m in entries):
         entries = [m for m in entries if m.group(1) or m.group(2)]
     if entries and text[:entries[0].start()].strip():
-        return []  # A mixed prose/reference block must not hide its prose.
+        # Publishers often put the end of entry N and the start of N+1 in
+        # one block. Both parts still need independent bibliographic evidence.
+        prefix = reference_evidence(text[:entries[0].start()])
+        suffix = reference_evidence(text[entries[0].start():])
+        return sorted(set(prefix + suffix)) if prefix and suffix else []
     parts = [text[m.end():entries[i + 1].start() if i + 1 < len(entries) else len(text)]
              for i, m in enumerate(entries)] if entries else [text]
     numbers = [int(next(g for g in m.groups() if g is not None)) for m in entries]
@@ -76,7 +81,7 @@ def reference_evidence(text: str) -> list[str]:
             "sequential-entry-numbers": sequential,
             "quoted-title": bool(_QUOTED.search(flat)),
             "doi": doi,
-            "publication-pages": venue and pages,
+            "publication-pages": pages and (venue or bool(_PAGE_FRAGMENT.fullmatch(flat))),
             "author-punctuation": author and (flat.count('.') >= 3 or flat.count(',') >= 3),
             "numbered-author": bool(entries) and author,
         }
@@ -184,6 +189,7 @@ def mark_references(document: dict) -> None:
     resolved by ``order_page``); see ``_reading_sequence`` for the exceptions.
     """
     active = False
+    entry_size = None
     for block in _reading_sequence(document):
         if block.get("kind") == "reference":
             # Re-evaluate older marks so a refresh can also un-mark blocks.
@@ -195,6 +201,7 @@ def mark_references(document: dict) -> None:
         rest = _split_heading(lines)
         if rest is not None:
             active = True
+            entry_size = None
             if not rest:
                 block.update(kind="reference", reference_evidence=["heading"])
             elif evidence := reference_evidence(rest):
@@ -204,9 +211,17 @@ def mark_references(document: dict) -> None:
         elif lines and len(lines[0]) < 160 and _END.match(lines[0]):
             active = False
         elif active:
+            # A proceedings scan can start the next article immediately after
+            # the bibliography on the same page. Its title closes this range;
+            # otherwise author names, dates and quoted prose look like entries.
+            if (entry_size and block.get("font_size", 0) > entry_size * 1.15
+                    and len(block["text"]) < 240 and not _ENTRY.match(block["text"])):
+                active = False
+                continue
             evidence = reference_evidence(block["text"])
             if evidence:
                 block.update(kind="reference", reference_evidence=evidence)
+                entry_size = min(entry_size or block.get("font_size", 10), block.get("font_size", 10))
 
 
 def reference_text_blocks(document: dict) -> list[tuple[int, str]]:

@@ -22,6 +22,12 @@ def block(identity, text, page=1, x=40, y=80, right=280):
 
 
 class ReferenceLayoutTests(unittest.TestCase):
+    def test_wrapped_entry_tail_and_following_entry_keep_bibliographic_evidence(self):
+        tail = 'Control, F. W. Vaandrager, Ed. Lecture Notes in Computer Science, 1999, pp. 31-45.'
+        self.assertTrue(reference_evidence(tail + '\n' + REF))
+        self.assertTrue(reference_evidence('pp. 1021–1026.\n' + REF))
+        self.assertFalse(reference_evidence('This is ordinary prose.\n' + REF))
+
     def test_relaxed_or_cues(self):
         cases = {
             'Collected research notes (2021).': 'publication-year',
