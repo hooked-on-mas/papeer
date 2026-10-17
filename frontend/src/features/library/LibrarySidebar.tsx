@@ -1,4 +1,5 @@
 import { newNotebook, moveNotebook, showHoldings } from "@/features/notebooks/NotebookDialogs";
+import { useInkPdfExport } from "@/features/reader/inkControls";
 import { useNotebooks } from "@/features/notebooks/notebooks";
 import { useTagChoices } from "@/api/tagChoices";
 import { useAttachments, type Attachment } from "@/api/attachments";
@@ -31,7 +32,7 @@ import { paperDisplayName, useCollections, usePaperList, type PaperData } from "
 import { useStore } from "@/store";
 import {
   ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuLabel, ContextMenuRadioGroup,
-  ContextMenuRadioItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger,
+  ContextMenuRadioItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
@@ -138,6 +139,9 @@ function renameFolderRow(path: string) {
   void renameFolder(path).then((renamed) => { if (renamed !== null) requestTreeFocus(folderKey(renamed)); });
 }
 
+/** How long a paper to show that the library does not list yet is waited for (see reveal-paper). */
+const REVEAL_WAIT_MS = 5000;
+
 /** The keys that move in the tree, which a button in a row passes on to it. */
 const MOVE_KEYS = new Set(["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"]);
 
@@ -219,6 +223,11 @@ export function LibrarySidebar() {
   useEffect(() => {
     if (papersLoaded && tagFilter && !allPapers.some(paper => paper.tags?.includes(tagFilter))) setTagFilter("");
   }, [allPapers, papersLoaded, tagFilter]);
+  // A reading status is a PDF's: a library of notebooks only has nothing to filter by.
+  const readFilterShown = !allPapers.length || allPapers.some(paper => itemCapabilities(paper).readStatus);
+  useEffect(() => {
+    if (papersLoaded && readFilter && !readFilterShown) setReadFilter("");
+  }, [papersLoaded, readFilter, readFilterShown]);
   const { data: searchResults, isFetching: searching, isError: searchError } = useQuery({
     queryKey: [QK.librarySearch, librarySearch],
     // Typing on stops the request of the previous words (their results would only be thrown away).
@@ -361,6 +370,7 @@ export function LibrarySidebar() {
   const treeRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const treeList = useRef<TreeListHandle>(null);
+  const waitingReveal = useRef<{ paperId: string; focus: boolean; at: number } | null>(null);
   const typed = useRef({ text: "", at: 0 });
   const focusRow = (key: string) => {
     const row = treeRef.current?.querySelector<HTMLElement>(`[data-tree-key="${CSS.escape(key)}"]`);
@@ -474,7 +484,7 @@ export function LibrarySidebar() {
           && filterPapers([row], { tag: tagFilter, readStatus: readFilter, matches: null }).length === 0;
         if (lifts) {
           if (tagFilter && !row.tags?.includes(tagFilter)) setTagFilter("");
-          if (readFilter && row.read_status !== readFilter) setReadFilter("");
+          if (readFilter && !(itemCapabilities(row).readStatus && row.read_status === readFilter)) setReadFilter("");
         }
         // Every folder is open while the setting is unset; the filtered tree lacks folders the lifted
         // filter brings back, so writing its folders out would close them.
@@ -488,7 +498,16 @@ export function LibrarySidebar() {
       if (focus) requestTreeFocus(key);
       else setTimeout(() => treeList.current?.scrollTo(key), 50);
     };
-    const offReveal = onAppEvent("reveal-paper", reveal);
+    // An item just made is not in the list until the library has loaded it again: shown once it is.
+    const waiting = waitingReveal.current;
+    if (waiting && Date.now() - waiting.at < REVEAL_WAIT_MS && allPapers.some((p) => p.id === waiting.paperId)) {
+      waitingReveal.current = null;
+      reveal(waiting);
+    }
+    const offReveal = onAppEvent("reveal-paper", (detail) => {
+      if (allPapers.some((p) => p.id === detail.paperId)) reveal(detail);
+      else waitingReveal.current = { ...detail, at: Date.now() };
+    });
     // Ctrl+L: the row the keys were on while it is on screen, else the open paper, else the row that
     // takes the Tab key; the search box when the tree is empty.
     const offFocus = onAppEvent("focus-library", () => {
@@ -597,11 +616,11 @@ export function LibrarySidebar() {
             <FolderPlus className="w-4 h-4 text-muted-foreground" />
           </button>
         </div>
-        <div className="flex gap-1.5">
+        {readFilterShown && <div className="flex gap-1.5">
           <select aria-label="読書状態で絞り込み" className="min-w-0 flex-1 border rounded bg-background h-7 px-1 text-xs" value={readFilter} onChange={e => setReadFilter(e.target.value)}>
-            <option value="">すべての読書状態</option>{Array.from(new Set([...readingStatuses, ...allPapers.map(p => p.read_status).filter((s): s is string => !!s)])).map(status => <option key={status}>{status}</option>)}
+            <option value="">すべての読書状態</option>{Array.from(new Set([...readingStatuses, ...allPapers.filter(p => itemCapabilities(p).readStatus).map(p => p.read_status).filter((s): s is string => !!s)])).map(status => <option key={status}>{status}</option>)}
           </select>
-        </div>
+        </div>}
         <LibraryTags papers={allPapers} selected={tagFilter} onSelect={setTagFilter} />
       </div>
 
@@ -612,11 +631,13 @@ export function LibrarySidebar() {
         },
       }}
         onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={endDrag}>
-        <div
+        {/* The tree's blank part has a menu of its own (a row's menu opens first, and stops this one). */}
+        <ContextMenu>
+        <ContextMenuTrigger
           ref={scrollRef}
           className="flex-1 overflow-auto outline-none"
           tabIndex={-1}
-          title={withShortcutLabels("右クリックで名前変更・子フォルダー作成。論文をドラッグしてフォルダーへ移動。Ctrl・Shift+クリックで複数選択（F2：名前変更、Delete：削除）")}
+          title={withShortcutLabels("右クリックで名前変更・子フォルダー作成・ノート作成。論文をドラッグしてフォルダーへ移動。Ctrl・Shift+クリックで複数選択（F2：名前変更、Delete：削除）")}
         >
           {libraryLoading && (
             <div className="px-4 py-4" aria-busy={!libraryFailed}>
@@ -674,7 +695,13 @@ export function LibrarySidebar() {
               </button>
             </div>
           )}
-        </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-56">
+          <ContextMenuItem onClick={() => newNotebook()}><NotebookPen className="size-4 mr-2" />ノートを作る…</ContextMenuItem>
+          <ContextMenuItem onClick={() => void createFolder(null)}><FolderPlus className="size-4 mr-2" />フォルダーを作成…</ContextMenuItem>
+          <ContextMenuItem onClick={() => void importPdfs()}><FilePlus2 className="size-4 mr-2" />PDFを追加…</ContextMenuItem>
+        </ContextMenuContent>
+        </ContextMenu>
         <DragOverlay dropAnimation={null} modifiers={[besideCursor]}>
           {dragging && (
             <div className="px-3 py-1.5 rounded-md bg-card border shadow-md text-[0.8125rem] max-w-[16.25rem] truncate">
@@ -1052,6 +1079,9 @@ function FolderRowView({ node, level, setSize, posInSet, papers, filtered, setEx
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
+        <ContextMenuItem onClick={() => newNotebook({ collection: node.path })}>
+          <NotebookPen className="w-4 h-4 mr-2" /> ここにノートを作る…
+        </ContextMenuItem>
         <ContextMenuItem onClick={() => createFolder(node.path)}>
           <FolderPlus className="w-4 h-4 mr-2" /> {node.path ? "子フォルダーを作成…" : "フォルダーを作成…"}
         </ContextMenuItem>
@@ -1227,8 +1257,11 @@ const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, se
                   <div className={`h-full rounded-full transition-[width] ${translating ? "bg-primary" : "bg-amber-500/60"}`} style={{ width: `${translation.progress}%` }} />
                 </div>}
               </> : <span>{paper.pages ?? 0}ページ</span>}
-              <span aria-hidden="true">·</span>
-              <span>{paper.read_status || "未設定"}</span>
+              {/* A notebook is written, not read: its pages, with no reading status. */}
+              {itemCapabilities(paper).readStatus && <>
+                <span aria-hidden="true">·</span>
+                <span>{paper.read_status || "未設定"}</span>
+              </>}
               {running && !translating && <span className="text-primary">· AI処理中</span>}
             </div>
             {!!paper.tags?.length && <div className="mt-1 flex flex-wrap items-center gap-1 [&>span]:leading-4">
@@ -1264,9 +1297,10 @@ function PaperMenu({ paper, collection, collections }: { paper: PaperData; colle
   const ids = useMemo(() => papersActedOn(usePaperSelection.getState(), useTreeFocus.getState().rows, paper.id), [paper.id]);
   const caps = itemCapabilities(paper);
   if (ids.length > 1) return <SelectionMenu ids={ids} paperId={paper.id} collections={collections} />;
+  if (caps.notebook) return <NotebookMenu paper={paper} collection={collection} collections={collections} />;
   return (
     <>
-      {!paper.parent_id && <ContextMenuItem onClick={() => newNotebook(paper)}><NotebookPen className="size-4 mr-2" />専用ノートを作る…</ContextMenuItem>}
+      {!paper.parent_id && <ContextMenuItem onClick={() => newNotebook({ owner: paper })}><NotebookPen className="size-4 mr-2" />専用ノートを作る…</ContextMenuItem>}
       {caps.notebook && <ContextMenuItem onClick={() => moveNotebook(paper)}><Folder className="size-4 mr-2" />持ち主を変更・独立させる…</ContextMenuItem>}
       {(caps.linkPaper || caps.linkNotebook) && <ContextMenuItem onClick={() => chooseItemLink(paper)}><Link2 className="size-4 mr-2" />{caps.linkNotebook ? "関連論文を追加…" : "ノートに紐づける…"}</ContextMenuItem>}
       <ContextMenuItem onClick={() => emitAppEvent("open-paper-details", { paperId: paper.id })}>
@@ -1315,6 +1349,57 @@ function PaperMenu({ paper, collection, collections }: { paper: PaperData; colle
 }
 
 /**
+ * A notebook's context menu: the PDF's menu without what is a paper's (原文PDF, BibTeX, the reading status),
+ * with the notebook's own wording (名前, フォルダー).
+ */
+function NotebookMenu({ paper, collection, collections }: { paper: PaperData; collection: string; collections: string[] }) {
+  const caps = itemCapabilities(paper);
+  const { exporting, exportPdf } = useInkPdfExport();
+  // Held by another item, a notebook is placed with its owner, and only an independent one holds and is linked.
+  const independent = !paper.parent_id;
+  return (
+    <>
+      {caps.rename && <ContextMenuItem onClick={() => renamePaperFile(paper.id)}>
+        <Edit2 className="w-4 h-4 mr-2" /> 名前を変更…
+        <ContextMenuShortcut>F2</ContextMenuShortcut>
+      </ContextMenuItem>}
+      {independent && caps.linkNotebook && <ContextMenuItem onClick={() => chooseItemLink(paper)}><Link2 className="size-4 mr-2" />関連論文を追加…</ContextMenuItem>}
+      {independent && <ContextMenuItem onClick={() => newNotebook({ owner: paper })}><NotebookPen className="size-4 mr-2" />専用ノートを作る…</ContextMenuItem>}
+      <ContextMenuItem onClick={() => moveNotebook(paper)}><Folder className="size-4 mr-2" />持ち主を変更・独立させる…</ContextMenuItem>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger disabled={!independent}>
+          <Folder className="w-4 h-4 mr-2" /> フォルダーを移動
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-56 max-h-[320px] overflow-y-auto">
+          {["", ...collections].map((c) => (
+            <ContextMenuCheckboxItem key={c || "(unfiled)"} checked={c === collection} onClick={() => movePaper(paper.id, c)}>
+              {c || "未分類"}
+            </ContextMenuCheckboxItem>
+          ))}
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => chooseNewCollection(paper.id, collection)}>新しいフォルダーを入力…</ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <PaperOrganizeItems paper={paper} />
+      <ContextMenuItem onClick={() => emitAppEvent("open-paper-details", { paperId: paper.id })}>
+        <FileText className="w-4 h-4 mr-2" /> 情報・整理
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem disabled={exporting} onClick={() => void exportPdf(paper.id, "original")}>
+        <Download className="w-4 h-4 mr-2" /> {exporting ? "出力中…" : "書き込み付きPDFとして保存…"}
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => openPaperFolder(paper.id)}>
+        <FolderOpen className="w-4 h-4 mr-2" /> 保存フォルダーを開く
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={() => deletePaperRow(paper.id)} className="text-destructive">
+        <Trash2 className="w-4 h-4 mr-2" /> ライブラリから削除
+      </ContextMenuItem>
+    </>
+  );
+}
+
+/**
  * One paper's reading status and tags, each saved as it is chosen. The tags' list stays open, so that
  * several go on or off in a row; the marks show what was chosen at once, with the changes still being
  * saved over the row as loaded (useShownOrganization).
@@ -1326,7 +1411,7 @@ function PaperOrganizeItems({ paper }: { paper: PaperData }) {
   const names = [...new Set([...tagChoices, ...tags])];
   return (
     <>
-      <ContextMenuSub>
+      {itemCapabilities(paper).readStatus && <ContextMenuSub>
         <ContextMenuSubTrigger>
           <BookOpen className="w-4 h-4 mr-2" /> 読書状態
         </ContextMenuSubTrigger>
@@ -1339,7 +1424,7 @@ function PaperOrganizeItems({ paper }: { paper: PaperData }) {
           </ContextMenuRadioGroup>
           {!statuses.length && <ContextMenuItem disabled>読書状態がありません</ContextMenuItem>}
         </ContextMenuSubContent>
-      </ContextMenuSub>
+      </ContextMenuSub>}
       <ContextMenuSub>
         <ContextMenuSubTrigger>
           <Tag className="w-4 h-4 mr-2" /> タグ{tags.length ? `（${tags.length}）` : ""}
@@ -1372,6 +1457,8 @@ function SelectionMenu({ ids, paperId, collections }: { ids: string[]; paperId: 
     const wanted = new Set(ids);
     return listed.filter((p) => wanted.has(p.id));
   }, [ids, listed]);
+  // The reading status is the PDFs' only: a notebook among them is left as it is.
+  const readable = useMemo(() => selected.filter((p) => itemCapabilities(p).readStatus).map((p) => p.id), [selected]);
   // Tags that any of them has, to take off; and every tag, to put on.
   const onSome = [...new Set(selected.flatMap((p) => p.tags ?? []))];
   const tags = [...new Set([...tagChoices, ...onSome])];
@@ -1426,17 +1513,17 @@ function SelectionMenu({ ids, paperId, collections }: { ids: string[]; paperId: 
           ))}
         </ContextMenuSubContent>
       </ContextMenuSub>
-      <ContextMenuSub>
+      {!!readable.length && <ContextMenuSub>
         <ContextMenuSubTrigger>
-          <BookOpen className="w-4 h-4 mr-2" /> 読書状態を変更
+          <BookOpen className="w-4 h-4 mr-2" /> {readable.length < ids.length ? "読書状態を変更（PDFのみ）" : "読書状態を変更"}
         </ContextMenuSubTrigger>
         <ContextMenuSubContent className="w-56 max-h-[320px] overflow-y-auto">
           {statuses.map((status) => (
-            <ContextMenuItem key={status} onClick={() => void setPapersReadStatus(ids, status)}>{status}</ContextMenuItem>
+            <ContextMenuItem key={status} onClick={() => void setPapersReadStatus(readable, status)}>{status}</ContextMenuItem>
           ))}
           {!statuses.length && <ContextMenuItem disabled>読書状態がありません</ContextMenuItem>}
         </ContextMenuSubContent>
-      </ContextMenuSub>
+      </ContextMenuSub>}
       {/* Not for a selection with an item that has no bibliography (a notebook). */}
       <ContextMenuItem disabled={!selected.every((item) => itemCapabilities(item).bibliography)} onClick={() => void copyBibtex(ids)}>
         <Copy className="w-4 h-4 mr-2" /> {ids.length}件の BibTeX をコピー

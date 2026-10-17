@@ -200,7 +200,7 @@ export function Header() {
               <Pencil className="w-4 h-4 mr-2" /> 名前を変更…
             </DropdownMenuItem>}
             {paper && caps.notebook && <DropdownMenuItem onClick={() => moveNotebook(paper)}>持ち主を変更・独立させる…</DropdownMenuItem>}
-            {paper && !paper.parent_id && <DropdownMenuItem onClick={() => newNotebook(paper)}>専用ノートを作る…</DropdownMenuItem>}
+            {paper && !paper.parent_id && <DropdownMenuItem onClick={() => newNotebook({ owner: paper })}>専用ノートを作る…</DropdownMenuItem>}
             {caps.notebook && <DropdownMenuItem disabled={exportingInk || !notebook} onClick={() => void exportInkPdf(activePaperId, "original")}>
               <Download className="w-4 h-4 mr-2" /> {exportingInk ? "出力中…" : "書き込み付きPDFとして保存…"}
             </DropdownMenuItem>}

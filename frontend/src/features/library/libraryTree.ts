@@ -42,10 +42,13 @@ export type PaperFilter = {
   matches: ReadonlySet<string> | null;
 };
 
-/** The papers the tag, reading status and search keep; `papers` itself when nothing filters. */
+/**
+ * The papers the tag, reading status and search keep; `papers` itself when nothing filters. An item with no
+ * reading status (a notebook) is not kept by one, whatever its row says.
+ */
 export function filterPapers(papers: PaperData[], { tag, readStatus, matches }: PaperFilter): PaperData[] {
   if (!tag && !readStatus && !matches) return papers;
-  return papers.filter((p) => (!tag || !!p.tags?.includes(tag)) && (!readStatus || p.read_status === readStatus)
+  return papers.filter((p) => (!tag || !!p.tags?.includes(tag)) && (!readStatus || (itemCapabilities(p).readStatus && p.read_status === readStatus))
     && (!matches || matches.has(p.id)));
 }
 

@@ -491,9 +491,11 @@ export async function renamePaperFile(paperId: string): Promise<void> {
     showError(error);
     return;
   }
-  const { fileExtension } = itemCapabilities(current);
-  const name = await askText("ファイル名を変更", `新しいファイル名${fileExtension ? `（${fileExtension}は自動で付きます）` : ""}`,
-    current.original_name || current.title);
+  const { fileExtension, notebook } = itemCapabilities(current);
+  // A notebook has a name, not a file name.
+  const name = notebook ? await askText("名前を変更", "新しい名前", current.title)
+    : await askText("ファイル名を変更", `新しいファイル名${fileExtension ? `（${fileExtension}は自動で付きます）` : ""}`,
+      current.original_name || current.title);
   if (name === null) return;
   await renamePaperTo(paperId, name);
 }

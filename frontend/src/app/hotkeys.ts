@@ -43,6 +43,7 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
       { keys: ["Ctrl", "A"], label: "一覧に見えている論文をすべて選択" },
       { keys: ["Esc"], label: "複数選択を解除（選択中の論文の右クリックでまとめて移動・タグ・読書状態・削除）" },
       { keys: ["Ctrl", "Shift", "N"], label: "新しいフォルダー" },
+      { keys: ["Ctrl", "Alt", "N"], label: "新しいノート（追加先のフォルダーに作る）" },
       { keys: ["F2"], label: "名前を変更（一覧ではカーソルのある行）" },
       { keys: ["Delete"], label: "一覧でカーソルのあるフォルダー・論文を削除（確認あり）" },
     ],

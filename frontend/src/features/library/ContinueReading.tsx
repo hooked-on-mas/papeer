@@ -5,6 +5,7 @@ import { useStore } from "@/store";
 import { emitAppEvent } from "@/lib/appEvents";
 import { openedAgo, recentlyOpened } from "@/lib/recentPapers";
 import { normalizeCollection } from "@/lib/collectionPath";
+import { itemCapabilities } from "@/lib/itemKinds";
 import { openPaper } from "./selectionStore";
 
 /** How many papers 続きから読む offers. */
@@ -31,7 +32,7 @@ export function ContinueReading() {
       <ul className="rounded-lg border divide-y bg-background">
         {recent.map((paper) => {
           const page = paperPages[paper.id];
-          const detail = [page ? `${page}ページ` : "", paper.read_status || "", openedAgo(paper.last_opened_at!, now)]
+          const detail = [page ? `${page}ページ` : "", (itemCapabilities(paper).readStatus && paper.read_status) || "", openedAgo(paper.last_opened_at!, now)]
             .filter(Boolean).join(" · ");
           return (
             <li key={paper.id}>

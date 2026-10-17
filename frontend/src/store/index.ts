@@ -7,6 +7,7 @@ import { pageFilterOf, type PageFilter } from "@/features/reader/pageAppearance"
 import { openBesideReader, tabChange, type SidePanel } from "@/features/reader/sidePanel";
 import { inkBarStartOf, type InkBarStart } from "@/features/reader/readerBars";
 import { mergePersisted, migratePersisted, PERSIST_VERSION } from "./persisted";
+import type { NotebookPaper } from "@/features/notebooks/paperSpec";
 import { upsertJob } from "@/features/jobs/jobSelectors";
 
 export { ZOOM_FIT_PAGE, ZOOM_LEVELS, ZOOM_PRESETS } from "@/features/reader/zoomLevels";
@@ -83,6 +84,8 @@ interface UiState {
   notebookZoom: number;
   /** The notebook's page sidebar is hidden (▤ in its toolbar) rather than shown whenever there is room for it. */
   notebookSidebarHidden: boolean;
+  /** The paper of the notebook made last, which the next one starts with (on this PC); none until one is made. */
+  lastNotebookPaper: NotebookPaper | null;
   /** How pages look under the dark theme (設定「表示」); see features/reader/pageAppearance.ts. */
   pageFilter: PageFilter;
   currentPage: number;
@@ -135,6 +138,7 @@ interface UiState {
   setZoom: (zoom: number) => void;
   setNotebookZoom: (zoom: number) => void;
   setNotebookSidebarHidden: (hidden: boolean) => void;
+  setLastNotebookPaper: (paper: NotebookPaper) => void;
   setPageFilter: (filter: PageFilter) => void;
   setCurrentPage: (page: number) => void;
   setPaperAnchor: (paperId: string, anchor: number | null) => void;
@@ -177,6 +181,7 @@ export const useStore = create<UiState>()(
       zoom: 1,
       notebookZoom: ZOOM_FIT_PAGE,
       notebookSidebarHidden: false,
+      lastNotebookPaper: null,
       pageFilter: "normal",
       currentPage: 1,
       paperPages: {},
@@ -223,6 +228,7 @@ export const useStore = create<UiState>()(
       setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
       setNotebookZoom: (notebookZoom) => set({ notebookZoom: clampZoom(notebookZoom) }),
       setNotebookSidebarHidden: (notebookSidebarHidden) => set({ notebookSidebarHidden }),
+      setLastNotebookPaper: (lastNotebookPaper) => set({ lastNotebookPaper }),
       setPageFilter: (filter) => set({ pageFilter: pageFilterOf(filter) }),
       setCurrentPage: (page) => set((state) => ({
         currentPage: page,
@@ -281,6 +287,7 @@ export const useStore = create<UiState>()(
         zoom: state.zoom,
         notebookZoom: state.notebookZoom,
         notebookSidebarHidden: state.notebookSidebarHidden,
+        lastNotebookPaper: state.lastNotebookPaper,
         pageFilter: state.pageFilter,
         sidebarWidth: state.sidebarWidth,
         sidebarCollapsed: state.sidebarCollapsed,

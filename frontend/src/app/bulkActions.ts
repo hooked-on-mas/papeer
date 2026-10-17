@@ -21,6 +21,7 @@ import {
 } from "./actions";
 import { MAX_TAG_LENGTH } from "@/features/notes/tagOptions";
 import { normalizeCollection } from "@/lib/collectionPath";
+import { itemCapabilities } from "@/lib/itemKinds";
 import { pyStrip } from "@/lib/pyWhitespace";
 import { BULK_BUSY_MESSAGE, beginBulk, isBulkRunning } from "./bulkState";
 import { forgetDraftsOfPapers } from "@/lib/pendingSaves";
@@ -122,7 +123,9 @@ export async function setPapersReadStatus(ids: string[], status: string): Promis
     return;
   }
   await eachPaper(ids, `読書状態を「${status}」にしています`, async (id) => {
-    if (((await paper(id)).read_status ?? "") === status) return "unchanged";
+    const current = await paper(id);
+    // A notebook has no reading status, and is left as it is.
+    if (!itemCapabilities(current).readStatus || (current.read_status ?? "") === status) return "unchanged";
     await patchPaper(id, { read_status: status });
     return "done";
   }, {

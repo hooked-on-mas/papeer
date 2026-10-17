@@ -88,3 +88,14 @@ test("the notebook's zoom and sidebar choice are kept apart from the PDF's zoom,
   for (const notebookZoom of ["wide", null, NaN]) assert.equal(restoreNotebook({ notebookZoom }).notebookZoom, typeof notebookZoom === "number" ? 1 : 0, String(notebookZoom));
   for (const notebookSidebarHidden of ["yes", 1, null]) assert.equal(restoreNotebook({ notebookSidebarHidden }).notebookSidebarHidden, false, String(notebookSidebarHidden));
 });
+
+test("the paper of the last notebook made is restored whole; a broken one gives none", () => {
+  const withPaper = { ...defaults, lastNotebookPaper: null };
+  const restorePaper = (saved: object) => mergePersisted(migratePersisted(structuredClone(saved), PERSIST_VERSION), { ...withPaper });
+  const paper = { size: "A5", orientation: "portrait", template: "dot5", color: "dark" };
+  assert.deepEqual(restorePaper({ lastNotebookPaper: paper }).lastNotebookPaper, paper);
+  assert.equal(restorePaper({ zoom: 1 }).lastNotebookPaper, null);
+  for (const lastNotebookPaper of ["A4", 1, { ...paper, template: "later" }, { size: "A5" }]) {
+    assert.equal(restorePaper({ lastNotebookPaper }).lastNotebookPaper, null, JSON.stringify(lastNotebookPaper));
+  }
+});

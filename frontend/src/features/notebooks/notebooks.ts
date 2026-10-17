@@ -8,16 +8,10 @@ import { blockNotebookInk, flushNotebookInk, reconcileNotebookInk } from "@/feat
 import { useStore } from "@/store";
 import { create } from "zustand";
 
-export type NotebookPaper = components["schemas"]["NotebookPaper"];
 export type NotebookDocument = components["schemas"]["NotebookDocument"];
 export type NotebookPage = components["schemas"]["NotebookPage"];
 export type NotebookChange = components["schemas"]["NotebookChange"];
-export const DEFAULT_PAPER = { size: "A4", orientation: "portrait", template: "ruled7", color: "white" } satisfies NotebookPaper;
-export const PAPER_SIZES = ["A4", "B5", "A5", "Letter", "16:9"] as const;
-export const PAPER_TEMPLATES = [
-  ["blank", "無地"], ["ruled7", "横罫 7mm"], ["ruled6", "横罫 6mm"], ["ruled5", "横罫 5mm"],
-  ["grid5", "方眼 5mm"], ["grid10", "方眼 10mm"], ["dot5", "ドット 5mm"], ["cornell", "コーネル"],
-] as const;
+export { DEFAULT_PAPER, PAPER_SIZES, PAPER_TEMPLATES, type NotebookPaper } from "./paperSpec.ts";
 
 export const useNotebookBusy = create<{ ids: string[] }>(() => ({ ids: [] }));
 export function useNotebooks() {

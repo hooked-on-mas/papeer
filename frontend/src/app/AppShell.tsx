@@ -383,6 +383,10 @@ export function AppShell() {
     const store = useStore.getState();
     createFolder(store.selectedFolder ?? store.currentCollection);
   }, hotkeyOptions);
+  // Ctrl+Alt+N makes a notebook in the 追加先; Ctrl+Shift+N is the folder's. Not over another dialog.
+  useHotkeys("ctrl+alt+n, meta+alt+n", () => {
+    if (!document.querySelector("[role='dialog']")) newNotebook();
+  }, hotkeyOptions);
   // Not in the library tree, whose ←→ open and close folders, and move a paper dragged with the keyboard.
   const pageKeyOptions = { ...hotkeyOptions, ignoreEventWhen: (e: KeyboardEvent) => e.target instanceof Element && !!e.target.closest("[role=tree]") };
   useHotkeys("left", () => { if (useStore.getState().activeTab === "reader") movePage(-1); }, pageKeyOptions);
@@ -451,7 +455,7 @@ export function AppShell() {
             <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title={withShortcutLabels("PDFを追加（Ctrl+O）")} onClick={importPdfs}>
               <FilePlus2 className="w-4 h-4 text-muted-foreground" />
             </button>
-            <button aria-label="ノートを作る" className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" onClick={() => newNotebook()}><NotebookPen className="size-4 text-muted-foreground" /></button>
+            <button aria-label="ノートを作る" title={withShortcutLabels("ノートを作る（Ctrl+Alt+N）")} className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" onClick={() => newNotebook()}><NotebookPen className="size-4 text-muted-foreground" /></button>
             <button className="mt-auto w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title="接続・設定"
               onClick={() => setIsSettingsOpen(true)}>
               <Settings2 className="w-4 h-4 text-muted-foreground" />

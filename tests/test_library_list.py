@@ -293,6 +293,13 @@ def test_only_an_unread_paper_starts_reading_and_only_while_the_status_exists(li
     assert library.start_reading(unread) is False and library.paper(unread)["read_status"] == "未読"
 
 
+def test_opening_a_notebook_does_not_start_reading_it(library):
+    from papeer.core import notebook
+    identity = notebook.create(library, "手書き", {})
+    assert library.paper(identity)["read_status"] == "未読"
+    assert library.start_reading(identity) is False and library.paper(identity)["read_status"] == "未読"
+
+
 def test_opened_times_of_removed_papers_are_forgotten_and_other_files_ignored(library, tmp_path):
     kept = _add(library, tmp_path, "a", "A")
     removed = _add(library, tmp_path, "b", "B")

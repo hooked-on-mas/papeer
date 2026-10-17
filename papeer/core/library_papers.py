@@ -213,7 +213,8 @@ class PaperRecords(LibraryBase):
                 db.executemany("INSERT OR IGNORE INTO tag_choices VALUES('paper',?)", [(name,) for name in tags])
 
     def start_reading(self, paper_id: str) -> bool:
-        """An unread paper (未読) becomes 読書中 when opened; whether it changed.
+        """An unread paper (未読) becomes 読書中 when opened; whether it changed. A notebook is written, not
+        read, so it is never started.
 
         Only while the paper is still 未読 and 読書中 is among the choices (the user may have removed or
         renamed it; 未読 need not be, as a paper can keep a status removed since). So opening it again writes
@@ -222,7 +223,7 @@ class PaperRecords(LibraryBase):
         """
         with self.connection() as db:
             return db.execute(
-                """UPDATE papers SET read_status='読書中' WHERE id=? AND read_status='未読'
+                """UPDATE papers SET read_status='読書中' WHERE id=? AND read_status='未読' AND kind='pdf'
                    AND EXISTS(SELECT 1 FROM reading_status_choices WHERE name='読書中')""", (paper_id,)).rowcount > 0
 
     def rename_paper(self, paper_id: str, name: str) -> str:

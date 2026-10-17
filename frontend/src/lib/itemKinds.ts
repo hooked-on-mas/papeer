@@ -44,6 +44,8 @@ export type ItemCapabilities = {
   rename: boolean;
   /** What renaming it appends to the name, "" for none. */
   fileExtension: string;
+  /** A reading status (未読, 読書中…) to set, filter by and show: a PDF is read; a notebook is written, so has none. */
+  readStatus: boolean;
   /** Listed ahead of the papers in its folder. */
   listedFirst: boolean;
   /** Linking a paper to an independent notebook, without moving either. */
@@ -55,13 +57,13 @@ export type ItemCapabilities = {
 const NONE: ItemCapabilities = {
   notebook: false, translate: false, split: false, summary: false, chat: false, memo: false, stickyNotes: false, citationMap: false,
   bibliography: false, ocr: false, fullTextSearch: false, organize: false, annotate: false, originalPdf: false, rename: false,
-  fileExtension: "", listedFirst: false, linkPaper: false, linkNotebook: false,
+  fileExtension: "", readStatus: false, listedFirst: false, linkPaper: false, linkNotebook: false,
 };
 
 const PDF: ItemCapabilities = {
   notebook: false, translate: true, split: true, summary: true, chat: true, memo: true, stickyNotes: true, citationMap: true,
   bibliography: true, ocr: true, fullTextSearch: true, organize: true, annotate: true, originalPdf: true, rename: true,
-  fileExtension: ".pdf", listedFirst: false, linkPaper: true, linkNotebook: false,
+  fileExtension: ".pdf", readStatus: true, listedFirst: false, linkPaper: true, linkNotebook: false,
 };
 
 /**

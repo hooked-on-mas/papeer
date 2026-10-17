@@ -80,6 +80,12 @@ test("filterPapers keeps the papers that every filter lets through", () => {
   assert.deepEqual(ids({ tag: "", readStatus: "", matches: new Set() }), []);
 });
 
+test("a reading status keeps PDFs only: a notebook has none, whatever its row says", () => {
+  const papers = [paper("a", "", { read_status: "読了" }), paper("n", "", { kind: "notebook", read_status: "読了" })];
+  assert.deepEqual(filterPapers(papers, { tag: "", readStatus: "読了", matches: null }).map((p) => p.id), ["a"]);
+  assert.deepEqual(filterPapers(papers, { tag: "", readStatus: "", matches: null }).map((p) => p.id), ["a", "n"]);
+});
+
 test("folder paths are normalized from either slash, without empty parts", () => {
   assert.equal(normalizeCollection(" ML \\ Vision/ 3D /"), "ML / Vision / 3D");
   assert.equal(normalizeCollection(""), "");

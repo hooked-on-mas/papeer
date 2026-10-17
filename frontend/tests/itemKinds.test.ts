@@ -20,6 +20,11 @@ test("a notebook is not translated and has no text: only writing, a memo and a n
     assert.equal(notebook[name as keyof ItemCapabilities], false, name);
   }
   assert.equal(notebook.fileExtension, "");
+  // Written, not read: no reading status to show, filter by or set.
+  assert.equal(notebook.readStatus, false);
+  assert.equal(kindCapabilities("pdf").readStatus, true);
+  assert.equal(kindCapabilities("whiteboard").readStatus, false);
+  assert.equal(itemCapabilities(paperData({ id: "n", kind: "notebook", parent_id: "p" })).readStatus, false);
 });
 
 test("a row without a kind (an old cache, a test's data) is a PDF, and a kind unknown to this app can do nothing", () => {

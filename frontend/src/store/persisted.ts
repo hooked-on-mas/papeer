@@ -7,6 +7,7 @@ import { mergeSavedSettings, type PageFilter } from "../features/reader/pageAppe
 import type { SidePanel } from "../features/reader/sidePanel.ts";
 import { initialInkBarOpen, inkBarStartOf, type InkBarStart } from "../features/reader/readerBars.ts";
 import { clampZoom } from "../features/reader/zoomLevels.ts";
+import { savedNotebookPaper, type NotebookPaper } from "../features/notebooks/paperSpec.ts";
 
 /** The version of the saved data; migratePersisted brings older versions up to it. */
 export const PERSIST_VERSION = 3;
@@ -33,14 +34,16 @@ export function migratePersisted(persisted: any, version: number): any {
  */
 export function mergePersisted<T extends {
   pageFilter: PageFilter; sidePanel: SidePanel | null; inkBarStart: InkBarStart; inkBarOpen: boolean;
-  notebookZoom?: number; notebookSidebarHidden?: boolean;
+  notebookZoom?: number; notebookSidebarHidden?: boolean; lastNotebookPaper?: NotebookPaper | null;
 }>(saved: unknown, current: T): T {
   const merged = mergeSavedSettings(saved, current);
   const inkBarStart = inkBarStartOf(merged.inkBarStart);
   // The notebook's zoom and sidebar choice, where the store has them: anything unreadable gives the default.
-  const notebook: { notebookZoom?: number; notebookSidebarHidden?: boolean } = {};
+  const notebook: { notebookZoom?: number; notebookSidebarHidden?: boolean; lastNotebookPaper?: NotebookPaper | null } = {};
   if ("notebookZoom" in current) notebook.notebookZoom = typeof merged.notebookZoom === "number" ? clampZoom(merged.notebookZoom) : current.notebookZoom;
   if ("notebookSidebarHidden" in current) notebook.notebookSidebarHidden = merged.notebookSidebarHidden === true;
+  // The paper of the last notebook made: whole, or none (the default paper is used).
+  if ("lastNotebookPaper" in current) notebook.lastNotebookPaper = savedNotebookPaper(merged.lastNotebookPaper);
   return {
     ...merged,
     ...notebook,
