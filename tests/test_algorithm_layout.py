@@ -9,6 +9,29 @@ from papeer.layout.algorithm_layout import separate_algorithms
 
 
 class AlgorithmLayoutTests(unittest.TestCase):
+    def test_unruled_indented_algorithm_translates_each_step_and_stops_at_remark(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / 'source.pdf'
+            with fitz.open() as pdf:
+                page = pdf.new_page()
+                for x, y, text in [(52, 80, 'Algorithm 4.1: Iterative controller'),
+                                    (40, 100, '(Initialization) Choose the initial control sequence.'),
+                                    (45, 120, '1) Observe the current state.'),
+                                    (45, 140, '2) Solve the optimization problem.'),
+                                    (45, 160, '3) Evaluate the following cases.'),
+                                    (65, 180, '3.a) If the state is feasible, apply the input.'),
+                                    (45, 200, '4) Apply the selected input and repeat.'),
+                                    (40, 225, 'Remark 4.1: This paragraph is ordinary prose.')]:
+                    page.insert_text((x, y), text, fontsize=10)
+                pdf.save(source)
+            document = extract_pdf(source)
+        steps = [b for b in document['blocks'] if b.get('algorithm_step')]
+        self.assertEqual(len(steps), 7)
+        self.assertTrue(all(b['kind'] == 'text' for b in steps))
+        self.assertTrue(any(u['text'].startswith('3.a)') for u in translation_units(document)))
+        remark = next(b for b in document['blocks'] if b['text'].startswith('Remark'))
+        self.assertNotIn('algorithm_step', remark)
+
     def test_relaxed_numbering_and_frames(self):
         for marker in ('1:', '0:', '4:', '1.', '1)', '1 :'):
             for rules in ((65, 85, 170), (65, 170), (85, 170)):

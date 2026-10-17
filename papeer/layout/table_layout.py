@@ -22,6 +22,15 @@ def _horizontal_rules(page):
                 continue
             key = next((k for k in rows if abs(k - y) < 1), y)
             rows.setdefault(key, []).append((left, right))
+    # Some IEEE PDFs paint rules as a stretched 1x1 monochrome image rather
+    # than a vector path. Ignoring them leaves just the numeric cells protected
+    # and allows the mathematical header to be overwritten as prose.
+    for image in page.get_image_info():
+        box = fitz.Rect(image["bbox"])
+        if image.get("width") == image.get("height") == 1 and image.get("bpc") == 1 and box.height <= 1:
+            y = (box.y0 + box.y1) / 2
+            key = next((k for k in rows if abs(k - y) < 1), y)
+            rows.setdefault(key, []).append((box.x0, box.x1))
     rules = []
     for y, segments in rows.items():
         merged = []
@@ -61,7 +70,7 @@ def _table_regions(page: fitz.Page) -> list[fitz.Rect]:
     for (left, right), ys in groups.items():
         runs = [[]]
         for y in sorted(set(ys)):
-            if runs[-1] and (y - runs[-1][-1] > 160 or any(
+            if runs[-1] and (y - runs[-1][-1] > page.rect.height * .65 or any(
                     runs[-1][-1] < caption.y0 < y and caption.x0 < right and caption.x1 > left
                     for caption in captions)):
                 runs.append([])
@@ -69,6 +78,26 @@ def _table_regions(page: fitz.Page) -> list[fitz.Rect]:
                 runs[-1].append(y)
         for run in runs:
             if len(run) >= 3 and run[-1] - run[0] > 15:
+                ruled = fitz.Rect(left - 1, run[0] - 1, right + 1, run[-1] + 3)
+                # A table with just top/header/bottom rules has no ruled data
+                # rows for find_tables to discover. Repeated separated cells
+                # and numeric data confirm the entire bounded region instead.
+                inside = [w for w in words if fitz.Point((w[0]+w[2])/2, (w[1]+w[3])/2) in ruled]
+                rows = []
+                for word in sorted(inside, key=lambda w: (w[1], w[0])):
+                    row = next((r for r in rows if abs(r[0][1]-word[1]) < min(r[0][3]-r[0][1], word[3]-word[1]) * .4), None)
+                    if row is None: rows.append([word])
+                    else: row.append(word)
+                structured = 0
+                header = False
+                for row in rows:
+                    row.sort(key=lambda w: w[0])
+                    height = max(w[3]-w[1] for w in row)
+                    gaps = sum(b[0]-a[2] > height * .7 for a,b in zip(row,row[1:]))
+                    structured += gaps >= 2 and any(re.search(r'\d', w[4]) for w in row)
+                    header |= gaps >= 2 and sum(bool(re.search(r'[A-Za-z]{2}', w[4])) for w in row) >= 3
+                if structured >= 3 or structured >= 2 and header:
+                    regions.append(ruled)
                 options_list.append(dict(vertical_strategy="text", horizontal_strategy="lines_strict",
                     intersection_y_tolerance=20, clip=fitz.Rect(left - 1, run[0] - 1, right + 1, run[-1] + 3),
                     add_lines=[((left, y), (right, y)) for y in run]))

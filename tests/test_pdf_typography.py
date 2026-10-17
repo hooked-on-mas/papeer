@@ -9,6 +9,66 @@ from papeer.pdf.pdf_typography import FONT_DIRECTORY, TextStyle, first_line_inde
 
 
 class TypographyTests(unittest.TestCase):
+    def test_short_paragraph_uses_adjacent_body_space_before_shrinking(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source, output = Path(temporary) / 'source.pdf', Path(temporary) / 'output.pdf'
+            with fitz.open() as pdf:
+                page = pdf.new_page(width=400, height=400)
+                page.insert_text((40, 90), 'A short lead-in paragraph.', fontsize=10)
+                page.insert_textbox(fitz.Rect(40, 93, 280, 190),
+                                    'This paragraph explains the control method and its assumptions. ' * 4, fontsize=10)
+                raw = [line for item in page.get_text('dict')['blocks'] for line in item.get('lines', [])]
+                pdf.save(source)
+            blocks = []
+            for identity, selected in [('a', [r for r in raw if r['bbox'][1] < 93]),
+                                       ('b', [r for r in raw if r['bbox'][1] >= 93])]:
+                box = fitz.Rect(selected[0]['bbox'])
+                for line in selected[1:]: box |= fitz.Rect(line['bbox'])
+                box.x1 = 280
+                text = '\n'.join(''.join(s['text'] for s in line['spans']) for line in selected)
+                blocks.append(dict(id=identity, page=1, kind='text', font_size=10, bbox=list(box), text=text,
+                                   translation_text=text, formulas=[], regions=[list(r['bbox']) for r in selected]))
+            document = dict(title='Paragraph spacing', page_count=1, pages=[dict(number=1, height=400)], blocks=blocks)
+            report = build_translated_pdf(source, document, {'a': '定義に関する詳しい説明です。' * 4,
+                                                            'b': '制御方法の前提を説明する。'}, output)
+            self.assertFalse(report['readability_warnings'])
+            with fitz.open(output) as pdf:
+                self.assertIn('制御方法の前提', pdf[0].get_text())
+
+    def test_equation_gap_can_fit_two_text_rows_without_moving_equations(self):
+        body = dict(id='body', page=1, kind='text', font_size=10, bbox=[40, 491, 280, 505], text='where the value is known')
+        before = dict(body, id='before', kind='formula', bbox=[100, 470, 250, 479], text='x = 1')
+        after = dict(body, id='after', kind='formula', bbox=[100, 510, 250, 525], text='y = 2')
+        space = reading_space(body, TextStyle('body', 10, 1.25), [before, body, after], fitz.Rect(0, 0, 600, 800), [])
+        self.assertGreaterEqual(space.height, 23)
+        self.assertGreater(space.y0, before['bbox'][3])
+        self.assertLess(space.y1, after['bbox'][1])
+
+    def test_small_wrapped_all_caps_title_keeps_superscript_note_and_one_translation_unit(self):
+        blocks = [dict(id='title1', page=1, kind='text', font_size=10,
+                       text='THE EXACT FEASIBILITY OF RANDOMIZED SOLUTIONS OF',
+                       translation_text='THE EXACT FEASIBILITY OF RANDOMIZED SOLUTIONS OF',
+                       bbox=[85, 111, 428, 121], formulas=[]),
+                  dict(id='title2', page=1, kind='text', font_size=9.85,
+                       text='UNCERTAIN CONVEX PROGRAMS∗',
+                       translation_text='UNCERTAIN CONVEX PROGRAMS[[PD_MATH_title2_0]]',
+                       bbox=[158, 121.5, 359, 133],
+                       formulas=[dict(token='[[PD_MATH_title2_0]]', text='∗')])]
+        merged = merge_wrapped_headings(blocks, {1: 792})
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(len(merged[0]['formulas']), 1)
+        self.assertIn('OF UNCERTAIN', merged[0]['translation_text'])
+        self.assertEqual(text_style(merged[0], 10, 792).role, 'title')
+
+    def test_bibliography_type_does_not_hide_smaller_footnotes(self):
+        from papeer.layout.reading_flow import footnote_ids, source_body_size
+        body = dict(id='body', page=1, kind='text', font_size=10, bbox=[40, 80, 280, 500],
+                    text='The proposed controller maintains stability under uncertainty. ' * 8)
+        note = dict(body, id='note', font_size=8, bbox=[40, 650, 280, 700])
+        refs = [dict(body, id=f'ref{i}', kind='reference', font_size=8) for i in range(10)]
+        self.assertEqual(source_body_size([body, note, *refs]), 9)
+        self.assertEqual(footnote_ids([body, note, *refs], 792), {'note'})
+
     def test_lettered_subsections_use_heading_typography(self):
         for text in ("A. Partitioning scheme", "B. Problem formulation"):
             block = dict(text=text, bbox=[40, 90, 180, 101], font_size=10, formulas=[])

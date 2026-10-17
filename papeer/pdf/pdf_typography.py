@@ -160,13 +160,16 @@ def text_style(block: dict, body_size: float, page_height: float, *, footnote: b
     source_body: the page's body size before rounding (reading_flow.source_body_size); a
     caption is "smaller type" relative to it. Defaults to body_size.
     """
-    if block.get("kind") == "algorithm":
+    if block.get("kind") == "algorithm" or block.get("algorithm_step"):
         return TextStyle("algorithm", block["font_size"], 1.05)
     text = " ".join(block["text"].split())
     rect = fitz.Rect(block["bbox"])
+    if block.get("compact_title"):
+        return TextStyle("title", min(17, max(12, block["font_size"] * 1.25)), 1.2)
     if block.get("running_header"):
         return TextStyle("footer", min(8, body_size * .85), 1.2)
     numbered = _NUMBERED.match(text)
+    note_markers_only = all(re.fullmatch(r"[∗*†‡]", f.get("text", "").strip()) for f in block.get("formulas", []))
     short = len(text) < 160 and len(text.split()) <= 15 and not block.get("formulas")
     # A cover sheet may precede the article. Recognize prominent titles from
     # their typography and geometry rather than the physical page number.
@@ -177,8 +180,8 @@ def text_style(block: dict, body_size: float, page_height: float, *, footnote: b
     # Some TeX journals set the paper title in small, all-capital type.
     # Its position and length distinguish it from author names and running heads.
     if (block.get("page") == 1 and rect.y0 < page_height * .3
-            and rect.width > 200 and len(text.split()) >= 8 and len(text) < 240
-            and text.isupper() and not numbered and not block.get("formulas")):
+            and rect.width > 200 and len(text.split()) >= 7 and len(text) < 240
+            and text.isupper() and not numbered and note_markers_only):
         return TextStyle("title", 17, 1.25)
     if (rect.y0 > page_height * 0.93
             or (rect.y1 < page_height * 0.045 and len(text) < 180)
@@ -249,8 +252,9 @@ def merge_wrapped_headings(blocks: list[dict], page_heights: dict[int, float] | 
         heading_case = words and all(w[0].isupper() or w.lower() in {
             "and", "or", "of", "on", "in", "the", "a", "an", "to", "for", "with", "by"
         } for w in words)
-        if (block.get("kind", "text") == "text" and not block.get("formulas")
-                and heading_case and not _NUMBERED.match(text)
+        note_markers_only = all(re.fullmatch(r"[∗*†‡]", f.get("text", "").strip()) for f in block.get("formulas", []))
+        if (block.get("kind", "text") == "text" and note_markers_only
+                and not _NUMBERED.match(text)
                 and not re.search(r"[.!?:;]$", text)):
             box = fitz.Rect(block["bbox"])
             for previous in reversed(result):
@@ -259,9 +263,19 @@ def merge_wrapped_headings(blocks: list[dict], page_heights: dict[int, float] | 
                 combined = previous["text"] + " " + text
                 is_title = text_style(previous, body_sizes[previous["page"]],
                                       page_heights.get(previous["page"], 792)).role == "title"
+                previous_words = re.findall(r"[A-Za-z]+", previous["text"])
+                compact_title = (heading_case and previous.get("bold_heading") and block.get("bold_heading")
+                                 and len(previous_words) >= 4
+                                 and all(w[0].isupper() or w.lower() in {
+                                     "and", "or", "of", "on", "in", "the", "a", "an", "to", "for", "with", "by"
+                                 } for w in previous_words)
+                                 and abs((a.x0 + a.x1 - box.x0 - box.x1) / 2) < 3)
+                is_title = is_title or compact_title
                 if (previous["page"] == block["page"]
                         and previous.get("kind", "text") == "text"
-                        and not previous.get("formulas") and (is_title or _NUMBERED.match(previous["text"]))
+                        and (not previous.get("formulas") or is_title and all(
+                            re.fullmatch(r"[∗*†‡]", f.get("text", "").strip()) for f in previous.get("formulas", [])))
+                        and (is_title or heading_case and _NUMBERED.match(previous["text"]))
                         and not re.search(r"[.!?:;]$", previous["text"])
                         and len(combined) < (300 if is_title else 160)
                         and len(combined.split()) <= (40 if is_title else 15)
@@ -275,6 +289,8 @@ def merge_wrapped_headings(blocks: list[dict], page_heights: dict[int, float] | 
                            and other["bbox"][0] < max(a.x1, box.x1) for other in result):
                         continue
                     target = previous
+                    if compact_title:
+                        target["compact_title"] = True
                     break
         if target is None:
             result.append(dict(block))
@@ -284,6 +300,7 @@ def merge_wrapped_headings(blocks: list[dict], page_heights: dict[int, float] | 
         for key in ("translation_text", "text"):
             target[key] = target.get(key, target["text"]) + "\n" + block.get(key, block["text"])
         target["regions"] = target.get("regions", []) + block.get("regions", [])
+        target["formulas"] = target.get("formulas", []) + block.get("formulas", [])
     for block in result:
         if text_style(block, body_sizes[block["page"]], page_heights.get(block["page"], 792)).role in {
                 "title", "section", "subsection"}:
@@ -373,13 +390,20 @@ def reading_space(block: dict, style: TextStyle, blocks: list[dict], bounds: fit
                 occupied = heading_space(other, other_style, blocks, bounds)
         barriers.append(occupied)
     barriers += obstacles
+    fixed = [fitz.Rect(b["bbox"]) for b in blocks
+             if b.get("kind") in {"formula", "table", "reference", "figure", "algorithm"}] + obstacles
+    fixed_boxes = {tuple(box) for box in fixed}
     for other in barriers:
         if other.x1 <= rect.x0 or other.x0 >= rect.x1:
             continue
         if other.y1 <= source.y0:
-            top = max(top, (other.y1 + source.y0) / 2 + 3)
+            gap = source.y0 - other.y1
+            padding = max(3, gap / 2 - 3)
+            top = max(top, other.y1 + padding if tuple(other) in fixed_boxes else (other.y1 + source.y0) / 2 + min(3, gap / 4))
         elif other.y0 >= source.y1:
-            bottom = min(bottom, (source.y1 + other.y0) / 2 - 3)
+            gap = other.y0 - source.y1
+            padding = max(3, gap / 2 - 3)
+            bottom = min(bottom, other.y0 - padding if tuple(other) in fixed_boxes else (source.y1 + other.y0) / 2 - min(3, gap / 4))
         else:
             # A figure or neighboring box alongside this text is not free space.
             top, bottom = max(top, source.y0), min(bottom, source.y1)
@@ -427,16 +451,33 @@ LIGHT_TEXT_COLOR = "#f4f6f8"
 
 
 def text_html(text: str, style: TextStyle, images: dict[str, str], *,
-              first_indent: bool = False, color: str = TEXT_COLOR) -> str:
+              first_indent: bool = False, color: str = TEXT_COLOR,
+              story_canvas: bool = False) -> str:
     heading = style.role in {"title", "section", "subsection"}
     family = "PapeerHeading" if heading else "PapeerSerif"
     weight = "bold" if heading else "normal"
     paragraphs = []
+    bottom_descent = 0.0
     # A block split into several translation units continues the same paragraph.
     for index, line in enumerate(resolve_unit_joins(text).splitlines()):
         if not line.strip():
             continue
-        content = _content(line.strip(), images)
+        line_images = dict(images)
+        bottom_descent = 0.0
+        for token in MATH_TOKEN.findall(line):
+            markup = images.get(token, '')
+            height = re.search(r'height:([\d.]+)em', markup)
+            offset = re.search(r'vertical-align:([-\d.]+)em', markup)
+            if height and offset:
+                descent = -float(offset[1])
+                if float(height[1]) > 1.4 or descent > .45:
+                    # Story ignores inline line-height, but a font strut grows
+                    # just the affected row. Do not enlarge every body row.
+                    strut = max(float(height[1]) + .8, 2 * descent + 1.2)
+                    line_images[token] = ('<span data-papeer-tall-math="1" style="white-space:nowrap">' + markup
+                        + f'<span style="font-size:{strut:.4f}em">&#8203;</span></span>')
+                    bottom_descent = max(bottom_descent, descent)
+        content = _content(line.strip(), line_images)
         if style.role == "algorithm":
             content = content.replace("  ", "&nbsp; ")
         if style.role == "runin" and index == 0:
@@ -448,5 +489,10 @@ def text_html(text: str, style: TextStyle, images: dict[str, str], *,
         indent = "1em" if style.role == "body" and not paragraphs and first_indent else "0"
         gap = ".35em" if paragraphs and style.role == "body" else "0"
         paragraphs.append(f'<p style="margin:{gap} 0 0;padding:0;text-indent:{indent}">{content}</p>')
+    if bottom_descent > .45 and not story_canvas:
+        # Story's fit excludes negative vertical-align overflow from its last
+        # line. A real (invisible) text row reserves that tail before clipping
+        # the temporary PDF; padding/empty blocks are ignored by fit_scale.
+        paragraphs.append(f'<p style="margin:0;padding:0;line-height:{bottom_descent + .2:.4f}">&#8203;</p>')
     return (f'<div lang="ja" style="font-family:{family};font-weight:{weight};font-size:{style.size}pt;'
             f'line-height:{style.leading};color:{color};margin:0;padding:0">' + "".join(paragraphs) + "</div>")

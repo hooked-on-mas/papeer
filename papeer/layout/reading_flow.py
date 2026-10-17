@@ -16,6 +16,7 @@ def _prose(b):
     text = b.get('text','').strip()
     # A page needing OCR is kept as the original, so its blocks never join a flow.
     return (b.get('kind','text') == 'text' and not b.get('running_header') and not b.get('needs_ocr')
+            and not b.get('algorithm_step')
             and not b.get('reading_margin') and not b.get('reading_ambiguous') and not formula_only_block(b)
             and not _CAPTION.match(text) and len(text.split()) >= 5
             and not (_HEADING.match(text) and len(text.split()) < 16))
@@ -41,7 +42,7 @@ def _as_extracted(blocks):
 def source_body_size(blocks):
     """The body type size of one page (median of long prose) as order_page measures it,
     not rounded into the range the Japanese typesetting uses."""
-    return _body_size(_as_extracted(blocks))
+    return _body_size(_as_extracted([b for b in blocks if b.get('kind') != 'reference']))
 
 
 def footnote_ids(blocks, height):
@@ -50,7 +51,9 @@ def footnote_ids(blocks, height):
     Nearly the same answer, not always the same: the laid-out page may join blocks
     (wrapped headings, overlapping fragments) that order_page saw separately.
     """
-    fresh = _as_extracted(blocks)
+    # Once references have been identified, their smaller type must not become
+    # the body baseline on a page dominated by the bibliography.
+    fresh = _as_extracted([b for b in blocks if b.get('kind') != 'reference'])
     body = _body_size(fresh)
     return {b['id'] for b in fresh if _footnote(b, body, height)}
 

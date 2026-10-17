@@ -6,10 +6,88 @@ from collections import Counter
 import pymupdf as fitz
 
 from papeer.layout.table_layout import _horizontal_rules
+from papeer.layout.math_layout import _prose_baseline
 
 
 _CAPTION = re.compile(r"\s*Algorithm\s*\d+", re.I)
 _STEP = re.compile(r"^\s*(\d+\s*[:.)]|(?:Require|Ensure|Input|Output)\s*:)", re.I)
+
+
+def unruled_algorithm_steps(items):
+    """Split unframed, numbered pseudocode into translation/layout steps.
+
+    A caption and at least three numbered steps are required, and the next
+    theorem/remark/heading is a hard boundary in the same column.
+    """
+    def text(line):
+        return "".join(c["c"] for s in line["spans"] for c in s["chars"]).strip()
+    lines = [line for item in items for line in item.get("lines", [])]
+    captions = [line for line in lines if re.match(r"Algorithm\s+\d+(?:\.\d+)*\s*[:.]", text(line), re.I)]
+    ranges = []
+    step = re.compile(r"^(?:\d+(?:[.][a-z])?[.)]|\(Initialization\))\s*", re.I)
+    def is_step(line):
+        if not step.match(text(line)):
+            return False
+        first = next((s for s in line["spans"] if any(c["c"].strip() for c in s["chars"])), None)
+        return first is not None and not first.get("math_font")
+    end = re.compile(r"^(?:Remark|Theorem|Lemma|Proposition|Corollary|Proof|Algorithm)\b", re.I)
+    for caption in captions:
+        box = fitz.Rect(caption["bbox"])
+        following = sorted((line for line in lines if line["bbox"][1] >= box.y0
+                            and box.x0 - 24 <= line["bbox"][0] < box.x1), key=lambda line: line["bbox"][1])
+        bottom = next((line["bbox"][1] for line in following
+                       if line is not caption and line["bbox"][1] > box.y1 and end.match(text(line))), None)
+        if bottom is None:
+            continue  # No justified end: leave it to the ordinary layout.
+        body = [line for line in following if line["bbox"][1] < bottom]
+        if sum(bool(is_step(line) and re.match(r"\d+[.)]\s*", text(line))) for line in body) < 3:
+            continue
+        markers = sorted({_prose_baseline(line) for line in body
+                          if is_step(line) or line is caption})
+        ranges.append((min(line["bbox"][0] for line in body), max(line["bbox"][2] for line in body),
+                       box.y0, bottom, markers))
+    if not ranges:
+        return items
+    result = []
+    for item in items:
+        chunks = []
+        for line in item.get("lines", []):
+            x0, y0, _, _ = line["bbox"]
+            region = next((i for i, (left, right, top, bottom, _) in enumerate(ranges)
+                           if left - 4 <= x0 < right and top <= y0 < bottom), None)
+            identity = None
+            if region is not None:
+                ordinal = sum(y <= _prose_baseline(line) + 2 for y in ranges[region][4]) - 1
+                identity = f"a{region}s{ordinal}"
+            if not chunks or chunks[-1][0] != identity:
+                chunks.append((identity, []))
+            chunks[-1][1].append(line)
+        for identity, chunk in chunks:
+            box = fitz.Rect(chunk[0]["bbox"])
+            for line in chunk[1:]:
+                box |= fitz.Rect(line["bbox"])
+            value = dict(item, lines=chunk, bbox=list(box))
+            if identity is not None:
+                value["algorithm_step"] = identity
+                value["algorithm_right"] = ranges[int(identity.split("s")[0][1:])][1]
+            result.append(value)
+    grouped, output = {}, []
+    for item in result:
+        identity = item.get("algorithm_step")
+        if identity is None:
+            output.append(item)
+            continue
+        if identity not in grouped:
+            grouped[identity] = dict(item, lines=list(item["lines"]))
+            output.append(grouped[identity])
+        else:
+            target = grouped[identity]
+            target["lines"].extend(item["lines"])
+            target["bbox"] = list(fitz.Rect(target["bbox"]) | fitz.Rect(item["bbox"]))
+    for item in grouped.values():
+        item["algorithm_size"] = Counter(round(s["size"], 1) for line in item["lines"]
+                                         for s in line["spans"] for c in s["chars"] if c["c"].strip()).most_common(1)[0][0]
+    return output
 
 
 def _has_algorithm_body(page, region):

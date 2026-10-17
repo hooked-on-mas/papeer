@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 import re
 import threading
+from io import BytesIO
 from typing import Callable
 
 import pymupdf as fitz
@@ -14,10 +15,10 @@ from papeer.layout.math_layout import LAYOUT_VERSION, MATH_TOKEN, annotate_math_
 from papeer.core.bibliography import extract_bibliography
 from papeer.core.fileio import atomic_output
 from papeer.layout.reference_layout import mark_references
-from papeer.pdf.pdf_math_crops import formula_crop, page_glyph_bounds
+from papeer.pdf.pdf_math_crops import formula_crop, page_glyph_bounds, tighten_type3_geometry
 from papeer.layout.table_layout import separate_tables, table_regions
-from papeer.layout.figure_layout import diagram_regions, figure_regions
-from papeer.layout.algorithm_layout import separate_algorithms
+from papeer.layout.figure_layout import diagram_regions, figure_regions, restore_plot_labels, raster_crosses_prose
+from papeer.layout.algorithm_layout import separate_algorithms, unruled_algorithm_steps
 from papeer.layout.ocr_engines import EngineSet, OcrError, OcrOptions
 from papeer.providers.common import Cancelled
 from papeer.layout.ocr_pages import ocr_check
@@ -218,11 +219,16 @@ def _text_pages(document: fitz.Document) -> tuple[list[list[dict]], list[dict], 
         block_seq = 1
         items = page.get_text("rawdict", sort=True, flags=fitz.TEXTFLAGS_RAWDICT & ~fitz.TEXT_PRESERVE_IMAGES)["blocks"]
         annotate_math_fonts(items)
+        tighten_type3_geometry(page, items)
         page_items = items
         items, algorithms, algorithm_regions = separate_algorithms(page, items)
+        items = unruled_algorithm_steps(items)
         figures = figure_regions(page)
         tables = [r for r in table_regions(page) if not any(r.intersects(f) for f in figures + algorithm_regions)]
-        figures += diagram_regions(page, figures + tables + algorithm_regions)
+        figures += diagram_regions(page, figures + tables + algorithm_regions, embedded=figures)
+        # A multi-part diagram owns embedded photos and their labels as one
+        # region; nested boxes must not split it back into fragments.
+        figures = [r for r in figures if not any(r != other and r in other for other in figures)]
         items, tables = separate_tables(items, tables, number + 1)
         items, figures = separate_tables(items, figures, number + 1, kind="figure")
         items = merge_inline_items(items)
@@ -317,7 +323,7 @@ def translation_units(document: dict, limit: int | None = None) -> list[dict]:
             continue
         text = block.get("translation_text", block["text"])
         # Pure page numbers and symbol-only blocks are retained verbatim.
-        if not re.search(r"[A-Za-z\u3040-\u30ff\u3400-\u9fff]", text):
+        if re.fullmatch(r"\(\d+[a-z]?\)", text.strip()) or not re.search(r"[A-Za-z\u3040-\u30ff\u3400-\u9fff]", text):
             continue
         start, index = 0, 0
         while start < len(text):
@@ -457,9 +463,132 @@ def _light_text(fill: tuple[float, float, float]) -> bool:
 
 def _fit(placement: fitz.Rect, markup: str, archive: fitz.Archive, bounds: fitz.Rect) -> tuple[float, float]:
     """(remaining, scale) of the markup laid out in placement, shrunk as far as needed."""
+    if 'data-papeer-tall-math' in markup:
+        remaining, scale, _ = _fit_story_canvas(placement, markup, archive, bounds)
+        return remaining, scale
     with fitz.open() as probe:
         candidate = probe.new_page(width=bounds.width, height=bounds.height)
         return candidate.insert_htmlbox(placement, markup, archive=archive, css=FONT_CSS, scale_low=0)
+
+
+def _fit_story_canvas(placement, markup, archive, bounds):
+    """Fit and draw directly on a page, preserving ink below Story's last row.
+
+    insert_htmlbox clips its intermediate page at the reported text height;
+    negative image alignment can extend below that height. Measuring the
+    drawn images avoids a blank tail paragraph that shrinks the whole block.
+    """
+    story = fitz.Story(markup, user_css=FONT_CSS, archive=archive)
+    rect = fitz.Rect(0, 0, placement.width, placement.height)
+    def fits(scale):
+        story.reset()
+        more, _ = story.place(rect * (1 / scale))
+        return not more
+    if fits(1):
+        scale = 1.0
+    else:
+        low, high = .05, 1.0
+        if not fits(low):
+            return -1, 0, None
+        for _ in range(11):
+            middle = (low + high) / 2
+            if fits(middle): low = middle
+            else: high = middle
+        scale = low
+    for _ in range(6):
+        stream = BytesIO()
+        writer = fitz.DocumentWriter(stream)
+        device = writer.begin_page(bounds)
+        story.reset()
+        more, _ = story.place(rect * (1 / scale))
+        story.draw(device, fitz.Matrix(scale, scale) * fitz.Matrix(1, 0, 0, 1, placement.x0, placement.y0))
+        writer.end_page(); writer.close()
+        data = stream.getvalue()
+        with fitz.open(stream=data, filetype='pdf') as drawn:
+            bottom = max((info['bbox'][3] for info in drawn[0].get_image_info()), default=placement.y0)
+        if bottom <= placement.y1 + .05 and not more:
+            return 0, scale, data
+        scale *= min(.98, placement.height / max(placement.height + .1, bottom - placement.y0))
+    return -1, scale, None
+
+
+def _without_images(rect: fitz.Rect, images: list[fitz.Rect]) -> list[fitz.Rect]:
+    """Paint text without painting photographs inside a wraparound box."""
+    pieces = [rect]
+    for image in images:
+        remaining = []
+        for box in pieces:
+            cut = box & image
+            if cut.is_empty:
+                remaining.append(box)
+                continue
+            remaining.extend(part for part in (
+                fitz.Rect(box.x0, box.y0, box.x1, cut.y0),
+                fitz.Rect(box.x0, cut.y1, box.x1, box.y1),
+                fitz.Rect(box.x0, cut.y0, cut.x0, cut.y1),
+                fitz.Rect(cut.x1, cut.y0, box.x1, cut.y1)) if not part.is_empty)
+        pieces = remaining
+    return pieces
+
+
+def _fit_around_images(placement, markup, archive, bounds, images):
+    """Flow one story through horizontal bands around fixed photographs.
+
+    MuPDF Story does not implement CSS floats. Separate placement rectangles
+    keep both the source image footprint and the text's reading order intact.
+    """
+    cuts = sorted({placement.y0, placement.y1, *(max(placement.y0, min(placement.y1, y))
+                   for image in images for y in (image.y0 - 2, image.y1 + 2))})
+    regions = []
+    for top, bottom in zip(cuts, cuts[1:]):
+        if bottom - top < 2:
+            continue
+        band = fitz.Rect(placement.x0, top, placement.x1, bottom)
+        pieces = _without_images(band, [image + (-3, -2, 3, 2) for image in images])
+        usable = [r for r in pieces if r.width >= 30 and r.height >= 2]
+        if usable:
+            region = max(usable, key=lambda r: r.width)
+            # Story's glyph ink can rise above its reported placed rectangle.
+            # Keep the first ink of a new band below the photograph above it.
+            region.y0 += 4
+            if region.height > 2:
+                regions.append(region)
+    if not regions:
+        return -1, 0, None
+    story = fitz.Story(markup, user_css=FONT_CSS, archive=archive)
+    def fits(scale):
+        story.reset()
+        for region in regions:
+            more, filled = story.place(region * (1 / scale))
+            story.draw(None)
+            if not more:
+                return True
+        return False
+    if fits(1):
+        scale = 1.0
+    else:
+        low, high = .1, 1.0
+        if not fits(low):
+            return -1, 0, None
+        for _ in range(11):
+            middle = (low + high) / 2
+            if fits(middle):
+                low = middle
+            else:
+                high = middle
+        scale = low
+    stream = BytesIO()
+    writer = fitz.DocumentWriter(stream)
+    device = writer.begin_page(bounds)
+    story.reset()
+    for region in regions:
+        more, filled = story.place(region * (1 / scale))
+        story.draw(device, fitz.Matrix(scale, scale))
+        if not more:
+            break
+    writer.end_page()
+    writer.close()
+    return 0, scale, stream.getvalue()
 
 
 def _search_text(writer: fitz.TextWriter, font: fitz.Font | None, rect: fitz.Rect, text: str) -> None:
@@ -473,6 +602,22 @@ def _search_text(writer: fitz.TextWriter, font: fitz.Font | None, rect: fitz.Rec
     size = min(rect.height / height, rect.width / width)
     baseline = rect.y0 + (rect.height - height * size) / 2 + font.ascender * size
     writer.append((rect.x0, baseline), text, font=font, fontsize=size)
+
+
+def _restore_source_region(page: fitz.Page, source: fitz.Page, rect: fitz.Rect) -> None:
+    """Restore opaque source pixels, including clipped images and white gaps.
+
+    A sampled border color is not the background of an entire protected region.
+    PDF forms also retain transparent gaps, so placing them over a guessed fill
+    can introduce colored rectangles that never existed in the original.
+    """
+    # Keep the original text searchable beneath the opaque appearance.
+    page.show_pdf_page(rect, source.parent, source.number, clip=rect)
+    pixels = source.get_pixmap(matrix=fitz.Matrix(4, 4), clip=rect, alpha=False, annots=False)
+    # Pixmap clips round outwards to device pixels. Preserve that exact mapping.
+    target = fitz.Rect(pixels.x / 4, pixels.y / 4,
+                       (pixels.x + pixels.width) / 4, (pixels.y + pixels.height) / 4)
+    page.insert_image(target, stream=pixels.tobytes('png'), overlay=True)
 
 
 def build_translated_pdf(source: Path, document: dict, translations: dict[str, str], output: Path,
@@ -493,6 +638,19 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
     sources = {member: [group["blocks"][0]] for group in document.get("continuations", [])
                if group["blocks"][0] in translations for member in group["blocks"]}
     document, translations = materialize_flows(document, translations)
+    # Correct figure boundaries in old caches without re-extracting paragraphs
+    # or discarding their saved translations. Labels retain the original glyphs.
+    if any(b.get("kind") == "figure" for b in document["blocks"]):
+        with PDF_LOCK, fitz.open(source) as geometry_source:
+            by_page = {}
+            for block in document["blocks"]:
+                by_page.setdefault(block["page"], []).append(block)
+            kept = {}
+            for number, blocks in by_page.items():
+                restored, labels = restore_plot_labels(geometry_source[number - 1], blocks)
+                kept.update((b["id"], b) for b in restored)
+                preserved_label_blocks.extend(labels)
+            document = dict(document, blocks=[kept[b["id"]] for b in document["blocks"] if b["id"] in kept])
     document = dict(document, blocks=running_headers(document))
     document = dict(document, blocks=[dict(b, kind="formula", formulas=[]) if formula_only_block(b) else b
                                      for b in document["blocks"]])
@@ -516,26 +674,60 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 continue
         restored.append(block)
     document = dict(document, blocks=restored)
+    page_heights = {p["number"]: p["height"] for p in document["pages"]}
+    page_body = {number: body_font_size([b for b in document["blocks"] if b["page"] == number])
+                 for number in page_heights}
+    roles = {b["id"]: text_style(b, page_body[b["page"]], page_heights[b["page"]]).role
+             for b in document["blocks"]}
+    protected = [b for b in document["blocks"] if b.get("kind") in {"formula", "table", "reference", "figure", "algorithm"}]
+    def adjacent_body(a, b):
+        gap = b["bbox"][1] - a["bbox"][3]
+        if (not 0 <= gap <= 4 or abs(a["bbox"][2] - b["bbox"][2]) > 8
+                or roles[a["id"]] not in {"body", "runin"} or roles[b["id"]] not in {"body", "runin"}
+                or a.get("reading_margin") or b.get("reading_margin")):
+            return False
+        return not any(p["page"] == b["page"] and p["bbox"][1] < b["bbox"][1]
+                       and p["bbox"][3] > a["bbox"][3]
+                       and min(p["bbox"][2], b["bbox"][2]) > max(p["bbox"][0], b["bbox"][0]) for p in protected)
+    with PDF_LOCK, fitz.open(source) as image_source:
+        wrap_images = {n + 1: [fitz.Rect(image['bbox']) for image in page.get_image_info()
+                              if fitz.Rect(image['bbox']).width >= 20
+                              and fitz.Rect(image['bbox']).height >= 20
+                              and not raster_crosses_prose(page, fitz.Rect(image['bbox']))]
+                       for n, page in enumerate(image_source)}
+    def same_wrapped_paragraph(a, b):
+        if (not 0 <= b['bbox'][1] - a['bbox'][3] <= max(a['font_size'], b['font_size']) * 1.5
+                or abs(a['bbox'][2] - b['bbox'][2]) > 8
+                or roles[a['id']] not in {'body', 'runin'} or roles[b['id']] not in {'body', 'runin'}):
+            return False
+        return any(fitz.Rect(a['bbox']).intersects(image) or fitz.Rect(b['bbox']).intersects(image)
+                   for image in wrap_images.get(b['page'], []))
     merged = []
     for block in document["blocks"]:
         box = fitz.Rect(block["bbox"])
         target = next((b for b in reversed(merged)
                        if b["page"] == block["page"]
                        and b.get("kind") == block.get("kind") == "text"
+                       and not b.get("algorithm_step") and not block.get("algorithm_step")
                        and b["id"] in translations and block["id"] in translations
-                       and abs(b["bbox"][0] - box.x0) < 8
-                       and min(b["bbox"][3], box.y1) > max(b["bbox"][1], box.y0)), None)
+                       and (abs(b["bbox"][0] - box.x0) < 8 or same_wrapped_paragraph(b, block))
+                       and (min(b["bbox"][3], box.y1) > max(b["bbox"][1], box.y0)
+                            or adjacent_body(b, block) or same_wrapped_paragraph(b, block))), None)
         if target is None:
             merged.append(dict(block))
         else:
+            paragraph = (first_line_indented(block) or bool(re.match(
+                r"^(?:Remark|Assumption|Theorem|Lemma|Proposition|Corollary|Definition)\b", block["text"]))
+                         or bool(re.search(r"[.!?]\s*$", target["text"])))
+            separator = "\n" if paragraph else " "
             target["bbox"] = list(fitz.Rect(target["bbox"]) | box)
             if target.get("regions") and block.get("regions"):
                 target["regions"] = target["regions"] + block["regions"]
             else:
                 target.pop("regions", None)
-            target["text"] += " " + block["text"]
+            target["text"] += separator + block["text"]
             target["formulas"] = target.get("formulas", []) + block.get("formulas", [])
-            translations[target["id"]] += " " + translations[block["id"]]
+            translations[target["id"]] += separator + translations[block["id"]]
             sources[target["id"]] = list(dict.fromkeys(sources.get(target["id"], [target["id"]])
                                                        + sources.get(block["id"], [block["id"]])))
     document = dict(document, blocks=merged)
@@ -598,7 +790,20 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
             # Old caches may contain only block boxes. Recover line geometry
             # from the source without re-extracting IDs or invalidating translations.
             source_lines = None
-            obstacles = [fitz.Rect(item["bbox"]) for item in page.get_image_info()]
+            inline_ink = [fitz.Rect(formula["bbox"]) for b in document["blocks"] for formula in b.get("formulas", [])
+                          if formula.get("source_page", b["page"]) == number + 1]
+            # Bitmap math belongs to the text being replaced. Treating its
+            # source image as a separate figure blocks all whitespace growth.
+            obstacles = []
+            raster_images = []
+            for item in page.get_image_info():
+                image = fitz.Rect(item["bbox"])
+                if raster_crosses_prose(page, image):
+                    continue
+                if not any((image & rect).get_area() >= image.get_area() * .95 for rect in inline_ink):
+                    obstacles.append(image)
+                    if image.width >= 20 and image.height >= 20:
+                        raster_images.append(image)
             obstacles.extend(fitz.Rect(item["rect"]) for item in page.get_drawings())
             body_size = body_font_size(page_blocks)
             footnotes = footnote_ids(page_blocks, bounds.height)
@@ -606,6 +811,9 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
             # Preserve the full box for isolated math (including fraction bars).
             # Where it encloses prose, protect the actual equation lines instead.
             prose_rects = [fitz.Rect(b["bbox"]) for b in page_blocks if b.get("kind") not in {"formula", "table", "reference", "figure", "algorithm"}]
+            prose_lines = [fitz.Rect(region) for b in page_blocks
+                           if b.get("kind") not in {"formula", "table", "reference", "figure", "algorithm"}
+                           for region in b.get("regions", [b["bbox"]])]
             full_boxes = [fitz.Rect(b["bbox"]) & bounds for b in page_blocks if b.get("kind") == "formula"]
             enclosed_prose = []
             for rect in prose_rects:
@@ -618,10 +826,13 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 if block.get("kind") not in {"formula", "table", "reference", "figure", "algorithm"}:
                     continue
                 box = fitz.Rect(block["bbox"])
+                mixed_math = block.get("kind") == "formula" and any(box.intersects(line) for line in prose_lines)
                 regions = (block.get("regions", [block["bbox"]])
-                           if any(box.intersects(rect) for rect in enclosed_prose) else [block["bbox"]])
+                           if mixed_math or any(box.intersects(rect) for rect in enclosed_prose) else [block["bbox"]])
                 display_rects.extend(fitz.Rect(region) & bounds for region in regions)
             restore_rects = []
+            painted_ids = set()
+            painted_rects = []
             for block in by_page.get(number + 1, []):
                 rect = fitz.Rect(block["bbox"]) & bounds
                 if (re.fullmatch(r"[A-Za-z]{1,4}", block["text"].strip())
@@ -664,9 +875,10 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                     em = max(1, block["font_size"])
                     math_ems += crop.width / em
                     descent = (crop.y1 - formula["baseline"]) / em
-                    images[formula["token"]] = (
+                    image_markup = (
                         f'<img src="{name}" style="width:{crop.width / em:.4f}em;'
                         f'height:{crop.height / em:.4f}em;vertical-align:{-descent:.4f}em">')
+                    images[formula["token"]] = image_markup
                 if not block.get("regions"):
                     if source_lines is None:
                         source_lines = [fitz.Rect(line["bbox"])
@@ -676,13 +888,13 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                                if rect.contains((line.tl + line.br) / 2)]
                     block = dict(block, regions=regions)
                 first_indent = first_line_indented(block)
-                markup = text_html(text, style, images, first_indent=first_indent, color=color)
+                markup = text_html(text, style, images, first_indent=first_indent, color=color, story_canvas=True)
                 remaining, scale = _fit(placement, markup, archive, bounds)
                 role, regular_scale = style.role, scale
                 # Before shrinking the type, tighten the leading of running text.
                 if scale < 1 and style.leading > TIGHT_LEADING and role in {"body", "runin"}:
                     tight = replace(style, leading=TIGHT_LEADING)
-                    tight_markup = text_html(text, tight, images, first_indent=first_indent, color=color)
+                    tight_markup = text_html(text, tight, images, first_indent=first_indent, color=color, story_canvas=True)
                     tight_remaining, tight_scale = _fit(placement, tight_markup, archive, bounds)
                     if tight_remaining >= 0 and tight_scale > scale:
                         style, markup, remaining, scale = tight, tight_markup, tight_remaining, tight_scale
@@ -693,13 +905,23 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 if (regular_scale < .85 and role in {"body", "note", "caption"}
                         and placement.height < max(style.size, body_size) * 3 and len(MATH_TOKEN.sub("x", text)) < 160):
                     compact_style = TextStyle("compact", style.size, 1.15)
-                    compact = text_html(text, compact_style, images, color=color)
+                    compact = text_html(text, compact_style, images, color=color, story_canvas=True)
                     compact_remaining, compact_scale = _fit(placement, compact, archive, bounds)
                     if compact_remaining >= 0 and compact_scale > scale:
                         style, markup, remaining, scale = compact_style, compact, compact_remaining, compact_scale
                         compact_blocks.append(block["id"])
                 if remaining < 0:
                     raise RuntimeError("訳文を元のページ内に配置できませんでした。未完成のPDFは保存していません。")
+                flow_pdf = None
+                if 'data-papeer-tall-math' in markup:
+                    remaining, scale, flow_pdf = _fit_story_canvas(placement, markup, archive, bounds)
+                wrapped_images = [image for image in raster_images
+                                  if (image & rect).get_area() > 1]
+                if wrapped_images:
+                    remaining, scale, flow_pdf = _fit_around_images(
+                        placement, markup, archive, bounds, wrapped_images)
+                    if remaining < 0:
+                        raise RuntimeError("図版を避けて訳文を配置できませんでした。")
                 scaled_blocks += int(scale < 0.60)
                 minimum = readable_size(TextStyle(role, style.size, style.leading))
                 if style.size * scale < minimum:
@@ -712,27 +934,63 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                         "char_budget": character_budget(placement, minimum, style.leading, math_ems),
                         "source_blocks": sources.get(block["id"], [block["id"]])})
                 inline_formulas += len(formulas)
-                page.add_redact_annot(rect, fill=fill, cross_out=False)
+                for paint in _without_images(rect, raster_images):
+                    page.add_redact_annot(paint, fill=fill, cross_out=False)
+                painted_ids.add(block["id"])
+                painted_rects.append(rect)
                 # In the translation's order, which the laid-out images follow; word order may differ from the source.
                 by_token = {}
                 for formula in formulas:
                     by_token.setdefault(formula["token"], []).append(formula)
-                planned.append((placement, markup, archive, [by_token[token].pop(0) for token in MATH_TOKEN.findall(text)]))
+                planned.append((placement, markup, archive,
+                                [by_token[token].pop(0) for token in MATH_TOKEN.findall(text)], flow_pdf))
             if planned:
                 search_layer = fitz.TextWriter(page.rect)
                 page.apply_redactions(images=0, graphics=0, text=0)
-                # Redaction removes any glyph touching a text box. Restore math
-                # from a separate source document, retaining vector quality.
+                # Some embedded PDF forms lose unrelated glyphs when MuPDF
+                # redacts a paragraph. Restore every protected region, including
+                # equations in the other column, when its glyphs actually went
+                # missing. Leave intact regions alone to avoid changing their
+                # antialiasing at a crop boundary.
+                def glyph_key(span, char):
+                    return span["font"], char[0], char[1], tuple(round(v, 3) for v in char[2])
+                surviving = {glyph_key(span, char) for span in page.get_texttrace() for char in span["chars"]}
+                original_glyphs = [(glyph_key(span, char), fitz.Rect(char[3]))
+                                   for span in original[number].get_texttrace() for char in span["chars"]]
+                missing = [box for key, box in original_glyphs if key not in surviving]
+                nonlocal_loss = any(not any(box.intersects(rect) for rect in painted_rects) for box in missing)
+                if nonlocal_loss:
+                    # A corrupt rewrite can also move surviving source text to
+                    # the page edge. Clear that text layer and reconstruct only
+                    # the regions that should remain original before typesetting.
+                    page.add_redact_annot(bounds, fill=None, cross_out=False)
+                    page.apply_redactions(images=0, graphics=0, text=0)
+                    restore_rects = list(display_rects)
+                    restore_rects.extend(fitz.Rect(b["bbox"]) & bounds for b in page_blocks
+                                         if b.get("kind") not in {"formula", "table", "reference", "figure", "algorithm"}
+                                         and b["id"] not in painted_ids)
+                else:
+                    restore_rects.extend(rect for rect in display_rects if rect not in restore_rects
+                                         and any(rect.intersects(glyph) for glyph in missing))
                 for rect in restore_rects:
-                    page.draw_rect(rect, color=None, fill=background.color(rect), overlay=True)
-                    page.show_pdf_page(rect, original, number, clip=rect)
+                    if any(b.get('kind') == 'figure' and fitz.Rect(b['bbox']).contains(rect)
+                           for b in page_blocks):
+                        _restore_source_region(page, original[number], rect)
+                    else:
+                        page.draw_rect(rect, color=None, fill=background.color(rect), overlay=True)
+                        page.show_pdf_page(rect, original, number, clip=rect)
                 # Image boxes on the page so far (each listing costs a text page); only markup
                 # with formulas adds images.
                 images_before: set[tuple] | None = None
-                for rect, markup, archive, formulas in planned:
+                for rect, markup, archive, formulas, flow_pdf in planned:
                     if formulas and images_before is None:
                         images_before = {tuple(img['bbox']) for img in page.get_image_info()}
-                    remaining, _ = page.insert_htmlbox(rect, markup, archive=archive, css=FONT_CSS, scale_low=0)
+                    if flow_pdf:
+                        with fitz.open(stream=flow_pdf, filetype='pdf') as flow:
+                            page.show_pdf_page(bounds, flow, 0)
+                        remaining = 0
+                    else:
+                        remaining, _ = page.insert_htmlbox(rect, markup, archive=archive, css=FONT_CSS, scale_low=0)
                     if remaining < 0:
                         raise RuntimeError("訳文の描画に失敗しました。未完成のPDFは保存していません。")
                     if formulas and images_before is not None:
