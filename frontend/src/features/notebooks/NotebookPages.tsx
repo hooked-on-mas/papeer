@@ -64,7 +64,7 @@ export function NotebookPages({ id, document }: { id: string; document: Notebook
       <Button size="sm" variant="ghost" aria-label="ページ一覧" aria-expanded={pagesOpen} aria-controls={panelId} onClick={() => setPagesOpen(open => !open)}>
         {pagesOpen ? <ChevronDown /> : <ChevronRight />}ページ一覧
       </Button>
-      <span className="text-muted-foreground">{busy ? "書き込みを保存してページを変更中…" : `${current} / ${document.pages.length}ページ`}</span>
+      {busy && <span className="text-muted-foreground">書き込みを保存してページを変更中…</span>}
     </div>
     <div id={panelId} hidden={!pagesOpen}>
     <div className="flex items-center flex-wrap gap-1 px-2 py-1 text-xs">

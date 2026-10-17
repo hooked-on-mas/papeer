@@ -1,9 +1,4 @@
-import { NotebookPages } from "@/features/notebooks/NotebookPages";
-import { RelatedItems } from "@/features/library/RelatedItems";
-import { useNotebook, useNotebookBusy } from "@/features/notebooks/notebooks";
-import { useInkTools } from "./useInkEditor";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { FilePlus2, Languages, Loader2 } from "lucide-react";
 import { useStore } from "@/store";
 import { StartupReader } from "@/app/StartupReader";
@@ -15,37 +10,19 @@ import { ReaderToolbar } from "./ReaderToolbar";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { importPdfs } from "@/app/actions";
 import { ContinueReading } from "@/features/library/ContinueReading";
-import { bindReaderViewport, changeZoom, historyBack, historyForward, movePage, moveToEdgePage, navigateTo } from "./navigation";
-import { createReaderWheelPager, horizontalEdges, keyTarget, onScreen, paneEdges, readerKeyAction, readerOwnsKey, type KeyPlace } from "./pageTurn";
-import { savedAnchor } from "./sidePanel";
+import { navigateTo } from "./navigation";
 import { loadOutline, originalPageFor, type OutlineEntry, type PdfPlace } from "./pdfLinks";
-import { pinchLevel, pinchStart } from "./zoomLevels";
 import { inkToolActive } from "./useInkEditor";
 import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 import { createScrollSync } from "./scrollSync";
-import { api, unwrap } from "@/api/client";
-import type { StickyNote } from "./stickyNotes";
-import type { JumpTarget } from "./PdfPane";
 import { emitAppEvent } from "@/lib/appEvents";
-import { QK } from "@/lib/queryKeys";
 import { useRebuilding } from "./rebuildJobs";
-import { isImeKey } from "@/lib/imeKeys";
+import { useViewerInput } from "./useViewerInput";
+import { usePageAnchor } from "./usePageAnchor";
+import { usePageNotes } from "./usePageNotes";
 import { usePdfTouchOwner } from "./usePdfTouch";
 
-// Stable while the notes are loading or failed: a new array would redraw the text layer on every render.
-const NO_NOTES: StickyNote[] = [];
 const NO_PAGES: number[] = [];
-
-/**
- * Where the view is on the page in `pane`, as JumpTarget.anchor_y takes it: jumping there again
- * brings back the same view.
- */
-function viewAnchor(pane: HTMLElement | null): number | null {
-  const page = pane?.querySelector<HTMLElement>(".react-pdf__Page");
-  if (!pane || !page || !page.clientHeight) return null;
-  const top = page.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
-  return Math.max(0, Math.min(1, (pane.scrollTop + pane.clientHeight * 0.25 - top) / page.clientHeight));
-}
 
 /** Only completed translations are displayed in this pane. */
 function translatedCaption(reading: ReadingData | null | undefined, page: number, rebuilding = false): string {
@@ -69,22 +46,9 @@ export function Reader() {
   // What the open item can do (see lib/itemKinds.ts): an item that is not translated has no right pane
   // and no 翻訳済みページのみ filter, whatever the filter is set to for the papers.
   const caps = useItemCapabilities(activePaperId);
-  const { data: notebook } = useNotebook(activePaperId, caps.notebook);
-  const notebookBusy = useNotebookBusy(s => !!activePaperId && s.ids.includes(activePaperId));
-  useEffect(() => {
-    if (activePaperId && caps.notebook) { useInkTools.getState().setTool("pen"); useStore.getState().setInkBarOpen(true); }
-  }, [activePaperId, caps.notebook]);
   const translatedOnly = useStore((s) => s.translatedOnly) && caps.translate;
   const [search, setSearch] = useState<{ query: string; side: "original" | "translated" }>({ query: "", side: "original" });
-  const [bookmarkTarget, setBookmarkTarget] = useState<JumpTarget | null>(null);
-  const { data: bookmarks = NO_NOTES } = useQuery({
-    queryKey: [QK.stickyNotes, activePaperId],
-    queryFn: async () => await unwrap(api.GET("/api/papers/{paper_id}/sticky-notes", {
-      params: { path: { paper_id: activePaperId as string } } })) as StickyNote[],
-    enabled: !!activePaperId,
-  });
-  const sourceHighlights = useMemo(() => bookmarks.filter(item => item.page === currentPage && item.side === "original"), [bookmarks, currentPage]);
-  const translatedHighlights = useMemo(() => bookmarks.filter(item => item.page === currentPage && item.side === "translated"), [bookmarks, currentPage]);
+  const { original: sourceHighlights, translated: translatedHighlights } = usePageNotes(activePaperId, currentPage);
   const { data: reading } = useReading(activePaperId);
   const translateJobId = useStore((s) => runningPaperJob(s.activeJobs, s.activePaperId, ["translate"])?.job_id);
   const translating = !!translateJobId;
@@ -99,16 +63,8 @@ export function Reader() {
     return createScrollSync(() => usePdfTouchOwner.getState().pane);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the page and paper are what start it over
   }, [activePaperId, currentPage]);
-  // The pane the pointer was last over, which the paging keys scroll.
-  const activePane = useRef<"left" | "right">("left");
-  // The pane to scroll and to judge the page's end by: `preferred`, unless it shows no page (a
-  // translation still pending, say) and the other one does.
-  const readingPane = (preferred: "left" | "right") => {
-    const [first, second] = preferred === "right" ? [rightScrollRef.current, leftScrollRef.current] : [leftScrollRef.current, rightScrollRef.current];
-    const hasPage = (pane: HTMLElement | null) => !!pane?.querySelector(".react-pdf__Page");
-    return !hasPage(first) && hasPage(second) ? second : first ?? second;
-  };
-  useEffect(() => bindReaderViewport(() => viewAnchor(leftScrollRef.current)), []);
+  const { jumpTarget: bookmarkTarget, recordAnchor } = usePageAnchor({ paperId: activePaperId, panes: [leftScrollRef, rightScrollRef] });
+  const { ownsKey } = useViewerInput({ rootRef: readerRef, panes: [leftScrollRef, rightScrollRef], wheelTurns: () => !inkToolActive(), resetKey: activePaperId });
   // Where the pane being written on places the writing toolbar, across both panes.
   const [inkToolbarSlot, setInkToolbarSlot] = useState<HTMLDivElement | null>(null);
 
@@ -127,27 +83,9 @@ export function Reader() {
   }, [activePaperId, reading?.outline]);
   useEffect(() => { outlineDoc.current = null; setLoadedOutline(null); }, [activePaperId]);
 
-  const pageCount = caps.notebook && notebook ? notebook.pages.length : reading?.page_count ?? 0;
+  const pageCount = reading?.page_count ?? 0;
   const completed = reading?.completed_pages ?? NO_PAGES;
-  // A paper opens where its page was last left (paperAnchors, saved in ui-state.json), from the top otherwise.
-  // Until the view has moved there, the scrolls to the top of the page on the way are not kept (recordAnchor).
-  const restoringAnchor = useRef(false);
-  useEffect(() => {
-    setSearch({ query: "", side: "original" });
-    const { paperAnchors, currentPage: page } = useStore.getState();
-    const anchor = activePaperId ? paperAnchors[activePaperId] : undefined;
-    restoringAnchor.current = anchor !== undefined;
-    setBookmarkTarget(anchor === undefined ? null : { id: Date.now(), page, side: "original", anchor_y: anchor });
-  }, [activePaperId]);
-  // A passage opened from the chat. Taken from the store so that it is shown once, not on every remount.
-  const readerJump = useStore((s) => s.readerJump);
-  useEffect(() => {
-    const jump = useStore.getState().readerJump;
-    if (!jump) return;
-    useStore.getState().setReaderJump(null);
-    if (jump.paperId !== activePaperId) return;
-    setBookmarkTarget({ id: Date.now(), page: jump.page, side: jump.side, anchor_y: jump.anchor_y, anchor_x: jump.anchor_x, passage: jump, toEnd: jump.toEnd });
-  }, [readerJump, activePaperId]);
+  useEffect(() => { setSearch({ query: "", side: "original" }); }, [activePaperId]);
 
   // Keep the page valid for the paper and the 翻訳済みページのみ filter.
   useEffect(() => {
@@ -161,168 +99,6 @@ export function Reader() {
       setCurrentPage(1);
     }
   }, [reading, translatedOnly, currentPage, pageCount, completed]);
-
-  // New pages start at the top, as in the old reader.
-  useEffect(() => {
-    for (const pane of [leftScrollRef.current, rightScrollRef.current]) if (pane) pane.scrollTop = 0;
-  }, [currentPage, activePaperId]);
-
-  // Keeps where the view is within the page for the paper, a moment after scrolling stops. Measured as
-  // it scrolls, so that switching to another paper before then keeps the place in this one.
-  const pendingAnchor = useRef<{ paperId: string; anchor: number | null } | null>(null);
-  const anchorTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const commitAnchor = useCallback(() => {
-    clearTimeout(anchorTimer.current);
-    const pending = pendingAnchor.current;
-    pendingAnchor.current = null;
-    if (pending) useStore.getState().setPaperAnchor(pending.paperId, pending.anchor);
-  }, []);
-  const recordAnchor = useCallback((pane: HTMLElement) => {
-    const paperId = useStore.getState().activePaperId;
-    if (!paperId || !onScreen(pane)) return;
-    // The saved place is only ever below the top, so the first scroll away from it is the move there
-    // (or the reader's own scrolling, once it has given up on it).
-    if (restoringAnchor.current) {
-      if (pane.scrollTop <= 0) return;
-      restoringAnchor.current = false;
-    }
-    pendingAnchor.current = { paperId, anchor: savedAnchor(pane.scrollTop, viewAnchor(pane)) };
-    clearTimeout(anchorTimer.current);
-    anchorTimer.current = setTimeout(commitAnchor, 500);
-  }, [commitAnchor]);
-  useEffect(() => commitAnchor, [activePaperId, commitAnchor]);
-
-  useEffect(() => {
-    const element = readerRef.current;
-    if (!element) return;
-    // Scale the pinch is heading for; the zoom snaps to the nearest preset on the way.
-    let pinchTarget = 1;
-    let lastPinch = 0;
-    // Safari's engine (WKWebView, macOS) reports a touchpad pinch as gesture events whose scale is from
-    // the pinch's start, not as Ctrl+wheel; the zoom the pinch started from while one is under way.
-    let gestureStart: number | null = null;
-    const pager = createReaderWheelPager();
-    const onWheel = (e: WheelEvent) => {
-      const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? 400 : 1;
-      const dx = e.deltaX * unit;
-      const dy = e.deltaY * unit;
-      // A mouse notch is a single large vertical step; touchpads send small, often diagonal ones.
-      const mouseWheel = dx === 0 && Math.abs(dy) >= 50;
-
-      if (e.ctrlKey || e.metaKey) {
-        // Ctrl+wheel, and touchpad pinch, which arrives as Ctrl+wheel, zoom both panes together.
-        e.preventDefault();
-        if (gestureStart !== null) return; // The pinch's gesture events zoom already.
-        if (mouseWheel) {
-          changeZoom(dy < 0 ? 1 : -1);
-          return;
-        }
-        // Pinch deltas follow scale = exp(-deltaY / 100) and are only a few pixels each.
-        const { zoom, setZoom } = useStore.getState();
-        if (e.timeStamp - lastPinch > 300) pinchTarget = pinchStart(zoom);
-        lastPinch = e.timeStamp;
-        const pinch = pinchLevel(pinchTarget * Math.exp(-dy / 100));
-        pinchTarget = pinch.scale;
-        if (pinch.level !== zoom) setZoom(pinch.level);
-        return;
-      }
-
-      const pane = [leftScrollRef.current, rightScrollRef.current].find((p) => p?.contains(e.target as Node));
-      if (!pane) return;
-      activePane.current = pane === rightScrollRef.current ? "right" : "left";
-      // Scrolling on past the end of the page turns it, except while writing on the page, where a
-      // stray wheel movement should not take the page away.
-      if (!e.shiftKey && (dx !== 0 || dy !== 0) && !inkToolActive()) {
-        const { turn, swallow, axis } = pager({ dx, dy, time: e.timeStamp, notch: mouseWheel,
-          horizontal: horizontalEdges(pane), vertical: paneEdges(readingPane(activePane.current) ?? pane) });
-        if (turn) {
-          if (e.cancelable) e.preventDefault();
-          movePage(turn, { toEnd: axis === "vertical" && turn < 0 });
-          return;
-        }
-        if (swallow) {
-          if (e.cancelable) e.preventDefault();
-          return;
-        }
-      }
-
-      // Touchpad swipes can latch onto the window rather than the PDF under the pointer,
-      // so scroll that pane directly. Non-cancelable events belong to a native scroll already under way.
-      if (mouseWheel || !e.cancelable) return;
-      e.preventDefault();
-      pane.scrollBy(e.shiftKey && dx === 0 ? dy : dx, e.shiftKey && dx === 0 ? 0 : dy);
-    };
-    const onGestureStart = (e: Event) => {
-      e.preventDefault();
-      gestureStart = pinchStart(useStore.getState().zoom);
-    };
-    const onGestureChange = (e: Event) => {
-      e.preventDefault();
-      const scale = (e as Event & { scale?: number }).scale;
-      if (gestureStart === null || typeof scale !== "number" || !(scale > 0)) return;
-      const { zoom, setZoom } = useStore.getState();
-      const pinch = pinchLevel(gestureStart * scale);
-      if (pinch.level !== zoom) setZoom(pinch.level);
-    };
-    const onGestureEnd = (e: Event) => {
-      e.preventDefault();
-      gestureStart = null;
-    };
-    element.addEventListener("wheel", onWheel, { passive: false });
-    element.addEventListener("gesturestart", onGestureStart);
-    element.addEventListener("gesturechange", onGestureChange);
-    element.addEventListener("gestureend", onGestureEnd);
-    return () => {
-      element.removeEventListener("wheel", onWheel);
-      element.removeEventListener("gesturestart", onGestureStart);
-      element.removeEventListener("gesturechange", onGestureChange);
-      element.removeEventListener("gestureend", onGestureEnd);
-    };
-  }, [activePaperId]);
-
-  // Whether the last click was in the reader, and in which pane, for the keys below.
-  const pointerInReader = useRef(false);
-  useEffect(() => {
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target instanceof Node ? e.target : null;
-      pointerInReader.current = !!target && !!readerRef.current?.contains(target);
-      if (target && rightScrollRef.current?.contains(target)) activePane.current = "right";
-      else if (target && leftScrollRef.current?.contains(target)) activePane.current = "left";
-    };
-    window.addEventListener("pointerdown", onPointerDown, true);
-    return () => window.removeEventListener("pointerdown", onPointerDown, true);
-  }, []);
-  // Whether a key press is the reader's (see readerOwnsKey); the search's F3 follows it too.
-  const ownsKey = useCallback((e: KeyboardEvent) => {
-    const root = readerRef.current;
-    if (!root || document.querySelector("[data-lightbox]")) return false;
-    const target = e.target instanceof Element ? e.target : null;
-    const place: KeyPlace = target && root.contains(target) ? "inside" : !target || target.contains(root) ? "around" : "elsewhere";
-    const readerVisible = useStore.getState().activeTab === "reader" && onScreen(root);
-    return readerOwnsKey({ place, pointerInReader: pointerInReader.current, readerVisible });
-  }, []);
-
-  // The paging keys (see readerKeyAction), never taken from a text field.
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || isImeKey(e) || !ownsKey(e) || useNotebookBusy.getState().ids.includes(useStore.getState().activePaperId ?? "")) return;
-      const target = e.target instanceof Element ? e.target : null;
-      const pane = readingPane(activePane.current);
-      const action = readerKeyAction({
-        key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey,
-        target: keyTarget(target), ...(pane ? paneEdges(pane) : { atStart: true, atEnd: true }),
-      });
-      if (!action) return;
-      e.preventDefault();
-      if (action.type === "scroll") pane?.scrollBy({ top: action.direction * pane.clientHeight * 0.9 });
-      else if (action.type === "turn") movePage(action.amount, { toEnd: action.toEnd });
-      else if (action.type === "edge") moveToEdgePage(action.edge);
-      else if (action.direction === "back") historyBack();
-      else historyForward();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [ownsKey]);
 
   if (!activePaperId && !uiStateLoaded) return <StartupReader />;
 
@@ -342,7 +118,7 @@ export function Reader() {
 
   const fileUrl = (file: string, version: number) =>
     backendUrl(`/api/papers/${activePaperId}/files/${file}?v=${version}`);
-  const leftUrl = fileUrl("original.pdf", caps.notebook ? notebook?.revision ?? 0 : reading?.original_mtime ?? 0);
+  const leftUrl = fileUrl("original.pdf", reading?.original_mtime ?? 0);
   const ref = reading?.translated_pages?.[String(currentPage)];
   const rightUrl = ref ? fileUrl(ref.file, ref.mtime) : null;
   const caption = translatedCaption(reading, currentPage, rebuilding);
@@ -377,11 +153,9 @@ export function Reader() {
   return (
     <div ref={readerRef} className="flex flex-col h-full w-full bg-reader-bg">
       <ReaderToolbar paperId={activePaperId} search={search} setSearch={setSearch} outline={reading?.outline ?? outline} ownsKey={ownsKey} />
-      {caps.notebook && notebook && <NotebookPages id={activePaperId} document={notebook} />}
-      {caps.linkNotebook && <RelatedItems key={activePaperId} paperId={activePaperId} compact />}
       <span role="status" className="sr-only">{rebuilding ? "PDFを作り直しています" : translating ? "翻訳中" : ""}</span>
       {/* data-ink-toolbar-slot: INK_TOOLBAR_SLOT, which lets the toolbar's keys through to its pane. */}
-      <div id="reader-ink-tools" ref={setInkToolbarSlot} data-ink-toolbar-slot="" inert={notebookBusy} className="flex flex-col shrink-0 max-h-[40%]" />
+      <div id="reader-ink-tools" ref={setInkToolbarSlot} data-ink-toolbar-slot="" className="flex flex-col shrink-0 max-h-[40%]" />
       {noTranslatedPages ? (
         <div className="flex-1 flex items-center justify-center text-muted-foreground p-8 text-[0.8125rem]">
           翻訳済みのページはまだありません。完了すると自動で表示します。
@@ -400,11 +174,10 @@ export function Reader() {
           }}
         >
           <ResizablePanel id="original" defaultSize={caps.split ? `${readerSplit * 100}%` : "100%"} minSize="15%" className="flex flex-col">
-            <div className="flex-1 relative min-h-0" role="region" aria-label={caps.notebook ? "ノート" : "原文"} inert={notebookBusy}>
+            <div className="flex-1 relative min-h-0" role="region" aria-label="原文">
               <PdfPane
-                url={caps.notebook && !notebook ? null : leftUrl}
-                preservePaperColor={caps.notebook}
-                inkPage={reading && (!caps.notebook || notebook?.pages[currentPage - 1]) ? { paperId: activePaperId, page: currentPage, pageId: caps.notebook ? notebook?.pages[currentPage - 1]?.id : undefined } : undefined}
+                url={leftUrl}
+                inkPage={reading ? { paperId: activePaperId, page: currentPage } : undefined}
                 pageNumber={currentPage}
                 zoom={zoom}
                 onScroll={(e) => { syncScroll(e.currentTarget, rightScrollRef.current); recordAnchor(e.currentTarget); }}
@@ -415,7 +188,7 @@ export function Reader() {
                 savedHighlights={sourceHighlights}
                 onDocumentLoad={onOriginalLoad}
                 onInternalLink={(place) => navigateTo({ ...place, side: "original" })}
-                caption={caps.notebook ? "ノート" : "原文"}
+                caption="原文"
                 inkToolbarSlot={inkToolbarSlot}
               />
             </div>

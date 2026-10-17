@@ -118,7 +118,7 @@ test("map restores history and reading state; 360/900/1280px with 150% text keep
   await page.getByText("起点：Planning in uncertain environments", { exact: true }).waitFor();
   await page.getByRole("button", { name: "戻る", exact: true }).click();
   await detail.waitFor(); assert.equal(await transform.getAttribute("transform"), camera);
-  await detail.getByRole("button", { name: "PDFを読む", exact: true }).click();
+  await detail.getByRole("button", { name: "論文を開く", exact: true }).click();
   assert.equal(await page.getByTestId("navigation").textContent(), "b:reader:1");
   await page.getByRole("button", { name: "元の論文のマップへ戻る", exact: true }).click();
   await detail.waitFor(); assert.equal(await transform.getAttribute("transform"), camera);

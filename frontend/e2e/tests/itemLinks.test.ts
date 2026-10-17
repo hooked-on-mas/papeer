@@ -38,7 +38,7 @@ scenario("論文と独立ノートをドラッグ・右クリックで紐づけ�
   await page.locator("h1", { hasText: "輪読ノート" }).waitFor();
   assert.equal(await row(notebook.id).getAttribute("aria-current"), "true");
   assert.equal(await linkRow(paperId, notebook.id).getAttribute("aria-selected"), "false");
-  await page.locator("summary", { hasText: "関連論文（1件）" }).click();
+  await page.getByRole("button", { name: "↗ 関連論文 1", exact: true }).click();
   await page.getByRole("button", { name: /↗.*Stochastic Gradient/ }).waitFor();
   await row(notebook.id).focus(); await row(notebook.id).press("ArrowRight");
   await linkRow(notebook.id, paperId).click({ button: "right" });
@@ -61,8 +61,8 @@ scenario("論文と独立ノートをドラッグ・右クリックで紐づけ�
   await waitForLibrary(page, ["輪読ノート"]);
   assert.equal(await page.locator('[data-tree-key^="link:"]').count(), 0, "隠す設定は再起動後も保存される");
   await row(notebook.id).click();
-  const related = page.locator("details").filter({ has: page.locator("summary", { hasText: "関連論文（2件）" }) });
-  await related.locator("summary").click();
+  await page.getByRole("button", { name: "↗ 関連論文 2", exact: true }).click();
+  const related = page.getByRole("dialog", { name: "関連論文", exact: true });
   await related.getByRole("button", { name: /Stochastic Gradient.*紐づけを外す/ }).click();
   await waitFor(async () => (await api.call("GET", `/api/papers/${notebook.id}/links`)).length === 1, "隠している間も画面の関連論文から解除すること");
   assert.ok(await api.call("GET", `/api/papers/${paperId}`));

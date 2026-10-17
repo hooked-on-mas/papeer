@@ -20,7 +20,7 @@ export function sidePanelOpen({ sidePanel, hasPaper }: { sidePanel: SidePanel | 
 }
 
 /**
- * The pane shown in the side panel, or null. It belongs to the 「PDFを読む」 tab: while another tab is
+ * The pane shown in the side panel, or null. It belongs to the 「本文」 tab (「ノート」 for a notebook): while another tab is
  * shown, the reader stays mounted but hidden and the panel is not rendered, so that a pane is never
  * mounted twice (the チャット tab and a チャット panel), which would register its unsaved edits twice.
  */

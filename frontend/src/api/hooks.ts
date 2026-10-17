@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api, ApiError, unwrap } from "./client";
 import type { components } from "./schema";
 import { QK } from "@/lib/queryKeys";
@@ -50,13 +50,31 @@ export function getPaper(id: string): Promise<PaperData> {
   return unwrap(api.GET("/api/papers/{paper_id}", { params: { path: { paper_id: id } } }));
 }
 
+/**
+ * The row of paper `id` in a list already loaded (the library's, or the notebooks'), which has the same shape
+ * as the detail. Shown for the paper until its own row arrives, so that what depends on its kind (the reader's
+ * screen) is not held up by the request.
+ */
+export function listedPaper(client: QueryClient, id: string): PaperData | undefined {
+  for (const key of [[QK.papers, "list"], [QK.notebooks]]) {
+    for (const [, rows] of client.getQueriesData<PaperData[]>({ queryKey: key })) {
+      const row = Array.isArray(rows) ? rows.find((item) => item.id === id) : undefined;
+      if (row) return row;
+    }
+  }
+  return undefined;
+}
+
 export function usePaper(id: string | null) {
+  const client = useQueryClient();
   return useQuery({
     queryKey: [QK.papers, id],
     queryFn: async (): Promise<PaperData | null> => {
       if (!id) return null;
       return getPaper(id);
     },
+    // The detail is still read: this stands in until it arrives, and where it is not listed there is nothing.
+    placeholderData: () => (id ? listedPaper(client, id) : undefined),
     enabled: !!id,
     retry: false,
   });

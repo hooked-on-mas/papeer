@@ -49,6 +49,7 @@ before(async () => {
     server: await import("react-dom/server"),
     query: await import("@tanstack/react-query"),
     Reader: (await load("/src/features/reader/Reader.tsx")).Reader,
+    NotebookView: (await load("/src/features/notebooks/NotebookView.tsx")).NotebookView,
     Header: (await load("/src/app/Header.tsx")).Header,
     ReaderArea: (await load("/src/app/ReaderArea.tsx")).ReaderArea,
     ReaderTab: (await load("/src/app/ReaderArea.tsx")).ReaderTab,
@@ -206,12 +207,48 @@ function render(element, state, inkPanes = {}, queries = []) {
 // Panes say that they have a page to write on from an effect, which the server doesn't run.
 const writableOriginal = { active: "original", hosts: { original: true, translated: false } };
 
+// The open item's row, which tells the reader's screen from a notebook's once it has loaded.
+const pdfRow = [["papers", "p1"], { id: "p1", kind: "pdf", title: "Paper", original_name: "paper.pdf" }];
+
+test("neither screen is mounted until the open item's kind is known", () => {
+  const html = render(modules.React.createElement(modules.ReaderArea), { activeTab: "reader" });
+  assert.match(html, /読み込んでいます…/);
+  assert.doesNotMatch(html, /id="page-input"|role="toolbar"/);
+});
+
+test("an item listed in the library is shown by its kind at once, before its own row has loaded", () => {
+  const { React, ReaderArea } = modules;
+  const row = (kind) => [["papers", "list", "", 0], [{ id: "p1", kind, title: "Item", original_name: "item", collection_name: "", pages: 1, parent_id: null }]];
+  const pdf = render(React.createElement(ReaderArea), { activeTab: "reader" }, {}, [row("pdf")]);
+  assert.match(pdf, /id="page-input"/);
+  assert.doesNotMatch(pdf, /aria-label="ノートの道具"|読み込んでいます…/);
+  const notebook = render(React.createElement(ReaderArea), { activeTab: "reader" }, {}, [row("notebook")]);
+  assert.match(notebook, /aria-label="ノートの道具"/);
+  assert.doesNotMatch(notebook, /aria-label="目次"|読み込んでいます…/);
+});
+
 test("the reader renders a paper with its toolbar and both panes", () => {
   const html = render(modules.React.createElement(modules.Reader));
   assert.match(html, /id="page-input"/);
   assert.match(html, /aria-label="その他の表示・操作"/);
   assert.match(html, /aria-label="原文"/);
   assert.match(html, /data-ink-toolbar-slot/);
+});
+
+test("a notebook opens in its own view: one row of tools, page and zoom, and nothing of a PDF's reading", () => {
+  const { React, ReaderArea, NotebookView } = modules;
+  const notebook = { id: "p1", kind: "notebook", title: "ノート", original_name: "ノート", collection_name: "", pages: 1, parent_id: null };
+  const document = { version: 1, revision: 1, pages: [{ id: "a", size: "A4", orientation: "portrait", template: "ruled7", color: "white" }] };
+  const queries = [[["papers", "p1"], notebook], [["notebook", "p1"], document]];
+  for (const html of [render(React.createElement(NotebookView, { paperId: "p1" }), {}, {}, queries),
+    render(React.createElement(ReaderArea), { activeTab: "reader" }, {}, queries)]) {
+    assert.match(html, /role="toolbar" aria-label="ノートの道具"/);
+    assert.match(html, /id="page-input"/);
+    // The row is not measured on the server, so only what always shows is there.
+    assert.match(html, /aria-label="その他の表示・操作"/);
+    assert.match(html, /role="region" aria-label="ノート"/);
+    assert.doesNotMatch(html, /aria-label="目次"|論文内検索|aria-label="原文"|本文選択|aria-label="書き込みツール"|>原文</);
+  }
 });
 
 test("the reader renders in focus mode with the writing toolbar open, which waits for its shared slot", () => {
@@ -242,7 +279,7 @@ test("the reader renders with the chat open beside it in the normal view", async
   const { React, ReaderArea, lazyPanes } = modules;
   const state = { activeTab: "reader", sidePanel: "chat" };
   // The first render starts loading the chat's code and shows the pane's loading state meanwhile.
-  const loading = render(React.createElement(ReaderArea), state);
+  const loading = render(React.createElement(ReaderArea), state, {}, [pdfRow]);
   assert.match(loading, /data-side-panel="chat"/);
   assert.match(loading, /aria-label="チャット（右パネル）"/);
   assert.match(loading, /id="page-input"/);
@@ -250,7 +287,7 @@ test("the reader renders with the chat open beside it in the normal view", async
   await server.ssrLoadModule("/src/features/chat/ChatPane.tsx");
   await new Promise((resolve) => setTimeout(resolve, 0));
   // Once loaded, the chat itself renders in the panel.
-  const html = render(React.createElement(ReaderArea), state);
+  const html = render(React.createElement(ReaderArea), state, {}, [pdfRow]);
   assert.match(html, /data-side-panel="chat"/);
   assert.doesNotMatch(html, /読み込み中…|表示できませんでした/);
   assert.match(html, /<textarea[^>]*placeholder="例：従来手法と比べた改善点と、実験の限界は？"/);
@@ -258,7 +295,7 @@ test("the reader renders with the chat open beside it in the normal view", async
 });
 
 test("the side panel is not rendered while another tab is shown, so that its pane never mounts twice", () => {
-  const html = render(modules.React.createElement(modules.ReaderArea), { activeTab: "chat", sidePanel: "chat" });
+  const html = render(modules.React.createElement(modules.ReaderArea), { activeTab: "chat", sidePanel: "chat" }, {}, [pdfRow]);
   assert.doesNotMatch(html, /data-side-panel/);
   // Its room stays, empty, so that the reader keeps its size while hidden.
   assert.match(html, /id="side-panel"/);
@@ -268,7 +305,7 @@ test("the side panel is not rendered while another tab is shown, so that its pan
 
 test("the reader tab stays laid out, invisible and inert, while another tab is shown", () => {
   const { React, Tabs, ReaderTab } = modules;
-  const inTabs = (activeTab) => render(React.createElement(Tabs, { value: activeTab }, React.createElement(ReaderTab)), { activeTab });
+  const inTabs = (activeTab) => render(React.createElement(Tabs, { value: activeTab }, React.createElement(ReaderTab)), { activeTab }, {}, [pdfRow]);
   const hidden = inTabs("notes");
   // Not display: none, which would lose the panes' scroll positions and size.
   assert.doesNotMatch(hidden, /<div[^>]*role="tabpanel"[^>]*\shidden=""/);

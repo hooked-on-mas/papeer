@@ -15,10 +15,11 @@ import { useTheme } from "@/app/ThemeProvider";
 import { externalHttpUrl } from "@/lib/externalLinks";
 import { PdfContextMenu } from "./PdfContextMenu";
 import { selectInTextLayer } from "./textLayerRange";
-import { inkToolActive, useInkEditor, useInkPanes } from "./useInkEditor";
+import { inkToolActive, useInkEditor, useInkPanes, type InkEditor } from "./useInkEditor";
 import { movePage } from "./navigation";
 import { InkOverlay } from "./InkOverlay";
 import { InkToolbar } from "./InkToolbar";
+import type { InkToolbarProps } from "./inkControls";
 import { InkCapture } from "./InkCapture";
 import type { Bounds } from "./inkGeometry";
 import { isHighlight, type StickyNote } from "./stickyNotes";
@@ -68,6 +69,15 @@ interface PdfPaneProps {
    * Without one, the pane shows its own toolbar above the page.
    */
   inkToolbarSlot?: HTMLElement | null;
+  /** The writing toolbar to show: the PDF's own by default (the notebook has its own). */
+  inkToolbar?: React.ComponentType<InkToolbarProps>;
+  /**
+   * Shown just below the writing selected on the page, over it (the notebook's copy, cut and delete);
+   * `ratio` is the page's height over its width.
+   */
+  selectionBar?: (editor: InkEditor, ratio: number) => React.ReactNode;
+  /** What to call the page's surface in the messages over it: the PDF, or a notebook's paper. */
+  surfaceName?: string;
 }
 
 /** A place to scroll to, from a bookmark, a search result or a chat attachment. */
@@ -128,7 +138,8 @@ function fitTextLayer(layer: HTMLElement, content: TextContent, scale: number) {
 
 export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholder, missingPageMessage,
   translated = false, searchTerm = "", jumpTarget,
-  savedHighlights = [], inkPage, preservePaperColor = false, onDocumentLoad, onInternalLink, caption, badge, inkToolbarSlot }: PdfPaneProps) {
+  savedHighlights = [], inkPage, preservePaperColor = false, onDocumentLoad, onInternalLink, caption, badge, inkToolbarSlot,
+  inkToolbar: WritingToolbar = InkToolbar, selectionBar, surfaceName = "PDF" }: PdfPaneProps) {
   const [inkViewport, setInkViewport] = useState<{ key: string; ratio: number } | null>(null);
   const side = translated ? "translated" : "original";
   const editor = useInkEditor(url && !placeholder ? inkPage?.paperId : undefined, side, inkPage?.page ?? pageNumber, inkViewport?.ratio ?? 1, inkPage?.pageId);
@@ -410,18 +421,18 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     // React events bubble up from the portaled toolbar too, so using it activates this pane.
     <div ref={editor.scopeRef} className="flex flex-col h-full min-h-0" onPointerDownCapture={activate} onFocusCapture={activate}>
     {/* The same element either way, so that its state survives the toolbar moving between panes. */}
-    {inkPage && inkHost && <InkToolbar editor={editor} side={side} errorsOnly={!servesToolbar} slot={servesToolbar ? inkToolbarSlot : undefined}
+    {inkPage && inkHost && <WritingToolbar editor={editor} side={side} errorsOnly={!servesToolbar} slot={servesToolbar ? inkToolbarSlot : undefined}
       disabled={inkViewport?.key !== inkKey} onStickyNote={selection => {
-      const box = editor.selection;
-      if (selection && box) {
-        void openStickyNote({ paperId: inkPage.paperId, pageId: inkPage.pageId, page: inkPage.page, side: translated ? "translated" : "original",
-          anchorY: box.y, anchorX: box.x, quote: editor.selected.map(s => s.text ?? "").filter(Boolean).join("\n") });
-      } else {
-        editor.setTool("select"); setCapture(null); setPlacingNote(value => !value);
-      }
-    }} />}
+        const box = editor.selection;
+        if (selection && box) {
+          void openStickyNote({ paperId: inkPage.paperId, pageId: inkPage.pageId, page: inkPage.page, side: translated ? "translated" : "original",
+            anchorY: box.y, anchorX: box.x, quote: editor.selected.map(s => s.text ?? "").filter(Boolean).join("\n") });
+        } else {
+          editor.setTool("select"); setCapture(null); setPlacingNote(value => !value);
+        }
+      }} />}
     {placingNote && <div role="status" className="flex items-center gap-2 border-b bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:bg-amber-950 dark:text-amber-100">
-      PDF上の貼りたい場所をクリックしてください。
+      {surfaceName}上の貼りたい場所をクリックしてください。
       <button className="ml-auto underline" onClick={() => setPlacingNote(false)}>キャンセル</button>
     </div>}
     <div ref={setFrame} className="flex-1 min-h-0 relative">
@@ -454,7 +465,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
         // page that only just overflows at "fit width" shrinks to fit, loses its scrollbar and grows back.
         className={`w-full h-full bg-reader-bg [scrollbar-gutter:stable] [touch-action:none] [overflow-anchor:none] ${scrollsSideways(zoom, pageWidth, containerWidth - PADDING * 2) ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
       >
-        {placeholder ? message(placeholder) : !url ? message("PDFがありません。") : (
+        {placeholder ? message(placeholder) : !url ? message(`${surfaceName}がありません。`) : (
           <div className="w-fit min-w-full" style={{ padding: PADDING }}>
             {/* Suspense mode would throw load errors past `error=` to the root, blanking the app. */}
             <Document
@@ -469,7 +480,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
               onItemClick={handleItemClick}
               externalLinkTarget="_blank"
               loading={<PageSkeleton width={pageWidth} />}
-              error={message("PDFを読み込めませんでした。")}
+              error={message(`${surfaceName}を読み込めませんでした。`)}
               className="mx-auto w-fit"
             >
               {numPages !== null && pageNumber > numPages ? message(missingPageMessage ?? "このページはありません。") : drawnWidth > 0 && (
@@ -523,7 +534,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                   })}
                   {notes.map(item => <StickyNoteMarker key={`sticky-${item.id}`} item={item}
                     movable={!editor.locked && !placingNote && ["select", "region", "lasso"].includes(editor.tool)} />)}
-                  {placingNote && inkPage && <button autoFocus aria-label="PDFのこの位置に付箋を貼る" className="absolute inset-0 z-30 cursor-copy bg-amber-100/10 outline-2 outline-amber-400"
+                  {placingNote && inkPage && <button autoFocus aria-label={`${surfaceName}のこの位置に付箋を貼る`} className="absolute inset-0 z-30 cursor-copy bg-amber-100/10 outline-2 outline-amber-400"
                     onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setPlacingNote(false); } }}
                     onClick={e => {
                       e.stopPropagation();
@@ -541,6 +552,17 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                   />
                   {ink.entry && (ink.ready || editor.tool === "capture") && inkViewport?.key === inkKey && <InkOverlay key={`${inkPage?.paperId}:${inkPage?.page}:${inkKey}:${editor.tool}:${editor.locked}:${editor.visible}`}
                     editor={editor} aspectRatio={inkViewport.ratio} inkColor={appearance.inkColor} onCapture={setCapture} />}
+                  {selectionBar && ink.ready && inkViewport?.key === inkKey && editor.selection && (editor.tool === "region" || editor.tool === "lasso") && editor.visible && !editor.locked && (() => {
+                    // Below the selection, or above it when that is near the bottom of the page. y is a fraction of the page's height.
+                    const box = editor.selection;
+                    const below = box.y + box.height < 0.85;
+                    return <div data-ink-selection-bar="" className="absolute z-30 flex flex-wrap items-center gap-1 text-foreground"
+                      style={{ left: `${Math.max(0, Math.min(0.6, box.x)) * 100}%`, top: `${(below ? box.y + box.height : box.y) * 100}%`,
+                        transform: below ? "translateY(0.75rem)" : "translateY(calc(-100% - 0.75rem))" }}
+                      onPointerDown={event => event.stopPropagation()}>
+                      {selectionBar(editor, inkViewport.ratio)}
+                    </div>;
+                  })()}
                 </div>
               )}
             </Document>

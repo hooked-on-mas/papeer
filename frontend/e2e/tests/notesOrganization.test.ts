@@ -55,7 +55,7 @@ scenario("メモと整理を別に開き、整理の保存先と読書位置を�
   assert.equal((await api.call("GET", `/api/papers/${currentId}`)).first_author, "Current Author");
   assert.equal(await memo.innerText(), "読みながら書いたメモを維持する");
 
-  await page.getByRole("tab", { name: "PDFを読む", exact: true }).click();
+  await page.getByRole("tab", { name: "本文", exact: true }).click();
   assert.deepEqual(await readingPlace(page), place);
   assert.equal(await pdf!.evaluate(canvas => canvas.isConnected), true);
 

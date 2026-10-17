@@ -100,7 +100,7 @@ export function ResearchDetails({ sourcePaperId, reference, recordKey, registere
     {(record?.first_author || record?.publication_year || record?.venue) && <p className="text-xs text-muted-foreground break-words">{[record.first_author, record.publication_year, record.venue].filter(Boolean).join(" · ")}</p>}
     {loadError && <p role="alert" className="text-xs text-destructive">調査結果を読み込めませんでした：{loadError.message}</p>}
     {targetId && <div className="space-y-3">
-      <Button className="w-full" onClick={() => openReferencePaper(sourcePaperId, targetId)}><BookOpen />PDFを読む</Button>
+      <Button className="w-full" onClick={() => openReferencePaper(sourcePaperId, targetId)}><BookOpen />論文を開く</Button>
       <div className="flex flex-wrap gap-2">
         {hasSummary ? <Button size="sm" variant="outline" onClick={() => openReferencePaper(sourcePaperId, targetId, true)}><ScrollText />サマリーを見る</Button>
           : <Button size="sm" variant="outline" disabled={summaryBusy || submitting || record?.needs_ocr} onClick={() => void generateArticle(targetId)}><ScrollText />サマリーを作成</Button>}

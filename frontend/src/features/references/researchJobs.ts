@@ -26,7 +26,7 @@ export const researchJobHandlers: JobHandlers = {
       done(record.summary_error || (record.has_summary ? "PDFとサマリーを保存しました。" : "PDFを保存しました。"), {
         title: record.summary_error ? "PDF取り込み済み・サマリーは未作成" : "参考文献を取り込みました",
         tone: record.summary_error ? "info" : "success",
-        action: event.paper_id && record.paper_id ? { label: record.has_summary ? "サマリーを見る" : "PDFを読む",
+        action: event.paper_id && record.paper_id ? { label: record.has_summary ? "サマリーを見る" : "論文を開く",
           run: () => openReferencePaper(event.paper_id!, record.paper_id!, record.has_summary) } : undefined,
       });
     },

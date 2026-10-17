@@ -373,7 +373,11 @@ export function AppShell() {
   useHotkeys("f2", () => {
     const store = useStore.getState();
     if (store.selectedFolder) renameFolder(store.selectedFolder);
-    else if (store.activePaperId && caps.rename) renamePaperFile(store.activePaperId);
+    else if (store.activePaperId && caps.rename) {
+      // A notebook is renamed in its title when the header shows it; the dialog is for the rest.
+      if (caps.notebook && !store.focusMode) emitAppEvent("edit-item-title");
+      else renamePaperFile(store.activePaperId);
+    }
   }, hotkeyOptions);
   useHotkeys("ctrl+shift+n, meta+shift+n", () => {
     const store = useStore.getState();
@@ -463,7 +467,7 @@ export function AppShell() {
           <Tabs value={shownTab} onValueChange={(value) => setActiveTab(String(value))} className="flex-1 flex flex-col min-h-0 gap-0">
             <div hidden={focusMode} className="border-b px-4 shrink-0 bg-background/50">
               <TabsList variant="line" className="h-10 bg-transparent border-b-0 space-x-2">
-                <TabsTrigger value="reader" title={withShortcutLabels("Ctrl+1")}>PDFを読む</TabsTrigger>
+                <TabsTrigger value="reader" title={withShortcutLabels("Ctrl+1")}>{caps.notebook ? "ノート" : "本文"}</TabsTrigger>
                 {tabAvailable(caps, "summary") && <TabsTrigger value="summary" title={withShortcutLabels("Ctrl+2")}>サマリー</TabsTrigger>}
                 {tabAvailable(caps, "chat") && <TabsTrigger value="chat" title={withShortcutLabels("Ctrl+3")}>
                   チャット

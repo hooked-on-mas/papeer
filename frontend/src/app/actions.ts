@@ -469,6 +469,20 @@ export async function deleteFolder(path: string, papers: PaperData[] | null): Pr
 
 // --- Papers ---------------------------------------------------------------------------------
 
+/** Renames the paper's file to `name`; whether it was (the failure is shown). */
+export async function renamePaperTo(paperId: string, name: string): Promise<boolean> {
+  try {
+    const result = await unwrap(api.POST("/api/papers/{paper_id}/rename", { params: { path: { paper_id: paperId } }, body: { new_title: name } }));
+    // Its row in the lists follows from paper.changed.
+    void invalidate({ kind: "paper", paperId });
+    useStore.getState().setStatus(`ファイル名を「${result.name}」に変更しました。取り込み元のファイル名は変更されません。`);
+    return true;
+  } catch (error) {
+    showError(error, "名前を変更できませんでした");
+    return false;
+  }
+}
+
 export async function renamePaperFile(paperId: string): Promise<void> {
   let current: PaperData;
   try {
@@ -481,14 +495,7 @@ export async function renamePaperFile(paperId: string): Promise<void> {
   const name = await askText("ファイル名を変更", `新しいファイル名${fileExtension ? `（${fileExtension}は自動で付きます）` : ""}`,
     current.original_name || current.title);
   if (name === null) return;
-  try {
-    const result = await unwrap(api.POST("/api/papers/{paper_id}/rename", { params: { path: { paper_id: paperId } }, body: { new_title: name } }));
-    // Its row in the lists follows from paper.changed.
-    void invalidate({ kind: "paper", paperId });
-    useStore.getState().setStatus(`ファイル名を「${result.name}」に変更しました。取り込み元のファイル名は変更されません。`);
-  } catch (error) {
-    showError(error, "名前を変更できませんでした");
-  }
+  await renamePaperTo(paperId, name);
 }
 
 /** Whether the paper was deleted, once the library shows it gone. */

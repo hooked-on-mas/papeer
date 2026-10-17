@@ -24,14 +24,15 @@ const useInkClipboard = create<{ strokes: InkStroke[]; ratio: number; put: (stro
 // Both panes share the active tool and the last subtype in each tool group, and the 書き込み一覧,
 // which lists both sides' pages.
 export const useInkTools = create<{
-  tool: InkTool; lastPen: InkTool; lastRange: InkTool; version: number; listOpen: boolean;
+  tool: InkTool; lastPen: InkTool; lastShape: InkTool; lastRange: InkTool; version: number; listOpen: boolean;
   setTool: (tool: InkTool) => void;
   setListOpen: (open: boolean) => void;
 }>(set => ({
-  tool: "select", lastPen: "pen", lastRange: "region", version: 0, listOpen: false,
+  tool: "select", lastPen: "pen", lastShape: "rectangle", lastRange: "region", version: 0, listOpen: false,
   setListOpen: listOpen => set({ listOpen }),
   setTool: tool => set(state => ({ tool, version: state.version + 1,
     lastPen: ["pen", "highlighter", ...SHAPE_KINDS].includes(tool) ? tool : state.lastPen,
+    lastShape: SHAPE_KINDS.includes(tool) ? tool : state.lastShape,
     lastRange: tool === "region" || tool === "lasso" ? tool : state.lastRange,
   })),
 }));
@@ -66,7 +67,7 @@ export function useInkEditor(paperId: string | undefined, side: InkSide, page: n
   const ink = useInkPage(paperId, side, page, pageId);
   const preferences = useInkPreferences();
   const clipboard = useInkClipboard();
-  const { tool, setTool, lastPen, lastRange, version, listOpen, setListOpen } = useInkTools();
+  const { tool, setTool, lastPen, lastShape, lastRange, version, listOpen, setListOpen } = useInkTools();
   const [selectionState, setSelectionState] = useState<{ ids: string[]; version: number }>({ ids: [], version: 0 });
   // Clear both panes on tool changes, while retaining a newly pasted/created selection.
   const selectedIds = selectionState.version === version ? selectionState.ids : [];
@@ -150,7 +151,7 @@ export function useInkEditor(paperId: string | undefined, side: InkSide, page: n
     window.addEventListener("keydown", listener, true);
     return () => { window.removeEventListener("keydown", listener, true); if (activeEditor === self) activeEditor = null; };
   }, []);
-  return { ink, tool, setTool, lastPen, lastRange, preferences, strokes, selected, selectedIds, setSelectedIds, selection, visible, setVisible, locked, setLocked,
+  return { ink, tool, setTool, lastPen, lastShape, lastRange, preferences, strokes, selected, selectedIds, setSelectedIds, selection, visible, setVisible, locked, setLocked,
     listOpen, setListOpen, change, replaceSelected, transformSelected, remove, copy, cut,
     paste: () => insert(clipboard.strokes, clipboard.ratio), duplicate: () => insert(selected, ratio), hasClipboard: !!clipboard.strokes.length,
     style, scopeRef, beforeCommand, activate: () => { activeEditor = owner.current; }, color: tool === "highlighter" ? preferences.highColor : preferences.color, width: tool === "highlighter" ? preferences.highWidth : preferences.width };

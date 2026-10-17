@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  fitBar, fitReaderToolbar, INK_BAR_STARTS, inkBarStartOf, initialInkBarOpen, inkToolbarOpen, inkToolbarSide, MORE_BUTTON_WIDTH,
+  fitBar, fitNotebookToolbar, fitReaderToolbar, INK_BAR_STARTS, inkBarStartOf, initialInkBarOpen, inkToolbarOpen, inkToolbarSide, MORE_BUTTON_WIDTH,
   readerToolbarItems, TOOLBAR_GAP, TOOLBAR_SLACK,
   type BarFit, type BarItem,
 } from "../src/features/reader/readerBars.ts";
@@ -147,4 +147,17 @@ test("the writing toolbar's start setting: closed by default, open, or as it was
   // Anything but a saved true (nothing saved, or edited by hand) is closed.
   assert.equal(initialInkBarOpen("last", undefined), false);
   assert.equal(initialInkBarOpen("last", "true"), false);
+});
+
+test("the notebook toolbar keeps its tools, history and page field, and drops the colours, focus button and zoom as the row narrows", () => {
+  const wide = fitNotebookToolbar(1200, { focusMode: false });
+  assert.ok(Object.values(wide).every(form => form >= 0), "everything fits in a wide row");
+  const medium = fitNotebookToolbar(560, { focusMode: false });
+  assert.equal(medium.style, -1);
+  assert.ok(medium.zoom >= 0);
+  const narrow = fitNotebookToolbar(300, { focusMode: false });
+  assert.deepEqual([narrow.tools, narrow.history, narrow.pages], [0, 0, 0]);
+  assert.deepEqual([narrow.zoom, narrow.focus, narrow.style], [-1, -1, -1]);
+  // In focus mode the focus button is the way out, so it stays.
+  assert.equal(fitNotebookToolbar(300, { focusMode: true }).focus, 0);
 });

@@ -103,6 +103,34 @@ export function fitReaderToolbar(width: number, options: Parameters<typeof reade
 }
 
 /**
+ * The notebook toolbar's items, most important first, with the widths their markup in
+ * NotebookInkTools.tsx and NotebookToolbar.tsx takes. The writing tools, Undo/Redo and the page field
+ * are always there; the zoom, the focus button and the colours and width beside the tools go in that
+ * order (the colours are then in the popover of the tool, the zoom and focus mode in the 「…」 menu).
+ */
+export function notebookToolbarItems({ focusMode }: { focusMode: boolean }): BarItem[] {
+  return [
+    // Seven 28px tool buttons 2px apart, and the separator after them.
+    { id: "tools", widths: [7 * 28 + 6 * 2 + 9], required: true },
+    // Undo and Redo.
+    { id: "history", widths: [2 * 28 + 2 + 9], required: true },
+    // ‹ [page] / n ›
+    { id: "pages", widths: [24 + 36 + 36 + 24 + 3 * TOOLBAR_GAP], required: true },
+    // The zoom select alone (its widest option is ページ全体), then with the − and + buttons.
+    { id: "zoom", widths: [6 + 90, 6 + 24 + 90 + 24 + 2 * TOOLBAR_GAP] },
+    // 集中表示 / 集中表示を終了, bordered, outside the clipped area; kept in focus mode, where it is the way out.
+    { id: "focus", widths: [6 + 32], ...(focusMode ? { required: true } : {}) },
+    // Five 20px colours and the width select, beside the tools.
+    { id: "style", widths: [5 * 20 + 4 * TOOLBAR_GAP + 6 + 56] },
+  ];
+}
+
+/** Fits the notebook toolbar into a row whose content box is `width` px wide, the 「…」 button included. */
+export function fitNotebookToolbar(width: number, options: Parameters<typeof notebookToolbarItems>[0]): BarFit {
+  return fitBar(notebookToolbarItems(options), Math.max(0, width - MORE_BUTTON_WIDTH - TOOLBAR_GAP - TOOLBAR_SLACK), TOOLBAR_GAP);
+}
+
+/**
  * The pane whose writing toolbar is shown: the one last used, unless it has no page to write on
  * (a translation still pending, say) and the other one has.
  */

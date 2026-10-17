@@ -2,9 +2,10 @@ import { useState } from "react";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { TabsContent } from "@/components/ui/tabs";
 import { useStore } from "@/store";
-import { useItemCapabilities } from "@/api/hooks";
+import { useItemCapabilities, usePaper } from "@/api/hooks";
 import { tabAvailable } from "@/lib/itemKinds";
 import { Reader } from "../features/reader/Reader";
+import { NotebookView } from "@/features/notebooks/NotebookView";
 import { sidePanelOpen, shownSidePanel, type SidePanel } from "../features/reader/sidePanel";
 import { ChatPane, NotesPane, SummaryPane } from "./lazyPanes";
 import { DocumentsPane } from "@/features/documents/DocumentsPane";
@@ -28,11 +29,15 @@ export function useSidePanelOpen(): boolean {
 }
 
 /**
- * The 「PDFを読む」 tab: the reader, and beside it the side panel with the サマリー, チャット or メモ,
+ * The 「本文」 tab (「ノート」 for a notebook): the reader, and beside it the side panel with the サマリー, チャット or メモ,
  * in focus mode and the normal view alike (see features/reader/sidePanel.ts).
  */
 export function ReaderArea() {
   const owner = useStore(s => s.activePaperId);
+  const notebook = useItemCapabilities(owner).notebook;
+  // Until the open item's kind is known, neither screen is mounted: the PDF reader would take a jump meant
+  // for a notebook (see usePageAnchor), and show its toolbar for a moment.
+  const kindPending = usePaper(owner).isPending && !!owner;
   const enlarged = useDocumentState(s => s.enlarged);
   const open = useSidePanelOpen();
   const sidePanel = useChosenSidePanel();
@@ -47,7 +52,10 @@ export function ReaderArea() {
     <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
       {/* First and always there, so that opening the panel keeps the loaded PDFs. */}
       <ResizablePanel id="reader" minSize="320px" className="flex flex-col min-w-0">
-        {owner && enlarged === owner ? <DocumentsPane key={owner} owner={owner} enlarged /> : <Reader />}
+        {owner && enlarged === owner ? <DocumentsPane key={owner} owner={owner} enlarged />
+          // The only place that tells a notebook's screen from a PDF's.
+          : kindPending ? <div className="flex-1 min-h-0 bg-reader-bg" aria-busy="true"><span role="status" className="sr-only">読み込んでいます…</span></div>
+          : owner && notebook ? <NotebookView key={owner} paperId={owner} /> : <Reader />}
       </ResizablePanel>
       {open && sidePanel && (
         <>
@@ -76,7 +84,7 @@ export function ReaderArea() {
 }
 
 /**
- * The 「PDFを読む」 tab's panel. The reader stays mounted while another tab is shown, so that its PDFs,
+ * The 「本文」 tab's panel. The reader stays mounted while another tab is shown, so that its PDFs,
  * page and scroll position are there on coming back. It is hidden with visibility rather than
  * display: none (hidden={false} overrides the panel's own hidden attribute), which keeps its size and
  * scroll position, so it is neither laid out anew nor redrawn meanwhile. The panel is inert while

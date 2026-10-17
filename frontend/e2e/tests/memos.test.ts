@@ -57,7 +57,7 @@ scenario("複数メモを切り替え、持ち物を開き、mdと付箋を取�
   await more.waitFor();
   assert.equal(await page.locator(`[data-tree-key^="attachment:${owner}:"]`).count(), 5);
   await page.locator(`[data-tree-key="attachment:${owner}:${firstId}"]`).click();
-  assert.equal(await page.getByRole("tab", { name: "PDFを読む", exact: true }).getAttribute("aria-selected"), "true");
+  assert.equal(await page.getByRole("tab", { name: "本文", exact: true }).getAttribute("aria-selected"), "true");
   assert.equal(await selector.inputValue(), firstId);
   await more.click();
   const holdings = page.getByRole("dialog", { name: "持ち物", exact: true });

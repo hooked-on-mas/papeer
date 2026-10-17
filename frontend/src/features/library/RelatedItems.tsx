@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Popover } from "@base-ui/react/popover";
 import { Link2, X } from "lucide-react";
 import { paperDisplayName, usePaper } from "@/api/hooks";
 import { removeItemLink, useLinkedItems } from "@/api/itemLinks";
@@ -8,8 +9,11 @@ import { useStore } from "@/store";
 import { openPaper } from "./selectionStore";
 import { chooseItemLink } from "./ItemLinkDialog";
 
-/** The notebook's related-paper strip and the paper-details related-notebook section share actions. */
-export function RelatedItems({ paperId, compact = false }: { paperId: string; compact?: boolean }) {
+/**
+ * The related papers of a notebook and the related notebooks of a paper: a section of the paper's details,
+ * or (`popover`) a button for the notebook's header that opens them over the page. Both share the actions.
+ */
+export function RelatedItems({ paperId, variant = "section" }: { paperId: string; variant?: "section" | "popover" }) {
   const { data: owner } = usePaper(paperId);
   const { data: linked, isError, refetch } = useLinkedItems(paperId);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -18,7 +22,7 @@ export function RelatedItems({ paperId, compact = false }: { paperId: string; co
   const title = caps.linkNotebook ? "関連論文" : "関連ノート";
   const contents = <>
     <div className="flex items-center justify-between gap-2">
-      {!compact && <h3 className="text-[0.8125rem] font-semibold">{title}</h3>}
+      {variant === "section" && <h3 className="text-[0.8125rem] font-semibold">{title}</h3>}
       <Button size="sm" variant="ghost" onClick={() => chooseItemLink(owner)}><Link2 className="size-3.5" />紐づけを追加…</Button>
     </div>
     {isError ? <p role="alert" className="text-xs">読み込めませんでした。<button className="underline" onClick={() => void refetch()}>再試行</button></p>
@@ -31,8 +35,18 @@ export function RelatedItems({ paperId, compact = false }: { paperId: string; co
               onClick={() => { setRemoving(row.id); void removeItemLink(owner.id, row.id).finally(() => setRemoving(null)); }}><X className="size-3" /></Button>
           </li>)}</ul>}
   </>;
-  return compact ? <details className="shrink-0 border-b bg-background/80 px-3 py-1 text-xs">
-    <summary className="cursor-pointer text-muted-foreground">{title}{linked ? `（${linked.length}件）` : ""}</summary>
-    <div className="py-1">{contents}</div>
-  </details> : <section className="space-y-2 border-t pt-3">{contents}</section>;
+  if (variant === "section") return <section className="space-y-2 border-t pt-3">{contents}</section>;
+  return <Popover.Root>
+    <Popover.Trigger className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[0.8125rem] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+      title="このノートに紐づけた論文を開く・追加する・外す">
+      ↗ {title}{linked ? ` ${linked.length}` : ""}
+    </Popover.Trigger>
+    <Popover.Portal>
+      <Popover.Positioner side="bottom" align="end" sideOffset={6} className="z-50 outline-none">
+        <Popover.Popup aria-label={title} className="w-[min(24rem,calc(100vw-2rem))] space-y-2 rounded-lg border bg-popover p-3 text-popover-foreground shadow-lg outline-none origin-(--transform-origin) transition-[opacity,transform] duration-150 data-starting-style:opacity-0 data-ending-style:opacity-0">
+          {contents}
+        </Popover.Popup>
+      </Popover.Positioner>
+    </Popover.Portal>
+  </Popover.Root>;
 }

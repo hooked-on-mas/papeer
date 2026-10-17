@@ -25,6 +25,8 @@ export type AppEvents = {
   /** Move the keyboard focus to the library tree: its focused row, or else the open paper (Ctrl+L). */
   "focus-library": void;
   "ink-changed": { paperId: string };
+  /** Starts renaming the open item in place, in the header's title (a notebook's; F2). */
+  "edit-item-title": void;
 };
 
 type Payload<K extends keyof AppEvents> = AppEvents[K] extends void ? [] : [AppEvents[K]];

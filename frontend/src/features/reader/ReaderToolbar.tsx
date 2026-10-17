@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
-  ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, ListTree, Maximize2, MessageSquare, Minimize2, MoreHorizontal, NotebookPen, PanelRight,
-  ScrollText, Search, StickyNote, Undo2, ZoomIn, ZoomOut, Network, FileText,
+  ChevronDown, ClipboardCheck, ListTree, Maximize2, Minimize2, MoreHorizontal, PanelRight,
+  Search, StickyNote, Undo2, ZoomIn, ZoomOut, Network, FileText,
 } from "lucide-react";
 import { useStore, ZOOM_LEVELS } from "@/store";
 import { useUiScale } from "@/app/uiScale";
@@ -13,24 +13,17 @@ import {
   DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { emitAppEvent } from "@/lib/appEvents";
-import { changeZoom, historyBack, jumpToPage, movePage, navigateTo } from "./navigation";
-import { zoomLabel } from "./zoomLevels";
+import { changeZoom, historyBack, navigateTo } from "./navigation";
+import { PageNavigator } from "./PageNavigator";
+import { ZoomControl, ZoomMenuGroup } from "./ZoomControl";
+import { SIDE_PANEL_BUTTONS } from "./sidePanelButtons";
 import { currentOutlineIndex, type OutlineEntry } from "./pdfLinks";
 import { fitReaderToolbar } from "./readerBars";
 import { ReaderSearch } from "./ReaderSearch";
 import { ReaderInkButton } from "./ReaderInkButton";
 import { TranslationReview } from "./TranslationReview";
 import { translationIssues } from "@/lib/translationIssues";
-import type { SidePanel } from "./sidePanel";
 import { withShortcutLabels } from "@/lib/platform";
-import { isImeKey } from "@/lib/imeKeys";
-
-/** Tabs that open beside the reader; their keys do so in focus mode, and open the tab otherwise. */
-const SIDE_PANEL_BUTTONS: { tab: SidePanel; label: string; icon: typeof ScrollText; key: string }[] = [
-  { tab: "summary", label: "サマリー", icon: ScrollText, key: "Ctrl+2" },
-  { tab: "chat", label: "チャット", icon: MessageSquare, key: "Ctrl+3" },
-  { tab: "notes", label: "メモ", icon: NotebookPen, key: "Ctrl+4" },
-];
 
 type Search = { query: string; side: "original" | "translated" };
 
@@ -49,7 +42,6 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
 }) {
   const currentPage = useStore((s) => s.currentPage);
   const zoom = useStore((s) => s.zoom);
-  const setZoom = useStore((s) => s.setZoom);
   // What the open item can do (see lib/itemKinds.ts): the controls of what it cannot are not offered.
   const caps = useItemCapabilities(paperId);
   const translatedOnly = useStore((s) => s.translatedOnly) && caps.translate;
@@ -67,20 +59,6 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
 
   const count = reading?.page_count ?? 0;
   const completed = reading?.completed_pages ?? [];
-  const [pageText, setPageText] = useState(String(currentPage));
-  const cancelledPageEdit = useRef(false);
-  useEffect(() => setPageText(String(currentPage)), [currentPage, paperId]);
-
-  const commitPage = () => {
-    const value = parseInt(pageText.normalize("NFKC"), 10);
-    if (Number.isFinite(value)) {
-      const target = Math.max(1, Math.min(value, count || currentPage));
-      setPageText(String(target));
-      if (target !== currentPage) jumpToPage(target);
-    }
-    else setPageText(String(currentPage));
-  };
-
   let pageLabel = count ? `${currentPage} / ${count}` : "—";
   if (translatedOnly) {
     pageLabel = completed.length
@@ -148,40 +126,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
       <div ref={rowRef} className="h-[2.4375rem] flex items-center px-3 gap-1 text-[0.8125rem] min-w-0" role="toolbar" aria-label="PDFの表示">
         {/* Clips anything the width estimates got wrong; the 「…」 button stays outside, always reachable. */}
         <div className="flex-1 min-w-0 flex items-center gap-1 overflow-hidden">
-        <button onClick={() => movePage(-1)} disabled={atStart} className={button} aria-label="前のページ" title="前のページ（← / PageUp / ページ先頭でホイール上）">
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-        <input
-          id="page-input"
-          type="text"
-          inputMode="numeric"
-          value={pageText}
-          onChange={(e) => setPageText(e.target.value.replace(/[^0-9０-９]/g, ""))}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !isImeKey(e.nativeEvent)) commitPage();
-            if (e.key === "Escape" && !isImeKey(e.nativeEvent)) {
-              e.preventDefault();
-              cancelledPageEdit.current = true;
-              setPageText(String(currentPage));
-              e.currentTarget.blur();
-            }
-          }}
-          onBlur={() => {
-            if (cancelledPageEdit.current) cancelledPageEdit.current = false;
-            else commitPage();
-          }}
-          aria-label="ページ番号"
-          title={withShortcutLabels("ページ番号を入力し、Enterで移動（Ctrl+G）")}
-          className="w-11 h-6 shrink-0 text-center border rounded bg-background focus:ring-2 focus:ring-ring focus:outline-none tabular-nums"
-        />
-        {shown("go") && (
-          <button onClick={commitPage} className="h-6 px-2 shrink-0 rounded border text-[0.75rem] hover:bg-muted">
-            移動
-          </button>
-        )}
-        <button onClick={() => movePage(1)} disabled={atEnd} className={button} aria-label="次のページ" title="次のページ（→ / PageDown / ページ末尾でホイール下）">
-          <ChevronRight className="w-4 h-4" />
-        </button>
+        <PageNavigator paperId={paperId} currentPage={currentPage} count={count} atStart={atStart} atEnd={atEnd} showGo={shown("go")} />
         {shown("back") && (
           <button onClick={historyBack} disabled={!canGoBack} className={button} aria-label="戻る"
             title={withShortcutLabels("リンク・目次・検索で移動する前の場所に戻る（Alt+←）")}>
@@ -205,32 +150,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
         {caps.fullTextSearch && shown("search") && <button className={labeled} aria-label="論文内検索" aria-pressed={searchOpen} title={withShortcutLabels("論文内検索（Ctrl+F）")} onClick={() => setSearchOpen(!searchOpen)}>
           <Search className="size-3.5" />{full("search") && "検索"}
         </button>}
-        {shown("zoom") && <div className="ml-1.5 flex items-center gap-1 shrink-0">
-          {full("zoom") && (
-            <button onClick={() => changeZoom(-1)} disabled={zoom <= ZOOM_LEVELS[0]} className={button} aria-label="縮小"
-              title={withShortcutLabels("原文・日本語訳を縮小（Ctrl＋マウスホイール下 / Ctrl+-）")}>
-              <ZoomOut className="w-4 h-4" />
-            </button>
-          )}
-          <select
-            value={String(zoom)}
-            onChange={(e) => setZoom(Number(e.target.value))}
-            aria-label="表示倍率"
-            title="原文・日本語訳の共通倍率（幅に合わせた表示が基準。「ページ全体」はページ全体が収まる大きさ）"
-            className="h-6 bg-transparent border rounded text-[0.75rem] px-1 hover:bg-muted cursor-pointer tabular-nums"
-          >
-            {!ZOOM_LEVELS.includes(zoom) && <option value={String(zoom)}>{zoomLabel(zoom)}</option>}
-            {ZOOM_LEVELS.map((value) => (
-              <option key={value} value={String(value)}>{zoomLabel(value)}</option>
-            ))}
-          </select>
-          {full("zoom") && (
-            <button onClick={() => changeZoom(1)} disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]} className={button} aria-label="拡大"
-              title={withShortcutLabels("原文・日本語訳を拡大（Ctrl＋マウスホイール上 / Ctrl+=）")}>
-              <ZoomIn className="w-4 h-4" />
-            </button>
-          )}
-        </div>}
+        {shown("zoom") && <ZoomControl steps={full("zoom")} />}
         {caps.stickyNotes && focusMode && shown("sticky") && (
           <button onClick={() => useStore.getState().setActiveTab("sticky-notes")} className={`${button} ml-1.5`} title={withShortcutLabels("付箋タブへ（Ctrl+5）")} aria-label="付箋タブへ">
             <StickyNote className="w-4 h-4" />
@@ -333,17 +253,7 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
               <DropdownMenuItem disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]} onClick={() => changeZoom(1)}><ZoomIn /> {withShortcutLabels("拡大（Ctrl++）")}</DropdownMenuItem>
               <DropdownMenuItem disabled={zoom <= ZOOM_LEVELS[0]} onClick={() => changeZoom(-1)}><ZoomOut /> {withShortcutLabels("縮小（Ctrl+-）")}</DropdownMenuItem>
             </>}
-            {!shown("zoom") && (
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>表示倍率</DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={String(zoom)} onValueChange={(value) => setZoom(Number(value))}>
-                  {!ZOOM_LEVELS.includes(zoom) && <DropdownMenuRadioItem value={String(zoom)} className="tabular-nums">{zoomLabel(zoom)}</DropdownMenuRadioItem>}
-                  {ZOOM_LEVELS.map((value) => (
-                    <DropdownMenuRadioItem key={value} value={String(value)} className="tabular-nums">{zoomLabel(value)}</DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuGroup>
-            )}
+            {!shown("zoom") && <ZoomMenuGroup />}
             {caps.translate && <DropdownMenuGroup>
               <DropdownMenuLabel>表示するページ</DropdownMenuLabel>
               <DropdownMenuRadioGroup value={translatedOnly ? "translated" : "all"} onValueChange={(value) => setPageFilter(String(value))}>
