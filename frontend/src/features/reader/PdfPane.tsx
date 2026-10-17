@@ -434,7 +434,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     </div>}
     {capture && inkPage && <InkCapture key={`${inkPage.paperId}:${inkPage.page}`} paperId={inkPage.paperId} page={inkPage.page} pageId={inkPage.pageId}
       side={translated ? "translated" : "original"} box={capture} onClose={() => setCapture(null)} />}
-    <PdfContextMenu translated={translated}>
+    <PdfContextMenu translated={translated} disabled={editor.tool !== "select" || placingNote}>
       <div
         ref={attachScroller}
         data-pdf-scroller

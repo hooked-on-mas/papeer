@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { api, unwrap } from "@/api/client";
@@ -7,7 +7,7 @@ import { onAppEvent } from "@/lib/appEvents";
 import { InkDrawing } from "@/features/reader/InkOverlay";
 import { notebookDraftInk, type InkStroke } from "@/features/reader/inkStore";
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
-import { Copy, FilePlus2, Settings2, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, FilePlus2, Settings2, Trash2 } from "lucide-react";
 import { useStore } from "@/store";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -36,14 +36,16 @@ function Thumbnail({ page, number, active, disabled, select, shift, strokes }: {
 export function NotebookPages({ id, document }: { id: string; document: NotebookDocument }) {
   const current = useStore(s => s.currentPage);
   const busy = useNotebookBusy(s => s.ids.includes(id));
+  const [pagesOpen, setPagesOpen] = useState(false);
+  const panelId = useId();
   const [settings, setSettings] = useState<NotebookPaper | null>(null);
   const [, redrawInk] = useState(0);
   useEffect(() => onAppEvent("ink-changed", event => { if (event.paperId === id) redrawInk(value => value+1); }), [id]);
   const { data: savedInk = {} } = useQuery({ queryKey: [QK.inkPages, id, "notebook"],
     queryFn: () => unwrap(api.GET("/api/notebooks/{notebook_id}/ink", { params: { path: { notebook_id: id } } })) });
   const scroll = useRef<HTMLDivElement>(null);
-  const virtual = useVirtualizer({ count: document.pages.length, getScrollElement: () => scroll.current, estimateSize: () => 72, horizontal: true, overscan: 3 });
-  useEffect(() => { virtual.scrollToIndex(current-1, { align: "auto" }); }, [current, virtual]);
+  const virtual = useVirtualizer({ count: document.pages.length, getScrollElement: () => scroll.current, estimateSize: () => 72, horizontal: true, overscan: 3, enabled: pagesOpen });
+  useEffect(() => { if (pagesOpen) virtual.scrollToIndex(current-1, { align: "auto" }); }, [current, virtual, pagesOpen]);
   const page = document.pages[current - 1];
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }), useSensor(KeyboardSensor));
   const run = async (change: Omit<NotebookChange, "revision">) => {
@@ -58,8 +60,14 @@ export function NotebookPages({ id, document }: { id: string; document: Notebook
     void run({ action: "reorder", order });
   };
   return <section aria-label="ノートのページ" aria-busy={busy} className="border-b bg-background shrink-0">
+    <div className="flex items-center gap-2 px-2 py-1 text-xs">
+      <Button size="sm" variant="ghost" aria-label="ページ一覧" aria-expanded={pagesOpen} aria-controls={panelId} onClick={() => setPagesOpen(open => !open)}>
+        {pagesOpen ? <ChevronDown /> : <ChevronRight />}ページ一覧
+      </Button>
+      <span className="text-muted-foreground">{busy ? "書き込みを保存してページを変更中…" : `${current} / ${document.pages.length}ページ`}</span>
+    </div>
+    <div id={panelId} hidden={!pagesOpen}>
     <div className="flex items-center flex-wrap gap-1 px-2 py-1 text-xs">
-      <span className="mr-2">{busy ? "書き込みを保存してページを変更中…" : `${document.pages.length}ページ`}</span>
       <Button size="sm" variant="ghost" disabled={busy || !page} onClick={() => void run({ action: "insert", page_id: page?.id })}><FilePlus2 className="size-3" />後ろに挿入</Button>
       <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run({ action: "append" })}>末尾に追加</Button>
       <Button size="sm" variant="ghost" disabled={busy || !page} onClick={() => void run({ action: "duplicate", page_id: page?.id })}><Copy className="size-3" />複製</Button>
@@ -71,10 +79,11 @@ export function NotebookPages({ id, document }: { id: string; document: Notebook
         <div className="relative h-22" style={{ width: virtual.getTotalSize() }}>
         {virtual.getVirtualItems().map(slot => { const item = document.pages[slot.index], index = slot.index; return <div key={item.id} className="absolute top-0" style={{ left: slot.start }}><Thumbnail page={item} number={index+1} active={current === index+1} disabled={busy}
           strokes={notebookDraftInk(id, item.id) ?? savedInk[item.id]?.strokes as InkStroke[] ?? []}
-          select={() => useStore.getState().setCurrentPage(index+1)} shift={delta => { const target = document.pages[index+delta]; if (target) reorder(item.id, target.id); }} /></div>; })}
+          select={() => { useStore.getState().setCurrentPage(index+1); setPagesOpen(false); }} shift={delta => { const target = document.pages[index+delta]; if (target) reorder(item.id, target.id); }} /></div>; })}
         </div>
       </div>
     </DndContext>
+    </div>
     <Dialog open={!!settings} onOpenChange={open => { if (!open && !busy) setSettings(null); }}>
       <DialogContent><DialogHeader><DialogTitle>p.{current} の用紙を変更</DialogTitle><DialogDescription>書き込みはページ内の同じ比率の位置に保ちます。サイズや向きに合わせて伸縮します。</DialogDescription></DialogHeader>
         {settings && <fieldset disabled={busy}><PaperSettings value={settings} onChange={setSettings} /></fieldset>}

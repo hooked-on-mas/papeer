@@ -31,6 +31,16 @@ scenario("手書きノートの用紙・保存・ページ操作・専用ノー�
   const ink = () => api.call("GET", `${base}/pages/${originalId}/ink`);
   const layer = page.getByLabel("PDF書き込みレイヤー", { exact: true }).first();
   await layer.waitFor();
+  const pageStrip = page.getByRole("region", { name: "ノートのページ", exact: true });
+  const pageList = pageStrip.getByRole("button", { name: "ページ一覧", exact: true });
+  assert.equal(await pageList.getAttribute("aria-expanded"), "false");
+  assert.equal(await pageStrip.getByRole("button", { name: "複製", exact: true }).isVisible(), false);
+  const collapsedHeight = (await pageStrip.boundingBox())!.height;
+  await pageList.click();
+  await page.getByRole("button", { name: "ページ 1", exact: true }).waitFor();
+  assert.ok((await pageStrip.boundingBox())!.height > collapsedHeight + 80);
+  await page.getByRole("button", { name: "ページ 1", exact: true }).click();
+  assert.equal(await pageList.getAttribute("aria-expanded"), "false");
   assert.equal(await page.getByRole("button", { name: "ペン・図形", exact: true }).getAttribute("aria-pressed"), "true");
   assert.equal(await page.getByLabel("描画の種類", { exact: true }).inputValue(), "pen");
   const draw = async (offset = 0) => {
@@ -46,6 +56,27 @@ scenario("手書きノートの用紙・保存・ページ操作・専用ノー�
   await waitFor(async () => (await ink()).strokes.length === 0, "筆跡のUndoが保存されること");
   await page.getByRole("button", { name: "書き込みをやり直す", exact: true }).click();
   await waitFor(async () => (await ink()).strokes.length === 1, "筆跡のRedoが保存されること");
+  const nextPage = page.getByRole("menuitem", { name: /次のページ/ });
+  await layer.click({ button: "right", position: { x: 10, y: 10 } });
+  assert.equal(await nextPage.isVisible(), false);
+  const scroller = pageStrip.locator("..").locator("[data-pdf-scroller]").first();
+  await scroller.click({ button: "right", position: { x: 2, y: 2 } });
+  assert.equal(await nextPage.isVisible(), false);
+  // Touch events bubble separately from the overlay's pointer/contextmenu handlers.
+  // Keep the contact still beyond Base UI's 500 ms long-press timer.
+  await layer.evaluate(async element => {
+    const box = element.getBoundingClientRect();
+    const touch = new Touch({ identifier: 1, target: element, clientX: box.x + 10, clientY: box.y + 10 });
+    element.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, touches: [touch], targetTouches: [touch], changedTouches: [touch] }));
+    await new Promise(resolve => setTimeout(resolve, 650));
+    element.dispatchEvent(new TouchEvent("touchend", { bubbles: true, touches: [], targetTouches: [], changedTouches: [touch] }));
+  });
+  assert.equal(await nextPage.isVisible(), false);
+  await page.getByRole("button", { name: "本文選択", exact: true }).click();
+  await scroller.click({ button: "right", position: { x: 2, y: 2 } });
+  await nextPage.waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "ペン・図形", exact: true }).click();
   await page.getByRole("button", { name: "付箋", exact: true }).click();
   const paperBox = await layer.boundingBox(); assert.ok(paperBox);
   await page.mouse.click(paperBox.x+paperBox.width*.45, paperBox.y+paperBox.height*.4);
@@ -55,13 +86,13 @@ scenario("手書きノートの用紙・保存・ページ操作・専用ノー�
   await note.waitFor({ state: "detached" });
   await waitFor(async () => (await api.call("GET", `/api/papers/${identity}/sticky-notes`)).length === 1, "位置付箋を安定ページIDで保存すること");
   assert.equal((await api.call("GET", `/api/papers/${identity}/sticky-notes`))[0].page_id, originalId);
+  await pageList.click();
   await page.getByRole("button", { name: "複製", exact: true }).click();
   await waitFor(async () => (await document()).pages.length === 2, "ページを複製すること");
   configuration = await document();
   const duplicateId = configuration.pages[1].id;
   assert.equal((await api.call("GET", `${base}/pages/${duplicateId}/ink`)).strokes.length, 1);
   const secondThumbnail = page.getByRole("button", { name: "ページ 2", exact: true });
-  const pageStrip = page.getByRole("region", { name: "ノートのページ", exact: true });
   await waitFor(async () => (await secondThumbnail.isEnabled()) && (await pageStrip.getAttribute("aria-busy")) !== "true",
     "複製後の再取得が終わりサムネイルが操作可能になること");
   await secondThumbnail.focus();
@@ -92,6 +123,8 @@ scenario("手書きノートの用紙・保存・ページ操作・専用ノー�
   await page.reload();
   await layer.waitFor();
   await waitFor(async () => (await api.call("GET", `${base}/pages/${duplicateId}/ink`)).strokes.length === 1, "再起動後も複製した筆跡を読むこと");
+  assert.equal(await pageList.getAttribute("aria-expanded"), "false");
+  await pageList.click();
   await page.getByRole("button", { name: "ページ 2", exact: true }).click();
   await page.getByRole("button", { name: "ペン・図形", exact: true }).click();
   let failSave = true;
@@ -103,6 +136,7 @@ scenario("手書きノートの用紙・保存・ページ操作・専用ノー�
   await page.route(inkRoute, injectFailure);
   await draw(.15);
   await page.getByRole("alert").filter({ hasText: "保存の故障注入" }).first().waitFor();
+  await pageList.click();
   await page.getByRole("button", { name: "末尾に追加", exact: true }).click();
   await page.getByRole("dialog").last().waitFor();
   assert.equal((await document()).pages.length, 3, "保存に失敗した状態でページ構成を変更しない");

@@ -22,7 +22,7 @@ import { shortcutLabel } from "@/lib/platform";
  * selected text goes to the clipboard, チャット, メモ, a sticky note or a highlight; otherwise it offers
  * page and zoom controls. The toolbar over a selection (SelectionToolbar) offers the most used of these.
  */
-export function PdfContextMenu({ translated, children }: { translated: boolean; children: React.ReactNode }) {
+export function PdfContextMenu({ translated, disabled = false, children }: { translated: boolean; disabled?: boolean; children: React.ReactNode }) {
   const queryClient = useQueryClient();
   const areaRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState(false);
@@ -33,8 +33,10 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
   const caps = useItemCapabilities(useStore((s) => s.activePaperId));
   const can = passageActions(caps);
 
-  const handleOpen = (open: boolean) => {
+  const handleOpen: NonNullable<React.ComponentProps<typeof ContextMenu>["onOpenChange"]> = (open, details) => {
     if (!open) return;
+    // A touch long-press can finish after the user switches to a writing tool.
+    if (disabled) { details.cancel(); return; }
     passage.current = capturePassage(areaRef.current, translated);
     setSelected(!!passage.current);
   };
@@ -49,9 +51,10 @@ export function PdfContextMenu({ translated, children }: { translated: boolean; 
   });
 
   return (
-    <ContextMenu onOpenChange={handleOpen}>
+    <ContextMenu disabled={disabled} onOpenChange={handleOpen}>
       {/* The trigger's default select-none would stop text selection in the PDF. */}
-      <ContextMenuTrigger ref={areaRef} className="h-full w-full select-auto">
+      <ContextMenuTrigger ref={areaRef} className="h-full w-full select-auto"
+        onContextMenu={event => { if (disabled) event.preventDefault(); }}>
         {children}
       </ContextMenuTrigger>
       <ContextMenuContent className="w-64">
