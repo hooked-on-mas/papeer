@@ -33,7 +33,7 @@ import { SettingsVersionNotice } from "../features/settings/VersionNoticeHost";
 import { syncDrive } from "../features/settings/driveSync";
 import { fetchDriveStatus, fetchSyncCheck } from "../features/settings/driveApi";
 import { useJobEvents } from "../features/jobs/jobEvents";
-import { changeZoom, focusPageInput, movePage } from "../features/reader/navigation";
+import { changeZoom, focusPageInput, movePage, resetZoom } from "../features/reader/navigation";
 import { createFolder, importPdfs, renameFolder, renamePaperFile } from "./actions";
 import { normalizeCollection } from "@/lib/collectionPath";
 import { useDropTarget, useFileDrop } from "./fileDrop";
@@ -391,7 +391,7 @@ export function AppShell() {
   useHotkeys("ctrl+equal, meta+equal, ctrl+add, meta+add, ctrl+semicolon, meta+semicolon, ctrl+shift+semicolon, meta+shift+semicolon, ctrl+shift+equal, meta+shift+equal",
     () => changeZoom(1), hotkeyOptions);
   useHotkeys("ctrl+minus, meta+minus, ctrl+subtract, meta+subtract", () => changeZoom(-1), hotkeyOptions);
-  useHotkeys("ctrl+0, meta+0", () => useStore.getState().setZoom(1), hotkeyOptions);
+  useHotkeys("ctrl+0, meta+0", () => resetZoom(), hotkeyOptions);
   useHotkeys("ctrl+1, ctrl+2, ctrl+3, ctrl+4, ctrl+5, ctrl+6, meta+1, meta+2, meta+3, meta+4, meta+5, meta+6", (_e, handler) => {
     // The digit alone: handler.keys holds no modifier.
     const tab = TABS[Number(handler.keys?.join("")) - 1];

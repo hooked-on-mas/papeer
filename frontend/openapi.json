@@ -14791,6 +14791,15 @@
                 "type": "null"
               }
             ]
+          },
+          "position": {
+            "type": "string",
+            "enum": [
+              "before",
+              "after"
+            ],
+            "title": "Position",
+            "default": "after"
           }
         },
         "type": "object",

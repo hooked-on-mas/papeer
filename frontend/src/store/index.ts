@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { JobKind } from "@/features/jobs/jobKinds";
-import { clampZoom } from "@/features/reader/zoomLevels";
+import { clampZoom, ZOOM_FIT_PAGE } from "@/features/reader/zoomLevels";
 import { EMPTY_HISTORY, type ReaderHistory } from "@/features/reader/readerHistory";
 import { pageFilterOf, type PageFilter } from "@/features/reader/pageAppearance";
 import { openBesideReader, tabChange, type SidePanel } from "@/features/reader/sidePanel";
@@ -79,6 +79,10 @@ interface UiState {
   activeTab: string;
   /** Relative to the fitted page width, or ZOOM_FIT_PAGE; see features/reader/zoomLevels.ts. */
   zoom: number;
+  /** The notebook's own zoom, apart from the PDF's: a notebook opens at 「ページ全体」 (see features/notebooks). */
+  notebookZoom: number;
+  /** The notebook's page sidebar is hidden (▤ in its toolbar) rather than shown whenever there is room for it. */
+  notebookSidebarHidden: boolean;
   /** How pages look under the dark theme (設定「表示」); see features/reader/pageAppearance.ts. */
   pageFilter: PageFilter;
   currentPage: number;
@@ -129,6 +133,8 @@ interface UiState {
   setActivePaperId: (id: string | null, page?: number) => void;
   setActiveTab: (tab: string) => void;
   setZoom: (zoom: number) => void;
+  setNotebookZoom: (zoom: number) => void;
+  setNotebookSidebarHidden: (hidden: boolean) => void;
   setPageFilter: (filter: PageFilter) => void;
   setCurrentPage: (page: number) => void;
   setPaperAnchor: (paperId: string, anchor: number | null) => void;
@@ -169,6 +175,8 @@ export const useStore = create<UiState>()(
       activePaperId: null,
       activeTab: "reader",
       zoom: 1,
+      notebookZoom: ZOOM_FIT_PAGE,
+      notebookSidebarHidden: false,
       pageFilter: "normal",
       currentPage: 1,
       paperPages: {},
@@ -213,6 +221,8 @@ export const useStore = create<UiState>()(
       }),
       setActiveTab: (tab) => set((state) => tabChange(state, tab)),
       setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
+      setNotebookZoom: (notebookZoom) => set({ notebookZoom: clampZoom(notebookZoom) }),
+      setNotebookSidebarHidden: (notebookSidebarHidden) => set({ notebookSidebarHidden }),
       setPageFilter: (filter) => set({ pageFilter: pageFilterOf(filter) }),
       setCurrentPage: (page) => set((state) => ({
         currentPage: page,
@@ -269,6 +279,8 @@ export const useStore = create<UiState>()(
       partialize: (state) => ({
         activeTab: state.activeTab,
         zoom: state.zoom,
+        notebookZoom: state.notebookZoom,
+        notebookSidebarHidden: state.notebookSidebarHidden,
         pageFilter: state.pageFilter,
         sidebarWidth: state.sidebarWidth,
         sidebarCollapsed: state.sidebarCollapsed,

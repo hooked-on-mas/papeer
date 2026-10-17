@@ -110,6 +110,8 @@ export function fitReaderToolbar(width: number, options: Parameters<typeof reade
  */
 export function notebookToolbarItems({ focusMode }: { focusMode: boolean }): BarItem[] {
   return [
+    // The page sidebar's button, and the separator after it.
+    { id: "sidebar", widths: [28 + 9], required: true },
     // Seven 28px tool buttons 2px apart, and the separator after them.
     { id: "tools", widths: [7 * 28 + 6 * 2 + 9], required: true },
     // Undo and Redo.

@@ -157,7 +157,7 @@ def create(lib, title: str, spec: dict, collection="", parent_id=None) -> str:
     return identity
 
 
-def change(lib, identity: str, revision: int, action: str, page_id=None, order=None, spec=None) -> dict:
+def change(lib, identity: str, revision: int, action: str, page_id=None, order=None, spec=None, position="after") -> dict:
     with lock(lib.root, identity):
         before = read(lib, identity)
         if revision != before["revision"]:
@@ -174,7 +174,9 @@ def change(lib, identity: str, revision: int, action: str, page_id=None, order=N
                 raise Invalid("ノートは500ページまでです。")
             source = pages[index] if index >= 0 else pages[-1]
             added = page_spec(**(spec or {key: source[key] for key in ("size", "orientation", "template", "color")}))
-            pages.insert(len(pages) if action == "append" else index + 1, added)
+            # "insert" goes after the page by default, or before it with position="before".
+            before_page = action == "insert" and position == "before"
+            pages.insert(len(pages) if action == "append" else index if before_page else index + 1, added)
             if action == "duplicate":
                 copies[added["id"]] = source["id"]
         elif action == "delete":

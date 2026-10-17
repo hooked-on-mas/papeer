@@ -1,4 +1,4 @@
-import { Download, FileText, Maximize2, Minimize2, MoreHorizontal, PanelRight, Scan } from "lucide-react";
+import { Download, FileText, Maximize2, Minimize2, MoreHorizontal, PanelLeft, PanelRight, Scan } from "lucide-react";
 import { useStore } from "@/store";
 import { useItemCapabilities } from "@/api/hooks";
 import { tabAvailable } from "@/lib/itemKinds";
@@ -40,6 +40,8 @@ export function NotebookToolbar({ paperId, document, fit, busy, rowRef, setTools
   const setFocusMode = useStore((s) => s.setFocusMode);
   const sidePanel = useStore((s) => s.sidePanel);
   const setSidePanel = useStore((s) => s.setSidePanel);
+  const sidebarHidden = useStore((s) => s.notebookSidebarHidden);
+  const setSidebarHidden = useStore((s) => s.setNotebookSidebarHidden);
   const caps = useItemCapabilities(paperId);
   const preferences = useInkPreferences();
   const { exporting, exportPdf } = useInkPdfExport();
@@ -54,6 +56,13 @@ export function NotebookToolbar({ paperId, document, fit, busy, rowRef, setTools
     <div ref={rowRef} className="h-[2.4375rem] flex items-center px-3 gap-1 text-[0.8125rem] min-w-0" role="toolbar" aria-label="ノートの道具">
       {/* Clips anything the width estimates got wrong; the 「…」 button stays outside, always reachable. */}
       <div className="flex-1 min-w-0 flex items-center gap-1 overflow-hidden">
+        {/* 自動 (the default): the page sidebar is shown beside the paper, or folded into a tab when there is no room. */}
+        <button aria-label="ページ一覧" aria-pressed={!sidebarHidden} onClick={() => setSidebarHidden(!sidebarHidden)}
+          title={sidebarHidden ? "ページ一覧を表示する（余白に置き、狭いときは左端のつまみに畳みます）" : "ページ一覧を隠す（今は余白またはつまみに表示）"}
+          className={`size-7 shrink-0 rounded inline-flex items-center justify-center hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${sidebarHidden ? "text-muted-foreground hover:text-foreground" : "bg-primary/10 text-primary"}`}>
+          <PanelLeft className="size-4" aria-hidden="true" />
+        </button>
+        <span className="mx-1 h-4 shrink-0 border-l" />
         {/* data-ink-toolbar-slot: INK_TOOLBAR_SLOT, which lets the tools' keys through to the page. */}
         <div ref={setToolsSlot} data-ink-toolbar-slot="" inert={busy} className="flex items-center gap-1 shrink-0" />
         <PageNavigator paperId={paperId} currentPage={currentPage} count={count}
@@ -112,7 +121,7 @@ export function NotebookToolbar({ paperId, document, fit, busy, rowRef, setTools
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           {(!shown("zoom") || !shown("focus") || focusMode) && <DropdownMenuSeparator />}
-          {!shown("zoom") && <ZoomMenuGroup />}
+          {!shown("zoom") && <ZoomMenuGroup subject="notebook" />}
           {!shown("focus") && (
             <DropdownMenuItem onClick={() => setFocusMode(!focusMode)}>
               {focusMode ? <Minimize2 /> : <Maximize2 />} {withShortcutLabels(focusMode ? "集中表示を終了（F11）" : "集中表示（F11）")}

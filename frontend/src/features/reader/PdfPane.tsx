@@ -16,7 +16,7 @@ import { externalHttpUrl } from "@/lib/externalLinks";
 import { PdfContextMenu } from "./PdfContextMenu";
 import { selectInTextLayer } from "./textLayerRange";
 import { inkToolActive, useInkEditor, useInkPanes, type InkEditor } from "./useInkEditor";
-import { movePage } from "./navigation";
+import { movePage, type ZoomSubject } from "./navigation";
 import { InkOverlay } from "./InkOverlay";
 import { InkToolbar } from "./InkToolbar";
 import type { InkToolbarProps } from "./inkControls";
@@ -37,6 +37,22 @@ import { usePdfTouch, usePdfTouchOwner } from "./usePdfTouch";
 
 // Bundled worker, cMaps and fonts keep PDFs (including CJK text) readable offline.
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+/** What a menu over the page is given (see PdfPaneProps.pageMenu). */
+export interface PageMenuProps {
+  translated: boolean;
+  /** The menu must not open now (a sticky note is being placed, or the PDF's writing tool is picked). */
+  disabled: boolean;
+  editor: InkEditor;
+  inkPage?: { paperId: string; page: number; pageId?: string };
+  /** The page's scroller; the menu opens on a right click anywhere in it. */
+  children: React.ReactNode;
+}
+
+/** The PDF's menu over a page: copying, chat, sticky notes and the page and zoom controls. */
+function PdfPageMenu({ translated, disabled, children }: PageMenuProps) {
+  return <PdfContextMenu translated={translated} disabled={disabled}>{children}</PdfContextMenu>;
+}
 
 interface PdfPaneProps {
   inkPage?: { paperId: string; page: number; pageId?: string };
@@ -78,6 +94,13 @@ interface PdfPaneProps {
   selectionBar?: (editor: InkEditor, ratio: number) => React.ReactNode;
   /** What to call the page's surface in the messages over it: the PDF, or a notebook's paper. */
   surfaceName?: string;
+  /**
+   * The menu a right click on the page opens: the PDF's by default. With another one (the notebook's),
+   * a right click that the writing layer has no menu of its own for reaches it whichever tool is picked.
+   */
+  pageMenu?: React.ComponentType<PageMenuProps>;
+  /** Whose zoom a pinch on this page changes: the PDF's (the default), or the notebook's own. */
+  zoomSubject?: ZoomSubject;
 }
 
 /** A place to scroll to, from a bookmark, a search result or a chat attachment. */
@@ -139,7 +162,7 @@ function fitTextLayer(layer: HTMLElement, content: TextContent, scale: number) {
 export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholder, missingPageMessage,
   translated = false, searchTerm = "", jumpTarget,
   savedHighlights = [], inkPage, preservePaperColor = false, onDocumentLoad, onInternalLink, caption, badge, inkToolbarSlot,
-  inkToolbar: WritingToolbar = InkToolbar, selectionBar, surfaceName = "PDF" }: PdfPaneProps) {
+  inkToolbar: WritingToolbar = InkToolbar, selectionBar, surfaceName = "PDF", pageMenu: PageMenu = PdfPageMenu, zoomSubject = "pdf" }: PdfPaneProps) {
   const [inkViewport, setInkViewport] = useState<{ key: string; ratio: number } | null>(null);
   const side = translated ? "translated" : "original";
   const editor = useInkEditor(url && !placeholder ? inkPage?.paperId : undefined, side, inkPage?.page ?? pageNumber, inkViewport?.ratio ?? 1, inkPage?.pageId);
@@ -290,6 +313,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     pageWidth, drawnWidth, fitWidth,
     fitPageWidth: pageWidthFor(ZOOM_FIT_PAGE, fitWidth, containerSize.height - PADDING * 2 - 2, layoutRatio),
     onPageSwipe: direction => { if (!inkToolActive()) movePage(direction); },
+    zoomSubject,
   });
 
   useEffect(() => {
@@ -445,7 +469,8 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
     </div>}
     {capture && inkPage && <InkCapture key={`${inkPage.paperId}:${inkPage.page}`} paperId={inkPage.paperId} page={inkPage.page} pageId={inkPage.pageId}
       side={translated ? "translated" : "original"} box={capture} onClose={() => setCapture(null)} />}
-    <PdfContextMenu translated={translated} disabled={editor.tool !== "select" || placingNote}>
+    <PageMenu translated={translated} editor={editor} inkPage={inkPage}
+      disabled={placingNote || (PageMenu === PdfPageMenu && editor.tool !== "select")}>
       <div
         ref={attachScroller}
         data-pdf-scroller
@@ -551,7 +576,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
                     className="absolute left-px top-px w-[calc(100%-2px)] h-[calc(100%-2px)] pointer-events-none [filter:var(--pdf-page-filter)]"
                   />
                   {ink.entry && (ink.ready || editor.tool === "capture") && inkViewport?.key === inkKey && <InkOverlay key={`${inkPage?.paperId}:${inkPage?.page}:${inkKey}:${editor.tool}:${editor.locked}:${editor.visible}`}
-                    editor={editor} aspectRatio={inkViewport.ratio} inkColor={appearance.inkColor} onCapture={setCapture} />}
+                    editor={editor} aspectRatio={inkViewport.ratio} inkColor={appearance.inkColor} onCapture={setCapture} pageMenu={PageMenu !== PdfPageMenu} />}
                   {selectionBar && ink.ready && inkViewport?.key === inkKey && editor.selection && (editor.tool === "region" || editor.tool === "lasso") && editor.visible && !editor.locked && (() => {
                     // Below the selection, or above it when that is near the bottom of the page. y is a fraction of the page's height.
                     const box = editor.selection;
@@ -569,7 +594,7 @@ export function PdfPane({ url, pageNumber, zoom, onScroll, scrollRef, placeholde
           </div>
         )}
       </div>
-    </PdfContextMenu>
+    </PageMenu>
     {url && !placeholder && <SelectionToolbar container={scroller} frame={frame} translated={translated} highlights={highlights}
       inkTool={editor.tool !== "select"} placingNote={placingNote} />}
     </div>

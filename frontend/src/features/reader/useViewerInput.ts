@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { useStore } from "@/store";
 import { useNotebookBusy } from "@/features/notebooks/notebooks";
-import { changeZoom, historyBack, historyForward, movePage, moveToEdgePage } from "./navigation";
+import { changeZoom, historyBack, historyForward, movePage, moveToEdgePage, setZoomOf, zoomOf, type ZoomSubject } from "./navigation";
 import { createReaderWheelPager, horizontalEdges, keyTarget, onScreen, paneEdges, readerKeyAction, readerOwnsKey, type KeyPlace } from "./pageTurn";
 import { pinchLevel, pinchStart } from "./zoomLevels";
 import { isImeKey } from "@/lib/imeKeys";
@@ -13,12 +13,14 @@ import { isImeKey } from "@/lib/imeKeys";
  * keys act on the one the pointer was last over. `wheelTurns` says whether scrolling on past the end of a
  * page may turn it now (not while writing, where a stray wheel movement should not take the page away).
  * `resetKey` (the open item) starts the listeners over, as the root is there only once an item is open.
+ * `zoomSubject` says whose zoom Ctrl+wheel and pinch change: the PDF's, or the notebook's own.
  */
-export function useViewerInput({ rootRef, panes, wheelTurns, resetKey }: {
+export function useViewerInput({ rootRef, panes, wheelTurns, resetKey, zoomSubject = "pdf" }: {
   rootRef: RefObject<HTMLElement | null>;
   panes: RefObject<HTMLElement | null>[];
   wheelTurns: () => boolean;
   resetKey: unknown;
+  zoomSubject?: ZoomSubject;
 }): { ownsKey: (e: KeyboardEvent) => boolean } {
   const paneRefs = useRef(panes);
   paneRefs.current = panes;
@@ -57,16 +59,16 @@ export function useViewerInput({ rootRef, panes, wheelTurns, resetKey }: {
         e.preventDefault();
         if (gestureStart !== null) return; // The pinch's gesture events zoom already.
         if (mouseWheel) {
-          changeZoom(dy < 0 ? 1 : -1);
+          changeZoom(dy < 0 ? 1 : -1, zoomSubject);
           return;
         }
         // Pinch deltas follow scale = exp(-deltaY / 100) and are only a few pixels each.
-        const { zoom, setZoom } = useStore.getState();
+        const zoom = zoomOf(zoomSubject);
         if (e.timeStamp - lastPinch > 300) pinchTarget = pinchStart(zoom);
         lastPinch = e.timeStamp;
         const pinch = pinchLevel(pinchTarget * Math.exp(-dy / 100));
         pinchTarget = pinch.scale;
-        if (pinch.level !== zoom) setZoom(pinch.level);
+        if (pinch.level !== zoom) setZoomOf(zoomSubject, pinch.level);
         return;
       }
 
@@ -98,15 +100,14 @@ export function useViewerInput({ rootRef, panes, wheelTurns, resetKey }: {
     };
     const onGestureStart = (e: Event) => {
       e.preventDefault();
-      gestureStart = pinchStart(useStore.getState().zoom);
+      gestureStart = pinchStart(zoomOf(zoomSubject));
     };
     const onGestureChange = (e: Event) => {
       e.preventDefault();
       const scale = (e as Event & { scale?: number }).scale;
       if (gestureStart === null || typeof scale !== "number" || !(scale > 0)) return;
-      const { zoom, setZoom } = useStore.getState();
       const pinch = pinchLevel(gestureStart * scale);
-      if (pinch.level !== zoom) setZoom(pinch.level);
+      if (pinch.level !== zoomOf(zoomSubject)) setZoomOf(zoomSubject, pinch.level);
     };
     const onGestureEnd = (e: Event) => {
       e.preventDefault();
@@ -122,7 +123,7 @@ export function useViewerInput({ rootRef, panes, wheelTurns, resetKey }: {
       element.removeEventListener("gesturechange", onGestureChange);
       element.removeEventListener("gestureend", onGestureEnd);
     };
-  }, [resetKey, rootRef, readingPane]);
+  }, [resetKey, rootRef, readingPane, zoomSubject]);
 
   // Whether the last click was in the reader, and in which pane, for the keys below.
   const pointerInReader = useRef(false);

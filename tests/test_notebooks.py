@@ -63,6 +63,44 @@ def test_page_edits_keep_stable_ink_and_bookmarks(book):
     assert lib.rename_paper(identity, "改名") == "改名"
 
 
+def test_insert_before_a_page_keeps_ink_and_the_page_ids(book):
+    lib, client = book
+    identity = client.post("/api/notebooks", json={"title": "手帳", "size": "B5", "template": "grid5"}).json()["id"]
+    base = f"/api/notebooks/{identity}"
+    first = client.get(base).json()["pages"][0]
+    lib.save_ink(identity, "original", 1, [{"id": "s", "points": [[.1, .2], [.2, .3]], "color": "#000000", "width": .003}])
+    # Before the first page: the new page leads, and the old page (with its ink) is page 2.
+    before = client.post(base + "/pages", json={"revision": 1, "action": "insert", "page_id": first["id"], "position": "before"})
+    assert before.status_code == 200
+    pages = before.json()["pages"]
+    assert [page["id"] for page in pages][1] == first["id"]
+    assert pages[0]["id"] != first["id"]
+    assert (pages[0]["size"], pages[0]["template"]) == ("B5", "grid5")
+    assert not lib.ink(identity, "original", 1) and lib.ink(identity, "original", 2)
+    # Without a position it still goes after the page; "before" a middle page goes between.
+    after = client.post(base + "/pages", json={"revision": 2, "action": "insert", "page_id": first["id"]}).json()["pages"]
+    assert [page["id"] for page in after][:2] == [pages[0]["id"], first["id"]] and len(after) == 3
+    middle = client.post(base + "/pages", json={"revision": 3, "action": "insert", "page_id": after[2]["id"], "position": "before"}).json()["pages"]
+    assert [page["id"] for page in middle][:2] == [pages[0]["id"], first["id"]] and middle[3]["id"] == after[2]["id"]
+    assert lib.ink(identity, "original", 2)
+    assert client.post(base + "/pages", json={"revision": 4, "action": "insert", "page_id": "missing", "position": "before"}).status_code == 404
+    assert client.post(base + "/pages", json={"revision": 4, "action": "insert", "page_id": first["id"], "position": "sideways"}).status_code == 422
+
+
+def test_insert_before_respects_the_page_limit(book):
+    lib, client = book
+    identity = client.post("/api/notebooks", json={"title": "手帳"}).json()["id"]
+    # The limit is checked before any file is made, so the document alone stands in for 500 drawn pages.
+    document = notebook.read(lib, identity)
+    document["pages"] = [notebook.page_spec() for _ in range(500)]
+    (lib.folder(identity) / "notebook.json").write_text(json.dumps(document, ensure_ascii=False), "utf-8")
+    first = document["pages"][0]["id"]
+    for position in ("before", "after"):
+        response = client.post(f"/api/notebooks/{identity}/pages", json={"revision": 1, "action": "insert", "page_id": first, "position": position})
+        assert response.status_code == 400
+    assert len(notebook.read(lib, identity)["pages"]) == 500
+
+
 def test_ownership_guard_and_keep_on_delete(book):
     lib, client = book
     parent = notebook.create(lib, "親", {})

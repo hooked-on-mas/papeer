@@ -45,6 +45,8 @@ class NotebookChange(BaseModel):
     page_id: str | None = None
     order: list[str] | None = None
     spec: NotebookPaper | None = None
+    # Where "insert" puts the new page relative to page_id; ignored by the other actions.
+    position: Literal["before", "after"] = "after"
 
 
 class NotebookMove(BaseModel):
@@ -79,7 +81,7 @@ def change_pages(notebook_id: str, body: NotebookChange):
     lib = deps.get_library()
     with deps.job_manager.idle("処理中のためページを変更できません。", {notebook_id}):
         result = notebook.change(lib, notebook_id, body.revision, body.action, body.page_id, body.order,
-                                 body.spec.model_dump() if body.spec else None)
+                                 body.spec.model_dump() if body.spec else None, body.position)
     deps.paper_changed(notebook_id, ["pages"])
     return result
 

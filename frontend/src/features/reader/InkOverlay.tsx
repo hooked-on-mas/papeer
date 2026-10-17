@@ -70,7 +70,11 @@ export function InkDrawing({ stroke, ratio, inkColor = asPicked }: { stroke: Ink
       strokeWidth={stroke.width * 1000} strokeLinecap="round" strokeLinejoin="round" opacity={opacity} />;
 }
 
-export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, onCapture }: { editor: InkEditor; aspectRatio: number; inkColor?: InkColor; onCapture: (box: Bounds) => void }) {
+/**
+ * `pageMenu`: the page has a menu of its own (the notebook's), which a right click that opens none of the
+ * layer's own menu (the 削除 over the writing selected) is left to reach, whichever tool is picked.
+ */
+export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, onCapture, pageMenu = false }: { editor: InkEditor; aspectRatio: number; inkColor?: InkColor; onCapture: (box: Bounds) => void; pageMenu?: boolean }) {
   const { strokes, tool, color, width, preferences, selectedIds } = editor;
   const active = useRef<Gesture | null>(null);
   const svg = useRef<SVGSVGElement>(null);
@@ -176,12 +180,13 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
     return clamp ? [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))] : [x, y];
   };
   // Right-click, or a long press with a finger or Pencil, offers 削除 for the selection (or the writing pressed).
-  const openMenu = (p: Point) => {
-    if (tool !== "region" && tool !== "lasso") return;
+  const openMenu = (p: Point): boolean => {
+    if (tool !== "region" && tool !== "lasso") return false;
     const ids = pressTarget(strokes, selectedIds, p, ratio);
-    if (!ids) { setMenu(null); return; }
+    if (!ids) { setMenu(null); return false; }
     if (ids !== selectedIds) editor.setSelectedIds(ids);
     setMenu(p);
+    return true;
   };
   const openMenuNow = useRef(openMenu);
   openMenuNow.current = openMenu;
@@ -442,7 +447,13 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
       style={{ pointerEvents: interactive ? "auto" : "none", touchAction: interactive ? "none" : "auto",
         cursor: hoverCursorValue && SHAPE_KINDS.includes(tool) ? hoverCursorValue : tool === "pen" || tool === "highlighter" ? pointerType === "pen" ? "none" : "default" : tool === "eraser" ? eraserCursor : selecting ? "default" : "crosshair" }}
       viewBox={`0 0 1000 ${height}`} preserveAspectRatio="none"
-      onClick={event => event.stopPropagation()} onContextMenu={event => { if (!interactive) return; event.preventDefault(); event.stopPropagation(); openMenu(point(event)); }}
+      onClick={event => event.stopPropagation()} onContextMenu={event => {
+        if (!interactive) return;
+        const opened = openMenu(point(event));
+        // The page's menu takes a right click that opens none of the layer's own (and prevents the browser's itself).
+        if (pageMenu && !opened) return;
+        event.preventDefault(); event.stopPropagation();
+      }}
       onPointerEnter={event => setPointerType(event.pointerType)}
       onPointerDown={event => { setPointerType(event.pointerType); startPress(event); down(event); }}
       onPointerMove={event => { movePress(event); move(event); hoverAt(event); }} onPointerLeave={() => setHoverCursorValue(null)}

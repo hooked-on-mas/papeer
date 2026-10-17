@@ -3540,6 +3540,12 @@ export interface components {
             /** Order */
             order?: string[] | null;
             spec?: components["schemas"]["NotebookPaper"] | null;
+            /**
+             * Position
+             * @default after
+             * @enum {string}
+             */
+            position?: "before" | "after";
         };
         /** NotebookDocument */
         NotebookDocument: {

@@ -1,20 +1,22 @@
 import { useEffect, useLayoutEffect, useRef, type PointerEvent, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { create } from "zustand";
-import { useStore } from "@/store";
 import { scrollDeltaForZoomAnchor, type ZoomAnchor } from "./readingPlace";
 import { beginTouchPinch, moveTouchPinch, type TouchPinch, type TouchPoint } from "./touchZoom";
 import { horizontalEdges, touchSwipePage, type PaneEdges } from "./pageTurn";
+import { setZoomOf, zoomOf, type ZoomSubject } from "./navigation";
 
 // Both panes defer their expensive PDF redraw until the fingers lift. The touched pane owns
 // scrolling while zoom changes both layouts; the other pane must not send its clamped scroll back.
 export const usePdfTouchOwner = create<{ pane: HTMLDivElement | null }>(() => ({ pane: null }));
 
-export function usePdfTouch({ pageKey, enabled, paneRef, surfaceRef, pageWidth, drawnWidth, fitWidth, fitPageWidth, onPageSwipe }: {
+export function usePdfTouch({ pageKey, enabled, paneRef, surfaceRef, pageWidth, drawnWidth, fitWidth, fitPageWidth, onPageSwipe, zoomSubject = "pdf" }: {
   pageKey: string; enabled: boolean;
   paneRef: RefObject<HTMLDivElement | null>; surfaceRef: RefObject<HTMLDivElement | null>;
   pageWidth: number; drawnWidth: number; fitWidth: number; fitPageWidth: number;
   onPageSwipe?: (direction: -1 | 1) => void;
+  /** Whose zoom a pinch changes: the PDF's, or the notebook's own. */
+  zoomSubject?: ZoomSubject;
 }) {
   const touches = useRef(new Map<number, TouchPoint & { startX: number; startY: number }>());
   const panning = useRef(new Set<number>());
@@ -53,7 +55,7 @@ export function usePdfTouch({ pageKey, enabled, paneRef, surfaceRef, pageWidth, 
     anchor.current = next.anchor;
     // One layout per animation frame for both pointer streams. Restore against that layout,
     // including when only the midpoint moves or the scale is already at its limit.
-    if (next.zoom !== useStore.getState().zoom) flushSync(() => useStore.getState().setZoom(next.zoom));
+    if (next.zoom !== zoomOf(zoomSubject)) flushSync(() => setZoomOf(zoomSubject, next.zoom));
     restoreAnchor();
   };
   const cancelFrame = () => {

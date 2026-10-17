@@ -7,7 +7,7 @@ import { showReaderOf } from "@/features/documents/documentState";
 import { edgePage, steppedPage } from "./pageTurn";
 import { goBack, goForward, rememberPlace, type HistoryEntry } from "./readerHistory";
 import { summaryPlacement } from "./sidePanel";
-import { stepZoom } from "./zoomLevels";
+import { stepZoom, ZOOM_FIT_PAGE } from "./zoomLevels";
 
 function reading(): ReadingData | null | undefined {
   const id = useStore.getState().activePaperId;
@@ -152,10 +152,32 @@ export function showSummary(): void {
   else if (place === "tab") store.setActiveTab("summary");
 }
 
+/** Whose zoom is meant: the PDF's (both panes), or the notebook's paper, which has a zoom of its own. */
+export type ZoomSubject = "pdf" | "notebook";
+
+/** The zoom of the open item's kind: a notebook zooms apart from the PDFs. */
+export function activeZoomSubject(): ZoomSubject {
+  return activeItemCapabilities().notebook ? "notebook" : "pdf";
+}
+
+export function zoomOf(subject: ZoomSubject): number {
+  const { zoom, notebookZoom } = useStore.getState();
+  return subject === "notebook" ? notebookZoom : zoom;
+}
+
+export function setZoomOf(subject: ZoomSubject, level: number): void {
+  const { setZoom, setNotebookZoom } = useStore.getState();
+  (subject === "notebook" ? setNotebookZoom : setZoom)(level);
+}
+
 /** Steps through the zoom levels, 「ページ全体」 below 「幅に合わせる」. */
-export function changeZoom(steps: number): void {
-  const { zoom, setZoom } = useStore.getState();
-  setZoom(stepZoom(zoom, steps));
+export function changeZoom(steps: number, subject: ZoomSubject = activeZoomSubject()): void {
+  setZoomOf(subject, stepZoom(zoomOf(subject), steps));
+}
+
+/** Ctrl+0: the PDF's 「幅に合わせる」, or the notebook's own start, 「ページ全体」. */
+export function resetZoom(subject: ZoomSubject = activeZoomSubject()): void {
+  setZoomOf(subject, subject === "notebook" ? ZOOM_FIT_PAGE : 1);
 }
 
 export function focusPageInput(): void {
