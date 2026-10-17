@@ -16,7 +16,7 @@ import { NotebookPageSidebar } from "./NotebookPageSidebar";
 import { NotebookPaperDialog } from "./NotebookPaperDialog";
 import { NotebookPaperMenu } from "./NotebookPaperMenu";
 import { NotebookToolbar } from "./NotebookToolbar";
-import { NotebookBarContext } from "./notebookBar";
+import { NotebookBarContext, type NotebookHistory } from "./notebookBar";
 import { useNotebook, useNotebookBusy } from "./notebooks";
 import { cornerPlacement, sidebarPlacement, SIDEBAR_WIDTH } from "./pageSidebar";
 import { NotebookPageActionsContext, useNotebookPageActions } from "./useNotebookPageActions";
@@ -71,7 +71,9 @@ export function NotebookView({ paperId }: { paperId: string }) {
   const [toolsSlot, setToolsSlot] = useState<HTMLDivElement | null>(null);
   const [alertSlot, setAlertSlot] = useState<HTMLDivElement | null>(null);
   const inlineStyle = (fit.style ?? -1) >= 0;
-  const bar = useMemo(() => ({ inlineStyle, alertSlot }), [inlineStyle, alertSlot]);
+  const historyInBar = (fit.history ?? -1) >= 0;
+  const [history, setHistory] = useState<NotebookHistory | null>(null);
+  const bar = useMemo(() => ({ inlineStyle, historyInBar, setHistory, alertSlot }), [inlineStyle, historyInBar, alertSlot]);
 
   const page = notebook?.pages[currentPage - 1];
   const url = notebook ? backendUrl(`/api/papers/${paperId}/files/original.pdf?v=${notebook.revision}`) : null;
@@ -81,7 +83,7 @@ export function NotebookView({ paperId }: { paperId: string }) {
     <NotebookBarContext.Provider value={bar}>
       <div ref={rootRef} className="flex flex-col h-full w-full bg-reader-bg">
         <NotebookToolbar paperId={paperId} document={notebook} fit={fit} busy={busy}
-          rowRef={rowRef} setToolsSlot={setToolsSlot} setAlertSlot={setAlertSlot} />
+          history={history} rowRef={rowRef} setToolsSlot={setToolsSlot} setAlertSlot={setAlertSlot} />
         <div ref={viewRef} className="flex-1 relative min-h-0">
         <div className="absolute inset-0" role="region" aria-label="ノート" inert={busy}>
           <PdfPane
@@ -109,9 +111,10 @@ export function NotebookView({ paperId }: { paperId: string }) {
         </div>
         {notebook && !sidebarHidden && <NotebookPageSidebar paperId={paperId} notebook={notebook} placement={sidebar} />}
         {notebook && <NotebookPageCorner area={viewRef} overlay={corner === "overlay"} gutter={paper.gutter} />}
-        {busy && <p role="status" className="pointer-events-none absolute left-1/2 top-2 z-30 -translate-x-1/2 rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm">
-          書き込みを保存してページを変更中…
-        </p>}
+        {/* Always in the page, so that a screen reader that is told of the change has the region to watch. */}
+        <p role="status" className={busy ? "pointer-events-none absolute left-1/2 top-2 z-30 -translate-x-1/2 rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm" : "sr-only"}>
+          {busy ? "書き込みを保存してページを変更中…" : ""}
+        </p>
         </div>
       </div>
       <NotebookPaperDialog />

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
+import { DndContext, PointerSensor, closestCenter, useDraggable, useDroppable, useSensor, useSensors, type Announcements } from "@dnd-kit/core";
 import { ChevronRight, Plus } from "lucide-react";
 import { api, unwrap } from "@/api/client";
 import { QK } from "@/lib/queryKeys";
@@ -20,7 +20,9 @@ import { useNotebookBusy, type NotebookDocument, type NotebookPage } from "./not
 const LEAVE_MS = 250;
 
 function Thumbnail({ page, number, active, strokes, select, onMenuOpen, onFocusChange }: {
-  page: NotebookPage; number: number; active: boolean; strokes: InkStroke[]; select: () => void; onMenuOpen: (open: boolean) => void;
+  page: NotebookPage; number: number; active: boolean; strokes: InkStroke[];
+  /** Goes to the page; `keyboard` if it was chosen with a key (a click that has no pointer behind it). */
+  select: (keyboard: boolean) => void; onMenuOpen: (open: boolean) => void;
   /** The thumbnail took the focus (true), or lost it (false). */
   onFocusChange: (focused: boolean) => void;
 }) {
@@ -34,13 +36,15 @@ function Thumbnail({ page, number, active, strokes, select, onMenuOpen, onFocusC
   return <ContextMenu disabled={busy} onOpenChange={(open, details) => { if (mouse.allows(open, details)) onMenuOpen(open); }}>
     <ContextMenuTrigger ref={drop.setNodeRef} onPointerDownCapture={mouse.remember}
       className={`flex justify-center rounded ${drop.isOver ? "outline-2 outline-primary" : ""}`}>
-      <button ref={drag.setNodeRef} {...drag.attributes} {...drag.listeners} disabled={busy} onClick={select}
+      {/* A plain button: Enter (and Space) go to the page. The pointer drags it (no keyboard drag, nor the
+          attributes dnd-kit adds for one); the keyboard moves it with Alt+↑↓. */}
+      <button ref={drag.setNodeRef} {...drag.listeners} disabled={busy} onClick={(event) => select(event.detail === 0)}
         aria-label={`ページ ${number}`} aria-current={active ? "page" : undefined} data-page-id={page.id}
+        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
         onFocus={() => onFocusChange(true)} onBlur={() => onFocusChange(false)}
-        title="クリックで移動、ドラッグまたはAltと上下キーで並べ替え、右クリックでページの操作"
+        title="クリックまたはEnterで移動、ドラッグまたはAltと上下キーで並べ替え、右クリックでページの操作"
         onKeyDown={(e) => {
           if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) { e.preventDefault(); void actions.shift(page.id, e.key === "ArrowUp" ? -1 : 1); }
-          else drag.listeners?.onKeyDown?.(e);
         }}
         className={`flex flex-col items-center gap-0.5 rounded p-1 text-xs touch-none focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent ring-2 ring-primary" : "hover:bg-muted"} ${drag.isDragging ? "opacity-40" : ""}`}>
         <span className="relative block" style={{ width: size.width, height: size.height }}>
@@ -53,7 +57,7 @@ function Thumbnail({ page, number, active, strokes, select, onMenuOpen, onFocusC
       </button>
     </ContextMenuTrigger>
     <ContextMenuContent className="w-64">
-      <ContextMenuItem onClick={select}><ChevronRight /> このページへ移動</ContextMenuItem>
+      <ContextMenuItem onClick={(event) => select(event.detail === 0)}><ChevronRight /> このページへ移動</ContextMenuItem>
       <ContextMenuSeparator />
       <NotebookPageMenuItems pageId={page.id} />
     </ContextMenuContent>
@@ -82,13 +86,25 @@ export function NotebookPageSidebar({ paperId, notebook, placement }: { paperId:
   const dragging = useRef(false);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const focusOnOpen = useRef(false);
+  // Folded with the focus in the sidebar (Escape, choosing a page): it goes to the tab that takes its place.
+  const focusTab = useRef(false);
   // The thumbnail the keyboard is on: the buttons are disabled while a change is under way, which takes the
   // focus off the one being moved, so that the next Alt+↑↓ would have nothing to act on; it is put back after.
   const focusedPage = useRef<string | null>(null);
 
   useEffect(() => { if (placement === "margin") { setOpen(false); pinned.current = false; } }, [placement]);
   useEffect(() => () => clearTimeout(leaveTimer.current), []);
-  const fold = () => { clearTimeout(leaveTimer.current); pinned.current = false; setOpen(false); };
+  const fold = (keepFocus = false) => {
+    clearTimeout(leaveTimer.current);
+    pinned.current = false;
+    if (keepFocus && root.current?.contains(document.activeElement)) focusTab.current = true;
+    setOpen(false);
+  };
+  useEffect(() => {
+    if (shown || !focusTab.current) return;
+    focusTab.current = false;
+    root.current?.querySelector<HTMLElement>("[data-page-tab]")?.focus({ preventScroll: true });
+  }, [shown]);
 
   // A press anywhere else, which includes starting to write, and Escape fold the opened tab.
   useEffect(() => {
@@ -97,7 +113,7 @@ export function NotebookPageSidebar({ paperId, notebook, placement }: { paperId:
       if (menuOpen.current || (event.target instanceof Node && root.current?.contains(event.target))) return;
       fold();
     };
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !menuOpen.current) fold(); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !menuOpen.current) fold(true); };
     document.addEventListener("pointerdown", outside, true);
     document.addEventListener("keydown", escape, true);
     return () => { document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", escape, true); };
@@ -134,8 +150,19 @@ export function NotebookPageSidebar({ paperId, notebook, placement }: { paperId:
     root.current?.querySelector<HTMLElement>(`[data-page-id="${id}"]`)?.focus({ preventScroll: true });
   }, [busy, shapes]);
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }), useSensor(KeyboardSensor));
-  const choose = (number: number) => { useStore.getState().setCurrentPage(number); if (placement === "tab") fold(); };
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  // Folds the opened tab once a page is chosen. The focus goes back to the tab only when a key chose it: with
+  // the mouse, pen or touch it is left to fall to the page as it always did (a focus left on the tab would
+  // make Space open the list again and keep Ctrl+V and Delete from the writing).
+  const choose = (number: number, keyboard: boolean) => { useStore.getState().setCurrentPage(number); if (placement === "tab") fold(keyboard); };
+  // What dragging with the pointer says to a screen reader: the page, not the id dnd-kit would read.
+  const numberOf = (id: unknown) => notebook.pages.findIndex((item) => item.id === id) + 1;
+  const announcements: Announcements = {
+    onDragStart: ({ active }) => `ページ ${numberOf(active.id)} をつかみました`,
+    onDragOver: ({ over }) => over ? `ページ ${numberOf(over.id)} の位置` : undefined,
+    onDragEnd: ({ active, over }) => over ? `ページ ${numberOf(active.id)} を ${numberOf(over.id)} の位置へ動かします` : `ページ ${numberOf(active.id)} はそのままです`,
+    onDragCancel: ({ active }) => `ページ ${numberOf(active.id)} の移動をやめました`,
+  };
 
   const mouseEnter = (event: React.PointerEvent) => {
     clearTimeout(leaveTimer.current);
@@ -152,7 +179,7 @@ export function NotebookPageSidebar({ paperId, notebook, placement }: { paperId:
     const place = tabPosition(current, count);
     return <section ref={root} aria-label="ノートのページ" aria-busy={busy} onPointerEnter={mouseEnter}
       className="absolute inset-y-0 left-0 z-20" style={{ width: TAB_WIDTH }}>
-      <button aria-label="ページ一覧を開く" title={`ページ一覧を開く（${current} / ${count}）`} disabled={busy}
+      <button data-page-tab="" aria-label="ページ一覧を開く" title={`ページ一覧を開く（${current} / ${count}）`} disabled={busy}
         onClick={() => { pinned.current = true; focusOnOpen.current = true; setOpen(true); }}
         className="group relative block h-full w-full cursor-pointer bg-transparent outline-none hover:bg-foreground/5 focus-visible:bg-foreground/10 focus-visible:ring-2 focus-visible:ring-ring">
         <ChevronRight className="absolute left-1/2 top-1.5 size-3.5 -translate-x-1/2 text-muted-foreground group-hover:text-foreground" aria-hidden="true" />
@@ -166,10 +193,15 @@ export function NotebookPageSidebar({ paperId, notebook, placement }: { paperId:
   const overlaid = placement === "tab";
   return <section ref={root} aria-label="ノートのページ" aria-busy={busy} onPointerEnter={mouseEnter} onPointerLeave={mouseLeave}
     // The writing tool takes Escape from the page (it puts the tool down); from here it folds the opened tab.
-    onKeyDown={(event) => { if (event.key === "Escape" && placement === "tab" && !menuOpen.current) { event.stopPropagation(); fold(); } }}
+    onKeyDown={(event) => { if (event.key === "Escape" && placement === "tab" && !menuOpen.current) { event.stopPropagation(); fold(true); } }}
+    // Tabbing out of the opened sidebar folds it (not the focus being taken by the menu or a dialog over it).
+    onBlur={(event) => {
+      const next = event.relatedTarget;
+      if (placement === "tab" && open && !menuOpen.current && !dragging.current && next instanceof Node && !root.current?.contains(next)) fold();
+    }}
     className={`absolute z-20 flex flex-col ${overlaid ? "inset-y-0 left-0 border-r bg-background/95 shadow-[4px_0_14px_rgba(0,0,0,0.2)] backdrop-blur-sm" : "inset-y-2 left-2"}`}
     style={{ width: SIDEBAR_WIDTH }}>
-    <DndContext sensors={sensors} collisionDetection={closestCenter}
+    <DndContext sensors={sensors} collisionDetection={closestCenter} accessibility={{ announcements, screenReaderInstructions: { draggable: "" } }}
       onDragStart={() => { dragging.current = true; }}
       onDragCancel={() => { dragging.current = false; }}
       onDragEnd={(event) => { dragging.current = false; if (event.over) void actions.reorder(String(event.active.id), String(event.over.id)); }}>
@@ -182,7 +214,7 @@ export function NotebookPageSidebar({ paperId, notebook, placement }: { paperId:
             return <div key={item.id} className="absolute left-0 w-full px-1 pt-1" style={{ top: slot.start, height: slot.size }}>
               <Thumbnail page={item} number={slot.index + 1} active={current === slot.index + 1}
                 strokes={notebookDraftInk(paperId, item.id) ?? savedInk[item.id]?.strokes as InkStroke[] ?? []}
-                select={() => choose(slot.index + 1)}
+                select={(keyboard) => choose(slot.index + 1, keyboard)}
                 onFocusChange={(focused) => {
                   // Losing the focus to a disabled button (busy) is not the user's moving away.
                   if (focused) focusedPage.current = item.id;

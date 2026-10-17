@@ -1301,7 +1301,6 @@ function PaperMenu({ paper, collection, collections }: { paper: PaperData; colle
   return (
     <>
       {!paper.parent_id && <ContextMenuItem onClick={() => newNotebook({ owner: paper })}><NotebookPen className="size-4 mr-2" />専用ノートを作る…</ContextMenuItem>}
-      {caps.notebook && <ContextMenuItem onClick={() => moveNotebook(paper)}><Folder className="size-4 mr-2" />持ち主を変更・独立させる…</ContextMenuItem>}
       {(caps.linkPaper || caps.linkNotebook) && <ContextMenuItem onClick={() => chooseItemLink(paper)}><Link2 className="size-4 mr-2" />{caps.linkNotebook ? "関連論文を追加…" : "ノートに紐づける…"}</ContextMenuItem>}
       <ContextMenuItem onClick={() => emitAppEvent("open-paper-details", { paperId: paper.id })}>
         <FileText className="w-4 h-4 mr-2" /> 論文情報・整理
@@ -1377,7 +1376,7 @@ function NotebookMenu({ paper, collection, collections }: { paper: PaperData; co
             </ContextMenuCheckboxItem>
           ))}
           <ContextMenuSeparator />
-          <ContextMenuItem onClick={() => chooseNewCollection(paper.id, collection)}>新しいフォルダーを入力…</ContextMenuItem>
+          <ContextMenuItem onClick={() => chooseNewCollection(paper.id, collection, { notebook: true })}>新しいフォルダーを入力…</ContextMenuItem>
         </ContextMenuSubContent>
       </ContextMenuSub>
       <PaperOrganizeItems paper={paper} />

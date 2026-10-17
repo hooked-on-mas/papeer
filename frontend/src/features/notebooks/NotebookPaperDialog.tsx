@@ -5,7 +5,7 @@ import { PaperSettings } from "./PaperSettings";
 import type { NotebookPaper } from "./notebooks";
 import { usePageActions } from "./useNotebookPageActions";
 
-/** 用紙を変更: the dialog the sidebar's and the paper's menus (and the toolbar) open for one page. */
+/** 用紙を変更: the dialog that the menus over the sidebar's thumbnails and the paper, and the toolbar's 「…」 menu (for the page shown), open for one page. */
 export function NotebookPaperDialog() {
   const { paperTarget, closePaper, applyPaper, busy } = usePageActions();
   const [value, setValue] = useState<NotebookPaper | null>(null);

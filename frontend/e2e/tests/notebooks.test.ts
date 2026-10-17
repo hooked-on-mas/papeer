@@ -80,7 +80,7 @@ scenario("手書きノートの用紙・保存・ページ操作・専用ノー�
   assert.equal(await page.getByRole("tab", { name: "ノート", exact: true }).getAttribute("aria-selected"), "true");
   await page.getByText("ノート · 未分類 · 1ページ", { exact: true }).waitFor();
   await page.getByRole("button", { name: "情報・整理", exact: true }).waitFor();
-  await page.getByRole("button", { name: /^↗ 関連論文/ }).waitFor();
+  await page.getByRole("button", { name: /^関連論文/ }).waitFor();
   const toolbar = page.getByRole("toolbar", { name: "ノートの道具", exact: true });
   await toolbar.waitFor();
   assert.equal(await page.getByRole("button", { name: "ペン", exact: true }).getAttribute("aria-pressed"), "true");
@@ -415,7 +415,7 @@ scenario("手書きノートの用紙・保存・ページ操作・専用ノー�
   await layer.waitFor();
   await page.screenshot({ path: path.join(screenshots, "03-owned-notebook-cornell.png") });
   await page.getByText(/Stochastic Gradient.*の専用ノート · 1ページ/).waitFor();
-  assert.equal(await page.getByRole("button", { name: /^↗ 関連論文/ }).count(), 0, "専用ノートには関連論文ボタンを出さない");
+  assert.equal(await page.getByRole("button", { name: /^関連論文/ }).count(), 0, "専用ノートには関連論文ボタンを出さない");
   await page.getByRole("button", { name: "その他", exact: true }).click();
   await page.getByRole("menuitem", { name: "持ち主を変更・独立させる…", exact: true }).click();
   const placement = page.getByRole("dialog", { name: "ノートの持ち主を変更", exact: true });

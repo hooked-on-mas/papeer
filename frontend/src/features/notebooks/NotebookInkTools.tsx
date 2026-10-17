@@ -1,4 +1,4 @@
-import { useContext, useState, type ReactNode } from "react";
+import { useContext, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Popover } from "@base-ui/react/popover";
 import { Eraser, Hand, Highlighter, PenLine, Redo2, Shapes, StickyNote, Type, Undo2, type LucideIcon } from "lucide-react";
@@ -23,9 +23,16 @@ const popup = "flex flex-wrap items-center gap-1.5 max-w-80 rounded-lg border bg
  */
 export function NotebookInkTools({ editor, disabled, onStickyNote, errorsOnly = false, slot }: InkToolbarProps) {
   const { ink, tool, setTool, lastRange, lastShape, selected, visible, locked } = editor;
-  const { inlineStyle, alertSlot } = useContext(NotebookBarContext);
+  const { inlineStyle, historyInBar, setHistory, alertSlot } = useContext(NotebookBarContext);
   const editable = !disabled && !!ink.ready && visible && !locked;
   const { saveError, saveAll } = useInkSaveRetry(ink);
+  // Without room for their buttons, Undo and Redo are in the toolbar's 「…」 menu, which acts through these.
+  const entry = ink.entry, canUndo = editable && !!ink.canUndo, canRedo = editable && !!ink.canRedo;
+  useEffect(() => {
+    if (errorsOnly || historyInBar) { setHistory(null); return; }
+    setHistory({ canUndo, canRedo, undo: () => entry?.undo(), redo: () => entry?.redo() });
+    return () => setHistory(null);
+  }, [errorsOnly, historyInBar, setHistory, entry, canUndo, canRedo]);
   const [styleOpen, setStyleOpen] = useState(false);
   const [openFor, setOpenFor] = useState<ToolId | null>(null);
 
@@ -76,7 +83,9 @@ export function NotebookInkTools({ editor, disabled, onStickyNote, errorsOnly = 
             if (next && !active) { setTool(targetOf(id)); return; }
             setOpenFor(next ? id : null);
           }}>
-            <Popover.Trigger aria-label={label} aria-pressed={active} disabled={!editable}
+            {/* Pressed or not says which tool is picked; the popover it opens is in the title, so that the
+                button is not also read as expanded or collapsed. */}
+            <Popover.Trigger aria-label={label} aria-pressed={active} aria-expanded={undefined} aria-haspopup={undefined} disabled={!editable}
               title={active ? `${hint}（もう一度押すと設定）` : hint}
               className={`${toolButton} ${active ? "bg-primary/10 text-primary" : ""}`}>
               <Icon className="size-4" aria-hidden="true" />
@@ -96,11 +105,13 @@ export function NotebookInkTools({ editor, disabled, onStickyNote, errorsOnly = 
         <InkSwatches editor={editor} disabled={!styleReady} />
         <InkWidthSelect editor={editor} disabled={!styleReady || tool === "text"} />
       </div>}
-      <span className="mx-1 h-4 shrink-0 border-l" />
-      <div className="flex items-center gap-0.5 shrink-0" role="group" aria-label="元に戻す・やり直す">
-        <button aria-label="書き込みを元に戻す" title={withShortcutLabels("元に戻す（Ctrl+Z）")} className={toolButton} disabled={!editable || !ink.canUndo} onClick={ink.entry?.undo}><Undo2 className="size-4" aria-hidden="true" /></button>
-        <button aria-label="書き込みをやり直す" title={withShortcutLabels("やり直し（Ctrl+Y）")} className={toolButton} disabled={!editable || !ink.canRedo} onClick={ink.entry?.redo}><Redo2 className="size-4" aria-hidden="true" /></button>
-      </div>
+      {historyInBar && <>
+        <span className="mx-1 h-4 shrink-0 border-l" />
+        <div className="flex items-center gap-0.5 shrink-0" role="group" aria-label="元に戻す・やり直す">
+          <button aria-label="書き込みを元に戻す" title={withShortcutLabels("元に戻す（Ctrl+Z）")} className={toolButton} disabled={!canUndo} onClick={ink.entry?.undo}><Undo2 className="size-4" aria-hidden="true" /></button>
+          <button aria-label="書き込みをやり直す" title={withShortcutLabels("やり直し（Ctrl+Y）")} className={toolButton} disabled={!canRedo} onClick={ink.entry?.redo}><Redo2 className="size-4" aria-hidden="true" /></button>
+        </div>
+      </>}
     </>)}
     {saveAlert}
   </>;

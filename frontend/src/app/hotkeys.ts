@@ -19,7 +19,7 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
     items: [
       { keys: ["Ctrl", "O"], label: "PDF を追加" },
       { keys: ["Ctrl", "B"], label: "ライブラリの表示を切り替え" },
-      { keys: ["Ctrl", "1〜4"], label: "タブを切り替え（PDF を読む / サマリー / チャット / メモ）。集中表示中は右パネルに開閉" },
+      { keys: ["Ctrl", "1〜4"], label: "タブを切り替え（本文（ノートではノート）/ サマリー / チャット / メモ）。集中表示中は右パネルに開閉" },
       { keys: ["Ctrl", "5"], label: "付箋タブを開く（集中表示を終了）" },
       { keys: ["Ctrl", "6"], label: "論文マップを開く（集中表示を終了）" },
       { keys: ["F11"], label: "集中表示" },
@@ -54,7 +54,7 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
       { keys: ["←", "→"], label: "前後のページ" },
       { keys: ["PageDown", "Space"], label: "1 画面下へ。ページの末尾では次のページへ" },
       { keys: ["PageUp", "Shift+Space"], label: "1 画面上へ。ページの先頭では前のページの末尾へ" },
-      { keys: ["ホイール"], label: "ページの末尾・先頭でさらに回すと次・前のページへ（書き込みツール選択中を除く）" },
+      { keys: ["ホイール"], label: "ページの末尾・先頭でさらに回すと次・前のページへ（PDF は書き込みツール選択中を除く。ノートはペン先が触れている間を除き、最後のページで新しいページは作らない）" },
       { keys: ["Home", "End"], label: "最初・最後のページ" },
       { keys: ["Alt", "← / →"], label: "リンク・目次・検索で移動する前の場所に戻る・進む" },
       { keys: ["Ctrl", "G"], label: "ページ番号を入力" },
@@ -62,10 +62,18 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
       { keys: ["Enter", "Shift+Enter"], label: "論文内検索で次・前の結果へ（F3 / Shift+F3 でも可）" },
       { keys: ["Ctrl", "+"], label: "拡大" },
       { keys: ["Ctrl", "-"], label: "縮小" },
-      { keys: ["Ctrl", "0"], label: "幅に合わせる（「ページ全体」は倍率の選択から）" },
+      { keys: ["Ctrl", "0"], label: "幅に合わせる（ノートは「ページ全体」。ほかの倍率は倍率の選択から）" },
       { keys: ["Ctrl", "ホイール"], label: "拡大・縮小（タッチパッドのピンチでも可）" },
       { keys: ["Ctrl", "T"], label: "翻訳ダイアログを開く" },
       { keys: ["Delete"], label: "選択した付箋を削除（付箋タブのカードでも可）" },
+    ],
+  },
+  {
+    title: "ノートのページ一覧（サムネイル）",
+    items: [
+      { keys: ["Enter", "Space"], label: "そのページへ移動（重ねて開いているときは移動して畳む）" },
+      { keys: ["Alt", "↑ / ↓"], label: "ページを上・下へ並べ替え（ドラッグでも可）" },
+      { keys: ["Esc"], label: "重ねて開いた一覧を畳み、左端のつまみへフォーカスを戻す（Tab で外へ出ても畳む）" },
     ],
   },
 ];

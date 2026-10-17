@@ -149,15 +149,29 @@ test("the writing toolbar's start setting: closed by default, open, or as it was
   assert.equal(initialInkBarOpen("last", "true"), false);
 });
 
-test("the notebook toolbar keeps its sidebar button, tools, history and page field, and drops the colours, focus button and zoom as the row narrows", () => {
+test("the notebook toolbar keeps its tools and page field, and drops the colours, focus button, zoom, sidebar button and history in that order as the row narrows", () => {
   const wide = fitNotebookToolbar(1200, { focusMode: false });
   assert.ok(Object.values(wide).every(form => form >= 0), "everything fits in a wide row");
   const medium = fitNotebookToolbar(640, { focusMode: false });
   assert.equal(medium.style, -1);
   assert.ok(medium.zoom >= 0);
+  // Narrowing drops the colours first, then the focus button, the zoom, the sidebar's button and last Undo
+  // and Redo; no item comes back, and none stays once one that is more important has gone.
+  const order = ["history", "sidebar", "zoom", "focus", "style"];
+  let before = new Set<string>();
+  for (let width = 1200; width >= 200; width -= 10) {
+    const fit = fitNotebookToolbar(width, { focusMode: false });
+    const gone = new Set(Object.keys(fit).filter(id => fit[id] < 0));
+    for (const id of before) assert.ok(gone.has(id), `${id} stays out as the row narrows (${width})`);
+    order.forEach((id, i) => { if (gone.has(id)) order.slice(i).forEach(later => assert.ok(gone.has(later), `${later} goes with or before ${id} (${width})`)); });
+    before = gone;
+  }
   const narrow = fitNotebookToolbar(300, { focusMode: false });
-  assert.deepEqual([narrow.sidebar, narrow.tools, narrow.history, narrow.pages], [0, 0, 0, 0]);
-  assert.deepEqual([narrow.zoom, narrow.focus, narrow.style], [-1, -1, -1]);
+  assert.deepEqual([narrow.tools, narrow.pages], [0, 0]);
+  assert.deepEqual([narrow.zoom, narrow.focus, narrow.style, narrow.history, narrow.sidebar], [-1, -1, -1, -1, -1]);
+  // At 426px (a 640px window with the library open) the tools, the page field, Undo and Redo and the sidebar's button are all there.
+  const window640 = fitNotebookToolbar(426 - 24, { focusMode: false });
+  assert.deepEqual([window640.tools, window640.pages], [0, 0]);
   // In focus mode the focus button is the way out, so it stays.
   assert.equal(fitNotebookToolbar(300, { focusMode: true }).focus, 0);
 });

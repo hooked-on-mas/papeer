@@ -30,7 +30,7 @@ export function RelatedItems({ paperId, variant = "section" }: { paperId: string
         : linked.length === 0 ? <p className="text-xs text-muted-foreground">紐づけはありません。</p>
           : <ul className="space-y-1 max-h-40 overflow-auto">{linked.map(row => <li key={row.id} className="flex items-center gap-1 text-xs">
             <button className="flex-1 min-w-0 text-left truncate rounded px-1 py-1 hover:bg-muted" title={`${paperDisplayName(row)} — ${row.collection_name || "未分類"}`}
-              onClick={() => { useStore.getState().setActiveTab("reader"); openPaper(row.id, row.collection_name); }}>↗ {paperDisplayName(row)}</button>
+              onClick={() => { useStore.getState().setActiveTab("reader"); openPaper(row.id, row.collection_name); }}><span aria-hidden="true">↗ </span>{paperDisplayName(row)}</button>
             <Button size="icon" variant="ghost" className="size-6 shrink-0" aria-label={`「${paperDisplayName(row)}」との紐づけを外す`} disabled={removing !== null}
               onClick={() => { setRemoving(row.id); void removeItemLink(owner.id, row.id).finally(() => setRemoving(null)); }}><X className="size-3" /></Button>
           </li>)}</ul>}
@@ -39,7 +39,8 @@ export function RelatedItems({ paperId, variant = "section" }: { paperId: string
   return <Popover.Root>
     <Popover.Trigger className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[0.8125rem] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
       title="このノートに紐づけた論文を開く・追加する・外す">
-      ↗ {title}{linked ? ` ${linked.length}` : ""}
+      {/* The arrow is a sign for the eye; the button is read as 「関連論文 2」. */}
+      <span aria-hidden="true">↗</span> {title}{linked ? ` ${linked.length}` : ""}
     </Popover.Trigger>
     <Popover.Portal>
       <Popover.Positioner side="bottom" align="end" sideOffset={6} className="z-50 outline-none">

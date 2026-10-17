@@ -38,8 +38,8 @@ scenario("論文と独立ノートをドラッグ・右クリックで紐づけ�
   await page.locator("h1", { hasText: "輪読ノート" }).waitFor();
   assert.equal(await row(notebook.id).getAttribute("aria-current"), "true");
   assert.equal(await linkRow(paperId, notebook.id).getAttribute("aria-selected"), "false");
-  await page.getByRole("button", { name: "↗ 関連論文 1", exact: true }).click();
-  await page.getByRole("button", { name: /↗.*Stochastic Gradient/ }).waitFor();
+  await page.getByRole("button", { name: "関連論文 1", exact: true }).click();
+  await page.getByRole("dialog", { name: "関連論文", exact: true }).getByRole("button", { name: /Stochastic Gradient/ }).first().waitFor();
   await row(notebook.id).focus(); await row(notebook.id).press("ArrowRight");
   await linkRow(notebook.id, paperId).click({ button: "right" });
   await page.getByRole("menuitem", { name: "フォルダー内で表示", exact: true }).click();
@@ -61,7 +61,7 @@ scenario("論文と独立ノートをドラッグ・右クリックで紐づけ�
   await waitForLibrary(page, ["輪読ノート"]);
   assert.equal(await page.locator('[data-tree-key^="link:"]').count(), 0, "隠す設定は再起動後も保存される");
   await row(notebook.id).click();
-  await page.getByRole("button", { name: "↗ 関連論文 2", exact: true }).click();
+  await page.getByRole("button", { name: "関連論文 2", exact: true }).click();
   const related = page.getByRole("dialog", { name: "関連論文", exact: true });
   await related.getByRole("button", { name: /Stochastic Gradient.*紐づけを外す/ }).click();
   await waitFor(async () => (await api.call("GET", `/api/papers/${notebook.id}/links`)).length === 1, "隠している間も画面の関連論文から解除すること");
@@ -84,7 +84,7 @@ scenario("論文と独立ノートをドラッグ・右クリックで紐づけ�
   await page.getByRole("button", { name: "論文情報・整理", exact: true }).click();
   const details = page.getByRole("dialog", { name: "論文情報・整理", exact: true });
   await details.getByRole("heading", { name: "関連ノート", exact: true }).waitFor();
-  await details.getByRole("button", { name: "↗ 輪読ノート", exact: true }).waitFor();
+  await details.getByRole("button", { name: "輪読ノート", exact: true }).waitFor();
   await details.getByRole("button", { name: "閉じる", exact: true }).click();
   assert.deepEqual(app.consoleErrors.filter(error => error.startsWith("[pageerror]")), []);
 });

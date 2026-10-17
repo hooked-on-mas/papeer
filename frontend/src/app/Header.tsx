@@ -46,7 +46,7 @@ function NotebookTitle({ paper }: { paper: PaperData }) {
   const commit = () => {
     const name = text?.trim();
     setText(null);
-    if (name && name !== current) void renamePaperTo(paper.id, name);
+    if (name && name !== current) void renamePaperTo(paper.id, name, { notebook: true });
   };
   if (text === null) {
     return (

@@ -1,4 +1,4 @@
-import { Download, FileText, Maximize2, Minimize2, MoreHorizontal, PanelLeft, PanelRight, Scan } from "lucide-react";
+import { Download, FileText, Maximize2, Minimize2, MoreHorizontal, PanelLeft, PanelRight, Redo2, Scan, Settings2, Undo2 } from "lucide-react";
 import { useStore } from "@/store";
 import { useItemCapabilities } from "@/api/hooks";
 import { tabAvailable } from "@/lib/itemKinds";
@@ -14,7 +14,9 @@ import { SIDE_PANEL_BUTTONS } from "@/features/reader/sidePanelButtons";
 import { useInkPdfExport } from "@/features/reader/inkControls";
 import { useInkPreferences, useInkTools } from "@/features/reader/useInkEditor";
 import type { BarFit } from "@/features/reader/readerBars";
+import type { NotebookHistory } from "./notebookBar";
 import type { NotebookDocument } from "./notebooks";
+import { usePageActions } from "./useNotebookPageActions";
 
 const moreButton = "p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:pointer-events-none shrink-0";
 const chip = (active: boolean) => `flex items-center gap-1 h-6 px-2 rounded text-[0.75rem] border transition-colors shrink-0 whitespace-nowrap ${active ? "text-primary bg-primary/10 border-primary/40" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`;
@@ -25,12 +27,14 @@ const chip = (active: boolean) => `flex items-center gap-1 h-6 px-2 rounded text
  * whatever tool is picked, so that the paper under it never moves; what doesn't fit goes into the menu
  * (see fitNotebookToolbar). A failed save is reported in `setAlertSlot`, under the row.
  */
-export function NotebookToolbar({ paperId, document, fit, busy, rowRef, setToolsSlot, setAlertSlot }: {
+export function NotebookToolbar({ paperId, document, fit, busy, history, rowRef, setToolsSlot, setAlertSlot }: {
   paperId: string;
   document: NotebookDocument | undefined;
   fit: BarFit;
   /** A page operation is under way: the writing tools wait for it. */
   busy: boolean;
+  /** Undo and Redo for the menu, while their buttons are not in the row. */
+  history: NotebookHistory | null;
   rowRef: (row: HTMLDivElement | null) => void;
   setToolsSlot: (slot: HTMLDivElement | null) => void;
   setAlertSlot: (slot: HTMLDivElement | null) => void;
@@ -45,6 +49,8 @@ export function NotebookToolbar({ paperId, document, fit, busy, rowRef, setTools
   const caps = useItemCapabilities(paperId);
   const preferences = useInkPreferences();
   const { exporting, exportPdf } = useInkPdfExport();
+  const pageActions = usePageActions();
+  const currentId = document?.pages[currentPage - 1]?.id;
 
   const count = document?.pages.length ?? 0;
   const shown = (id: string) => (fit[id] ?? -1) >= 0;
@@ -56,13 +62,15 @@ export function NotebookToolbar({ paperId, document, fit, busy, rowRef, setTools
     <div ref={rowRef} className="h-[2.4375rem] flex items-center px-3 gap-1 text-[0.8125rem] min-w-0" role="toolbar" aria-label="ノートの道具">
       {/* Clips anything the width estimates got wrong; the 「…」 button stays outside, always reachable. */}
       <div className="flex-1 min-w-0 flex items-center gap-1 overflow-hidden">
-        {/* 自動 (the default): the page sidebar is shown beside the paper, or folded into a tab when there is no room. */}
-        <button aria-label="ページ一覧" aria-pressed={!sidebarHidden} onClick={() => setSidebarHidden(!sidebarHidden)}
-          title={sidebarHidden ? "ページ一覧を表示する（余白に置き、狭いときは左端のつまみに畳みます）" : "ページ一覧を隠す（今は余白またはつまみに表示）"}
-          className={`size-7 shrink-0 rounded inline-flex items-center justify-center hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${sidebarHidden ? "text-muted-foreground hover:text-foreground" : "bg-primary/10 text-primary"}`}>
-          <PanelLeft className="size-4" aria-hidden="true" />
-        </button>
-        <span className="mx-1 h-4 shrink-0 border-l" />
+        {shown("sidebar") && <>
+          {/* 自動 (the default): the page sidebar is shown beside the paper, or folded into a tab when there is no room. */}
+          <button aria-label="ページ一覧" aria-pressed={!sidebarHidden} onClick={() => setSidebarHidden(!sidebarHidden)}
+            title={sidebarHidden ? "ページ一覧を表示する（余白に置き、狭いときは左端のつまみに畳みます）" : "ページ一覧を隠す（今は余白またはつまみに表示）"}
+            className={`size-7 shrink-0 rounded inline-flex items-center justify-center hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${sidebarHidden ? "text-muted-foreground hover:text-foreground" : "bg-primary/10 text-primary"}`}>
+            <PanelLeft className="size-4" aria-hidden="true" />
+          </button>
+          <span className="mx-1 h-4 shrink-0 border-l" />
+        </>}
         {/* data-ink-toolbar-slot: INK_TOOLBAR_SLOT, which lets the tools' keys through to the page. */}
         <div ref={setToolsSlot} data-ink-toolbar-slot="" inert={busy} className="flex items-center gap-1 shrink-0" />
         <PageNavigator paperId={paperId} currentPage={currentPage} count={count}
@@ -92,6 +100,18 @@ export function NotebookToolbar({ paperId, document, fit, busy, rowRef, setTools
           <DropdownMenuItem disabled={!document} title="囲んだ範囲を画像としてキャプチャします" onClick={() => useInkTools.getState().setTool("capture")}>
             <Scan /> 範囲キャプチャ
           </DropdownMenuItem>
+          <DropdownMenuItem disabled={busy || !currentId} title="いま表示しているページの用紙の種類・大きさ・向きを変えます"
+            onClick={() => { if (currentId) pageActions.editPaper(currentId); }}>
+            <Settings2 /> 用紙を変更…（このページ）
+          </DropdownMenuItem>
+          {(history || !shown("sidebar")) && <DropdownMenuSeparator />}
+          {history && <>
+            <DropdownMenuItem disabled={!history.canUndo} onClick={history.undo}><Undo2 /> {withShortcutLabels("元に戻す（Ctrl+Z）")}</DropdownMenuItem>
+            <DropdownMenuItem disabled={!history.canRedo} onClick={history.redo}><Redo2 /> {withShortcutLabels("やり直す（Ctrl+Y）")}</DropdownMenuItem>
+          </>}
+          {!shown("sidebar") && <DropdownMenuItem onClick={() => setSidebarHidden(!sidebarHidden)}>
+            <PanelLeft /> {sidebarHidden ? "ページ一覧を表示する" : "ページ一覧を隠す"}
+          </DropdownMenuItem>}
           <DropdownMenuSeparator />
           {panelButtons.length > 0 && <DropdownMenuGroup>
             <DropdownMenuLabel>右パネル</DropdownMenuLabel>

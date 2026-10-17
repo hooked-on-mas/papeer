@@ -64,7 +64,11 @@ export function PageNavigator({ paperId, currentPage, count, atStart, atEnd, sho
         ? "w-9 h-6 shrink-0 text-center border border-transparent rounded bg-transparent hover:border-border focus:border-border focus:bg-background focus:ring-2 focus:ring-ring focus:outline-none tabular-nums"
         : "w-11 h-6 shrink-0 text-center border rounded bg-background focus:ring-2 focus:ring-ring focus:outline-none tabular-nums"}
     />
-    {compact && <span className="shrink-0 text-muted-foreground tabular-nums whitespace-nowrap" aria-hidden="true">/ {count || "—"}</span>}
+    {/* Seen as 「/ 12」 and read as 「全12ページ」, after the field it counts. */}
+    {compact && <span className="shrink-0 text-muted-foreground tabular-nums whitespace-nowrap">
+      <span aria-hidden="true">/ {count || "—"}</span>
+      {count > 0 && <span className="sr-only">全{count}ページ</span>}
+    </span>}
     {showGo && (
       <button onClick={commitPage} className="h-6 px-2 shrink-0 rounded border text-[0.75rem] hover:bg-muted">
         移動

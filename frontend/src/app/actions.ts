@@ -370,8 +370,9 @@ async function undoMovesOf(record: MovePapersRecord, run: { signal: AbortSignal;
   if (report.error) showError(report.error.message, report.error.title);
 }
 
-export async function chooseNewCollection(paperId: string, current: string): Promise<void> {
-  const name = await askText("新しい分類", "フォルダー名（例：制御工学 / 読書会）", current);
+export async function chooseNewCollection(paperId: string, current: string, { notebook = false }: { notebook?: boolean } = {}): Promise<void> {
+  // A notebook is put in a folder; a paper is sorted into a 分類.
+  const name = await askText(notebook ? "新しいフォルダー" : "新しい分類", "フォルダー名（例：制御工学 / 読書会）", current);
   if (name !== null && normalizeCollection(name)) await movePaper(paperId, name);
 }
 
@@ -469,13 +470,17 @@ export async function deleteFolder(path: string, papers: PaperData[] | null): Pr
 
 // --- Papers ---------------------------------------------------------------------------------
 
-/** Renames the paper's file to `name`; whether it was (the failure is shown). */
-export async function renamePaperTo(paperId: string, name: string): Promise<boolean> {
+/**
+ * Renames the paper's file to `name`; whether it was (the failure is shown). A notebook has a name rather
+ * than a file name (`notebook`), which its status says.
+ */
+export async function renamePaperTo(paperId: string, name: string, { notebook = false }: { notebook?: boolean } = {}): Promise<boolean> {
   try {
     const result = await unwrap(api.POST("/api/papers/{paper_id}/rename", { params: { path: { paper_id: paperId } }, body: { new_title: name } }));
     // Its row in the lists follows from paper.changed.
     void invalidate({ kind: "paper", paperId });
-    useStore.getState().setStatus(`ファイル名を「${result.name}」に変更しました。取り込み元のファイル名は変更されません。`);
+    useStore.getState().setStatus(notebook ? `名前を「${result.name}」に変更しました。`
+      : `ファイル名を「${result.name}」に変更しました。取り込み元のファイル名は変更されません。`);
     return true;
   } catch (error) {
     showError(error, "名前を変更できませんでした");
@@ -497,7 +502,7 @@ export async function renamePaperFile(paperId: string): Promise<void> {
     : await askText("ファイル名を変更", `新しいファイル名${fileExtension ? `（${fileExtension}は自動で付きます）` : ""}`,
       current.original_name || current.title);
   if (name === null) return;
-  await renamePaperTo(paperId, name);
+  await renamePaperTo(paperId, name, { notebook });
 }
 
 /** Whether the paper was deleted, once the library shows it gone. */

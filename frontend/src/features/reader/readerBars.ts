@@ -104,20 +104,21 @@ export function fitReaderToolbar(width: number, options: Parameters<typeof reade
 
 /**
  * The notebook toolbar's items, most important first, with the widths their markup in
- * NotebookInkTools.tsx and NotebookToolbar.tsx takes. The writing tools, Undo/Redo and the page field
- * are always there; the zoom, the focus button and the colours and width beside the tools go in that
- * order (the colours are then in the popover of the tool, the zoom and focus mode in the 「…」 menu).
+ * NotebookInkTools.tsx and NotebookToolbar.tsx takes. The writing tools and the page field are always
+ * there. As the row narrows the colours and width beside the tools go first (they are then in the
+ * popover of the tool), then the focus button, then the zoom, then the sidebar's button, then Undo and
+ * Redo; those go into the 「…」 menu (the sidebar's choice and Undo and Redo as items).
  */
 export function notebookToolbarItems({ focusMode }: { focusMode: boolean }): BarItem[] {
   return [
-    // The page sidebar's button, and the separator after it.
-    { id: "sidebar", widths: [28 + 9], required: true },
     // Seven 28px tool buttons 2px apart, and the separator after them.
     { id: "tools", widths: [7 * 28 + 6 * 2 + 9], required: true },
-    // Undo and Redo.
-    { id: "history", widths: [2 * 28 + 2 + 9], required: true },
     // ‹ [page] / n ›
     { id: "pages", widths: [24 + 36 + 36 + 24 + 3 * TOOLBAR_GAP], required: true },
+    // Undo and Redo, and the separator before them.
+    { id: "history", widths: [2 * 28 + 2 + 9] },
+    // The page sidebar's button, and the separator after it.
+    { id: "sidebar", widths: [28 + 9] },
     // The zoom select alone (its widest option is ページ全体), then with the − and + buttons.
     { id: "zoom", widths: [6 + 90, 6 + 24 + 90 + 24 + 2 * TOOLBAR_GAP] },
     // 集中表示 / 集中表示を終了, bordered, outside the clipped area; kept in focus mode, where it is the way out.
@@ -127,9 +128,21 @@ export function notebookToolbarItems({ focusMode }: { focusMode: boolean }): Bar
   ];
 }
 
-/** Fits the notebook toolbar into a row whose content box is `width` px wide, the 「…」 button included. */
+/**
+ * Fits the notebook toolbar into a row whose content box is `width` px wide, the 「…」 button included.
+ * The optional items leave in the order of notebookToolbarItems, and none stays once one before it has
+ * gone (a small item would otherwise take the room a larger, more important one left).
+ */
 export function fitNotebookToolbar(width: number, options: Parameters<typeof notebookToolbarItems>[0]): BarFit {
-  return fitBar(notebookToolbarItems(options), Math.max(0, width - MORE_BUTTON_WIDTH - TOOLBAR_GAP - TOOLBAR_SLACK), TOOLBAR_GAP);
+  const items = notebookToolbarItems(options);
+  const fit = fitBar(items, Math.max(0, width - MORE_BUTTON_WIDTH - TOOLBAR_GAP - TOOLBAR_SLACK), TOOLBAR_GAP);
+  let all = true;
+  for (const item of items) {
+    if (item.required) continue;
+    if (fit[item.id] < 0) all = false;
+    else if (!all) fit[item.id] = -1;
+  }
+  return fit;
 }
 
 /**

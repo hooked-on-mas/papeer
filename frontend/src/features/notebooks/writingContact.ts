@@ -11,8 +11,10 @@ function install() {
   window.addEventListener("pointerdown", onDown, true);
   window.addEventListener("pointerup", onUp, true);
   window.addEventListener("pointercancel", onUp, true);
-  window.addEventListener("blur", () => { down = new Set(); });
+  const onBlur = () => { down = new Set(); };
+  window.addEventListener("blur", onBlur);
   remove = () => {
+    window.removeEventListener("blur", onBlur);
     window.removeEventListener("pointerdown", onDown, true);
     window.removeEventListener("pointerup", onUp, true);
     window.removeEventListener("pointercancel", onUp, true);
