@@ -9,11 +9,16 @@ import { PwaStatus, useConnectivity } from "./PwaStatus";
 import { prepareWebNavigation } from "./textDrafts";
 import { clearReadingPlaces } from "./readingPlace";
 import { loadGoogleSdk } from "./googleSdk";
+import { useMediaQuery } from "../lib/useMediaQuery";
+import { UserRound } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
+import { PHONE_LAYOUT_QUERY } from "./phoneLayout";
 import "./style.css";
 
 const session = new DriveSession();
 function App() {
   const online = useConnectivity();
+  const phone = useMediaQuery(PHONE_LAYOUT_QUERY);
   const [sdkStatus, setSdkStatus] = useState<"loading" | "ready" | "error">("loading");
   const [sdkAttempt, setSdkAttempt] = useState(0);
   useEffect(() => {
@@ -72,19 +77,30 @@ function App() {
     setSelected("");
     if (found.length) await load(found.some(library => library.id === selected) ? selected : found[0].id, active);
   });
-  const actions = <div className="header-actions">
-        {signedIn && <Button variant="outline" size="sm" disabled={busy || !online} onClick={() => void run(async active => {
+  const refresh = () => void run(async active => {
           const found = await session.libraries(); if (!active()) return; setLibraries(found);
           if (found.length) await load(found.some(f => f.id === selected) ? selected : found[0].id, active);
           else { runtime?.dispose(); setRuntime(undefined); setManifest(undefined); }
-        })}>更新</Button>}
-        <Button variant="outline" size="sm" disabled={busy || !online || sdkStatus !== "ready"} onClick={() => void login()}>{signedIn ? "再ログイン" : "Googleでログイン"}</Button>
-        {signedIn && <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
+        });
+  const logout = () => {
           if (!prepareWebNavigation()) return;
           actionEpoch.current++;
           clearReadingPlaces();
           runtime?.dispose(); setRuntime(undefined); session.signOut(); setSignedIn(false); setManifest(undefined); setLibraries([]); setSelected(""); setError("");
-        }}>ログアウト</Button>}
+        };
+  const actions = <div className="header-actions">
+    {phone && signedIn ? <DropdownMenu>
+      <DropdownMenuTrigger className="web-account-trigger" aria-label="Google接続メニュー"><UserRound aria-hidden="true" /></DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48 web-account-menu">
+        <DropdownMenuItem disabled={busy || !online} onClick={refresh}>更新</DropdownMenuItem>
+        <DropdownMenuItem disabled={busy || !online || sdkStatus !== "ready"} onClick={() => void login()}>再ログイン</DropdownMenuItem>
+        <DropdownMenuItem disabled={busy} onClick={logout}>ログアウト</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu> : <>
+        {signedIn && <Button variant="outline" size="sm" disabled={busy || !online} onClick={refresh}>更新</Button>}
+        <Button variant="outline" size="sm" disabled={busy || !online || sdkStatus !== "ready"} onClick={() => void login()}>{signedIn ? "再ログイン" : "Googleでログイン"}</Button>
+        {signedIn && <Button variant="ghost" size="sm" disabled={busy} onClick={logout}>ログアウト</Button>}
+    </>}
       </div>;
   return <WorkspaceRoot className={`web-app ${manifest && focusMode ? "reader-focus" : ""}`}>
     {!manifest && <WorkspaceHeader className="web-document-header"><a className="brand" href="./">

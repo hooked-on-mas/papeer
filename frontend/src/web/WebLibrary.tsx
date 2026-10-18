@@ -18,6 +18,7 @@ import { useMediaQuery } from "../lib/useMediaQuery";
 import { WebLibrarySidebar } from "./WebLibrarySidebar";
 import { prepareWebNavigation } from "./textDrafts";
 import { artifactPlaceKey, getLibraryPlace, saveLibraryPlace } from "./readingPlace";
+import { PHONE_LAYOUT_QUERY } from "./phoneLayout";
 
 const PANEL_LABELS = { summary: "サマリー", chat: "チャット", notes: "メモ" } as const;
 
@@ -49,8 +50,11 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   const [selected, setSelected] = useState(initialPlace && (!initialPlace.itemId || items.some(item => item.id === initialPlace.itemId)) ? initialPlace.itemId : items[0]?.id ?? "");
   const [artifactId, setArtifactId] = useState(() => initialPlace ? runtime.query.listArtifacts(selected || null).find(row => artifactPlaceKey(row) === initialPlace.artifact)?.id ?? "" : "");
   const [tab, setTab] = useState("reader");
-  const narrow = useMediaQuery("(max-width: 800px)");
-  const stacked = useMediaQuery("(max-width: 760px)");
+  const phone = useMediaQuery(PHONE_LAYOUT_QUERY);
+  const narrowViewport = useMediaQuery("(max-width: 800px)");
+  const stackedViewport = useMediaQuery("(max-width: 760px)");
+  const narrow = narrowViewport || phone;
+  const stacked = stackedViewport || phone;
   const [collapsed, setCollapsed] = useState(narrow);
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [sidePanelWidth, setSidePanelWidth] = useState(380);
@@ -71,7 +75,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   const choose = (id: string, file?: string) => {
     if (!prepareWebNavigation()) return;
     setSelected(id); setArtifactId(file ?? ""); setTab("reader");
-    if (matchMedia("(max-width: 800px)").matches) setCollapsed(true);
+    if (narrow) setCollapsed(true);
   };
   const chooseChild = (id: string, file: string) => {
     if (!prepareWebNavigation()) return;
@@ -79,7 +83,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
     if (child?.role === "attachment" && /\.md$/i.test(child.filename)) {
       setSelected(id); if (id !== selected) setArtifactId("");
       setMemoId(file); setTab("notes");
-      if (matchMedia("(max-width: 800px)").matches) setCollapsed(true);
+      if (narrow) setCollapsed(true);
     } else choose(id, file);
   };
   const openBeside = (panel: SidePanel) => { setSidePanel(panel); setTab("reader"); };
@@ -145,7 +149,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   return <div className="workspace" inert={transitioning} aria-busy={transitioning}>
     {narrow && !collapsed && !focusMode && <><button className="sidebar-backdrop" aria-label="ライブラリを閉じる" onClick={() => setCollapsed(true)} />
       <aside className="web-sidebar web-sidebar-overlay" aria-label="ライブラリ一覧">{sidebar}</aside></>}
-    {collapsed && !focusMode && <WorkspaceRail onExpand={() => setCollapsed(false)}>
+    {!narrow && collapsed && !focusMode && <WorkspaceRail onExpand={() => setCollapsed(false)}>
       <button data-slot="all-files" aria-label="ライブラリ全体のファイル" className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" onClick={() => choose("")}><Folder className="size-4 text-muted-foreground" /></button>
     </WorkspaceRail>}
     <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0 min-w-0">

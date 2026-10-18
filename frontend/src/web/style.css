@@ -84,7 +84,7 @@
 .web-ink > * { pointer-events: none; }
 .ink-text { background: var(--background); border: 1px solid var(--border); padding: 16px; margin: 12px 0; }
 .ink-text textarea { display: block; width: 100%; min-height: 80px; margin: 8px 0; background: var(--background); border: 1px solid var(--border); }
-@media (max-width: 800px) {
+@media (max-width: 800px), (max-width: 950px) and (max-height: 500px) and (pointer: coarse) {
   .web-sidebar-overlay { position: absolute; inset: 0 auto 0 0; z-index: 20; max-width: calc(100vw - 48px); box-shadow: 4px 0 16px #0003; }
   .web-app .sidebar-backdrop { display: block; position: absolute; inset: 0; width: 100%; border: 0; border-radius: 0; background: #0005; z-index: 19; }
   .web-document-header .header-actions { width: 100%; justify-content: flex-end; }
@@ -95,6 +95,13 @@
 .web-document-reader { display: flex; flex-direction: column; height: 100%; min-height: 0; flex: 1; overflow: hidden; }
 .web-reader-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 8px; background: var(--background); border-bottom: 1px solid var(--border); font-size: .75rem; flex-shrink: 0; }
 .web-reader-tools label { display: inline-flex; align-items: center; gap: 4px; }
+.web-page-navigation { display: flex; align-items: center; gap: 8px; }
+.web-display-options { position: relative; }
+.web-display-options > summary { display: flex; align-items: center; justify-content: center; cursor: pointer; list-style: none; }
+.web-display-options > summary::-webkit-details-marker { display: none; }
+.web-display-options > div { position: absolute; top: 100%; right: 0; z-index: 10; display: flex; flex-direction: column; gap: 8px; padding: 12px; width: min(290px, calc(100vw - 16px)); background: var(--background); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px #0002; }
+.web-account-trigger { display: flex; align-items: center; justify-content: center; }
+.web-account-menu [role="menuitem"] { min-height: 44px; }
 .web-pdf-pane { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 2px; }
 .web-pdf-pane > .asset-heading { padding: 2px 6px; font-size: .75rem; }
 .web-reader-tools + [data-slot="resizable-panel-group"] { overflow: hidden; }
@@ -107,6 +114,56 @@
 .reader-focus .pwa-install { display: none; }
 .reader-focus .web-reader-tools { padding: 2px 4px; gap: 6px; }
 .reader-focus .web-pdf-pane { padding: 0; }
-@media (max-width: 400px) {
-  .web-app .ink-tools > button, .ink-options > summary { width: 27px; }
+@media (max-width: 600px), (max-width: 950px) and (max-height: 500px) and (pointer: coarse) {
+  /* Keep the phone's full width for the document; library navigation lives in the header. */
+  .web-document-header { min-height: 52px; padding: 2px 6px; gap: 4px; flex-wrap: nowrap; }
+  .web-document-header .header-actions { width: auto; flex-wrap: nowrap; }
+  .document-title { min-width: 0; }
+  .document-title h1 { font-size: .8125rem; }
+  .document-title small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .web-app .web-document-header button, .web-account-trigger { min-height: 44px; min-width: 44px; }
+  .web-reader-main > [data-slot="tabs"] > :has(> [role="tablist"]) { padding-inline: 8px; }
+  .web-reader-main [role="tablist"] { min-height: 48px; }
+  .web-reader-main [role="tab"] { min-height: 44px; padding-inline: 10px; }
+  .web-app :where(button, summary, a) { touch-action: manipulation; }
+  .document-controls { padding: 4px 8px; }
+  .document-controls label { display: flex; align-items: center; width: 100%; gap: 6px; }
+  .document-controls select { flex: 1; min-width: 0; max-width: 100%; margin: 0; }
+  /* 16px form text avoids Safari zooming the viewport when an input receives focus. */
+  .web-app input:not([type="checkbox"]):not([type="color"]), .web-app select, .web-app textarea { font-size: 1rem; min-height: 44px; }
+  .web-reader-tools, .reader-focus .web-reader-tools { flex-wrap: nowrap; gap: 4px; padding: 2px 4px; position: relative; z-index: 6; }
+  .web-page-navigation { gap: 0; margin-right: auto; }
+  .web-page-navigation > button { width: 44px; height: 44px; display: flex; justify-content: center; align-items: center; padding: 0; border: 0; }
+  .web-page-navigation > input { width: 40px; }
+  .web-display-options { position: static; }
+  .web-display-options > summary, .web-reader-tools > button, .web-reader-tools .web-panel-choice { width: 44px; height: 44px; flex-shrink: 0; padding: 0; }
+  .web-display-options > summary svg { width: 18px; height: 18px; }
+  .web-display-options > div { right: 4px; }
+  .web-display-options label { justify-content: space-between; }
+  .web-reader-tools .web-panel-choice { font-size: 0; gap: 0; justify-content: center; }
+  .web-panel-choice > svg:last-child { display: none; }
+  .web-panel-choice > svg:first-child { width: 18px; height: 18px; }
+  .web-app .ink-tools { gap: 0; flex-wrap: nowrap; }
+  .web-app .ink-tools > button, .ink-options > summary { width: 44px; height: 44px; }
+  .ink-options > div { max-height: 60dvh; overflow: auto; }
+  .ink-options label { min-height: 44px; }
+  .ink-mobile-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+  .ink-mobile-actions > button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
+  .web-pdf-pane { padding: 0; }
+  .web-pdf-pane > .asset-heading { padding: 0 6px; }
+  .web-pdf-pane > .asset-heading a { display: inline-flex; align-items: center; min-height: 44px; }
+  .web-saved-pane-body { padding: 12px; }
+  .ink-text { padding: 8px; }
+  .ink-text button { min-height: 44px; margin-right: 6px; }
+  .web-sidebar-overlay { width: min(340px, calc(100vw - 44px)); max-width: none; }
+  .web-sidebar-overlay [role="treeitem"], .web-sidebar-overlay [data-slot="all-files"] { min-height: 44px; }
+  .web-sidebar-overlay [role="treeitem"] button { min-width: 44px; min-height: 44px; }
+  .web-sidebar-overlay [data-slot="library-search-clear"] { min-width: 44px; min-height: 44px; right: 0; display: flex; justify-content: center; align-items: center; }
+  .web-sidebar-overlay input { padding-right: 44px; }
+  .web-sidebar-overlay [data-slot="library-expand"] { min-width: 44px; min-height: 44px; }
+  .site-footer { padding: 3px 8px; }
+  .pwa-install > summary { padding: 6px 8px; }
+}
+@media (max-width: 950px) and (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
+  .web-app:not(.reader-focus) .site-footer, .web-app .pwa-install { display: none; }
 }

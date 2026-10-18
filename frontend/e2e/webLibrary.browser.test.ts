@@ -155,7 +155,8 @@ test("Web Library reads PDF, memo, HTML and chat privately on desktop and mobile
   await page.getByRole("button", { name: "ライブラリ", exact: true }).click();
   await page.getByRole("tree", { name: "ライブラリ", exact: true }).getByRole("treeitem").filter({ hasText: "Adaptive Control" }).click();
   await page.getByLabel("表示する資料").selectOption({ label: "読書メモ" });
-  await page.getByRole("button", { name: "ログアウト", exact: true }).click();
+  await page.getByRole("button", { name: "Google接続メニュー", exact: true }).click();
+  await page.getByRole("menuitem", { name: "ログアウト", exact: true }).click();
   await page.getByRole("button", { name: "Googleでログインして開く →" }).waitFor();
   assert.equal(await page.getByLabel("表示する資料").count(), 0);
   assert.deepEqual(errors, []);
