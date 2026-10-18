@@ -32,6 +32,16 @@ def connect():
         return result
 
 
+@router.post("/api/cloud-drive/reopen")
+def reopen():
+    return cloud_drive_auth.reopen()
+
+
+@router.post("/api/cloud-drive/cancel")
+def cancel():
+    return cloud_drive_auth.cancel()
+
+
 @router.delete("/api/cloud-drive")
 def disconnect():
     with deps.job_manager.idle("処理が終わってから接続を解除してください。"):

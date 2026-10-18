@@ -13,6 +13,7 @@ import { startJob, requestCancel } from "@/features/jobs/jobEvents";
 type CloudStatus = {
   connected: boolean; connecting: boolean; supported: boolean; auth_error: string | null;
   configured: boolean; setup_error: string | null;
+  can_reopen: boolean; auth_stage: "waiting" | "exchanging" | null; auth_error_code: string | null;
   auto_upload: boolean | null; last_upload: string | null; error: string | null; folder_id: string | null;
 };
 const status = async () => await unwrap(api.GET("/api/cloud-drive")) as CloudStatus;
@@ -60,12 +61,16 @@ export function CloudDriveSection() {
   const queryClient = useQueryClient();
   const { data, error } = useQuery({ queryKey: ["cloud-drive"], queryFn: status, refetchInterval: 2000 });
   const [pending, setPending] = useState(false);
-  const busy = useStore(s => s.activeJobs.some(isRunning)) || pending || !!data?.connecting;
+  const actionBusy = useStore(s => s.activeJobs.some(isRunning)) || pending;
+  const busy = actionBusy || !!data?.connecting;
   const run = async (action: () => Promise<unknown>) => {
     setPending(true);
     try { await action(); }
     catch (e) { showError(e, "Google Driveへの接続・保存を完了できませんでした"); }
-    finally { setPending(false); void queryClient.invalidateQueries({ queryKey: ["cloud-drive"] }); }
+    finally {
+      try { await queryClient.invalidateQueries({ queryKey: ["cloud-drive"] }); }
+      finally { setPending(false); }
+    }
   };
   return <section className="space-y-3 rounded-lg border p-4">
     <h3 className="font-medium">Google Drive API・Web閲覧</h3>
@@ -75,9 +80,17 @@ export function CloudDriveSection() {
     {data?.supported && !data.connected && <>
       <p>Googleアカウントでログインして、Papeerが作成したファイルへのアクセスを許可します。</p>
       {!data.configured && <p role="alert" className="text-destructive">{data.setup_error || "Google接続機能が更新されました。Papeerを再起動してください。"}</p>}
-      <Button disabled={busy || !data.configured} onClick={() => void run(() => unwrap(api.POST("/api/cloud-drive/connect")))}>Googleに接続</Button>
+      <div className="flex gap-2">
+        <Button disabled={actionBusy || !data.configured || (data.connecting && !data.can_reopen)}
+          onClick={() => void run(() => unwrap(api.POST(data.connecting ? "/api/cloud-drive/reopen" : "/api/cloud-drive/connect")))}>
+          {data.connecting ? "認証画面をもう一度開く" : "Googleに接続"}</Button>
+      </div>
     </>}
-    {data?.connecting && <p role="status">ブラウザーでGoogleへの接続を完了してください（3分以内）。</p>}
+    {data?.connecting && <>
+      <p role="status">{data.auth_stage === "exchanging" ? "Googleの接続結果を確認しています。" : "ブラウザーでGoogleへの接続を完了してください（3分以内）。"}</p>
+      <Button variant="outline" disabled={actionBusy}
+        onClick={() => void run(() => unwrap(api.POST("/api/cloud-drive/cancel")))}>接続をキャンセル</Button>
+    </>}
     {data?.auth_error && <p role="alert" className="text-destructive">{data.auth_error}</p>}
     {data?.connected && <>
       <p>Google Driveに接続済み · 最終保存：{data.last_upload ? new Date(data.last_upload).toLocaleString() : "未保存"}</p>
