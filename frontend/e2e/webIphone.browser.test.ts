@@ -17,7 +17,9 @@ for (const engine of ["webkit", "chromium"] as const) {
       server: { host: "127.0.0.1", port: 0, hmr: false } });
     await server.listen(); t.after(() => server.close());
     const browser = engine === "webkit" ? await webkit.launch({ headless: true }) : await chromium.launch({ channel: "msedge", headless: true });
-    const context = await browser.newContext({ ...devices["iPhone 13"], viewport: { width: 390, height: 664 },
+    // A worker can bypass network routes, sending a mock token to the real API.
+    // PWA installation/cache behavior is exercised separately by webPwa.browser.test.ts.
+    const context = await browser.newContext({ ...devices["iPhone 13"], serviceWorkers: "block", viewport: { width: 390, height: 664 },
       // Chromium cannot emulate WebKit's device-specific UA behavior, but does exercise real touch.
       userAgent: engine === "webkit" ? devices["iPhone 13"].userAgent : undefined });
     const page = await context.newPage();

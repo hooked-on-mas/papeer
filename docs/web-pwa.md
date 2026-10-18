@@ -35,6 +35,6 @@ Service Workerが保存するのは、ビルド時に列挙した公開HTML・Ja
 
 iPad用のmanifest、Apple touch icon、safe areaと案内を実装し、iPad相当の画面サイズも確認する。iPad実機への追加操作とSafariのGoogle認証は実機確認が別途必要。
 
-iPhone向けは `node --test e2e/webIphone.browser.test.ts` でWebKitとEdgeを使い、幅320・375・390・430px、横向き、PDFの幅・ページ操作・倍率・集中表示・文字メモ保存・対訳の上下表示・接続メニューを確認する。Google・Driveは合成応答を使用する。EdgeではCDPのタッチ入力で指スクロールと描画の分離も確認する。ホーム画面アプリの判定とキーボード表示後に相当する高さの縮小も模擬するが、実際のiOSキーボード・ノッチ・Safariの認証・ホーム画面への追加を実機検証したものではない。
+iPhone向けは `node --test e2e/webIphone.browser.test.ts` でWebKitとEdgeを使い、幅320・375・390・430px、横向き、PDFの幅・ページ操作・倍率・集中表示・文字メモ保存・対訳の上下表示・接続メニューを確認する。Google・Driveは合成応答を使用する。通信モックがWorkerに迂回されないよう閲覧試験ではWorkerを無効化し、PWA自体は別の試験で確認する（[Playwrightの注意事項](https://playwright.dev/docs/network#missing-network-events-and-service-workers)）。EdgeではCDPのタッチ入力で指スクロールと描画の分離も確認する。ホーム画面アプリの判定とキーボード表示後に相当する高さの縮小も模擬するが、実際のiOSキーボード・ノッチ・Safariの認証・ホーム画面への追加を実機検証したものではない。
 
 参考：[Appleのホーム画面追加手順](https://support.apple.com/ja-jp/guide/ipad/ipad8f1f7a29/ipados)、[Service Workerの更新と待機](https://web.dev/learn/pwa/update)。
