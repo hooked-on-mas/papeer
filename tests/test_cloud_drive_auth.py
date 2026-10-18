@@ -32,7 +32,9 @@ def configuration(monkeypatch, tmp_path):
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows desktop OAuth")
 @pytest.mark.parametrize("fail", [False, True])
-def test_new_connection_uses_pkce_without_client_secret_and_rejects_forged_state(monkeypatch, fail):
+@pytest.mark.parametrize("secret", ["", "developer-owned-value"])
+def test_new_connection_uses_pkce_and_configured_credentials_and_rejects_forged_state(monkeypatch, fail, secret):
+    monkeypatch.setattr(auth, "desktop_oauth", lambda: DesktopOAuth(CLIENT, secret))
     seen, saved, opened = [], [], []
     finished = threading.Event()
     def token(values):
@@ -59,7 +61,9 @@ def test_new_connection_uses_pkce_without_client_secret_and_rejects_forged_state
     while auth.status()["connecting"] and time.monotonic() < deadline:
         finished.wait(.01)
     assert not auth.status()["connecting"]
-    assert len(seen) == 1 and "client_secret" not in seen[0]
+    assert len(seen) == 1 and seen[0].get("client_secret", "") == secret
+    if not secret:
+        assert "client_secret" not in seen[0]
     verifier = seen[0]["code_verifier"]
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
     assert opened[0]["code_challenge"] == [challenge]
@@ -70,7 +74,9 @@ def test_new_connection_uses_pkce_without_client_secret_and_rejects_forged_state
         assert saved == [] and auth.status()["auth_error"]
         assert "a-secret-value" not in json.dumps(auth.status())
     else:
-        assert saved[0]["client_id"] == CLIENT and "client_secret" not in saved[0]
+        assert saved[0]["client_id"] == CLIENT and saved[0].get("client_secret", "") == secret
+        if not secret:
+            assert "client_secret" not in saved[0]
 
 
 def _wait_until_idle(timeout=3):

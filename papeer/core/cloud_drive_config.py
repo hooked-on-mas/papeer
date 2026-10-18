@@ -1,7 +1,7 @@
 """Developer-owned desktop OAuth configuration; never collected by the settings UI.
 
-The official build uses a public client ID with PKCE. An optional developer configuration can
-support older clients, but a value shipped to a native client cannot remain confidential.
+The official build uses PKCE and developer-owned desktop client configuration. A value shipped
+to a native client cannot remain confidential, even when supplied through private build settings.
 User tokens are separate and stay protected by cloud_drive_auth's DPAPI storage.
 """
 from __future__ import annotations
@@ -29,10 +29,11 @@ CLIENT_SECRET_ENV = "PAPEER_GOOGLE_DESKTOP_CLIENT_SECRET"
 class DesktopOAuth:
     client_id: str
     client_secret: str = field(default="", repr=False)
+    requires_secret: bool = False
 
     @property
     def configured(self) -> bool:
-        return bool(self.client_id)
+        return bool(self.client_id) and (not self.requires_secret or bool(self.client_secret))
 
 
 def _read(path: Path) -> dict:
@@ -67,7 +68,11 @@ def desktop_oauth() -> DesktopOAuth:
         raise ValueError("Google接続のデスクトップ用クライアントIDが不正です。")
     if not isinstance(secret, str) or len(secret) > 2048 or any(c in secret for c in "\r\n\x00"):
         raise ValueError("Google接続のビルド設定が不正です。")
-    return DesktopOAuth(client_id, secret)
+    # This requirement is based on the official client's real post-consent token response.
+    # An ID override must not inherit a different client's requirement or credentials.
+    requires_secret = (client_id == public.get("desktop_client_id")
+                       and public.get("desktop_client_secret_required") is True)
+    return DesktopOAuth(client_id, secret, requires_secret)
 
 
 def setup_status() -> dict:
@@ -100,8 +105,12 @@ def main() -> int:
     parser.add_argument("--require-configured", action="store_true")
     args = parser.parse_args()
     try:
-        configured = desktop_oauth().configured
+        config = desktop_oauth()
+        configured = config.configured
         if args.require_configured and not configured:
+            if config.requires_secret and not config.client_secret:
+                raise ValueError("公式Windows版のGoogle接続にはデスクトップ用client_secretのビルド設定が必要です。"
+                                 "PAPEER_GOOGLE_OAUTH_CONFIG_FILE または PAPEER_GOOGLE_DESKTOP_CLIENT_SECRET を設定してください。")
             raise ValueError("公式配布にはGoogle接続のビルド設定が必要です。docs/google-drive-web.mdを確認してください。")
         if args.write_bundle:
             write_bundle()

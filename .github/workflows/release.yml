@@ -132,6 +132,7 @@ jobs:
       - name: Build
         env:
           PAPEER_GOOGLE_DESKTOP_CLIENT_ID: ${{ vars.GOOGLE_DESKTOP_CLIENT_ID }}
+          PAPEER_GOOGLE_DESKTOP_CLIENT_SECRET: ${{ runner.os == 'Windows' && secrets.GOOGLE_DESKTOP_CLIENT_SECRET || '' }}
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = Windows ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then

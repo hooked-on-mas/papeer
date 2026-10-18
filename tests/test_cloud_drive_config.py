@@ -20,13 +20,32 @@ def public_config(tmp_path, monkeypatch):
     return path
 
 
-def test_official_client_id_is_ready_without_a_secret(public_config, tmp_path):
+def test_public_client_without_secret_requirement_is_ready(public_config, tmp_path):
     credentials = config.desktop_oauth()
     assert credentials.client_id == CLIENT
     assert credentials.configured and not credentials.client_secret
     assert config.setup_status() == {"configured": True, "setup_error": None}
     config.write_bundle(tmp_path)
     assert json.loads((tmp_path / config.BUNDLE_CONFIG).read_text("utf-8")) == {"client_id": CLIENT}
+
+
+def test_known_client_requirement_blocks_incomplete_builds_and_not_another_client(public_config, monkeypatch, tmp_path, capsys):
+    public_config.write_text(json.dumps({"desktop_client_id": CLIENT, "desktop_client_secret_required": True}), "utf-8")
+    assert not config.desktop_oauth().configured
+    assert not config.setup_status()["configured"]
+    assert "更新" in config.setup_status()["setup_error"]
+    monkeypatch.setattr(sys, "argv", ["cloud_drive_config", "--require-configured"])
+    assert config.main() == 1
+    assert "ビルド設定" in capsys.readouterr().err
+    monkeypatch.setenv(config.CLIENT_SECRET_ENV, "developer-owned-value")
+    assert config.desktop_oauth().configured
+    assert config.main() == 0
+    assert "developer-owned-value" not in json.dumps(config.setup_status())
+    config.write_bundle(tmp_path)
+    assert json.loads((tmp_path / config.BUNDLE_CONFIG).read_text("utf-8"))["client_secret"] == "developer-owned-value"
+    monkeypatch.delenv(config.CLIENT_SECRET_ENV)
+    monkeypatch.setenv(config.CLIENT_ID_ENV, "456-other.apps.googleusercontent.com")
+    assert config.desktop_oauth().configured and not config.desktop_oauth().requires_secret
 
 
 def test_missing_or_bad_build_configuration_does_not_ask_user_for_credentials(public_config):

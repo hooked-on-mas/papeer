@@ -16,6 +16,10 @@ sidecar-sources.txt
 
 # Local generated output and scratch files
 /output/
+
+# Developer-downloaded desktop OAuth credentials (public ID defaults live in assets/google-oauth.json).
+client_secret_*.json
+google-desktop-oauth.json
 /tmp/
 /experiments/
 
