@@ -128,6 +128,7 @@ stop-stale-dev args:
 # macOS では Mach-O ファイルすべてに ad-hoc 署名する（tools/sign_sidecar.py。ほかの OS では何もしない）
 # 配置（tools/place_sidecar.py）は frontend/src-tauri/sidecar.new にコピーしてから名前の変更で入れ替える
 build-sidecar:
+    uv run python -m papeer.core.cloud_drive_config --write-bundle
     uv run python -m papeer.core.code_version code-version.txt
     uv run python -m papeer.core.code_version --record-bundle build/sidecar-sources.pending
     uv run --group build pyinstaller --noconfirm sidecar.spec

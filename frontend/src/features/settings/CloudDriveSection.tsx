@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "@/api/client";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { showError } from "@/components/errorDialog";
 import { isRunning, useStore } from "@/store";
@@ -13,6 +12,7 @@ import { startJob, requestCancel } from "@/features/jobs/jobEvents";
 
 type CloudStatus = {
   connected: boolean; connecting: boolean; supported: boolean; auth_error: string | null;
+  configured: boolean; setup_error: string | null;
   auto_upload: boolean | null; last_upload: string | null; error: string | null; folder_id: string | null;
 };
 const status = async () => await unwrap(api.GET("/api/cloud-drive")) as CloudStatus;
@@ -59,8 +59,6 @@ export function CloudDriveHost() {
 export function CloudDriveSection() {
   const queryClient = useQueryClient();
   const { data, error } = useQuery({ queryKey: ["cloud-drive"], queryFn: status, refetchInterval: 2000 });
-  const [clientId, setClientId] = useState("");
-  const [secret, setSecret] = useState("");
   const [pending, setPending] = useState(false);
   const busy = useStore(s => s.activeJobs.some(isRunning)) || pending || !!data?.connecting;
   const run = async (action: () => Promise<unknown>) => {
@@ -75,14 +73,9 @@ export function CloudDriveSection() {
     {error && <p role="alert">Google Driveの設定を取得できませんでした。</p>}
     {data?.supported === false && <p>APIへのアップロードはWindows版で設定してください。</p>}
     {data?.supported && !data.connected && <>
-      <label className="block">デスクトップ用OAuthクライアントID
-        <Input value={clientId} onChange={e => setClientId(e.target.value)} disabled={busy} autoComplete="off" /></label>
-      <label className="block">デスクトップ用クライアントシークレット
-        <Input type="password" value={secret} onChange={e => setSecret(e.target.value)} disabled={busy} autoComplete="off" /></label>
-      <Button disabled={busy || !clientId.trim() || !secret.trim()} onClick={() => void run(async () => {
-        await unwrap(api.POST("/api/cloud-drive/connect", { body: { client_id: clientId, client_secret: secret } }));
-        setSecret("");
-      })}>Googleに接続</Button>
+      <p>Googleアカウントでログインして、Papeerが作成したファイルへのアクセスを許可します。</p>
+      {!data.configured && <p role="alert" className="text-destructive">{data.setup_error || "Google接続機能が更新されました。Papeerを再起動してください。"}</p>}
+      <Button disabled={busy || !data.configured} onClick={() => void run(() => unwrap(api.POST("/api/cloud-drive/connect")))}>Googleに接続</Button>
     </>}
     {data?.connecting && <p role="status">ブラウザーでGoogleへの接続を完了してください（3分以内）。</p>}
     {data?.auth_error && <p role="alert" className="text-destructive">{data.auth_error}</p>}

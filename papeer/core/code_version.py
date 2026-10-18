@@ -83,6 +83,9 @@ def bundle_version(root: Path) -> str:
     paths = [path for name in _BUNDLED
              for path in ((root / name).rglob("*") if (root / name).is_dir() else [root / name])
              if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"]
+    oauth = root / "build" / "google-desktop-oauth.json"
+    if oauth.is_file():
+        paths.append(oauth)
     return "bundle-sha256-" + _digest(root, sorted(paths, key=lambda path: path.relative_to(root).as_posix()))
 
 

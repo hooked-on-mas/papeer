@@ -2702,13 +2702,6 @@ export interface components {
             /** To */
             to: string;
         };
-        /** ConnectRequest */
-        ConnectRequest: {
-            /** Client Id */
-            client_id: string;
-            /** Client Secret */
-            client_secret: string;
-        };
         /** CreateCollectionRequest */
         CreateCollectionRequest: {
             /** Name */
@@ -10628,11 +10621,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ConnectRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

@@ -9,11 +9,6 @@ from sidecar.job_types import JobKind, JobStarted
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 
 
-class ConnectRequest(BaseModel):
-    client_id: str
-    client_secret: str
-
-
 class OptionsRequest(BaseModel):
     auto_upload: bool
 
@@ -28,11 +23,11 @@ def status():
 
 
 @router.post("/api/cloud-drive/connect")
-def connect(body: ConnectRequest):
+def connect():
     with deps.job_manager.idle("処理が終わってから接続してください。"):
         # Switching Google accounts must not reuse file IDs or the old upload baseline.
         root = deps.get_data_dir()
-        result = cloud_drive_auth.connect(body.client_id.strip(), body.client_secret.strip())
+        result = cloud_drive_auth.connect()
         cloud_drive.save_state(root, {"auto_upload": True})
         return result
 

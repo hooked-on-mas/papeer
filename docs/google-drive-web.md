@@ -21,13 +21,34 @@ https://hooked-on-mas.github.io
 ## Windows から保存
 
 1. 設定 → 保存先・同期 → **Google Drive API・Web閲覧** を開きます。
-2. デスクトップ用 OAuth クライアントの ID とシークレットを入力し、「Googleに接続」を押します。
+2. **Googleに接続** を押します。クライアントIDやシークレットの入力は不要です。
 3. 既定のブラウザーで Google にログインして許可し、Papeer に戻ります。
 4. **今すぐアップロード** を押します。以後は起動中に 5 分ごと、変更があるときに保存します。設定画面・編集ダイアログ・ほかの処理が開いている間は待機します。
 
 初回はライブラリ全体を転送します。一時コピーと書き込み付きPDFを作るため、ローカルにも空き容量が必要です。保存内容が一貫するよう、転送中は編集を一時停止します。処理一覧から中止できます。アプリ終了後の自動転送はありません。PCを閉じる前に最新の内容をWebで読みたいときは、手動アップロードの完了を確認してください。
 
 認証にはランダムなループバックポートと PKCE・state を使います。更新トークンなどは `%LOCALAPPDATA%\PapeerSync\google-drive-credentials.dpapi` に Windows DPAPI で暗号化して保存します。ライブラリ・バックアップ・Drive・GitHub Pagesには含めません。APIへの接続は現在Windows版のみです。
+
+## OSS・公式配布版のOAuth設定（開発者向け）
+
+通常の利用者がGoogle Cloudの設定を作成したり、資格情報を入力したりする必要はありません。公式配布版は `papeer/core/assets/google-oauth.json` にある公開のデスクトップ用クライアントIDとPKCEを使います。Web用IDとは別で、同じGoogle Cloudプロジェクトに作成したデスクトップアプリ用IDを使います。
+
+新規接続では `client_secret` を送らない構成です。GoogleのデスクトップOAuth仕様では任意です。認証フローとトークン更新は自動テストで確認しています。指定された実クライアントでのGoogleログイン・同意とトークン取得は、利用者の操作を伴う確認が必要です。
+
+フォーク版を公開配布する場合は、配布者自身のGoogle CloudプロジェクトでWindows用・Web用のIDを用意します。ソースの公開設定を変更するか、ビルド時に次を指定します。クライアントIDは秘密情報ではありません。
+
+```powershell
+$env:PAPEER_GOOGLE_DESKTOP_CLIENT_ID = 'デスクトップ用ID.apps.googleusercontent.com'
+just build
+```
+
+GitHub Actionsの公式ReleaseではRepository variable `GOOGLE_DESKTOP_CLIENT_ID` で上書きできます。Web側は `GOOGLE_WEB_CLIENT_ID` を同じプロジェクトのWeb用IDに設定します。通常の公式ビルドでシークレットの登録は要求しません。設定不備があるビルドは「Googleに接続」を無効化し、対応版への更新を案内します。
+
+`just build-sidecar` は `build/google-desktop-oauth.json` を生成して配布用sidecarへ取り込みます。この生成ファイルはGit管理外です。含める設定はsidecarの内容ハッシュでも照合し、古い設定のsidecarを誤って配布しないようにします。
+
+既存接続で保存済みのデスクトップ用 `client_secret` は、後方互換のため引き続きトークン更新に使います。開発者向けの互換確認では `PAPEER_GOOGLE_OAUTH_CONFIG_FILE` にGoogleからダウンロードしたデスクトップ用JSONのローカルパスを指定する方法、または `PAPEER_GOOGLE_DESKTOP_CLIENT_SECRET` の明示指定も残します。これらは一般利用者の設定画面には表示しません。資格情報JSON・シークレット・ユーザーのトークンをGitへ登録したり、ログへ出したりしないでください。配布物に同梱する値は、ビルド時に隠しても配布後に秘密として保持できません。
+
+Web版はGoogle Identity Servicesのトークン方式を維持し、Webサーバー用のシークレットをPagesへ配置しません。ユーザーのアクセストークンはWebではメモリー内だけ、Windowsの更新トークンは端末内のDPAPI保護領域だけに保存します。OAuth設定はアプリ単位、認証トークンは利用者単位で分離します。
 
 ## GitHub Pages
 

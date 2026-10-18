@@ -21,6 +21,7 @@ import webbrowser
 
 from papeer.core.fileio import atomic_write_bytes
 from papeer.core.paths import device_directory
+from papeer.core.cloud_drive_config import desktop_oauth, setup_status
 
 SCOPE = "https://www.googleapis.com/auth/drive.file"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -86,8 +87,10 @@ def access_token() -> str:
     with _lock:
         saved = _load()
         if saved.get("expires_at", 0) < time.time() + 60:
-            saved.update(_token({"grant_type": "refresh_token", "refresh_token": saved["refresh_token"],
-                                 "client_id": saved["client_id"], "client_secret": saved["client_secret"]}))
+            values = {"grant_type": "refresh_token", "refresh_token": saved["refresh_token"], "client_id": saved["client_id"]}
+            if saved.get("client_secret"):
+                values["client_secret"] = saved["client_secret"]
+            saved.update(_token(values))
             _save(saved)
         return saved["access_token"]
 
@@ -95,7 +98,7 @@ def access_token() -> str:
 def status() -> dict:
     with _lock:
         return {"connected": _path().is_file(), "connecting": _pending, "auth_error": _error,
-                "supported": sys.platform == "win32"}
+                "supported": sys.platform == "win32", **setup_status()}
 
 
 def disconnect():
@@ -107,13 +110,15 @@ def disconnect():
         _error = None
 
 
-def connect(client_id: str, client_secret: str) -> dict:
+def connect() -> dict:
     """Open the system browser; finish asynchronously so the sidecar can continue answering."""
     global _pending, _error
     if sys.platform != "win32":
         raise ValueError("Google Drive APIへの接続は現在Windows版に対応しています。")
-    if not client_id.endswith(".apps.googleusercontent.com") or not client_secret.strip():
-        raise ValueError("デスクトップアプリ用のクライアントIDとシークレットを入力してください。")
+    config = desktop_oauth()
+    if not config.configured:
+        raise ValueError("このビルドではGoogle接続を利用できません。接続対応版に更新してください。")
+    client_id, client_secret = config.client_id, config.client_secret
     with _lock:
         if _pending:
             raise ValueError("ブラウザーでのGoogle接続を完了してください。")
@@ -154,13 +159,18 @@ def connect(client_id: str, client_secret: str) -> dict:
                     server.handle_request()
                 if "code" not in answer:
                     raise ValueError("Google接続がキャンセルされたか、時間切れになりました。")
-                token = _token({"grant_type": "authorization_code", "code": answer["code"],
-                                "client_id": client_id, "client_secret": client_secret,
-                                "redirect_uri": redirect, "code_verifier": verifier})
+                values = {"grant_type": "authorization_code", "code": answer["code"],
+                          "client_id": client_id, "redirect_uri": redirect, "code_verifier": verifier}
+                if client_secret:
+                    values["client_secret"] = client_secret
+                token = _token(values)
                 if not token.get("refresh_token"):
                     raise ValueError("自動アップロードの認証を取得できませんでした。接続し直してください。")
                 with _lock:
-                    _save(token | {"client_id": client_id, "client_secret": client_secret})
+                    credentials = token | {"client_id": client_id}
+                    if client_secret:
+                        credentials["client_secret"] = client_secret
+                    _save(credentials)
             except Exception:  # noqa: BLE001 - background boundary; no credential-bearing exception is logged.
                 with _lock:
                     _error = "Google接続を完了できませんでした。OAuth設定・通信を確認し、もう一度接続してください。"

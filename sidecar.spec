@@ -18,12 +18,18 @@ CLI_EXCLUDES = [
     'websockets', 'fitz', 'pymupdf', 'pypdfium2', 'PIL', 'fontTools', 'numpy', 'winrt',
 ]
 
+# Developer-owned OAuth configuration stays out of the public source tree. Desktop public clients
+# cannot keep this value confidential after distribution; user tokens are never bundled here.
+from pathlib import Path
+oauth_bundle = Path('build/google-desktop-oauth.json')
+oauth_datas = [(str(oauth_bundle), '.')] if oauth_bundle.is_file() else []
+
 
 a = Analysis(
     ['sidecar/__main__.py'],
     pathex=[],
     binaries=[],
-    datas=[('papeer/core/prompts/*', 'papeer/core/prompts'), ('papeer/core/assets/fonts/*', 'papeer/core/assets/fonts'), ('papeer/core/assets/*', 'papeer/core/assets'), ('code-version.txt', '.')],
+    datas=[('papeer/core/prompts/*', 'papeer/core/prompts'), ('papeer/core/assets/fonts/*', 'papeer/core/assets/fonts'), ('papeer/core/assets/*', 'papeer/core/assets'), ('code-version.txt', '.'), *oauth_datas],
     hiddenimports=['papeer'],
     hookspath=[],
     hooksconfig={},

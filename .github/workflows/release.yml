@@ -130,7 +130,14 @@ jobs:
       # bundle.resources (tools/place_sidecar.py, then sidecar-sources.txt), `just check-sidecar`,
       # `pnpm tauri build` (the bundles of tauri.conf.json and tauri.<platform>.conf.json).
       - name: Build
-        run: just build
+        env:
+          PAPEER_GOOGLE_DESKTOP_CLIENT_ID: ${{ vars.GOOGLE_DESKTOP_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Windows ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            uv run python -m papeer.core.cloud_drive_config --require-configured
+          fi
+          just build
 
       # The app is signed ad hoc as a whole (Tauri, signingIdentity "-"), and each program and library of the
       # sidecar in its Resources on its own (tools/sign_sidecar.py): without a valid signature, Apple Silicon

@@ -10665,16 +10665,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConnectRequest"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -12755,24 +12745,6 @@
           "to"
         ],
         "title": "CollectionMove"
-      },
-      "ConnectRequest": {
-        "properties": {
-          "client_id": {
-            "type": "string",
-            "title": "Client Id"
-          },
-          "client_secret": {
-            "type": "string",
-            "title": "Client Secret"
-          }
-        },
-        "type": "object",
-        "required": [
-          "client_id",
-          "client_secret"
-        ],
-        "title": "ConnectRequest"
       },
       "CreateCollectionRequest": {
         "properties": {
