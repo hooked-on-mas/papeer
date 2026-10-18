@@ -36,6 +36,14 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and update
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "papeer-pwa-test-"));
   const context = await chromium.launchPersistentContext(profile, { channel: "msedge", headless: true });
   t.after(async () => { await context.close(); fs.rmSync(profile, { recursive: true, force: true }); });
+  await context.addInitScript(() => {
+    const original = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+    let fail = true;
+    Object.defineProperty(navigator.serviceWorker, "register", { value: (...args: Parameters<ServiceWorkerContainer["register"]>) => {
+      if (fail) { fail = false; throw new DOMException("temporary policy failure", "SecurityError"); }
+      return original(...args);
+    } });
+  });
   // Close Chromium's initial blank client, so update tests control every tab.
   for (const blank of context.pages()) await blank.close();
   const page = await context.newPage();
@@ -45,7 +53,11 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and update
   await context.route("https://www.googleapis.com/**", route => route.fulfill({ json: { private: "fixture-token" } }));
   await page.goto(base);
   await page.getByRole("heading", { name: "論文を選んで、読み始めよう" }).waitFor();
+  const cacheFailure = page.getByRole("status").filter({ hasText: "オフライン起動の準備を完了できませんでした" });
+  await cacheFailure.waitFor();
+  await page.evaluate(() => dispatchEvent(new Event("online")));
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
+  await cacheFailure.waitFor({ state: "hidden" });
   const cdp = await context.newCDPSession(page);
   const appManifest = await cdp.send("Page.getAppManifest");
   assert.deepEqual(appManifest.errors, []);
@@ -87,6 +99,7 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and update
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "論文を選んで、読み始めよう" }).waitFor();
   await page.getByRole("status").filter({ hasText: "オフラインです" }).waitFor();
+  assert.equal(await cacheFailure.count(), 0, "an offline launch with an active worker is already prepared");
   assert.equal(await page.getByRole("button", { name: "Googleでログインして開く →" }).isDisabled(), true);
   assert.equal(await page.evaluate(() => localStorage.getItem("papeer-ink:fixture-draft")), "unsent-draft-fixture");
   assert.equal(await page.evaluate(async () => { try { await fetch("./private.json"); return false; } catch { return true; } }), true);

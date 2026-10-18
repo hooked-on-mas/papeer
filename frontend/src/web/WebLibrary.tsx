@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 import { Folder, Maximize2, Minimize2, PanelLeft, Pin, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -16,13 +16,16 @@ import { AnnotationStore } from "./annotations";
 import { DocumentReader } from "./DocumentReader";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { WebLibrarySidebar } from "./WebLibrarySidebar";
+import { prepareWebNavigation } from "./textDrafts";
+import { artifactPlaceKey, getLibraryPlace, saveLibraryPlace } from "./readingPlace";
 
 const PANEL_LABELS = { summary: "サマリー", chat: "チャット", notes: "メモ" } as const;
 
 /** Web host supplies saved data to the same sidebar rows and reader dock as desktop. */
-export function WebLibrary({ runtime, session, manifest, actions, focusMode, onFocusModeChange }: {
+export function WebLibrary({ runtime, session, manifest, actions, focusMode, onFocusModeChange, transitioning }: {
   runtime: DriveLibraryRuntime; session: DriveSession; manifest: Manifest; actions: ReactNode;
   focusMode: boolean; onFocusModeChange: (focus: boolean) => void;
+  transitioning: boolean;
 }) {
   useEffect(() => {
     if (!focusMode) return;
@@ -42,8 +45,9 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
     return () => { clearInterval(timer); window.removeEventListener("online", retry); window.removeEventListener("focus", retry); store.dispose(); };
   }, [runtime, session, manifest]);
   const items = runtime.query.listItems();
-  const [selected, setSelected] = useState(items[0]?.id ?? "");
-  const [artifactId, setArtifactId] = useState("");
+  const [initialPlace] = useState(() => getLibraryPlace(runtime.scope.libraryId));
+  const [selected, setSelected] = useState(initialPlace && (!initialPlace.itemId || items.some(item => item.id === initialPlace.itemId)) ? initialPlace.itemId : items[0]?.id ?? "");
+  const [artifactId, setArtifactId] = useState(() => initialPlace ? runtime.query.listArtifacts(selected || null).find(row => artifactPlaceKey(row) === initialPlace.artifact)?.id ?? "" : "");
   const [tab, setTab] = useState("reader");
   const narrow = useMediaQuery("(max-width: 800px)");
   const stacked = useMediaQuery("(max-width: 760px)");
@@ -55,6 +59,9 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   const item = items.find(row => row.id === selected);
   const artifacts = runtime.query.listArtifacts(item?.id ?? null);
   const artifact = artifacts.find(row => row.id === artifactId) ?? artifacts[0];
+  useLayoutEffect(() => {
+    if (artifact) saveLibraryPlace(runtime.scope.libraryId, { itemId: selected, artifact: artifactPlaceKey(artifact) });
+  }, [runtime.scope.libraryId, selected, artifact]);
   const summary = artifacts.find(row => row.filename === "article.md" && row.role === "other");
   const memos = artifacts.filter(row => row.role === "attachment");
   const [memoId, setMemoId] = useState("");
@@ -62,10 +69,12 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   const available: SidePanel[] = item ? [...(summary ? ["summary" as const] : []), ...(runtime.capabilities["chat.read"] ? ["chat" as const] : []), ...(memos.length ? ["notes" as const] : [])] : [];
   const chosen = sidePanel && available.includes(sidePanel) ? sidePanel : null;
   const choose = (id: string, file?: string) => {
+    if (!prepareWebNavigation()) return;
     setSelected(id); setArtifactId(file ?? ""); setTab("reader");
     if (matchMedia("(max-width: 800px)").matches) setCollapsed(true);
   };
   const chooseChild = (id: string, file: string) => {
+    if (!prepareWebNavigation()) return;
     const child = runtime.query.listArtifacts(id).find(row => row.id === file);
     if (child?.role === "attachment" && /\.md$/i.test(child.filename)) {
       setSelected(id); if (id !== selected) setArtifactId("");
@@ -111,7 +120,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
         {item && runtime.capabilities["notes.read"] && <TabsTrigger value="sticky-notes">付箋</TabsTrigger>}
       </WorkspaceTabList>
       <div className="document-controls"><label>資料 <select aria-label="表示する資料" value={artifact?.id ?? ""}
-        onChange={e => { setArtifactId(e.target.value); setTab("reader"); }}>
+        onChange={e => { if (prepareWebNavigation()) { setArtifactId(e.target.value); setTab("reader"); } }}>
         {artifacts.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}
       </select></label></div>
       <div className="relative flex flex-1 min-h-0 flex-col">
@@ -120,7 +129,8 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
           <ReaderDock open={!!chosen && !focusMode} panelId={chosen ?? undefined} label={chosen ? `${PANEL_LABELS[chosen]}（右パネル）` : undefined}
             width={sidePanelWidth} onWidthChange={focusMode ? undefined : setSidePanelWidth} stacked={stacked} preserveWidth
             panel={chosen && tab === "reader" ? pane(chosen, true) : undefined}>
-            {artifact ? <AssetView key={artifact.id} artifact={artifact} runtime={runtime} annotations={annotations} controls={readerControls} />
+            {artifact ? <AssetView key={/\.pdf$/i.test(artifact.filename) && artifact.annotationTarget ? `${artifact.itemId ?? artifact.id}:pdf` : artifact.id}
+              artifact={artifact} runtime={runtime} annotations={annotations} controls={readerControls} />
               : <p className="empty">まだファイルがありません。Windows版でアップロードしてください。</p>}
           </ReaderDock>
         </TabsContent>
@@ -132,7 +142,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
       </div>
     </Tabs>
   </main>;
-  return <div className="workspace">
+  return <div className="workspace" inert={transitioning} aria-busy={transitioning}>
     {narrow && !collapsed && !focusMode && <><button className="sidebar-backdrop" aria-label="ライブラリを閉じる" onClick={() => setCollapsed(true)} />
       <aside className="web-sidebar web-sidebar-overlay" aria-label="ライブラリ一覧">{sidebar}</aside></>}
     {collapsed && !focusMode && <WorkspaceRail onExpand={() => setCollapsed(false)}>

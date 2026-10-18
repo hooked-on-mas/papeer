@@ -151,7 +151,7 @@ export function createDriveLibraryRuntime(session: FileReader, scope: RuntimeSco
               if (!ref || typeof ref.artifactPath !== "string" || typeof ref.page !== "number" || !Number.isSafeInteger(ref.page)
                 || ref.page < 1 || ref.page > 100000) throw new Error("保存されたページ対応の形式が不正です。");
               const artifact = byPath.get(ref.artifactPath);
-              translatedPages[page] = artifact?.itemId === id && artifact.filename.endsWith(".pdf")
+              translatedPages[page] = artifact?.itemId === id && artifact.role === "translated" && artifact.filename.endsWith(".pdf")
                 ? Object.freeze({ artifactId: artifact.id, page: ref.page }) : null;
             }
             parsed.set(id, Object.freeze({ pageCount: row.pageCount, translatedPages: Object.freeze(translatedPages) }));

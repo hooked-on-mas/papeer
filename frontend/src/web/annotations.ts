@@ -53,13 +53,21 @@ export class AnnotationStore {
   private controller = new AbortController();
   private disposed = false;
   private inFlight: Promise<void> | undefined;
+  private initializing: Promise<void> | undefined;
+  private refreshing: Promise<void> | undefined;
   private state: State = { ready: false, pending: 0, saving: false, error: "", version: 0, stale: 0 };
   private session: DriveSession;
-  private libraryId: string;
+  readonly libraryId: string;
   private manifest: Manifest;
   private storage: Storage;
-  constructor(session: DriveSession, libraryId: string, manifest: Manifest, storage: Storage = localStorage) {
-    this.session = session; this.libraryId = libraryId; this.manifest = manifest; this.storage = storage;
+  private blockedStorage = false;
+  constructor(session: DriveSession, libraryId: string, manifest: Manifest, storage?: Storage) {
+    this.session = session; this.libraryId = libraryId; this.manifest = manifest;
+    try { this.storage = storage ?? localStorage; }
+    catch {
+      this.blockedStorage = true;
+      this.storage = new Proxy({} as Storage, { get() { throw new Error("このブラウザーでは端末の保存領域を利用できません。サイトの保存設定を確認してください。"); } });
+    }
     this.prefix = `papeer-ink:${libraryId}:`;
   }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -74,8 +82,17 @@ export class AnnotationStore {
     const base = this.base.pages[`${anchor.paper_id}/${anchor.side}/${anchor.page}`] ?? { strokes: [], highlights: [] };
     return { strokes: mergeInk(base.strokes, [...this.operations.values()], anchor, this.base.applied), highlights: base.highlights };
   }
-  async start() {
+  start(): Promise<void> {
+    if (this.disposed || this.state.ready) return Promise.resolve();
+    if (!this.initializing) this.initializing = this.initialize().finally(() => { this.initializing = undefined; });
+    return this.initializing;
+  }
+  private async initialize() {
     try {
+      if (this.blockedStorage) {
+        try { this.storage = localStorage; this.blockedStorage = false; }
+        catch { throw new Error("このブラウザーでは端末の保存領域を利用できないため、書き込みを保存できません。サイトの保存設定を確認してください。"); }
+      }
       for (let i = 0; i < this.storage.length; i++) {
         const key = this.storage.key(i)!;
         if (!key.startsWith(this.prefix)) continue;
@@ -85,7 +102,7 @@ export class AnnotationStore {
       const file = this.manifest.files["web-annotations.json"];
       if (file) {
         const base = JSON.parse(await (await this.session.file(file, this.controller.signal)).text()) as BaseInk;
-        if (base.version !== 1 || !base.pages || !Array.isArray(base.applied)
+        if (!base || base.version !== 1 || !base.pages || typeof base.pages !== "object" || Array.isArray(base.pages) || !Array.isArray(base.applied)
           || base.applied.some(id => typeof id !== "string" || !uuid.test(id))
           || Object.values(base.pages).some(p => !p || !Array.isArray(p.strokes) || !p.strokes.every(validStroke) || !Array.isArray(p.highlights)
             || p.highlights.some(h => !h || !/^#[a-f\d]{6}$/i.test(h.color) || !Array.isArray(h.rects) || h.rects.length > 400
@@ -96,11 +113,16 @@ export class AnnotationStore {
         this.base = base;
       }
       await this.refresh();
-      this.update({ ready: true });
+      this.update({ ready: true, error: "" });
       await this.flush();
     } catch (e) { this.update({ error: String(e) }); }
   }
-  async refresh() {
+  refresh(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    if (!this.refreshing) this.refreshing = this.readRemote().finally(() => { this.refreshing = undefined; });
+    return this.refreshing;
+  }
+  private async readRemote() {
     const files = await this.session.annotationFiles(this.libraryId, this.controller.signal);
     // A few requests at once, without starting thousands of simultaneous downloads.
     for (let i = 0; i < files.length; i += 6) {
@@ -165,7 +187,10 @@ export class AnnotationStore {
   }
   async retry() {
     if (!this.state.ready) return this.start();
-    try { await this.refresh(); await this.flush(); } catch (e) { this.update({ error: String(e) }); }
+    try {
+      await this.refresh(); await this.flush();
+      if (!this.pending.size) this.update({ error: "" });
+    } catch (e) { this.update({ error: String(e) }); }
   }
   dispose() { this.disposed = true; this.controller.abort(); this.listeners.clear(); }
 }

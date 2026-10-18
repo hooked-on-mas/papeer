@@ -25,37 +25,72 @@ export class DriveSession {
   private token = "";
   private expires = 0;
   private generation = 0;
+  private cancelLogin?: () => void;
+  private requests = new Set<AbortController>();
 
   signIn(): Promise<void> {
+    this.cancelSignIn();
     const oauth = window.google?.accounts.oauth2;
     if (!oauth) return Promise.reject(new Error("Googleのログイン画面を読み込み中です。通信を確認してもう一度お試しください。"));
-    const generation = ++this.generation;
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true; clearTimeout(timer);
+        if (this.cancelLogin === cancel) this.cancelLogin = undefined;
+        if (error) reject(error); else resolve();
+      };
+      const cancel = () => finish(new Error("Googleへの接続をキャンセルしました。"));
+      const timer = setTimeout(() => finish(new Error("Googleへの接続が時間切れになりました。もう一度ログインしてください。")), 180_000);
+      this.cancelLogin = cancel;
+      try {
       const client = oauth.initTokenClient({ client_id: CLIENT_ID, scope: SCOPE,
         callback: result => {
-          if (generation !== this.generation) { reject(new Error("ログインを中止しました。")); return; }
-          if (!result.access_token || result.error) { reject(new Error("Googleへのログインを完了できませんでした。")); return; }
+          if (settled) return;
+          if (!result.access_token || result.error) { finish(new Error("Googleへのログインを完了できませんでした。")); return; }
+          for (const request of this.requests) request.abort();
+          this.generation++;
           this.token = result.access_token;
           this.expires = Date.now() + (result.expires_in ?? 3600) * 1000;
-          resolve();
+          finish();
         },
-        error_callback: () => reject(new Error("ログイン画面が閉じられたか、ポップアップがブロックされています。")),
+        error_callback: () => finish(new Error("ログイン画面が閉じられたか、ポップアップがブロックされています。")),
       });
       client.requestAccessToken({ prompt: "select_account" });
+      } catch { finish(new Error("Googleへの接続を開始できませんでした。もう一度ログインしてください。")); }
     });
   }
 
-  signOut() { this.generation++; this.token = ""; this.expires = 0; }
+  cancelSignIn() { this.cancelLogin?.(); }
+  signOut() {
+    this.cancelSignIn(); this.generation++; this.token = ""; this.expires = 0;
+    for (const request of this.requests) request.abort();
+  }
 
-  private async request(path: string, signal?: AbortSignal, init: RequestInit = {}, upload = false): Promise<Response> {
+  private async request<T>(path: string, read: (response: Response) => Promise<T>, signal?: AbortSignal, init: RequestInit = {}, upload = false): Promise<T> {
     if (!this.token || Date.now() >= this.expires) throw new Error("ログインの有効期限が切れました。再度Googleでログインしてください。");
     const generation = this.generation;
+    const controller = new AbortController(); this.requests.add(controller);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 120_000);
+    const cancel = () => controller.abort();
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) controller.abort();
+    try {
     const response = await fetch((upload ? "https://www.googleapis.com/upload/drive/v3/files" : API) + path,
-      { ...init, headers: { ...init.headers, Authorization: `Bearer ${this.token}` }, signal, cache: "no-store" });
+      { ...init, headers: { ...init.headers, Authorization: `Bearer ${this.token}` }, signal: controller.signal, cache: "no-store" });
     if (generation !== this.generation) throw new Error("ログイン状態が変わりました。再読み込みしてください。");
     if (!response.ok) throw new Error(response.status === 401 ? "再度Googleでログインしてください。"
       : `Driveとの通信に失敗しました (${response.status})。接続・空き容量・Googleアカウントを確認して再試行してください。`);
-    return response;
+    const value = await read(response);
+    if (generation !== this.generation) throw new Error("ログイン状態が変わりました。再読み込みしてください。");
+    return value;
+    } catch (error) {
+      if (timedOut) throw new Error("Driveとの通信が時間切れになりました。通信を確認して再試行してください。");
+      throw error;
+    } finally {
+      clearTimeout(timer); signal?.removeEventListener("abort", cancel); this.requests.delete(controller);
+    }
   }
 
   async libraries(): Promise<LibraryChoice[]> {
@@ -65,7 +100,7 @@ export class DriveSession {
       const params = new URLSearchParams({ q: "trashed = false and properties has { key='papeer' and value='library-v1' }",
         fields: "nextPageToken,files(id,name,modifiedTime)", orderBy: "modifiedTime desc", pageSize: "100" });
       if (pageToken) params.set("pageToken", pageToken);
-      const page = await (await this.request("?" + params)).json();
+      const page = await this.request("?" + params, response => response.json());
       items.push(...page.files);
       pageToken = page.nextPageToken ?? "";
     } while (pageToken);
@@ -73,7 +108,7 @@ export class DriveSession {
   }
 
   async manifest(id: string): Promise<Manifest> {
-    return parseManifest(await (await this.request(`/${encodeURIComponent(id)}?alt=media`)).json());
+    return parseManifest(await this.request(`/${encodeURIComponent(id)}?alt=media`, response => response.json()));
   }
 
   async annotationFiles(libraryId: string, signal?: AbortSignal): Promise<{ id: string; name: string; size: string }[]> {
@@ -85,31 +120,31 @@ export class DriveSession {
         + ` and properties has { key='library' and value='${libraryId}' }`,
         fields: "nextPageToken,files(id,name,size)", pageSize: "1000" });
       if (pageToken) params.set("pageToken", pageToken);
-      const page = await (await this.request("?" + params, signal)).json();
+      const page = await this.request("?" + params, response => response.json(), signal);
       files.push(...page.files); pageToken = page.nextPageToken ?? "";
     } while (pageToken);
     return files;
   }
 
   async annotation(id: string, signal?: AbortSignal): Promise<unknown> {
-    return (await this.request(`/${encodeURIComponent(id)}?alt=media`, signal)).json();
+    return this.request(`/${encodeURIComponent(id)}?alt=media`, response => response.json(), signal);
   }
 
   async saveAnnotation(libraryId: string, folderId: string | undefined, id: string, operation: unknown): Promise<void> {
     // Small immutable JSON files: neither the snapshot nor another device's edits are overwritten.
-    const folder = folderId || (await (await this.request(`/${encodeURIComponent(libraryId)}?fields=parents`)).json()).parents?.[0];
+    const folder = folderId || (await this.request(`/${encodeURIComponent(libraryId)}?fields=parents`, response => response.json())).parents?.[0];
     if (!folder || !/^[\w-]+$/.test(folder)) throw new Error("保存フォルダーが見つかりません。PCから再アップロードしてください。");
     const boundary = "papeer_" + crypto.randomUUID();
     const metadata = { name: `ink-${id}.json`, parents: [folder], mimeType: "application/json",
       properties: { papeer: "ink-v1", library: libraryId } };
     const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`
       + `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(operation)}\r\n--${boundary}--`;
-    await this.request("?uploadType=multipart&fields=id", undefined,
+    await this.request("?uploadType=multipart&fields=id", async () => undefined, undefined,
       { method: "POST", headers: { "Content-Type": `multipart/related; boundary=${boundary}` }, body }, true);
   }
 
   async file(file: DriveFile, signal?: AbortSignal): Promise<Blob> {
-    const buffer = await (await this.request(`/${encodeURIComponent(file.id)}?alt=media`, signal)).arrayBuffer();
+    const buffer = await this.request(`/${encodeURIComponent(file.id)}?alt=media`, response => response.arrayBuffer(), signal);
     if (buffer.byteLength !== file.size) throw new Error("ファイルが完全に届きませんでした。再読み込みしてください。");
     const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", buffer)), b => b.toString(16).padStart(2, "0")).join("");
     if (digest !== file.sha256) throw new Error("ファイルの内容が保存時と一致しません。Windows版から再アップロードしてください。");
@@ -120,9 +155,10 @@ export class DriveSession {
 export function parseManifest(value: unknown): Manifest {
   const m = value as Manifest | null;
   if (!m || m.version !== 1 || !Array.isArray(m.items) || !Array.isArray(m.attachments)
-    || !m.files || typeof m.files !== "object" || typeof m.updated_at !== "string" || typeof m.revision !== "string"
+    || !m.files || typeof m.files !== "object" || Array.isArray(m.files) || typeof m.updated_at !== "string" || typeof m.revision !== "string"
     || (m.folder_id !== undefined && (typeof m.folder_id !== "string" || !/^[\w-]+$/.test(m.folder_id)))
     || m.items.some(item => !item || typeof item.id !== "string" || !/^[a-f0-9]{32}$/.test(item.id))
+    || new Set(m.items.map(item => item.id)).size !== m.items.length
     || m.attachments.some(a => !a || typeof a.id !== "string" || typeof a.owner_id !== "string" || typeof a.title !== "string")
     || Object.entries(m.files).some(([name, file]) => !name || name.startsWith("/") || name.includes("\\")
       || name.split("/").includes("..") || !file || typeof file.id !== "string" || !/^[\w-]+$/.test(file.id)

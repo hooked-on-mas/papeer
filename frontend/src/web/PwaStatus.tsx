@@ -39,22 +39,40 @@ export function PwaStatus({ online }: { online: boolean }) {
     if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return;
     let disposed = false;
     let registration: ServiceWorkerRegistration | undefined;
+    let registering = false;
     const inspect = () => { if (!disposed && registration?.waiting) setUpdateReady(true); };
     const updateFound = () => {
       const worker = registration?.installing;
       worker?.addEventListener("statechange", () => {
         inspect();
+        if (!disposed && worker.state === "activated") setCacheFailed(false);
         if (!disposed && worker.state === "redundant") setCacheFailed(true);
       });
     };
-    const check = () => { if (navigator.onLine) void registration?.update().catch(() => {}); };
-    const focus = () => { if (document.visibilityState === "visible") check(); };
-    void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { scope: import.meta.env.BASE_URL, updateViaCache: "none" })
+    const attach = (value: ServiceWorkerRegistration) => {
+      if (disposed) return;
+      registration?.removeEventListener("updatefound", updateFound);
+      registration = value; inspect(); updateFound();
+      value.addEventListener("updatefound", updateFound);
+      if (value.active) setCacheFailed(false);
+    };
+    const register = () => {
+      if (registering || disposed) return;
+      registering = true;
+      void Promise.resolve().then(() => navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { scope: import.meta.env.BASE_URL, updateViaCache: "none" }))
       .then(value => {
-        if (disposed) return;
-        registration = value; inspect(); updateFound();
-        value.addEventListener("updatefound", updateFound);
-      }).catch(() => { if (!disposed) setCacheFailed(true); });
+        attach(value);
+      }).catch(async () => {
+        // An offline launch may already have a valid cached worker.
+        let existing: ServiceWorkerRegistration | undefined;
+        try { existing = await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL); } catch { /* Browser policy may block this API too. */ }
+        if (existing?.active) attach(existing);
+        else if (!disposed) setCacheFailed(true);
+      }).finally(() => { registering = false; });
+    };
+    const check = () => { if (navigator.onLine) { if (registration) void registration.update().catch(() => {}); else register(); } };
+    const focus = () => { if (document.visibilityState === "visible") check(); };
+    register();
     window.addEventListener("online", check);
     document.addEventListener("visibilitychange", focus);
     return () => {

@@ -175,19 +175,20 @@ test("dispose during body parsing discards the old snapshot instead of caching o
 });
 
 test("page mapping preserves exact partial-PDF page numbers and never guesses missing translations", async () => {
-  const data = { version: 1, items: { [id]: { pageCount: 5, translatedPages: {
+  const data = { version: 1, items: { [id]: { pageCount: 6, translatedPages: {
     "1": { artifactPath: translatedPath, page: 2 }, "2": { artifactPath: partialPath, page: 1 },
     "3": null, "4": { artifactPath: `papers/${id}/missing.pdf`, page: 1 },
     "5": { artifactPath: `papers/${otherId}/original.pdf`, page: 1 },
+    "6": { artifactPath: `papers/${id}/original.pdf`, page: 1 },
   } } } };
   const calls: string[] = [];
   const manifest = fixture();
   const runtime = createDriveLibraryRuntime({ file: async file => { calls.push(file.id); return new Blob([JSON.stringify(data)]); } }, scope, manifest);
   const pages = await runtime.query.readDocumentPages(id);
   const artifacts = runtime.query.listArtifacts(id);
-  assert.deepEqual(pages, { pageCount: 5, translatedPages: {
+  assert.deepEqual(pages, { pageCount: 6, translatedPages: {
     "1": { artifactId: artifacts.find(file => file.filename === "translated.pdf")!.id, page: 2 },
-    "2": { artifactId: artifacts.find(file => file.filename === "page-2.pdf")!.id, page: 1 }, "3": null, "4": null, "5": null,
+    "2": { artifactId: artifacts.find(file => file.filename === "page-2.pdf")!.id, page: 1 }, "3": null, "4": null, "5": null, "6": null,
   } });
   assert.equal(await runtime.query.readDocumentPages(otherId), null);
   assert.deepEqual(calls, [manifest.files["web-reading.json"].id]);

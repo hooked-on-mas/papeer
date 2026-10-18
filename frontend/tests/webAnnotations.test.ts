@@ -63,3 +63,39 @@ test("storage failures do not report a successful stroke; unrelated library draf
   assert.equal(store.page(anchor).strokes.length, 0); assert.equal(store.getSnapshot().pending, 0);
   assert.match(store.getSnapshot().error, /この端末/); store.dispose();
 });
+
+test("concurrent initialization/reconnects share one read and recover an initial failure", async () => {
+  let fail = true, calls = 0;
+  let release = () => {};
+  let waiting = new Promise<void>(resolve => { release = resolve; });
+  const transport = { annotationFiles: async () => { calls++; await waiting; if (fail) throw new Error("offline"); return []; } } as unknown as DriveSession;
+  const store = new AnnotationStore(transport, "library", manifest, storage());
+  const first = store.start(); assert.equal(store.start(), first);
+  release(); await first;
+  assert.equal(calls, 1); assert.equal(store.getSnapshot().ready, false);
+  fail = false; waiting = new Promise<void>(resolve => { release = resolve; });
+  const retries = [store.retry(), store.retry(), store.retry()];
+  release(); await Promise.all(retries);
+  assert.equal(calls, 2); assert.equal(store.getSnapshot().ready, true); assert.equal(store.getSnapshot().error, "");
+  store.dispose();
+});
+
+test("a recovered refresh failure clears its error even when there was no pending upload", async () => {
+  let fail = false;
+  const transport = { annotationFiles: async () => { if (fail) throw new Error("offline"); return []; } } as unknown as DriveSession;
+  const store = new AnnotationStore(transport, "library", manifest, storage()); await store.start();
+  fail = true; await store.retry(); assert.match(store.getSnapshot().error, /offline/);
+  fail = false; await Promise.all([store.retry(), store.retry()]);
+  assert.equal(store.getSnapshot().error, ""); store.dispose();
+});
+
+test("blocked browser storage does not crash library viewing or pretend that ink is durably saved", async t => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  t.after(() => { if (original) Object.defineProperty(globalThis, "localStorage", original); else Reflect.deleteProperty(globalThis, "localStorage"); });
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, get() { throw new DOMException("blocked", "SecurityError"); } });
+  const transport = { annotationFiles: async () => [] } as unknown as DriveSession;
+  const store = new AnnotationStore(transport, "library", manifest); await store.start();
+  assert.equal(store.getSnapshot().ready, false); assert.match(store.getSnapshot().error, /保存領域/);
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage() });
+  await store.retry(); assert.equal(store.getSnapshot().ready, true); assert.equal(store.getSnapshot().error, ""); store.dispose();
+});

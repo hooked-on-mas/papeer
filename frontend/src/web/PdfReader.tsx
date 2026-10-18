@@ -1,14 +1,21 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent, type ReactNode } from "react";
 import { PdfDocument as Document, PdfPage as Page } from "../features/reader/PdfDocument";
 import { PageNavigatorView } from "../features/reader/PageNavigatorView";
 import { cappedPixelRatio } from "../features/reader/canvasBudget";
 import { InkDrawing } from "../features/reader/InkDrawing";
 import { fitInk, hitInk, textPoints, type InkStroke, type Point } from "../features/reader/inkGeometry";
-import { AnnotationStore, type Anchor } from "./annotations";
+import { AnnotationStore, type Anchor, type PageInk } from "./annotations";
 import type { AnnotationTarget } from "../runtime/contracts";
-import { Check, Eraser, Hand, Highlighter, Loader2, Pen, Redo2, RefreshCw, Settings2, Type, Undo2 } from "lucide-react";
+import { AlertCircle, Check, Eraser, Hand, Highlighter, Loader2, Pen, Redo2, RefreshCw, Settings2, Type, Undo2 } from "lucide-react";
+import { prepareWebNavigation, registerNavigationGuard, textDrafts, type TextDraft } from "./textDrafts";
 
 type Tool = "read" | "pen" | "highlighter" | "eraser" | "text";
+
+const SavedInk = memo(function SavedInk({ ink, ratio }: { ink: PageInk; ratio: number }) {
+  return <>{ink.highlights.flatMap((h, i) => h.rects.map(([x, y, w, height], j) => <rect key={`${i}:${j}`} x={x * 1000} y={y * 1000 * ratio}
+    width={w * 1000} height={height * 1000 * ratio} fill={h.color} opacity={.3} />))}
+    {ink.strokes.map(stroke => <g key={stroke.id} data-ink-id={stroke.id}><InkDrawing stroke={stroke} ratio={ratio} /></g>)}</>;
+});
 
 export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 1, navigation = true }: {
   url: string; target?: AnnotationTarget; store?: AnnotationStore; pageNumber?: number;
@@ -40,13 +47,14 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
   }, [render]);
   const document = <Document file={url} loading="PDFを読み込んでいます…" error="PDFを表示できません。ダウンロードしてご確認ください。"
     onLoadSuccess={({ numPages }) => setPages(numPages)}>
-    <Page key={render.key} pageNumber={page} width={drawnWidth} devicePixelRatio={pixelRatio}
+    {pages > 0 && (page < 1 || page > pages) ? <p role="alert" className="error">保存されたPDFに指定ページがありません。PCから再アップロードしてください。</p>
+    : <Page key={render.key} pageNumber={page} width={drawnWidth} devicePixelRatio={pixelRatio}
       renderAnnotationLayer={false} onLoadSuccess={pdf => {
       const viewport = pdf.getViewport({ scale: 1 }); setRatio(viewport.height / viewport.width);
     }} onRenderSuccess={() => {
       // A cancelled old canvas can finish late. It must not enable or disable the current editor.
       if (activeRender.current === render) setRendered(render);
-    }} onRenderError={() => { if (activeRender.current === render) setRendered(null); }} />
+    }} onRenderError={() => { if (activeRender.current === render) setRendered(null); }} />}
   </Document>;
   return <div className="pdf" ref={container}>
     {navigation && <div className="pdf-tools"><PageNavigatorView paperId={url} currentPage={page} count={pages} compact shortcuts={false}
@@ -65,18 +73,40 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
 }) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const [preview, setPreview] = useState<InkStroke>();
-  const [text, setText] = useState<{ at: Point; value: string }>();
+  const draftKey = textDrafts.key(store.libraryId, anchor);
+  const [initialDraft] = useState(() => {
+    try { return { text: textDrafts.read(draftKey), error: "" }; }
+    catch (error) { return { text: undefined, error: String(error) }; }
+  });
+  const [text, setText] = useState<TextDraft | undefined>(initialDraft.text);
+  const [draftError, setDraftError] = useState(initialDraft.error);
+  const editText = (draft: TextDraft | undefined) => {
+    setText(draft);
+    try { textDrafts.write(draftKey, draft); setDraftError(""); }
+    catch { setDraftError("入力中の文字メモを端末に保存できません。空き容量・別タブの編集を確認し、文字をコピーするか、保存・キャンセルしてから画面を切り替えてください。"); }
+  };
   const [history, setHistory] = useState<{ action: "add" | "remove"; stroke: InkStroke }[]>([]);
   const [redo, setRedo] = useState<typeof history>([]);
   const gesture = useRef<{ id: number; stroke: InkStroke; tool: Tool } | undefined>(undefined);
+  const failed = useRef<InkStroke | undefined>(undefined);
+  const [failedStroke, setFailedStroke] = useState<InkStroke>();
   const touches = useRef(new Map<number, { x: number; y: number }>());
   useEffect(() => {
     // Rotation/zoom removes the old SVG; its lost-capture event may never reach React.
-    if (!enabled) { gesture.current = undefined; touches.current.clear(); setPreview(undefined); }
+    if (!enabled) { gesture.current = undefined; touches.current.clear(); setPreview(failed.current); }
   }, [enabled]);
-  const pageInk = store.page(anchor);
+  // Pen moves update only the live stroke, rather than re-merging and painting every saved annotation.
+  const pageInk = useMemo(() => ({ version: state.version, ink: store.page(anchor) }), [store, anchor, state.version]).ink;
   const writable = state.ready && enabled;
-  const remember = (action: "add" | "remove", stroke: InkStroke) => { setHistory(h => [...h, { action, stroke }]); setRedo([]); };
+  const remember = useCallback((action: "add" | "remove", stroke: InkStroke) => { setHistory(h => [...h, { action, stroke }]); setRedo([]); }, []);
+  const retryStroke = useCallback(() => {
+    const stroke = failed.current; if (!stroke) return true;
+    try {
+      remember("add", store.add(anchor, stroke));
+      failed.current = undefined; setFailedStroke(undefined); setPreview(undefined); return true;
+    } catch { return false; }
+  }, [store, anchor, remember]);
+  useLayoutEffect(() => registerNavigationGuard(() => !gesture.current && retryStroke()), [retryStroke]);
   const point = (e: PointerEvent<SVGSVGElement>, sample: { clientX: number; clientY: number } = e): Point => {
     const rect = e.currentTarget.getBoundingClientRect();
     return [Math.max(0, Math.min(1, (sample.clientX - rect.left) / rect.width)), Math.max(0, Math.min(1, (sample.clientY - rect.top) / rect.height))];
@@ -88,11 +118,11 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
       if (!gesture.current) { touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); e.currentTarget.setPointerCapture(e.pointerId); }
       return;
     }
-    if (!writable || tool === "read" || gesture.current || (e.button !== 0 && e.button !== 5)) return;
+    if (!writable || failed.current || tool === "read" || gesture.current || (e.button !== 0 && e.button !== 5)) return;
     touches.current.clear(); // A resting palm must not move the page while writing.
     e.preventDefault();
     const at = point(e);
-    if (tool === "text") { setText({ at, value: "" }); return; }
+    if (tool === "text") { editText({ at, value: text?.value ?? "" }); return; }
     const kind = e.button === 5 ? "eraser" : tool;
     e.currentTarget.setPointerCapture(e.pointerId);
     gesture.current = { id: e.pointerId, tool: kind,
@@ -127,7 +157,9 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
         const removed = pageInk.strokes.filter(s => s.id.startsWith("web-") && g.stroke.points.some(p => hitInk(s, p, .015, ratio)));
         for (const stroke of removed) { store.remove(anchor, stroke.id); remember("remove", stroke); }
       } else remember("add", store.add(anchor, g.stroke));
-    } catch { /* Store reports durable-save errors. */ }
+    } catch {
+      if (g.tool !== "eraser") { failed.current = g.stroke; setFailedStroke(g.stroke); setPreview(g.stroke); }
+    }
   };
   const cancel = (e: PointerEvent<SVGSVGElement>) => {
     touches.current.delete(e.pointerId);
@@ -149,11 +181,17 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
       setRedo(redo.slice(0, -1)); setHistory([...history, entry]);
     } catch { /* Store reports the error. */ }
   };
+  const saveStatus = failedStroke || draftError ? "端末に保存できていない書き込みがあります。"
+    : text?.value.trim() ? "文字メモは端末の下書きです。配置してDriveに保存してください。"
+    : !state.ready ? state.error ? "書き込みを読み込めません。再試行してください。" : "書き込みを読み込んでいます…"
+    : state.saving ? `Driveに保存中…（残り${state.pending}件）`
+    : state.pending ? `未保存 ${state.pending}件 · この端末に下書きがあります`
+    : state.error ? "書き込みの保存状態を確認してください。" : "Driveに保存済み";
   return <>
     <div className="ink-tools" role="toolbar" aria-label="PDFの書き込みツール">
       {([["read", "閲覧", Hand], ["pen", "ペン", Pen], ["highlighter", "蛍光ペン", Highlighter], ["text", "文字メモ", Type], ["eraser", "消しゴム", Eraser]] as const).map(([value, label, Icon]) =>
         <button key={value} disabled={!writable} title={label} aria-pressed={tool === value}
-          onClick={() => { gesture.current = undefined; touches.current.clear(); setPreview(undefined); setTool(value); }}><Icon aria-hidden="true" /><span className="sr-only">{label}</span></button>)}
+          onClick={() => { if (!prepareWebNavigation()) return; gesture.current = undefined; touches.current.clear(); setPreview(undefined); setTool(value); }}><Icon aria-hidden="true" /><span className="sr-only">{label}</span></button>)}
       <button title="元に戻す" disabled={!writable || !history.length} onClick={undo}><Undo2 aria-hidden="true" /><span className="sr-only">元に戻す</span></button>
       <button title="やり直す" disabled={!writable || !redo.length} onClick={redoLast}><Redo2 aria-hidden="true" /><span className="sr-only">やり直す</span></button>
       <details className="ink-options"><summary title="書き込み設定" aria-label="書き込み設定"><Settings2 aria-hidden="true" /></summary>
@@ -162,32 +200,33 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
             <option value={.002}>細い</option><option value={.003}>標準</option><option value={.006}>太い</option></select></label>
           <label><input type="checkbox" checked={finger} onChange={e => setFinger(e.target.checked)} /> 指でも書く</label></div>
       </details>
-      <span className="ink-save" role="status" title={!state.ready ? "書き込みを読み込んでいます…" : state.saving ? `Driveに保存中…（残り${state.pending}件）`
-        : state.pending ? `未保存 ${state.pending}件 · この端末に下書きがあります` : "Driveに保存済み"}>
-        {!state.ready || state.saving ? <Loader2 className="animate-spin" aria-hidden="true" /> : state.pending ? <span>{state.pending}</span> : <Check aria-hidden="true" />}
-        <span className="sr-only">{!state.ready ? "書き込みを読み込んでいます…" : state.saving ? `Driveに保存中…（残り${state.pending}件）`
-          : state.pending ? `未保存 ${state.pending}件 · この端末に下書きがあります` : "Driveに保存済み"}</span>
+      <span className="ink-save" role="status" title={saveStatus}>
+        {failedStroke || draftError || state.error ? <AlertCircle aria-hidden="true" /> : !state.ready || state.saving ? <Loader2 className="animate-spin" aria-hidden="true" /> : state.pending ? <span>{state.pending}</span> : <Check aria-hidden="true" />}
+        <span className="sr-only">{saveStatus}</span>
       </span>
       <button title="書き込みを同期・再試行" disabled={state.saving} onClick={() => void store.retry()}><RefreshCw aria-hidden="true" /><span className="sr-only">書き込みを同期・再試行</span></button>
     </div>
     {state.error && <p className="error" role="alert">{state.error}</p>}
+    {failedStroke && <div role="alert" className="error">この線はまだ端末に保存できていません。
+      <button onClick={retryStroke}>線を再保存</button> <button onClick={() => {
+        failed.current = undefined; setFailedStroke(undefined); setPreview(undefined); void store.retry();
+      }}>この線を破棄</button></div>}
+    {draftError && <p className="error" role="alert">{draftError}</p>}
     {state.stale > 0 && <p className="ink-help">以前のPDF版への書き込みが{state.stale}件Driveに残っています。PDFが更新されているため、現在の版には重ねていません。</p>}
     {text && <form className="ink-text" onSubmit={e => {
       e.preventDefault(); if (!text.value.trim()) return;
       try {
         const stroke = fitInk([{ id: "draft", kind: "text", text: text.value, color, width,
           points: textPoints(text.value, text.at, .023, ratio) }], ratio)[0];
-        remember("add", store.add(anchor, stroke)); setText(undefined);
+        remember("add", store.add(anchor, stroke)); editText(undefined);
       } catch { /* Store reports the error. */ }
-    }}><label>文字メモ <textarea aria-label="PDFに追加するメモ" value={text.value} maxLength={2000} autoFocus onChange={e => setText({ ...text, value: e.target.value })} /></label>
-      <button type="submit" disabled={!text.value.trim()}>メモを保存</button><button type="button" onClick={() => setText(undefined)}>キャンセル</button></form>}
+    }}><label>文字メモ <textarea aria-label="PDFに追加するメモ" value={text.value} maxLength={2000} autoFocus onChange={e => editText({ ...text, value: e.target.value })} /></label>
+      <button type="submit" disabled={!text.value.trim()}>メモを保存</button><button type="button" onClick={() => editText(undefined)}>キャンセル</button></form>}
     <div className="ink-page" style={{ width: pageWidth }}>{children}
       {enabled && <svg className={`web-ink ${tool === "read" ? "reading" : "writing"}`} data-testid="web-ink" aria-label="PDF書き込み面"
         viewBox={`0 0 1000 ${1000 * ratio}`} style={{ touchAction: tool === "read" ? "auto" : finger ? "none" : "pinch-zoom" }}
         onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={cancel} onLostPointerCapture={cancel}>
-        {pageInk.highlights.flatMap((h, i) => h.rects.map(([x, y, w, height], j) => <rect key={`${i}:${j}`} x={x * 1000} y={y * 1000 * ratio}
-          width={w * 1000} height={height * 1000 * ratio} fill={h.color} opacity={.3} />))}
-        {pageInk.strokes.map(stroke => <g key={stroke.id} data-ink-id={stroke.id}><InkDrawing stroke={stroke} ratio={ratio} /></g>)}
+        <SavedInk ink={pageInk} ratio={ratio} />
         {preview && <InkDrawing stroke={preview} ratio={ratio} />}
       </svg>}
     </div>

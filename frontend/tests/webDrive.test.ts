@@ -16,10 +16,60 @@ function manifest(): Manifest {
 test("manifest validation rejects incompatible and unsafe data", () => {
   assert.deepEqual(parseManifest(manifest()), manifest());
   for (const bad of [null, {}, { ...manifest(), version: 9 }, { ...manifest(), items: [{ id: "../../" }] },
+    { ...manifest(), items: [{ id }, { id }] }, { ...manifest(), files: [] },
     { ...manifest(), files: { "../secret": { id: "test", sha256: hash, size: 1, mime: "text/plain" } } },
     { ...manifest(), files: { "bad": { id: "test", sha256: "bad", size: -1, mime: "text/plain" } } }]) {
     assert.throws(() => parseManifest(bad));
   }
+});
+
+test("Google connection can be cancelled or timed out, ignores late grants, and can be retried", async t => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const callbacks: ((response: object) => void)[] = [];
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { google: { accounts: { oauth2: {
+    initTokenClient: (options: { callback: (response: object) => void }) => ({ requestAccessToken: () => { callbacks.push(options.callback); } }),
+  } } } } });
+  t.after(() => { if (original) Object.defineProperty(globalThis, "window", original); else Reflect.deleteProperty(globalThis, "window"); });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const session = new DriveSession();
+  const cancelled = assert.rejects(session.signIn(), /キャンセル/);
+  session.cancelSignIn(); await cancelled;
+  callbacks[0]({ access_token: "late-token", expires_in: 100 });
+  await assert.rejects(session.libraries(), /ログイン/);
+  const expired = assert.rejects(session.signIn(), /時間切れ/);
+  t.mock.timers.tick(180_001); await expired;
+  callbacks[1]({ access_token: "late-token", expires_in: 100 });
+  await assert.rejects(session.libraries(), /ログイン/);
+  const next = session.signIn(); callbacks[2]({ access_token: "valid-token", expires_in: 100 }); await next;
+  const cancelledByLogout = assert.rejects(session.signIn(), /キャンセル/);
+  session.signOut(); await cancelledByLogout;
+  callbacks[3]({ access_token: "late-token", expires_in: 100 });
+  await assert.rejects(session.libraries(), /ログイン/);
+});
+
+test("Drive body reads cannot cross logout and a stalled request has a bounded timeout", async t => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "window"), originalFetch = globalThis.fetch;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { google: { accounts: { oauth2: {
+    initTokenClient: (options: { callback: (response: object) => void }) => ({ requestAccessToken: () => options.callback({ access_token: "test", expires_in: 100 }) }),
+  } } } } });
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    if (original) Object.defineProperty(globalThis, "window", original); else Reflect.deleteProperty(globalThis, "window");
+  });
+  let release = (_buffer: ArrayBuffer) => {};
+  const body = new Promise<ArrayBuffer>(resolve => { release = resolve; });
+  globalThis.fetch = async () => ({ ok: true, arrayBuffer: () => body } as Response);
+  const session = new DriveSession(); await session.signIn();
+  const file = { id: "file", size: 3, sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", mime: "text/plain" };
+  const cancelled = assert.rejects(session.file(file), /ログイン状態/);
+  await Promise.resolve(); session.signOut(); release(new TextEncoder().encode("abc").buffer); await cancelled;
+  await session.signIn();
+  globalThis.fetch = async (_url, init) => new Promise((_resolve, reject) => {
+    init!.signal!.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+  });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const timedOut = assert.rejects(session.libraries(), /時間切れ/);
+  t.mock.timers.tick(120_001); await timedOut; session.signOut();
 });
 
 test("handwritten PDFs appear first and attachments keep their human title", () => {
