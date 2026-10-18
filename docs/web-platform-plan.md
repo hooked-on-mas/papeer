@@ -28,7 +28,7 @@ PCへ追記を取り込み ← Driveの追記ファイル ← Webで手書き・
 | 削除・フォルダー整理・復元 | 利用可能 | 提供しない |
 | Drive認証 | デスクトップOAuth、DPAPI | Web OAuth、トークンはメモリーのみ |
 
-`frontend/src/app/AppShell.tsx` と `frontend/src/web/main.tsx` をそれぞれのhost入口にする。同じPC上のChromeもWebとして動く。画面枠、サイドバー枠、ヘッダー、タブ、ページ操作、PDF描画設定、左右分割、手書き描画・座標を共用する。WebはDrive用閲覧adapterを使い、PCの終了・job監視や設定画面は起動しない。具体的な責務と契約は[Astraによる設計](runtime-architecture.md)を参照。
+`frontend/src/app/AppShell.tsx` と `frontend/src/web/main.tsx` をそれぞれのhost入口にする。同じPC上のChromeもWebとして動く。画面枠、階層ライブラリの行、幅変更可能な左パネル、ヘッダー、タブ、ページ操作、PDF描画設定、対訳分割、本文横のサマリー/チャット/メモdock、手書き描画・座標を共用する。WebはDrive用閲覧adapterを使い、PCの終了・job監視や設定画面は起動しない。具体的な責務と契約は[Astraによる設計](runtime-architecture.md)を参照。
 
 ## 書き込みの保存と競合
 

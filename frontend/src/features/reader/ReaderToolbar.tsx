@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import {
-  ChevronDown, ClipboardCheck, ListTree, Maximize2, Minimize2, MoreHorizontal, PanelRight,
+  ClipboardCheck, ListTree, Maximize2, Minimize2, MoreHorizontal,
   Search, StickyNote, Undo2, ZoomIn, ZoomOut, Network, FileText,
 } from "lucide-react";
 import { useStore, ZOOM_LEVELS } from "@/store";
@@ -17,6 +17,7 @@ import { changeZoom, historyBack, navigateTo } from "./navigation";
 import { PageNavigator } from "./PageNavigator";
 import { ZoomControl, ZoomMenuGroup } from "./ZoomControl";
 import { SIDE_PANEL_BUTTONS } from "./sidePanelButtons";
+import { SidePanelChooser } from "./SidePanelChooser";
 import { currentOutlineIndex, type OutlineEntry } from "./pdfLinks";
 import { fitReaderToolbar } from "./readerBars";
 import { ReaderSearch } from "./ReaderSearch";
@@ -94,7 +95,6 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
   const full = (id: string) => (fit[id] ?? -1) >= 1;
   const panelTitle = (label: string, key: string) => `${label}を右に表示${focusMode ? `（${withShortcutLabels(key)}）` : ""}`;
   const panelButtons = SIDE_PANEL_BUTTONS.filter(({ tab }) => tabAvailable(caps, tab));
-  const panelLabel = panelButtons.find(({ tab }) => tab === sidePanel)?.label ?? "右パネル";
 
   const setPageFilter = (value: string) => {
     const only = value === "translated";
@@ -157,25 +157,8 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
           </button>
         )}
         {panelButtons.length > 0 && shown("panels") && !focusMode && (
-          <DropdownMenu>
-            <DropdownMenuTrigger className={`${chip(!!sidePanel)} ml-1.5`} aria-label="右パネルを選択"
-              title={sidePanel ? `${panelLabel}を右に表示中` : "サマリー・チャット・メモを右に表示"}>
-              <PanelRight className="size-3.5" />
-              {panelLabel}
-              <ChevronDown className="size-3" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-44">
-              {panelButtons.map(({ tab, label, icon: Icon, key }) => (
-                <DropdownMenuCheckboxItem key={tab} checked={sidePanel === tab} closeOnClick
-                  aria-label={`${label}を右に表示`} title={panelTitle(label, key)}
-                  onCheckedChange={() => setSidePanel(sidePanel === tab ? null : tab)}>
-                  <Icon /> {label}
-                </DropdownMenuCheckboxItem>
-              ))}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem disabled={!sidePanel} onClick={() => setSidePanel(null)}>右パネルを閉じる</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <SidePanelChooser selected={sidePanel} available={panelButtons.map(choice => choice.tab)} onChange={setSidePanel}
+            className={`${chip(!!sidePanel)} ml-1.5`} titleFor={panelTitle} />
         )}
         {panelButtons.length > 0 && shown("panels") && focusMode && (
           <div className="ml-1.5 flex items-center gap-1 shrink-0">

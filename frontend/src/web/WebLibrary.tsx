@@ -1,18 +1,25 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { FileText, Folder, NotebookPen, PanelLeft } from "lucide-react";
+import { Folder, PanelLeft, Pin, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { WorkspaceHeader, WorkspaceSidebar, WorkspaceTabList } from "../components/WorkspaceChrome";
+import { WorkspaceHeader, WorkspaceSidebar, WorkspaceLibraryPanel, WorkspaceRail, WorkspaceTabList } from "../components/WorkspaceChrome";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../components/ui/resizable";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsContent, TabsTrigger } from "../components/ui/tabs";
+import { ReaderDock } from "../features/reader/ReaderDock";
+import { SidePanelChooser } from "../features/reader/SidePanelChooser";
+import type { SidePanel } from "../features/reader/sidePanel";
 import type { ArtifactView, SavedReadingView } from "../runtime/contracts";
 import type { DriveLibraryRuntime } from "./libraryRuntime";
 import type { DriveSession, Manifest } from "./drive";
 import { AnnotationStore } from "./annotations";
 import { DocumentReader } from "./DocumentReader";
 import { useMediaQuery } from "../lib/useMediaQuery";
+import { WebLibrarySidebar } from "./WebLibrarySidebar";
 
-/** Web host owns annotation transport/lifecycle; the shared chrome has no Drive dependency. */
+const PANEL_LABELS = { summary: "サマリー", chat: "チャット", notes: "メモ" } as const;
+
+/** Web host supplies saved data to the same sidebar rows and reader dock as desktop. */
 export function WebLibrary({ runtime, session, manifest, actions }: {
   runtime: DriveLibraryRuntime; session: DriveSession; manifest: Manifest; actions: ReactNode;
 }) {
@@ -26,81 +33,111 @@ export function WebLibrary({ runtime, session, manifest, actions }: {
     return () => { clearInterval(timer); window.removeEventListener("online", retry); window.removeEventListener("focus", retry); store.dispose(); };
   }, [runtime, session, manifest]);
   const items = runtime.query.listItems();
-  const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(items[0]?.id ?? "");
   const [artifactId, setArtifactId] = useState("");
   const [tab, setTab] = useState("reader");
   const narrow = useMediaQuery("(max-width: 800px)");
+  const stacked = useMediaQuery("(max-width: 760px)");
   const [collapsed, setCollapsed] = useState(narrow);
+  const [sidebarWidth, setSidebarWidth] = useState(280);
+  const [sidePanelWidth, setSidePanelWidth] = useState(380);
+  const [sidePanel, setSidePanel] = useState<SidePanel | null>(null);
   useEffect(() => { if (narrow) setCollapsed(true); }, [narrow]);
   const item = items.find(row => row.id === selected);
   const artifacts = runtime.query.listArtifacts(item?.id ?? null);
   const artifact = artifacts.find(row => row.id === artifactId) ?? artifacts[0];
-  const summary = artifacts.find(row => row.filename === "article.md");
+  const summary = artifacts.find(row => row.filename === "article.md" && row.role === "other");
   const memos = artifacts.filter(row => row.role === "attachment");
   const [memoId, setMemoId] = useState("");
   const memo = memos.find(row => row.id === memoId) ?? memos[0];
-  const visible = items.filter(row => `${row.title} ${row.collectionName}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
-  const collections = [...new Set(visible.map(row => row.collectionName || "未分類"))].sort();
-  const choose = (id: string) => {
-    setSelected(id); setArtifactId(""); setTab("reader");
+  const available: SidePanel[] = item ? [...(summary ? ["summary" as const] : []), ...(runtime.capabilities["chat.read"] ? ["chat" as const] : []), ...(memos.length ? ["notes" as const] : [])] : [];
+  const chosen = sidePanel && available.includes(sidePanel) ? sidePanel : null;
+  const choose = (id: string, file?: string) => {
+    setSelected(id); setArtifactId(file ?? ""); setTab("reader");
     if (matchMedia("(max-width: 800px)").matches) setCollapsed(true);
   };
-  return <div className="workspace">
-    {!collapsed && <><button className="sidebar-backdrop" aria-label="ライブラリを閉じる" onClick={() => setCollapsed(true)} />
-      <aside className="web-sidebar" aria-label="ライブラリ一覧"><WorkspaceSidebar onCollapse={() => setCollapsed(true)} footer={
-        <button className="all-files" onClick={() => choose("")}><Folder className="size-4" />ライブラリ全体のファイル</button>}>
-        <div className="library-list">
-          <div className="library-title"><span>ライブラリ</span><small>{items.length} 件</small></div>
-          <input className="search" aria-label="論文・ノートを検索" placeholder="論文・ノートを検索…" value={query} onChange={e => setQuery(e.target.value)} />
-          <nav aria-label="ライブラリの項目">{collections.map(collection => <section key={collection}>
-            <div className="collection-heading"><Folder className="size-4" />{collection}</div>
-            {visible.filter(row => (row.collectionName || "未分類") === collection).map(row => <button key={row.id}
-              className={`item ${row.id === selected ? "selected" : ""}`} aria-current={row.id === selected ? "page" : undefined} onClick={() => choose(row.id)}>
-              {row.kind === "notebook" ? <NotebookPen className="size-4" /> : <FileText className="size-4" />}
-              <span>{row.title}{row.parentId && <small> · 専用ノート</small>}</span>
-            </button>)}
-          </section>)}</nav>
-          {!visible.length && <p className="empty">該当する項目はありません。</p>}
-        </div>
-      </WorkspaceSidebar></aside></>}
-    <main className="web-reader-main">
-      <WorkspaceHeader className="web-document-header">
-        <Button variant="ghost" size="icon" aria-label="ライブラリ" onClick={() => setCollapsed(value => !value)}><PanelLeft /></Button>
-        <div className="document-title"><h1>{item?.title ?? "ライブラリ全体のファイル"}</h1>
-          <small>{item?.kind === "notebook" ? "ノート" : "PDF"} · {item?.collectionName || "未分類"}</small></div>
-        {actions}
-      </WorkspaceHeader>
-      <Tabs value={tab} onValueChange={value => setTab(String(value))} className="flex-1 flex flex-col min-h-0 gap-0">
-        <WorkspaceTabList>
-          <TabsTrigger value="reader">{item?.kind === "notebook" ? "ノート" : "本文"}</TabsTrigger>
-          {summary && <TabsTrigger value="summary">サマリー</TabsTrigger>}
-          {item && runtime.capabilities["chat.read"] && <TabsTrigger value="chat">チャット</TabsTrigger>}
-          {memos.length > 0 && <TabsTrigger value="notes">メモ</TabsTrigger>}
-          {item && runtime.capabilities["notes.read"] && <TabsTrigger value="sticky-notes">付箋</TabsTrigger>}
-        </WorkspaceTabList>
-        <div className="document-controls"><label>資料 <select aria-label="表示する資料" value={artifact?.id ?? ""}
-          onChange={e => { setArtifactId(e.target.value); setTab("reader"); }}>
-          {artifacts.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}
-        </select></label></div>
+  const chooseChild = (id: string, file: string) => {
+    const child = runtime.query.listArtifacts(id).find(row => row.id === file);
+    if (child?.role === "attachment" && /\.md$/i.test(child.filename)) {
+      setSelected(id); if (id !== selected) setArtifactId("");
+      setMemoId(file); setTab("notes");
+      if (matchMedia("(max-width: 800px)").matches) setCollapsed(true);
+    } else choose(id, file);
+  };
+  const openBeside = (panel: SidePanel) => { setSidePanel(panel); setTab("reader"); };
+  const chooser = <SidePanelChooser selected={chosen} available={available} onChange={setSidePanel}
+    className={`web-panel-choice ${chosen ? "bg-accent text-accent-foreground" : ""}`} />;
+  const pane = (kind: SidePanel, beside = false) => <ReadOnlyPane title={PANEL_LABELS[kind]}
+    onClose={beside ? () => setSidePanel(null) : undefined} onPin={!beside ? () => openBeside(kind) : undefined}>
+    {kind === "summary" && summary ? <AssetContent key={summary.id} artifact={summary} runtime={runtime} />
+      : kind === "chat" && item ? <SavedReading key={`${item.id}:chat`} runtime={runtime} itemId={item.id} tab="chat" />
+      : kind === "notes" && memo ? <><label className="memo-picker">メモ <select aria-label="表示するメモ" value={memo.id} onChange={e => setMemoId(e.target.value)}>
+        {memos.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}
+      </select></label><AssetContent key={memo.id} runtime={runtime} artifact={memo} /></> : <p className="empty">保存された内容はありません。</p>}
+  </ReadOnlyPane>;
+  const sidebar = <WorkspaceSidebar onCollapse={() => setCollapsed(true)}>
+    <WebLibrarySidebar runtime={runtime} selectedItemId={selected} selectedArtifactId={tab === "notes" ? memo?.id : artifactId}
+      onSelectItem={choose} onSelectArtifact={chooseChild} onAllFiles={() => choose("")} />
+  </WorkspaceSidebar>;
+  const main = <main className="web-reader-main">
+    <WorkspaceHeader className="web-document-header">
+      <Button variant="ghost" size="icon" aria-label="ライブラリ" onClick={() => setCollapsed(value => !value)}><PanelLeft /></Button>
+      <div className="document-title"><h1>{item?.title ?? "ライブラリ全体のファイル"}</h1>
+        <small>{item?.kind === "notebook" ? "ノート" : "PDF"} · {item?.collectionName || "未分類"}</small></div>{actions}
+    </WorkspaceHeader>
+    <Tabs value={tab} onValueChange={value => setTab(String(value))} className="flex-1 flex flex-col min-h-0 gap-0">
+      <WorkspaceTabList>
+        <TabsTrigger value="reader">{item?.kind === "notebook" ? "ノート" : "本文"}</TabsTrigger>
+        {summary && <TabsTrigger value="summary">サマリー</TabsTrigger>}
+        {item && runtime.capabilities["chat.read"] && <TabsTrigger value="chat">チャット</TabsTrigger>}
+        {memos.length > 0 && <TabsTrigger value="notes">メモ</TabsTrigger>}
+        {item && runtime.capabilities["notes.read"] && <TabsTrigger value="sticky-notes">付箋</TabsTrigger>}
+      </WorkspaceTabList>
+      <div className="document-controls"><label>資料 <select aria-label="表示する資料" value={artifact?.id ?? ""}
+        onChange={e => { setArtifactId(e.target.value); setTab("reader"); }}>
+        {artifacts.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}
+      </select></label></div>
+      <div className="relative flex flex-1 min-h-0 flex-col">
         <TabsContent value="reader" keepMounted hidden={false} inert={tab !== "reader"}
-          className={`document-body ${tab === "reader" ? "" : "hidden"}`}>
-          {artifact ? <AssetView key={artifact.id} artifact={artifact} runtime={runtime} annotations={annotations} />
-            : <p className="empty">まだファイルがありません。Windows版でアップロードしてください。</p>}
+          className={`web-reader-tab ${tab === "reader" ? "" : "invisible absolute inset-0"}`}>
+          <ReaderDock open={!!chosen} panelId={chosen ?? undefined} label={chosen ? `${PANEL_LABELS[chosen]}（右パネル）` : undefined}
+            width={sidePanelWidth} onWidthChange={setSidePanelWidth} stacked={stacked}
+            panel={chosen && tab === "reader" ? pane(chosen, true) : undefined}>
+            {artifact ? <AssetView key={artifact.id} artifact={artifact} runtime={runtime} annotations={annotations} controls={chooser} />
+              : <p className="empty">まだファイルがありません。Windows版でアップロードしてください。</p>}
+          </ReaderDock>
         </TabsContent>
-        {item && ["chat", "sticky-notes"].map(value => <TabsContent key={value} value={value} className="document-body data-hidden:hidden">
-          {tab === value && <SavedReading key={`${item.id}:${value}`} runtime={runtime} itemId={item.id} tab={value} />}
-        </TabsContent>)}
-        {summary && <TabsContent value="summary" className="document-body data-hidden:hidden">
-          {tab === "summary" && <AssetView key={summary.id} runtime={runtime} artifact={summary} />}
+        {(["summary", "chat", "notes"] as const).filter(kind => available.includes(kind)).map(kind =>
+          <TabsContent key={kind} value={kind} className="web-content-tab data-hidden:hidden">{tab === kind && pane(kind)}</TabsContent>)}
+        {item && <TabsContent value="sticky-notes" className="web-content-tab data-hidden:hidden">
+          {tab === "sticky-notes" && <ReadOnlyPane title="付箋・ハイライト"><SavedReading key={`${item.id}:sticky-notes`} runtime={runtime} itemId={item.id} tab="sticky-notes" /></ReadOnlyPane>}
         </TabsContent>}
-        {memo && <TabsContent value="notes" className="document-body data-hidden:hidden">
-          {tab === "notes" && <><label className="memo-picker">メモ <select aria-label="表示するメモ" value={memo.id} onChange={e => setMemoId(e.target.value)}>
-            {memos.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}
-          </select></label><AssetView key={memo.id} runtime={runtime} artifact={memo} /></>}
-        </TabsContent>}
-      </Tabs>
-    </main>
+      </div>
+    </Tabs>
+  </main>;
+  return <div className="workspace">
+    {narrow && !collapsed && <><button className="sidebar-backdrop" aria-label="ライブラリを閉じる" onClick={() => setCollapsed(true)} />
+      <aside className="web-sidebar web-sidebar-overlay" aria-label="ライブラリ一覧">{sidebar}</aside></>}
+    {collapsed && <WorkspaceRail onExpand={() => setCollapsed(false)}>
+      <button data-slot="all-files" aria-label="ライブラリ全体のファイル" className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" onClick={() => choose("")}><Folder className="size-4 text-muted-foreground" /></button>
+    </WorkspaceRail>}
+    <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0 min-w-0">
+      {!narrow && !collapsed && <><WorkspaceLibraryPanel width={sidebarWidth} onWidthChange={setSidebarWidth}>
+        <aside className="h-full min-h-0" aria-label="ライブラリ一覧">{sidebar}</aside>
+      </WorkspaceLibraryPanel><ResizableHandle className="w-1 bg-border hover:bg-primary/60 cursor-col-resize" /></>}
+      <ResizablePanel id="main" minSize={narrow ? "240px" : chosen ? "644px" : "480px"} className="flex flex-col min-w-0 min-h-0">{main}</ResizablePanel>
+    </ResizablePanelGroup>
+  </div>;
+}
+
+function ReadOnlyPane({ title, children, onClose, onPin }: { title: string; children: ReactNode; onClose?: () => void; onPin?: () => void }) {
+  return <div className="web-saved-pane">
+    <div className="min-h-12 flex items-center justify-between gap-2 px-4 py-2 border-b shrink-0 bg-background/50">
+      <h2 className="text-[0.875rem] font-semibold">{title}</h2>
+      {onClose ? <Button variant="ghost" size="icon-sm" aria-label="右パネルを閉じる" onClick={onClose}><X className="size-4" /></Button>
+        : onPin && <Button variant="ghost" size="icon-sm" aria-label={`${title}を右に表示`} onClick={onPin}><Pin className="size-4" /></Button>}
+    </div>
+    <div className="web-saved-pane-body">{children}</div>
   </div>;
 }
 
@@ -116,14 +153,14 @@ function SavedReading({ runtime, itemId, tab }: { runtime: DriveLibraryRuntime; 
   }, [runtime, itemId]);
   if (error) return <p role="alert" className="error">{error}</p>;
   if (!reading) return <p className="empty">読書データを読み込んでいます…</p>;
-  return <article className="prose reading-data">{tab === "chat" ? <>
-    <h2>チャット <small>{reading.messages.length}</small></h2>
+  return <article className="reading-data">{tab === "chat" ? <>
+
     {!reading.messages.length && <p>保存されたチャットはありません。</p>}
-    {reading.messages.map(message => <section key={message.id}><strong>{message.role === "user" ? "あなた" : "回答"}</strong>
+    {reading.messages.map(message => <section key={message.id}><div className="text-[0.75rem] font-medium text-muted-foreground mb-1">{message.role === "user" ? "あなた" : "回答"}</div><div className={message.role === "user" ? "rounded-lg bg-muted/60 border px-4 py-2.5 text-[0.875rem]" : "prose"}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null,
         a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer">{children}</a>,
-      }}>{message.content}</ReactMarkdown></section>)}
-  </> : <><h2>付箋・ハイライト <small>{reading.notes.length}</small></h2>
+      }}>{message.content}</ReactMarkdown></div></section>)}
+  </> : <><p className="text-xs text-muted-foreground mb-3">{reading.notes.length}件</p>
     {!reading.notes.length && <p>付箋はありません。</p>}
     {reading.notes.map(note => <section key={note.id}><strong>p.{note.page ?? "—"} · {note.side === "translated" ? "日本語訳" : "原文・ノート"}　{note.label}</strong>
       {note.quote && <blockquote>{note.quote}</blockquote>}<p>{note.note}</p></section>)}
@@ -149,9 +186,9 @@ function useAsset(runtime: DriveLibraryRuntime, artifact: ArtifactView) {
   return { data, error };
 }
 
-function AssetView({ artifact, runtime, annotations }: { artifact: ArtifactView; runtime: DriveLibraryRuntime; annotations?: AnnotationStore }) {
-  if (/\.pdf$/i.test(artifact.filename)) return <DocumentReader artifact={artifact} runtime={runtime} store={annotations} />;
-  return <AssetContent artifact={artifact} runtime={runtime} />;
+function AssetView({ artifact, runtime, annotations, controls }: { artifact: ArtifactView; runtime: DriveLibraryRuntime; annotations?: AnnotationStore; controls?: ReactNode }) {
+  if (/\.pdf$/i.test(artifact.filename)) return <DocumentReader artifact={artifact} runtime={runtime} store={annotations} controls={controls} />;
+  return <div className="web-asset-reader"><div className="web-reader-tools">{controls}</div><div className="web-saved-pane-body"><AssetContent artifact={artifact} runtime={runtime} /></div></div>;
 }
 
 function AssetContent({ artifact, runtime }: { artifact: ArtifactView; runtime: DriveLibraryRuntime }) {

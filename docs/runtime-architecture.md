@@ -10,7 +10,7 @@
 flowchart TB
     Desktop[Desktop host: 起動・終了・PC操作]
     Web[Web host: Googleログイン・snapshot選択]
-    UI[共通React部品: 枠・タブ・ページ操作・PDF表示・対訳配置・線の描画]
+    UI[共通React部品: 枠・階層行・左右パネル・タブ・PDF表示・線の描画]
     Model[表示DTO・閲覧capabilities]
     Query[ReadonlyLibraryQuery / ArtifactStore]
     Drive[Drive API: snapshot・blob・追記]
@@ -32,7 +32,9 @@ flowchart TB
 
 | 部品・契約 | 利用箇所・責務 |
 | --- | --- |
-| `components/WorkspaceChrome.tsx` | PC/Web共通の画面枠、サイドバー枠、ヘッダー、タブ枠 |
+| `components/WorkspaceChrome.tsx` | PC/Web共通の画面枠、幅変更可能な左パネル、折りたたみrail、ヘッダー、タブ枠 |
+| `features/library/LibraryRows.tsx` | 同じフォルダー・論文・持ち物の行。DesktopはDND/編集をhostに保持、Webは階層閲覧・検索・選択だけを供給 |
+| `features/reader/ReaderDock.tsx` / `SidePanelChooser.tsx` | PDF横のサマリー/チャット/メモの選択、左右配置、幅変更。両hostの実行経路で同じ部品を使用 |
 | `index.css` | PC/Web共通のフォント、色、明暗テーマ、基本タイポグラフィ |
 | `features/reader/PageNavigatorView.tsx` | 同じページ入力・前後移動部品。commandとショートカットの案内はhostが指定 |
 | `features/reader/PdfDocument.tsx` | legacy pdf.js worker、CMap、フォント、読み込み失敗の扱いを統一。認証headerはPC hostだけが渡す |
@@ -40,6 +42,8 @@ flowchart TB
 | `features/reader/InkDrawing.tsx` / `inkGeometry.ts` | 手書きの描画・座標・当たり判定。保存と編集可能範囲はhost別 |
 | `runtime/libraryItems.ts` | 項目の表示名・種類・親・フォルダーを同じDTOへ変換。PC一覧の表示名とWebの一覧が利用 |
 | `runtime/contracts.ts` | 通信hook、Tauri、DriveのIDやローカルパスに依存しない閲覧契約 |
+
+Webの左一覧はフォルダー階層・開閉・持ち物・専用ノートを表示し、メタデータとメモ名を検索する。行はタイトルを優先し、著者/年を含む完全な表示名はtooltipに保持する。右パネルは本文と同時表示し、閉じ開き後も幅を保持する。別タブに移っている間は本文の寸法・倍率を保持し、同じメモを二重mountしない。狭いWeb画面だけはdockを上下配置にする。
 
 PCの整理・翻訳・付箋編集等と、Webで提供する操作には違いがある。サイドバーの整理操作やPDFの全編集機能まで同じものとして公開しない。共有する見た目・表示部品と、hostの利用可能な操作を分ける。
 

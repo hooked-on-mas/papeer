@@ -8,7 +8,7 @@ import { paperData } from "./support/paperData.ts";
 test("desktop and snapshot rows produce the same transport-free presentation model", () => {
   const row = paperData({ id: "paper", title: "論文", first_author: " Smith ", publication_year: "2024", collection_name: "調査" });
   assert.deepEqual(toLibraryItem(row), {
-    id: "paper", title: "Smith (2024) 論文", kind: "pdf", parentId: null, collectionName: "調査",
+    id: "paper", title: "Smith (2024) 論文", displayTitle: "論文", kind: "pdf", parentId: null, collectionName: "調査",
   });
   assert.deepEqual(toLibraryItem(row), toLibraryItem(JSON.parse(JSON.stringify(row))));
   assert.equal(toLibraryItem({ id: "old", original_name: "scan.pdf" }).kind, "pdf");

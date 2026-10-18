@@ -28,6 +28,7 @@ export function toLibraryItem(row: LibraryItemSource): LibraryItemView {
   return Object.freeze({
     id: row.id,
     title: libraryItemTitle(row),
+    displayTitle: text(row.title) || libraryItemTitle(row),
     kind: row.kind == null || row.kind === "pdf" ? "pdf" : row.kind === "notebook" ? "notebook" : "unknown",
     parentId: text(row.parent_id) || null,
     collectionName: text(row.collection_name),

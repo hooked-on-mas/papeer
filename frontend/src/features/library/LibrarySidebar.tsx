@@ -25,7 +25,7 @@ import {
   type KeyboardCodes, type KeyboardCoordinateGetter, type UniqueIdentifier,
 } from "@dnd-kit/core";
 import {
-  ArrowUpDown, BookOpen, ChevronDown, ChevronRight, CircleAlert, Copy, Download, Edit2, ExternalLink, FilePlus2, FileText, Folder,
+  ArrowUpDown, BookOpen, CircleAlert, Copy, Download, Edit2, ExternalLink, FilePlus2, FileText, Folder,
   FolderOpen, FolderPlus, Link2, Loader2, NotebookPen, Plus, Save, Search, Sparkles, Tag, Trash2, Undo2, X,
 } from "lucide-react";
 import { paperDisplayName, useCollections, usePaperList, type PaperData } from "@/api/hooks";
@@ -78,6 +78,7 @@ import { QK } from "@/lib/queryKeys";
 import { SORT_LABELS } from "@/lib/librarySort";
 import { withShortcutLabels } from "@/lib/platform";
 import { isImeKey } from "@/lib/imeKeys";
+import { LibraryChildRowView, LibraryFolderRowView, LibraryPaperRowView } from "./LibraryRows";
 
 // Keep the title visible in narrow rows; author and file name remain in the full tooltip.
 const libraryPaperTitle = (paper: PaperData) => paper.title || paperDisplayName(paper);
@@ -105,9 +106,6 @@ export const useMenuRow = create<{ key: string | null }>(() => ({ key: null }));
 /** Keeps `useMenuRow` on the row whose menu is open; another row's menu may open before this one closes. */
 const menuOpenChange = (key: string) => (open: boolean) =>
   useMenuRow.setState((s) => (open ? { key } : s.key === key ? { key: null } : s));
-
-/** The keyboard focus of the rows: a ring when focused from the keyboard, in the theme's ring color. */
-const FOCUS_RING = "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring focus-visible:rounded-sm";
 
 // Choosing a folder or opening a paper (a click, Enter; see openPaper) ends selecting several papers: the
 // tree has its one selected row again, and a Shift range starts from the row chosen.
@@ -996,13 +994,11 @@ function MemoChildRow({ line }: { line: ChildLine }) {
   const ref = useRef<HTMLDivElement>(null);
   const tabStop = useTreeFocus(s => s.tabStop === line.key);
   useFocusRequest(ref, useTreeFocus(s => s.pending?.key === line.key));
-  const row = <div ref={ref} role="treeitem" data-tree-key={line.key} aria-level={line.level}
+  const row = <LibraryChildRowView ref={ref} role="treeitem" data-tree-key={line.key} aria-level={line.level}
     aria-setsize={line.setSize} aria-posinset={line.posInSet} aria-selected={false} tabIndex={tabStop ? 0 : -1}
     onFocus={e => { if (e.target === e.currentTarget) updateTreeFocus({ focused: line.key }); }} onClick={() => activateChild(line)}
-    className={`flex cursor-pointer items-center gap-1.5 py-1 pr-2 text-[0.75rem] leading-5 text-muted-foreground hover:bg-muted/60 ${FOCUS_RING}`}
-    style={{ paddingLeft: `${(line.level - 1) * 16 + 8}px` }} title={line.child.title}>
-    {line.kind === "link" ? <span aria-hidden="true">↗</span> : line.kind === "owned" ? <NotebookPen className="size-3 shrink-0" /> : line.kind === "attachment" && line.child.format === "html" ? <span aria-hidden="true">🌐</span> : line.kind !== "more" && <FileText className="size-3 shrink-0" />}<span className="truncate">{line.child.title}</span>
-  </div>;
+    level={line.level} title={line.child.title} label={line.child.title}
+    kind={line.kind === "attachment" && line.child.format === "html" ? "html" : line.kind} />;
   if (line.kind !== "link") return row;
   return <ContextMenu onOpenChange={menuOpenChange(line.key)}><ContextMenuTrigger role="none">{row}</ContextMenuTrigger>
     <ContextMenuContent>
@@ -1036,7 +1032,7 @@ function FolderRowView({ node, level, setSize, posInSet, papers, filtered, setEx
   return (
     <ContextMenu onOpenChange={menuOpenChange(key)}>
       <ContextMenuTrigger role="none">
-        <div
+        <LibraryFolderRowView
           ref={ref}
           role="treeitem"
           aria-level={level}
@@ -1047,10 +1043,9 @@ function FolderRowView({ node, level, setSize, posInSet, papers, filtered, setEx
           aria-label={`${node.name}（${node.count}件）`}
           data-tree-key={key}
           data-drop-collection={node.path}
-          className={`flex items-center h-[1.875rem] cursor-pointer group border-l-2 ${FOCUS_RING} ${
-            selected ? "bg-accent" : "hover:bg-muted/60"} ${chosen ? "border-primary" : "border-transparent"
-          } ${highlighted ? "outline-2 outline-primary -outline-offset-2 rounded-sm" : ""}`}
-          style={{ paddingLeft: `${(level - 1) * 16 + 6}px`, paddingRight: "8px" }}
+          level={level} selected={selected} chosen={chosen} expanded={expanded} name={node.name} count={node.count}
+          onToggle={() => setExpanded(node.path, !expanded)}
+          className={highlighted ? "outline-2 outline-primary -outline-offset-2 rounded-sm" : ""}
           tabIndex={tabStop ? 0 : -1}
           onFocus={(e) => { if (e.target === e.currentTarget) updateTreeFocus({ focused: key }); }}
           onClick={(e) => {
@@ -1062,21 +1057,7 @@ function FolderRowView({ node, level, setSize, posInSet, papers, filtered, setEx
           onKeyDown={(e) => { if (node.path && isDeleteKey(e)) { e.preventDefault(); deleteFolderRow(node.path, papers); } }}
           // The full path of a subfolder; not the name again, which the label already says.
           title={node.path === node.name ? undefined : node.path || "フォルダー未指定のPDF"}
-        >
-          {/* Out of the Tab order: ←→ open and close the folder from the row. */}
-          <button
-            tabIndex={-1}
-            className="w-4 h-4 flex items-center justify-center mr-1 text-muted-foreground shrink-0"
-            onClick={(e) => { e.stopPropagation(); setExpanded(node.path, !expanded); }}
-            aria-label={expanded ? "閉じる" : "開く"}
-          >
-            {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-          </button>
-          {expanded ? <FolderOpen className="mr-2 h-4 w-4 text-muted-foreground shrink-0" />
-            : <Folder className="mr-2 h-4 w-4 text-muted-foreground shrink-0" />}
-          <span className="flex-1 truncate">{node.name}</span>
-          <span className="text-[0.75rem] text-muted-foreground tabular-nums ml-2">{node.count}</span>
-        </div>
+        />
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem onClick={() => newNotebook({ collection: node.path })}>
@@ -1194,7 +1175,7 @@ const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, se
   return (
     <ContextMenu onOpenChange={menuOpenChange(key)}>
       <ContextMenuTrigger role="none">
-        <div
+        <LibraryPaperRowView
           ref={ref}
           id={`paper-row-${paper.id}`}
           {...listeners}
@@ -1231,21 +1212,11 @@ const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, se
             // Space alone picks it up; Ctrl+Space and the like are left for selecting.
             if (!e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) listeners?.onKeyDown?.(e);
           }}
-          className={`flex items-start py-1 cursor-pointer border-l-2 ${FOCUS_RING} ${linkOver ? "outline-2 outline-primary -outline-offset-2 rounded-sm cursor-alias" : ""} ${
-            selected ? "bg-accent" : "hover:bg-muted/60"} ${isActive ? "border-primary" : "border-transparent"
-          } ${isDragging || draggedAlong ? "opacity-40" : ""}`}
-          style={{ paddingLeft: `${(level - 1) * 16 + 8}px`, paddingRight: "8px" }}
+          level={level} selected={selected} active={isActive} expanded={expanded} expandable={expandable}
+          notebook={itemCapabilities(paper).notebook} label={libraryPaperTitle(paper)} onToggle={() => expandMemoOwner(paper.id, !expanded)}
+          className={`${linkOver ? "outline-2 outline-primary -outline-offset-2 rounded-sm cursor-alias" : ""} ${isDragging || draggedAlong ? "opacity-40" : ""}`}
           title={`${paperDisplayName(paper)}\nファイル名：${paper.original_name ?? ""}`}
-        >
-          {expandable && <button tabIndex={-1} aria-label={expanded ? "持ち物を閉じる" : "持ち物を開く"} aria-expanded={expanded}
-            className="mt-0.5 shrink-0 rounded hover:bg-muted" onPointerDown={e => e.stopPropagation()}
-            onClick={e => { e.stopPropagation(); expandMemoOwner(paper.id, !expanded); }}>
-            {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
-          </button>}
-          {itemCapabilities(paper).notebook ? <NotebookPen className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" /> : <FileText className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" />}
-          <div className="flex-1 min-w-0">
-            <div className="truncate leading-5">{libraryPaperTitle(paper)}</div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.75rem] leading-4 text-muted-foreground tabular-nums">
+          detail={<>
               {/* An item that is not translated (a notebook) has no translation status: its pages instead. */}
               {translation.applicable ? <>
                 <PaperStatusBadge status={translation.status} text={translation.text} description={translation.description}
@@ -1263,14 +1234,14 @@ const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, se
                 <span>{paper.read_status || "未設定"}</span>
               </>}
               {running && !translating && <span className="text-primary">· AI処理中</span>}
-            </div>
-            {!!paper.tags?.length && <div className="mt-1 flex flex-wrap items-center gap-1 [&>span]:leading-4">
+          </>}
+          tags={!!paper.tags?.length && <div className="mt-1 flex flex-wrap items-center gap-1 [&>span]:leading-4">
               {(allTags ? paper.tags : paper.tags.slice(0, 2)).map(name => <TagChip key={name} name={name} tabIndex={-1} onClick={() => onTagSelect(name)} />)}
               {paper.tags.length > 2 && <button tabIndex={-1} className="rounded px-1 text-[0.75rem] text-muted-foreground hover:bg-muted" title={paper.tags.join("、")}
                 onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setAllTags(!allTags); }}>
                 {allTags ? "閉じる" : `+${paper.tags.length - 2}`}</button>}
             </div>}
-          </div>
+          trailing={<>
           {memoCount > 0 && <span className="ml-1 mt-0.5 text-xs text-muted-foreground" aria-label={`持ち物 ${memoCount}件`}>{memoCount}</span>}
           {linkCount > 0 && <span className="ml-1 mt-0.5 text-xs text-muted-foreground" aria-label={`紐づけ ${linkCount}件`}>↗{linkCount}</span>}
           {running && !translating && <Loader2 className="w-3.5 h-3.5 ml-1 mt-0.5 animate-spin text-primary shrink-0" />}
@@ -1279,7 +1250,8 @@ const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, se
             onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
             onClick={e => { e.stopPropagation(); showJobFailure(paper.id); }}>
             <CircleAlert className="w-3.5 h-3.5" aria-hidden="true" /></button>}
-        </div>
+          </>}
+        />
       </ContextMenuTrigger>
       <ContextMenuContent className="w-56">
         <PaperMenu paper={paper} collection={collection} collections={collections} />

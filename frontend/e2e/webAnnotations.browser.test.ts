@@ -37,13 +37,14 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   const originalPdf = Buffer.from(blobs.get(manifest!.files[`papers/${paper}/translated.pdf`].id)!);
   const operations = new Map<string, Operation>();
   let failSave = false;
-  const server = await createServer({ configFile: path.join(frontend, "vite.web.config.ts"), logLevel: "error",
+  const server = await createServer({ cacheDir: path.join(directory, "vite-cache"), configFile: path.join(frontend, "vite.web.config.ts"), logLevel: "error",
     server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false } });
   await server.listen(); t.after(() => server.close());
   const webUrl = process.env.PAPEER_WEB_TEST_URL || server.resolvedUrls!.local[0];
   const browser = await chromium.launch({ channel: "msedge", headless: true }); t.after(() => browser.close());
   const context = await browser.newContext({ viewport: { width: 1440, height: 1200 }, hasTouch: true });
   const errors: string[] = [], forbidden: string[] = [];
+  t.after(() => { if (errors.length) console.error("Web page errors:", errors); });
   context.on("page", page => {
     page.on("pageerror", e => errors.push(e.message));
     page.on("request", req => { if (/127\.0\.0\.1:8000|api\.openai\.com|chatgpt\.com/.test(req.url())) forbidden.push(req.url()); });

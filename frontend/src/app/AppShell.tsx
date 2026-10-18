@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { FilePlus2, NotebookPen, Settings2 } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
-import { WorkspaceRoot, WorkspaceSidebar, WorkspaceTabList } from "@/components/WorkspaceChrome";
+import { WorkspaceRoot, WorkspaceSidebar, WorkspaceLibraryPanel, WorkspaceRail, WorkspaceTabList } from "@/components/WorkspaceChrome";
 import { Tabs, TabsContent, TabsTrigger } from "@/components/ui/tabs";
 import { api, unwrap } from "@/api/client";
 import { showToast } from "@/components/toast";
@@ -414,14 +414,7 @@ export function AppShell() {
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
         {!focusMode && !sidebarCollapsed && (
           <>
-            <ResizablePanel
-              id="sidebar"
-              defaultSize={`${sidebarWidth}px`}
-              minSize="200px"
-              maxSize="80%"
-              onResize={(size) => useStore.getState().setSidebarWidth(Math.round(size.inPixels))}
-              className="bg-sidebar flex flex-col border-r"
-            >
+            <WorkspaceLibraryPanel width={sidebarWidth} onWidthChange={width => useStore.getState().setSidebarWidth(width)}>
               <WorkspaceSidebar onCollapse={() => useStore.getState().setSidebarCollapsed(true)}
                 collapseTitle={withShortcutLabels("左パネルを閉じる（Ctrl+B）")} footer={<button
                   className="h-10 border-t flex items-center gap-2 px-4 shrink-0 text-[0.8125rem] hover:bg-muted/50 transition-colors text-left"
@@ -430,19 +423,13 @@ export function AppShell() {
                 </button>}>
                 <LibrarySidebar />
               </WorkspaceSidebar>
-            </ResizablePanel>
+            </WorkspaceLibraryPanel>
             <ResizableHandle className="w-1 bg-border hover:bg-primary/60 transition-colors cursor-col-resize" />
           </>
         )}
 
         {!focusMode && sidebarCollapsed && (
-          <div className="w-12 bg-sidebar border-r flex flex-col items-center py-2 gap-1 shrink-0">
-            <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title={withShortcutLabels("ライブラリを表示（Ctrl+B）")}
-              onClick={() => useStore.getState().setSidebarCollapsed(false)}>
-              <span className="flex size-8 shrink-0 items-center justify-center">
-                <img src="/papeer.png" alt="Papeer" className="size-8 object-contain" />
-              </span>
-            </button>
+          <WorkspaceRail title={withShortcutLabels("ライブラリを表示（Ctrl+B）")} onExpand={() => useStore.getState().setSidebarCollapsed(false)}>
             <button className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" title={withShortcutLabels("PDFを追加（Ctrl+O）")} onClick={importPdfs}>
               <FilePlus2 className="w-4 h-4 text-muted-foreground" />
             </button>
@@ -451,7 +438,7 @@ export function AppShell() {
               onClick={() => setIsSettingsOpen(true)}>
               <Settings2 className="w-4 h-4 text-muted-foreground" />
             </button>
-          </div>
+          </WorkspaceRail>
         )}
 
         {/* Room for the reader and the side panel within it (320px each) when the panel is open. */}

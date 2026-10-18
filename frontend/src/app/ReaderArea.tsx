@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { ReaderDock } from "@/features/reader/ReaderDock";
 import { TabsContent } from "@/components/ui/tabs";
 import { useStore } from "@/store";
 import { useItemCapabilities, usePaper } from "@/api/hooks";
@@ -42,44 +41,21 @@ export function ReaderArea() {
   const open = useSidePanelOpen();
   const sidePanel = useChosenSidePanel();
   const panel = useStore((s) => shownSidePanel({ activeTab: s.activeTab, sidePanel, hasPaper: !!s.activePaperId }));
-  // The panel opens at the width it was last left at. Changing defaultSize while it is open would
-  // re-register it and interrupt a resize, so the width is read only when it opens.
-  const [openWidth, setOpenWidth] = useState<number | null>(null);
-  if (open && openWidth === null) setOpenWidth(useStore.getState().sidePanelWidth);
-  if (!open && openWidth !== null) setOpenWidth(null);
 
   return (
-    <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
-      {/* First and always there, so that opening the panel keeps the loaded PDFs. */}
-      <ResizablePanel id="reader" minSize="320px" className="flex flex-col min-w-0">
+    <ReaderDock open={open && !!sidePanel} width={useStore.getState().sidePanelWidth}
+      onWidthChange={width => useStore.getState().setSidePanelWidth(width)} panelId={panel ?? undefined}
+      label={panel ? `${SIDE_PANEL_LABELS[panel]}（右パネル）` : undefined}
+      panel={panel ? <>
+        {panel === "summary" && <SummaryPane />}
+        {panel === "chat" && <ChatPane />}
+        {panel === "notes" && <NotesPane compact />}
+      </> : undefined}>
         {owner && enlarged === owner ? <DocumentsPane key={owner} owner={owner} enlarged />
           // The only place that tells a notebook's screen from a PDF's.
           : kindPending ? <div className="flex-1 min-h-0 bg-reader-bg" aria-busy="true"><span role="status" className="sr-only">読み込んでいます…</span></div>
           : owner && notebook ? <NotebookView key={owner} paperId={owner} /> : <Reader />}
-      </ResizablePanel>
-      {open && sidePanel && (
-        <>
-          <ResizableHandle className="w-1 bg-border hover:bg-primary/60 transition-colors cursor-col-resize" />
-          <ResizablePanel
-            id="side-panel"
-            defaultSize={`${openWidth ?? useStore.getState().sidePanelWidth}px`}
-            minSize="320px"
-            maxSize="80%"
-            onResize={(size) => { if (size.inPixels > 0) useStore.getState().setSidePanelWidth(Math.round(size.inPixels)); }}
-            className="flex flex-col min-w-0 bg-background"
-          >
-            {/* Empty while another tab is shown, keeping its room so that the hidden reader keeps its size. */}
-            {panel && (
-              <aside className="flex-1 flex flex-col min-h-0" aria-label={`${SIDE_PANEL_LABELS[panel]}（右パネル）`} data-side-panel={panel}>
-                {panel === "summary" && <SummaryPane />}
-                {panel === "chat" && <ChatPane />}
-                {panel === "notes" && <NotesPane compact />}
-              </aside>
-            )}
-          </ResizablePanel>
-        </>
-      )}
-    </ResizablePanelGroup>
+    </ReaderDock>
   );
 }
 

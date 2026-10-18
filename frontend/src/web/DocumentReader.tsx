@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { PageNavigatorView } from "../features/reader/PageNavigatorView";
 import { ReaderSplit } from "../features/reader/ReaderSplit";
 import type { ArtifactView, DocumentPagesView } from "../runtime/contracts";
@@ -7,8 +7,8 @@ import type { AnnotationStore } from "./annotations";
 import { PdfReader } from "./PdfReader";
 import { useMediaQuery } from "../lib/useMediaQuery";
 
-export function DocumentReader({ artifact, runtime, store }: {
-  artifact: ArtifactView; runtime: DriveLibraryRuntime; store?: AnnotationStore;
+export function DocumentReader({ artifact, runtime, store, controls }: {
+  artifact: ArtifactView; runtime: DriveLibraryRuntime; store?: AnnotationStore; controls?: ReactNode;
 }) {
   const [mapping, setMapping] = useState<DocumentPagesView | null>(null);
   const [mappingError, setMappingError] = useState("");
@@ -43,6 +43,7 @@ export function DocumentReader({ artifact, runtime, store }: {
       {canSplit && <label>表示 <select aria-label="本文の表示方法" value={split ? "split" : "single"} onChange={e => { setMode(e.target.value as "split" | "single"); setPage(1); }}>
         <option value="single">資料を1つ表示</option><option value="split">原文と日本語訳</option>
       </select></label>}
+      {controls}
     </div>
     {mappingError && <p role="alert" className="error">対訳のページ情報を読み込めませんでした。資料を1つずつ表示します。{mappingError}</p>}
     <ReaderSplit fraction={fraction} onResize={setFraction} original={

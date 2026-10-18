@@ -2,6 +2,8 @@
 export type LibraryItemView = Readonly<{
   id: string;
   title: string;
+  /** Title first in the compact library tree; title retains the full author/year tooltip. */
+  displayTitle: string;
   kind: "pdf" | "notebook" | "unknown";
   parentId: string | null;
   collectionName: string;
