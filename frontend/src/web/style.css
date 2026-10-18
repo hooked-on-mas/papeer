@@ -7,6 +7,9 @@
 .pwa-install > summary { padding: 4px 12px; cursor: pointer; color: var(--muted-foreground); }
 .pwa-install-help { position: absolute; z-index: 40; bottom: 100%; right: 8px; width: min(380px, calc(100vw - 16px)); max-height: 60dvh; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--background); box-shadow: 0 4px 20px #0002; }
 .pwa-install-help p { margin: 8px 0; line-height: 1.7; }
+.pwa-notices > summary { padding: 5px 8px; cursor: pointer; }
+.pwa-notices > div { position: absolute; z-index: 40; bottom: 100%; left: 8px; right: 8px; max-height: 60dvh; overflow: auto; padding: 12px; background: var(--background); border: 1px solid var(--border); border-radius: 6px; }
+.pwa-notices p { padding-block: 4px; line-height: 1.7; }
 
 /* The desktop owns the tokens and typography; only Web layout and content live here. */
 @layer base {
@@ -163,6 +166,20 @@
   .web-sidebar-overlay [data-slot="library-expand"] { min-width: 44px; min-height: 44px; }
   .site-footer { padding: 3px 8px; }
   .pwa-install > summary { padding: 6px 8px; }
+  /* Reading starts with one bar, including Japanese/original switching. */
+  .phone-reading .web-document-header,
+  .phone-reading .web-reader-main > [data-slot="tabs"] > :has(> [role="tablist"]),
+  .phone-reading .web-pdf-pane > .asset-heading,
+  .web-app:has(.phone-reading) > .site-footer,
+  .web-app:has(.phone-reading) .pwa-install { display: none; }
+  .phone-reading .web-reader-tools { gap: 2px; padding: 2px; }
+  .phone-reading .web-page-navigation > input { width: 32px; }
+  .phone-reading .web-reader-tools .web-language-switch { width: 72px; height: 44px; padding: 0; font-size: .75rem; font-weight: 600; display: flex; gap: 3px; align-items: center; justify-content: center; }
+  .web-language-switch svg { width: 12px; height: 12px; }
+  .web-language-label { font-size: .75rem; white-space: nowrap; }
+  .web-display-options > div { max-height: calc(100dvh - 60px); overflow: auto; overscroll-behavior: contain; }
+  .web-display-options > div > button, .web-display-options > div > a { min-height: 44px; display: flex; align-items: center; justify-content: flex-start; padding: 6px 8px; }
+  .web-reading-title { font-size: .8125rem; overflow-wrap: anywhere; padding-block: 8px; border-top: 1px solid var(--border); }
 }
 @media (max-width: 950px) and (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
   .web-app:not(.reader-focus) .site-footer, .web-app .pwa-install { display: none; }

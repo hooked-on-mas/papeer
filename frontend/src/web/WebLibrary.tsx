@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
-import { Folder, Maximize2, Minimize2, PanelLeft, Pin, X } from "lucide-react";
+import { ArrowLeftRight, Folder, Maximize2, Minimize2, PanelLeft, Pin, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { WorkspaceHeader, WorkspaceSidebar, WorkspaceLibraryPanel, WorkspaceRail, WorkspaceTabList } from "../components/WorkspaceChrome";
@@ -13,20 +13,22 @@ import type { ArtifactView, SavedReadingView } from "../runtime/contracts";
 import type { DriveLibraryRuntime } from "./libraryRuntime";
 import type { DriveSession, Manifest } from "./drive";
 import { AnnotationStore } from "./annotations";
-import { DocumentReader } from "./DocumentReader";
+import { DocumentReader, type PhoneReaderControls } from "./DocumentReader";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { WebLibrarySidebar } from "./WebLibrarySidebar";
 import { prepareWebNavigation } from "./textDrafts";
 import { artifactPlaceKey, getLibraryPlace, saveLibraryPlace } from "./readingPlace";
 import { PHONE_LAYOUT_QUERY } from "./phoneLayout";
+import { preferredReadingArtifact } from "./readingArtifact";
 
 const PANEL_LABELS = { summary: "サマリー", chat: "チャット", notes: "メモ" } as const;
 
 /** Web host supplies saved data to the same sidebar rows and reader dock as desktop. */
-export function WebLibrary({ runtime, session, manifest, actions, focusMode, onFocusModeChange, transitioning }: {
+export function WebLibrary({ runtime, session, manifest, actions, focusMode, onFocusModeChange, transitioning, libraryPicker }: {
   runtime: DriveLibraryRuntime; session: DriveSession; manifest: Manifest; actions: ReactNode;
   focusMode: boolean; onFocusModeChange: (focus: boolean) => void;
   transitioning: boolean;
+  libraryPicker?: ReactNode;
 }) {
   useEffect(() => {
     if (!focusMode) return;
@@ -62,7 +64,11 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   useEffect(() => { if (narrow) setCollapsed(true); }, [narrow]);
   const item = items.find(row => row.id === selected);
   const artifacts = runtime.query.listArtifacts(item?.id ?? null);
-  const artifact = artifacts.find(row => row.id === artifactId) ?? artifacts[0];
+  const artifact = artifacts.find(row => row.id === artifactId) ?? (phone ? preferredReadingArtifact(artifacts) : artifacts[0]);
+  const originalPdf = artifacts.find(row => row.role === "original" && row.annotationTarget)
+    ?? artifacts.find(row => row.role === "original" && row.filename.endsWith(".pdf"));
+  const translatedPdf = artifacts.find(row => row.role === "translated" && row.annotationTarget)
+    ?? artifacts.find(row => row.role === "translated" && row.filename.endsWith(".pdf"));
   useLayoutEffect(() => {
     if (artifact) saveLibraryPlace(runtime.scope.libraryId, { itemId: selected, artifact: artifactPlaceKey(artifact) });
   }, [runtime.scope.libraryId, selected, artifact]);
@@ -97,6 +103,24 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
       {focusMode ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
     </Button>
   </>;
+  const phoneControls: PhoneReaderControls = {
+    leading: <Button variant="ghost" size="icon" aria-label="ライブラリ" onClick={() => setCollapsed(value => !value)}><PanelLeft /></Button>,
+    language: originalPdf && translatedPdf && (artifact?.role === "original" || artifact?.role === "translated")
+      ? <button className="web-language-switch" aria-label={artifact.role === "translated" ? "原文を表示" : "日本語訳を表示"} title={artifact.role === "translated" ? "原文に切り替える" : "日本語訳に切り替える"}
+        onClick={() => { if (prepareWebNavigation()) setArtifactId(artifact.role === "translated" ? originalPdf.id : translatedPdf.id); }}>{artifact.role === "translated" ? "日本語訳" : "原文"}<ArrowLeftRight aria-hidden="true" /></button>
+      : <span className="web-language-label">{artifact?.role === "translated" ? "日本語訳" : artifact?.role === "original" ? "原文" : "添付"}</span>,
+    menu: <>
+      <p className="web-reading-title">{item?.title ?? "ライブラリ"}</p>
+      {focusMode && <button onClick={() => onFocusModeChange(false)}>集中表示を終了</button>}
+      {artifact?.role !== "original" && artifact?.role !== "translated" && <button onClick={() => choose(selected, preferredReadingArtifact(artifacts)?.id)}>本文に戻る</button>}
+      {available.map(kind => <button key={kind} onClick={() => setTab(kind)}>{PANEL_LABELS[kind]}を開く</button>)}
+      {item && runtime.capabilities["notes.read"] && <button onClick={() => setTab("sticky-notes")}>付箋を開く</button>}
+      {artifacts.filter(row => row.role === "attachment" && !/\.md$/i.test(row.filename)).map(row => <button key={row.id} onClick={() => chooseChild(selected, row.id)}>{row.label}を開く</button>)}
+      {actions}
+      {libraryPicker}
+      <small>ホーム画面に追加：Safariの共有メニューから追加できます。</small>
+    </>,
+  };
   const pane = (kind: SidePanel, beside = false) => <ReadOnlyPane title={PANEL_LABELS[kind]}
     onClose={beside ? () => setSidePanel(null) : undefined} onPin={!beside ? () => openBeside(kind) : undefined}>
     {kind === "summary" && summary ? <AssetContent key={summary.id} artifact={summary} runtime={runtime} />
@@ -123,18 +147,18 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
         {memos.length > 0 && <TabsTrigger value="notes">メモ</TabsTrigger>}
         {item && runtime.capabilities["notes.read"] && <TabsTrigger value="sticky-notes">付箋</TabsTrigger>}
       </WorkspaceTabList>
-      <div className="document-controls"><label>資料 <select aria-label="表示する資料" value={artifact?.id ?? ""}
+      {!phone && <div className="document-controls"><label>資料 <select aria-label="表示する資料" value={artifact?.id ?? ""}
         onChange={e => { if (prepareWebNavigation()) { setArtifactId(e.target.value); setTab("reader"); } }}>
         {artifacts.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}
-      </select></label></div>
+      </select></label></div>}
       <div className="relative flex flex-1 min-h-0 flex-col">
         <TabsContent value="reader" keepMounted hidden={false} inert={tab !== "reader"}
           className={`web-reader-tab ${tab === "reader" ? "" : "invisible absolute inset-0"}`}>
-          <ReaderDock open={!!chosen && !focusMode} panelId={chosen ?? undefined} label={chosen ? `${PANEL_LABELS[chosen]}（右パネル）` : undefined}
+          <ReaderDock open={!!chosen && !focusMode && !phone} panelId={chosen ?? undefined} label={chosen ? `${PANEL_LABELS[chosen]}（右パネル）` : undefined}
             width={sidePanelWidth} onWidthChange={focusMode ? undefined : setSidePanelWidth} stacked={stacked} preserveWidth
             panel={chosen && tab === "reader" ? pane(chosen, true) : undefined}>
             {artifact ? <AssetView key={/\.pdf$/i.test(artifact.filename) && artifact.annotationTarget ? `${artifact.itemId ?? artifact.id}:pdf` : artifact.id}
-              artifact={artifact} runtime={runtime} annotations={annotations} controls={readerControls} />
+              artifact={artifact} runtime={runtime} annotations={annotations} controls={readerControls} phoneControls={phoneControls} />
               : <p className="empty">まだファイルがありません。Windows版でアップロードしてください。</p>}
           </ReaderDock>
         </TabsContent>
@@ -146,7 +170,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
       </div>
     </Tabs>
   </main>;
-  return <div className="workspace" inert={transitioning} aria-busy={transitioning}>
+  return <div className={`workspace ${phone && tab === "reader" && /\.pdf$/i.test(artifact?.filename ?? "") ? "phone-reading" : ""}`} inert={transitioning} aria-busy={transitioning}>
     {narrow && !collapsed && !focusMode && <><button className="sidebar-backdrop" aria-label="ライブラリを閉じる" onClick={() => setCollapsed(true)} />
       <aside className="web-sidebar web-sidebar-overlay" aria-label="ライブラリ一覧">{sidebar}</aside></>}
     {!narrow && collapsed && !focusMode && <WorkspaceRail onExpand={() => setCollapsed(false)}>
@@ -217,8 +241,8 @@ function useAsset(runtime: DriveLibraryRuntime, artifact: ArtifactView) {
   return { data, error };
 }
 
-function AssetView({ artifact, runtime, annotations, controls }: { artifact: ArtifactView; runtime: DriveLibraryRuntime; annotations?: AnnotationStore; controls?: ReactNode }) {
-  if (/\.pdf$/i.test(artifact.filename)) return <DocumentReader artifact={artifact} runtime={runtime} store={annotations} controls={controls} />;
+function AssetView({ artifact, runtime, annotations, controls, phoneControls }: { artifact: ArtifactView; runtime: DriveLibraryRuntime; annotations?: AnnotationStore; controls?: ReactNode; phoneControls?: PhoneReaderControls }) {
+  if (/\.pdf$/i.test(artifact.filename)) return <DocumentReader artifact={artifact} runtime={runtime} store={annotations} controls={controls} phoneControls={phoneControls} />;
   return <div className="web-asset-reader"><div className="web-reader-tools">{controls}</div><div className="web-saved-pane-body"><AssetContent artifact={artifact} runtime={runtime} /></div></div>;
 }
 

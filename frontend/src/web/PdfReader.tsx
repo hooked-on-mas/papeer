@@ -19,9 +19,9 @@ const SavedInk = memo(function SavedInk({ ink, ratio }: { ink: PageInk; ratio: n
     {ink.strokes.map(stroke => <g key={stroke.id} data-ink-id={stroke.id}><InkDrawing stroke={stroke} ratio={ratio} /></g>)}</>;
 });
 
-export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 1, navigation = true }: {
+export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 1, navigation = true, editing = true }: {
   url: string; target?: AnnotationTarget; store?: AnnotationStore; pageNumber?: number;
-  onPageCount?: (count: number) => void; zoom?: number; navigation?: boolean;
+  onPageCount?: (count: number) => void; zoom?: number; navigation?: boolean; editing?: boolean;
 }) {
   const [pages, setPages] = useState(0), [localPage, setPage] = useState(1);
   const page = pageNumber ?? localPage;
@@ -62,16 +62,17 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
     {navigation && <div className="pdf-tools"><PageNavigatorView paperId={url} currentPage={page} count={pages} compact shortcuts={false}
       atStart={page <= 1} atEnd={page >= pages} onJump={setPage} onMove={delta => setPage(value => Math.max(1, Math.min(pages || 1, value + delta)))} /></div>}
     {store && anchor ? <EditablePage key={`${url}:${page}`} store={store} anchor={anchor} ratio={ratio} pageWidth={drawnWidth}
-      tool={tool} setTool={setTool} color={color} setColor={setColor} width={inkWidth} setWidth={setInkWidth} finger={finger} setFinger={setFinger}
+      tool={editing ? tool : "read"} editing={editing} setTool={setTool} color={color} setColor={setColor} width={inkWidth} setWidth={setInkWidth} finger={finger} setFinger={setFinger}
       enabled={rendered === render}>{document}</EditablePage>
-      : <><p className="ink-help">書き込みを有効にするには、最新版のPCアプリからアップロードし、原文または日本語訳を開いてください。</p>{document}</>}
+      : <>{editing && <p className="ink-help">書き込みを有効にするには、最新版のPCアプリからアップロードし、原文または日本語訳を開いてください。</p>}{document}</>}
   </div>;
 }
 
-function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool, setTool, color, setColor, width, setWidth, finger, setFinger }: {
+function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool, setTool, color, setColor, width, setWidth, finger, setFinger, editing }: {
   store: AnnotationStore; anchor: Anchor; ratio: number; enabled: boolean; pageWidth: number; children: ReactNode;
   tool: Tool; setTool: (tool: Tool) => void; color: string; setColor: (color: string) => void;
   width: number; setWidth: (width: number) => void; finger: boolean; setFinger: (finger: boolean) => void;
+  editing: boolean;
 }) {
   const phone = useMediaQuery(PHONE_LAYOUT_QUERY);
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
@@ -200,7 +201,7 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
   </>;
   const syncTool = <button title="書き込みを同期・再試行" disabled={state.saving} onClick={() => void store.retry()}><RefreshCw aria-hidden="true" /><span className={phone ? "" : "sr-only"}>書き込みを同期・再試行</span></button>;
   return <>
-    <div className="ink-tools" role="toolbar" aria-label="PDFの書き込みツール">
+    {editing && <div className="ink-tools" role="toolbar" aria-label="PDFの書き込みツール">
       {([["read", "閲覧", Hand], ["pen", "ペン", Pen], ["highlighter", "蛍光ペン", Highlighter], ["text", "文字メモ", Type], ["eraser", "消しゴム", Eraser]] as const).map(([value, label, Icon]) =>
         <button key={value} disabled={!writable} title={label} aria-pressed={tool === value}
           onClick={() => { if (!prepareWebNavigation()) return; gesture.current = undefined; touches.current.clear(); setPreview(undefined); setTool(value); }}><Icon aria-hidden="true" /><span className="sr-only">{label}</span></button>)}
@@ -217,7 +218,7 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
         <span className="sr-only">{saveStatus}</span>
       </span>
       {!phone && syncTool}
-    </div>
+    </div>}
     {state.error && <p className="error" role="alert">{state.error}</p>}
     {failedStroke && <div role="alert" className="error">この線はまだ端末に保存できていません。
       <button onClick={retryStroke}>線を再保存</button> <button onClick={() => {
@@ -225,7 +226,7 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
       }}>この線を破棄</button></div>}
     {draftError && <p className="error" role="alert">{draftError}</p>}
     {state.stale > 0 && <p className="ink-help">以前のPDF版への書き込みが{state.stale}件Driveに残っています。PDFが更新されているため、現在の版には重ねていません。</p>}
-    {text && <form className="ink-text"
+    {text && editing && <form className="ink-text"
       onPointerDownCapture={() => { placementClick.current = false; }}
       onKeyDownCapture={() => { placementClick.current = false; }}
       onClickCapture={e => {

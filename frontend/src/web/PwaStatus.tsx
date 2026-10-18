@@ -16,7 +16,7 @@ export function useConnectivity() {
   return online;
 }
 
-export function PwaStatus({ online }: { online: boolean }) {
+export function PwaStatus({ online, compact = false }: { online: boolean; compact?: boolean }) {
   const [install, setInstall] = useState<InstallPrompt>();
   const [standalone, setStandalone] = useState(() => matchMedia("(display-mode: standalone)").matches
     || !!(navigator as Navigator & { standalone?: boolean }).standalone);
@@ -81,10 +81,16 @@ export function PwaStatus({ online }: { online: boolean }) {
     };
   }, []);
 
-  return <div className="pwa-status">
+  const notices = <>
     {!online && <p role="status">オフラインです。新しい資料の取得・Googleログイン・Driveへの保存には通信が必要です。未送信の書き込みはこの端末に保持し、接続後に再送します。</p>}
     {updateReady && <p role="status">更新があります。書き込みを終え、Papeerのタブとアプリをすべて閉じて開き直すと反映されます。</p>}
     {cacheFailed && <p role="status">オフライン起動の準備を完了できませんでした。通信と端末の空き容量を確認し、次回の起動時に再試行してください。</p>}
+  </>;
+  return <div className="pwa-status">
+    {compact ? (!online || updateReady || cacheFailed) && <details className="pwa-notices">
+      <summary><span role="status">{!online ? "オフライン · 書き込みは端末に保持" : updateReady ? "更新があります" : "オフライン起動の準備が必要です"}</span></summary>
+      <div>{notices}</div>
+    </details> : notices}
     {!standalone && <details className="pwa-install">
       <summary>アプリとして使う</summary>
       <div className="pwa-install-help">

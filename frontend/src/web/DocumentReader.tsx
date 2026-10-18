@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { PageNavigatorView } from "../features/reader/PageNavigatorView";
 import { ReaderSplit } from "../features/reader/ReaderSplit";
 import type { ArtifactView, DocumentPagesView } from "../runtime/contracts";
@@ -8,11 +8,13 @@ import { PdfReader } from "./PdfReader";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { prepareWebNavigation } from "./textDrafts";
 import { documentPlaceKey, getDocumentPlace, saveDocumentPlace } from "./readingPlace";
-import { Settings2 } from "lucide-react";
+import { Ellipsis } from "lucide-react";
 import { PHONE_LAYOUT_QUERY } from "./phoneLayout";
 
-export function DocumentReader({ artifact, runtime, store, controls }: {
-  artifact: ArtifactView; runtime: DriveLibraryRuntime; store?: AnnotationStore; controls?: ReactNode;
+export type PhoneReaderControls = { leading: ReactNode; language: ReactNode; menu: ReactNode };
+
+export function DocumentReader({ artifact, runtime, store, controls, phoneControls }: {
+  artifact: ArtifactView; runtime: DriveLibraryRuntime; store?: AnnotationStore; controls?: ReactNode; phoneControls?: PhoneReaderControls;
 }) {
   const [mapping, setMapping] = useState<DocumentPagesView | null>(null);
   const [mappingError, setMappingError] = useState("");
@@ -24,6 +26,9 @@ export function DocumentReader({ artifact, runtime, store, controls }: {
   const [fraction, setFraction] = useState(.5);
   const narrow = useMediaQuery("(max-width: 900px)");
   const phone = useMediaQuery(PHONE_LAYOUT_QUERY);
+  const [editing, setEditing] = useState(false);
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  const fileUrl = useCallback((id: string, url: string) => setUrls(previous => previous[id] === url ? previous : { ...previous, [id]: url }), []);
   useEffect(() => {
     if (!artifact.itemId) return;
     const controller = new AbortController();
@@ -51,47 +56,69 @@ export function DocumentReader({ artifact, runtime, store, controls }: {
   const translated = mapping?.translatedPages[String(page)];
   const translatedFile = translated ? files.find(file => file.id === translated.artifactId) : undefined;
   const singleTranslation = !split && canSplit && artifact.annotationTarget?.side === "translated";
+  const download = singleTranslation ? translatedFile : artifact;
   const missingTranslation = <div className="empty" role="status">この原文ページの日本語訳はまだ保存されていません。</div>;
   const displaySettings = <>
       <label>倍率 <select aria-label="表示倍率" value={zoom} onChange={e => setZoom(Number(e.target.value))}>
         {[.5, .75, 1, 1.25, 1.5, 2].map(value => <option key={value} value={value}>{value === 1 ? "幅に合わせる" : `${value * 100}%`}</option>)}
       </select></label>
       {canSplit && <label>表示 <select aria-label="本文の表示方法" value={split ? "split" : "single"} onChange={e => { if (prepareWebNavigation()) setMode(e.target.value as "split" | "single"); }}>
-        <option value="single">資料を1つ表示</option><option value="split">原文と日本語訳</option>
+        <option value="single">1つずつ表示</option><option value="split">原文と日本語訳</option>
       </select></label>}
   </>;
   return <div className="web-document-reader">
     <div className="web-reader-tools" aria-label="本文の表示操作">
+      {phone && phoneControls?.leading}
       <div className="web-page-navigation">
       <PageNavigatorView paperId={artifact.id} currentPage={page} count={maxPage} atStart={page <= 1} atEnd={page >= maxPage}
         compact shortcuts={false} inputId="web-page-input" onJump={jump} onMove={delta => jump(page + delta)} />
       </div>
+      {phone && phoneControls?.language}
       {phone ? <details className="web-display-options">
-        <summary aria-label="表示設定" title="表示設定"><Settings2 aria-hidden="true" /></summary>
-        <div>{displaySettings}</div>
+        <summary aria-label="読書メニュー" title="読書メニュー"><Ellipsis aria-hidden="true" /></summary>
+        <div onClick={e => {
+          const button = (e.target as Element).closest("button");
+          if (button && !button.hasAttribute("aria-haspopup")) e.currentTarget.closest("details")!.open = false;
+        }}>
+          {store && artifact.annotationTarget && <button onClick={() => {
+            if (prepareWebNavigation()) setEditing(value => !value);
+          }}>{editing ? "書き込みを終了" : "書き込みを開始"}</button>}
+          {displaySettings}
+          {download && urls[download.id] && <a href={urls[download.id]} download={download.filename}>PDF本体を保存</a>}
+          {store && <PhoneSaveStatus store={store} />}
+          {phoneControls?.menu}
+        </div>
       </details> : displaySettings}
-      {controls}
+      {!phone && controls}
     </div>
     {mappingError && <p role="alert" className="error">対訳のページ情報を読み込めませんでした。資料を1つずつ表示します。{mappingError}</p>}
     <ReaderSplit fraction={fraction} onResize={setFraction} stacked={phone} original={
       singleTranslation ? translatedFile && translated ?
-        <PdfArtifact key={translatedFile.id} artifact={translatedFile} runtime={runtime} store={store} page={translated.page} zoom={zoom} onPageCount={loadedCount} /> : missingTranslation
+        <PdfArtifact key={translatedFile.id} artifact={translatedFile} runtime={runtime} store={store} page={translated.page} zoom={zoom} onPageCount={loadedCount} editing={!phone || editing} onFileUrl={fileUrl} /> : missingTranslation
       : <PdfArtifact key={(split ? original! : artifact).id} artifact={split ? original! : artifact} runtime={runtime} store={store}
-        page={page} zoom={zoom} onPageCount={loadedCount} />
+        page={page} zoom={zoom} onPageCount={loadedCount} editing={!phone || editing} onFileUrl={fileUrl} />
     } translated={split ? translatedFile && translated ?
-      <PdfArtifact key={translatedFile.id} artifact={translatedFile} runtime={runtime} store={store} page={translated.page} zoom={zoom} />
+      <PdfArtifact key={translatedFile.id} artifact={translatedFile} runtime={runtime} store={store} page={translated.page} zoom={zoom} editing={!phone || editing} onFileUrl={fileUrl} />
       : missingTranslation : undefined} />
   </div>;
 }
 
-function PdfArtifact({ artifact, runtime, store, page, zoom, onPageCount }: {
+function PhoneSaveStatus({ store }: { store: AnnotationStore }) {
+  const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
+  return state.ready && !state.pending && !state.error ? null
+    : <p role="status">{state.error ? "保存状態を確認してください。" : !state.ready ? "書き込みを確認中…" : `未送信の書き込み ${state.pending}件（端末に保存済み）`}</p>;
+}
+
+function PdfArtifact({ artifact, runtime, store, page, zoom, onPageCount, editing = true, onFileUrl }: {
   artifact: ArtifactView; runtime: DriveLibraryRuntime; store?: AnnotationStore; page: number; zoom: number;
   onPageCount?: (id: string, count: number) => void;
+  editing?: boolean; onFileUrl?: (id: string, url: string) => void;
 }) {
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const pageCount = useCallback((count: number) => onPageCount?.(artifact.id, count), [artifact.id, onPageCount]);
+  useEffect(() => { onFileUrl?.(artifact.id, url); return () => onFileUrl?.(artifact.id, ""); }, [artifact.id, url, onFileUrl]);
   useEffect(() => {
     setError(""); setUrl("");
     const controller = new AbortController(); let objectUrl = "";
@@ -103,6 +130,6 @@ function PdfArtifact({ artifact, runtime, store, page, zoom, onPageCount }: {
   return <section className="web-pdf-pane" aria-label={artifact.role === "translated" ? "日本語訳" : artifact.role === "original" ? "原文" : artifact.label}>
     <div className="asset-heading"><span>{artifact.label}</span>{url && <a href={url} download={artifact.filename}>PDF本体を保存 ↓</a>}</div>
     {error ? <div role="alert" className="error">{error} <button onClick={() => setAttempt(value => value + 1)}>PDFを再試行</button></div> : !url ? <p role="status">PDFを読み込んでいます…</p>
-      : <PdfReader url={url} target={artifact.annotationTarget} store={store} pageNumber={page} zoom={zoom} navigation={false} onPageCount={pageCount} />}
+      : <PdfReader url={url} target={artifact.annotationTarget} store={store} pageNumber={page} zoom={zoom} navigation={false} onPageCount={pageCount} editing={editing} />}
   </section>;
 }
