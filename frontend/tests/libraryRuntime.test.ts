@@ -62,6 +62,33 @@ test("legacy snapshots retain their flattened handwritten PDF ordering", () => {
   runtime.dispose();
 });
 
+test("review backups cannot replace current PDFs, and nested PDFs keep distinct labels and roles", async () => {
+  const manifest = fixture();
+  const backup = `papers/${id}/review-backups/20260919T120527Z-b38b0572/translated.pdf`;
+  const nested = `papers/${id}/attachments/translated.pdf`;
+  manifest.files[backup] = { ...manifest.files[translatedPath], id: "historical-pdf" };
+  manifest.files[nested] = { ...manifest.files[translatedPath], id: "attached-pdf" };
+  // This historical path sorts before translated.pdf under the old basename-only ranking.
+  assert.ok(backup.localeCompare(translatedPath) < 0);
+  const data = { version: 1, items: { [id]: { pageCount: 1,
+    translatedPages: { "1": { artifactPath: translatedPath, page: 1 } } } } };
+  const runtime = createDriveLibraryRuntime({ file: async () => new Blob([JSON.stringify(data)]) }, scope, manifest);
+  const files = runtime.query.listArtifacts(id);
+  assert.deepEqual(files.slice(0, 2).map(file => file.label), ["原文・ノート", "日本語訳"]);
+  const translations = files.filter(file => file.label === "日本語訳");
+  assert.equal(translations.length, 1);
+  assert.equal(translations[0].annotationTarget?.side, "translated");
+  assert.equal(files.some(file => file.label.includes("review-backups/")), false);
+  const history = runtime.query.listArtifacts(null).find(file => file.label.startsWith("review-backups/"))!;
+  assert.equal(history.role, "other");
+  assert.equal(history.annotationTarget, undefined);
+  const attachment = files.find(file => file.label === "attachments/translated.pdf")!;
+  assert.equal(attachment.role, "attachment");
+  assert.equal(attachment.annotationTarget, undefined);
+  assert.deepEqual((await runtime.query.readDocumentPages(id))?.translatedPages["1"], { artifactId: translations[0].id, page: 1 });
+  runtime.dispose();
+});
+
 test("relative images resolve only to published resources within the same item", () => {
   const runtime = createDriveLibraryRuntime({ file: async () => new Blob() }, scope, fixture());
   const memo = runtime.query.listArtifacts(id).find(file => file.filename === "memo.md")!;

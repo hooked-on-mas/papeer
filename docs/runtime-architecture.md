@@ -51,6 +51,8 @@ PCの整理・翻訳・付箋編集等と、Webで提供する操作には違い
 
 Webの`createDriveLibraryRuntime`は既存の`DriveSession`をtransportとして使用する。認証・Drive API全体をsidecar互換APIへ作り替えず、必要な閲覧機能だけをadapterにする。PCの既存HTTP query/jobは維持し、使わない汎用Desktop runtimeは作らない。
 
+項目の資料一覧では正規の原文・訳文を優先し、review-backups内の再翻訳前の保存履歴を除外する。同名PDFでも保存履歴や添付は正規文書のrole・注釈対象を持たない。「ライブラリ全体のファイル」では保存履歴を相対パスで区別して残す。
+
 runtimeはlogin epoch、library ID、snapshot revisionを持つ。資料IDはruntimeごとに異なり、別runtimeへ持ち越せない。切替・ログアウト時はdisposeで読込を中止し、transportや本文解析が遅れても古い応答を返さない。query keyにもこのscopeを含める。
 
 ## 対訳ページ対応

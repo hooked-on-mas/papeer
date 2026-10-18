@@ -26,6 +26,12 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   const readSnapshot = (stage: string) => {
     manifest = JSON.parse(fs.readFileSync(path.join(directory, "manifest.json"), "utf8"));
     for (const [relative, file] of Object.entries(manifest.files)) blobs.set(file.id, fs.readFileSync(path.join(directory, "snapshot-" + stage, relative)));
+    // Real libraries retain review rollback PDFs. These must not shadow the current translation
+    // with an identical friendly label, losing its annotation anchor and paired-reading controls.
+    for (const side of ["original", "translated"]) {
+      manifest.files[`papers/${paper}/review-backups/20260919T120527Z-b38b0572/${side}.pdf`] =
+        { ...manifest.files[`papers/${paper}/${side}.pdf`] };
+    }
   };
   readSnapshot("prepare");
   const originalPdf = Buffer.from(blobs.get(manifest!.files[`papers/${paper}/translated.pdf`].id)!);
@@ -74,6 +80,9 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   const open = async (p: Page) => {
     await p.goto(webUrl);
     await p.getByRole("button", { name: "Googleでログインして開く →" }).click();
+    await p.getByLabel("表示する資料").waitFor();
+    assert.equal(await p.getByLabel("表示する資料").getByRole("option", { name: "日本語訳", exact: true }).count(), 1);
+    assert.equal(await p.getByLabel("表示する資料").getByRole("option", { name: /review-backups/ }).count(), 0);
     await p.getByLabel("表示する資料").selectOption({ label: "日本語訳" });
     await p.getByRole("region", { name: "原文", exact: true }).locator("canvas").waitFor();
     await p.getByRole("region", { name: "日本語訳", exact: true }).locator("canvas").waitFor();

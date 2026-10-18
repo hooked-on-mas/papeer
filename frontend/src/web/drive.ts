@@ -134,17 +134,23 @@ export function parseManifest(value: unknown): Manifest {
 
 export function itemFiles(manifest: Manifest, itemId: string): string[] {
   const paths = Object.keys(manifest.files).filter(p => p.startsWith(`papers/${itemId}/`) || p.startsWith(`web/${itemId}/`))
+    // Review rollback copies are retained in the snapshot, but are not current reading materials.
+    .filter(p => !p.startsWith(`papers/${itemId}/review-backups/`))
     .filter(p => !p.endsWith("-annotated.pdf") || !manifest.files["web-annotations.json"]
       || !manifest.files[p.replace(/^web\//, "papers/").replace("-annotated.pdf", ".pdf")]);
-  const rank = (p: string) => p.endsWith("original-annotated.pdf") ? 0 : p.endsWith("original.pdf") ? 1
-    : p.endsWith("translated-annotated.pdf") ? 2 : p.endsWith("translated.pdf") ? 3
+  const rank = (p: string) => p === `web/${itemId}/original-annotated.pdf` ? 0 : p === `papers/${itemId}/original.pdf` ? 1
+    : p === `web/${itemId}/translated-annotated.pdf` ? 2 : p === `papers/${itemId}/translated.pdf` ? 3
     : p.endsWith(".md") ? 4 : p.endsWith(".html") ? 5 : 6;
   return paths.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 }
 
 export function fileLabel(path: string, manifest: Manifest): string {
   const name = path.split("/").pop() ?? path;
-  const attachment = manifest.attachments.find(a => name === `${a.id}.${a.format}`);
+  const relative = path.replace(/^(?:papers|web)\/[a-f0-9]{32}\//, "");
+  const attachment = manifest.attachments.find(a => path === `papers/${a.owner_id}/attachments/${a.id}.${a.format}`);
+  // Only current, top-level outputs get the friendly document names. Keep history distinguishable
+  // in the explicit all-files view, even when it has the same basename as a current PDF.
+  if (relative.includes("/")) return attachment?.title || relative;
   return attachment?.title || ({ "original.pdf": "原文・ノート", "translated.pdf": "日本語訳",
     "original-annotated.pdf": "原文・ノート（手書き入り）", "translated-annotated.pdf": "日本語訳（手書き入り）",
     "article.md": "解説", "translation.md": "翻訳テキスト" } as Record<string, string>)[name] || name;

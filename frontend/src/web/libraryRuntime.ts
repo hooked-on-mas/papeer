@@ -53,8 +53,8 @@ export function createDriveLibraryRuntime(session: FileReader, scope: RuntimeSco
     const filename = path.split("/").pop()!;
     const owner = /^(?:papers|web)\/([a-f0-9]{32})\//.exec(path)?.[1] ?? null;
     const source = /^papers\/([a-f0-9]{32})\/(original|translated)\.pdf$/.exec(path);
-    const role = /^(original|translated)(?:-annotated)?\.pdf$/.exec(filename)?.[1]
-      ?? (filename === "translation.md" || /\/translation-pages\/.*\.pdf$/.test(path) ? "translated" : undefined);
+    const role = source?.[2] ?? /^web\/[a-f0-9]{32}\/(original|translated)-annotated\.pdf$/.exec(path)?.[1]
+      ?? (/^papers\/[a-f0-9]{32}\/(?:translation\.md|translation-pages\/.*\.pdf)$/.test(path) ? "translated" : undefined);
     const view: ArtifactView = Object.freeze({
       id: `artifact-${instance}-${index}`, itemId: owner,
       label: fileLabel(path, manifest), filename, mediaType: file.mime,
