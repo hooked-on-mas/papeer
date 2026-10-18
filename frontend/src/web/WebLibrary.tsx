@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Folder, PanelLeft, Pin, X } from "lucide-react";
+import { Folder, Maximize2, Minimize2, PanelLeft, Pin, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { WorkspaceHeader, WorkspaceSidebar, WorkspaceLibraryPanel, WorkspaceRail, WorkspaceTabList } from "../components/WorkspaceChrome";
@@ -20,9 +20,18 @@ import { WebLibrarySidebar } from "./WebLibrarySidebar";
 const PANEL_LABELS = { summary: "サマリー", chat: "チャット", notes: "メモ" } as const;
 
 /** Web host supplies saved data to the same sidebar rows and reader dock as desktop. */
-export function WebLibrary({ runtime, session, manifest, actions }: {
+export function WebLibrary({ runtime, session, manifest, actions, focusMode, onFocusModeChange }: {
   runtime: DriveLibraryRuntime; session: DriveSession; manifest: Manifest; actions: ReactNode;
+  focusMode: boolean; onFocusModeChange: (focus: boolean) => void;
 }) {
+  useEffect(() => {
+    if (!focusMode) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !(event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true]"))) onFocusModeChange(false);
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [focusMode, onFocusModeChange]);
   const [annotations, setAnnotations] = useState<AnnotationStore>();
   useEffect(() => {
     const store = new AnnotationStore(session, runtime.scope.libraryId, manifest);
@@ -67,6 +76,14 @@ export function WebLibrary({ runtime, session, manifest, actions }: {
   const openBeside = (panel: SidePanel) => { setSidePanel(panel); setTab("reader"); };
   const chooser = <SidePanelChooser selected={chosen} available={available} onChange={setSidePanel}
     className={`web-panel-choice ${chosen ? "bg-accent text-accent-foreground" : ""}`} />;
+  const readerControls = <>
+    {!focusMode && chooser}
+    <Button variant="ghost" size="icon-sm" title={focusMode ? "集中表示を終了" : "集中表示"}
+      aria-label={focusMode ? "集中表示を終了" : "集中表示"} aria-pressed={focusMode}
+      onClick={() => { setTab("reader"); onFocusModeChange(!focusMode); }}>
+      {focusMode ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+    </Button>
+  </>;
   const pane = (kind: SidePanel, beside = false) => <ReadOnlyPane title={PANEL_LABELS[kind]}
     onClose={beside ? () => setSidePanel(null) : undefined} onPin={!beside ? () => openBeside(kind) : undefined}>
     {kind === "summary" && summary ? <AssetContent key={summary.id} artifact={summary} runtime={runtime} />
@@ -100,10 +117,10 @@ export function WebLibrary({ runtime, session, manifest, actions }: {
       <div className="relative flex flex-1 min-h-0 flex-col">
         <TabsContent value="reader" keepMounted hidden={false} inert={tab !== "reader"}
           className={`web-reader-tab ${tab === "reader" ? "" : "invisible absolute inset-0"}`}>
-          <ReaderDock open={!!chosen} panelId={chosen ?? undefined} label={chosen ? `${PANEL_LABELS[chosen]}（右パネル）` : undefined}
-            width={sidePanelWidth} onWidthChange={setSidePanelWidth} stacked={stacked}
+          <ReaderDock open={!!chosen && !focusMode} panelId={chosen ?? undefined} label={chosen ? `${PANEL_LABELS[chosen]}（右パネル）` : undefined}
+            width={sidePanelWidth} onWidthChange={focusMode ? undefined : setSidePanelWidth} stacked={stacked} preserveWidth
             panel={chosen && tab === "reader" ? pane(chosen, true) : undefined}>
-            {artifact ? <AssetView key={artifact.id} artifact={artifact} runtime={runtime} annotations={annotations} controls={chooser} />
+            {artifact ? <AssetView key={artifact.id} artifact={artifact} runtime={runtime} annotations={annotations} controls={readerControls} />
               : <p className="empty">まだファイルがありません。Windows版でアップロードしてください。</p>}
           </ReaderDock>
         </TabsContent>
@@ -116,16 +133,16 @@ export function WebLibrary({ runtime, session, manifest, actions }: {
     </Tabs>
   </main>;
   return <div className="workspace">
-    {narrow && !collapsed && <><button className="sidebar-backdrop" aria-label="ライブラリを閉じる" onClick={() => setCollapsed(true)} />
+    {narrow && !collapsed && !focusMode && <><button className="sidebar-backdrop" aria-label="ライブラリを閉じる" onClick={() => setCollapsed(true)} />
       <aside className="web-sidebar web-sidebar-overlay" aria-label="ライブラリ一覧">{sidebar}</aside></>}
-    {collapsed && <WorkspaceRail onExpand={() => setCollapsed(false)}>
+    {collapsed && !focusMode && <WorkspaceRail onExpand={() => setCollapsed(false)}>
       <button data-slot="all-files" aria-label="ライブラリ全体のファイル" className="w-8 h-8 flex items-center justify-center hover:bg-muted rounded" onClick={() => choose("")}><Folder className="size-4 text-muted-foreground" /></button>
     </WorkspaceRail>}
     <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0 min-w-0">
-      {!narrow && !collapsed && <><WorkspaceLibraryPanel width={sidebarWidth} onWidthChange={setSidebarWidth}>
+      {!narrow && !collapsed && !focusMode && <><WorkspaceLibraryPanel width={sidebarWidth} onWidthChange={setSidebarWidth}>
         <aside className="h-full min-h-0" aria-label="ライブラリ一覧">{sidebar}</aside>
       </WorkspaceLibraryPanel><ResizableHandle className="w-1 bg-border hover:bg-primary/60 cursor-col-resize" /></>}
-      <ResizablePanel id="main" minSize={narrow ? "240px" : chosen ? "644px" : "480px"} className="flex flex-col min-w-0 min-h-0">{main}</ResizablePanel>
+      <ResizablePanel key="main" id="main" minSize={focusMode ? "240px" : narrow ? "240px" : chosen ? "644px" : "480px"} className="flex flex-col min-w-0 min-h-0">{main}</ResizablePanel>
     </ResizablePanelGroup>
   </div>;
 }

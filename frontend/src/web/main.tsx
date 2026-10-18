@@ -18,6 +18,7 @@ function App() {
   const [selected, setSelected] = useState("");
   const [manifest, setManifest] = useState<Manifest>();
   const [runtime, setRuntime] = useState<DriveLibraryRuntime>();
+  const [focusMode, setFocusMode] = useState(false);
   useEffect(() => () => runtime?.dispose(), [runtime]);
   const load = async (id: string) => {
     const next = await session.manifest(id);
@@ -46,7 +47,7 @@ function App() {
           runtime?.dispose(); setRuntime(undefined); session.signOut(); setSignedIn(false); setManifest(undefined); setLibraries([]); setSelected(""); setError("");
         }}>ログアウト</Button>}
       </div>;
-  return <WorkspaceRoot className="web-app">
+  return <WorkspaceRoot className={`web-app ${manifest && focusMode ? "reader-focus" : ""}`}>
     {!manifest && <WorkspaceHeader className="web-document-header"><a className="brand" href="./">
       <img src={`${import.meta.env.BASE_URL}papeer.png`} alt="" />Papeer</a>{actions}</WorkspaceHeader>}
     {error && <p role="alert" className="error banner">{error}</p>}
@@ -54,7 +55,8 @@ function App() {
     {libraries.length > 1 && <label className="library-picker">保存ライブラリ <select value={selected} disabled={busy}
       onChange={e => void run(() => load(e.target.value))}>{libraries.map((library, i) =>
         <option key={library.id} value={library.id}>ライブラリ {i + 1} · {new Date(library.modifiedTime).toLocaleString()}</option>)}</select></label>}
-    {manifest && runtime ? <WebLibrary key={runtime.scope.sessionKey} runtime={runtime} session={session} manifest={manifest} actions={actions} /> : <main className="welcome">
+    {manifest && runtime ? <WebLibrary key={runtime.scope.sessionKey} runtime={runtime} session={session} manifest={manifest} actions={actions}
+      focusMode={focusMode} onFocusModeChange={setFocusMode} /> : <main className="welcome">
       <h1>論文を選んで、読み始めよう</h1>
       <p>Windows版Papeerで保存した翻訳PDF、手書きノート、<br />メモやチャットを、Google Driveから開けます。</p>
       {!signedIn ? <Button disabled={busy || !online} onClick={() => void login()}>Googleでログインして開く →</Button>

@@ -107,6 +107,9 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
     await p.mouse.down(); await p.mouse.move(b.x + b.width * .45, b.y + b.height * (y + .02), { steps: 8 }); await p.mouse.up();
   };
   await open(page);
+  assert.equal(await page.getByText("ペンはApple Pencil・マウスに対応。", { exact: false }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "ペン", exact: true }).getAttribute("aria-pressed"), "true");
+  assert.equal(await page.getByTestId("web-ink").evaluate(element => getComputedStyle(element).touchAction), "pinch-zoom");
   assert.equal(await count(page), 1); // PC's blue ink is visible on the raw Japanese translation.
   assert.equal(await page.getByText("Codex", { exact: false }).count(), 0);
   assert.ok((await page.locator(".react-pdf__Page").textContent())?.includes("PCで翻訳したPDF"));
@@ -143,10 +146,13 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   const box = (await page.getByTestId("web-ink").boundingBox())!;
   const cdp = await context.newCDPSession(page);
   const x = box.x + box.width * .3, y = box.y + box.height * .7;
+  const penScroll = await page.getByRole("region", { name: "日本語訳", exact: true }).evaluate(element => element.scrollTop);
   await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1, pointerType: "pen" });
+  await page.getByTestId("web-ink").dispatchEvent("pointercancel", { pointerId: 9876, pointerType: "touch" });
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: x + 80, y: y + 10, button: "left", buttons: 1, pointerType: "pen" });
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: x + 80, y: y + 10, button: "left", clickCount: 1, pointerType: "pen" });
   await saved(page); assert.equal(await count(page), 7);
+  assert.equal(await page.getByRole("region", { name: "日本語訳", exact: true }).evaluate(element => element.scrollTop), penScroll);
   // Web eraser leaves PC ink alone; undo restores the erased Web stroke under a new ID.
   await draw(page, "消しゴム", .3); await saved(page); assert.equal(await count(page), 6);
   assert.equal(await page.locator('[data-ink-id="pc-ink"]').count(), 1);
@@ -155,13 +161,57 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   const touchBox = (await page.getByTestId("web-ink").boundingBox())!;
   const touchAt = { x: touchBox.x + touchBox.width * .55, y: touchBox.y + touchBox.height * .65 };
   await page.touchscreen.tap(touchAt.x, touchAt.y); assert.equal(await count(page), 7);
+  // A real touch drag pans the PDF without drawing or cancelling the pen tool.
+  const scroller = page.getByRole("region", { name: "日本語訳", exact: true });
+  await page.getByLabel("表示倍率").selectOption("2");
+  await page.waitForFunction(() => !!document.querySelector('[data-testid="web-ink"]') && !(document.querySelector('.ink-tools button') as HTMLButtonElement)?.disabled);
+  await scroller.evaluate(element => { element.scrollTop = 0; });
+  const scrollBefore = await scroller.evaluate(element => element.scrollTop);
+  const bounds = (await page.getByTestId("web-ink").boundingBox())!;
+  const paneBounds = (await scroller.boundingBox())!;
+  assert.ok(await scroller.evaluate(element => element.scrollHeight - element.clientHeight) > 100,
+    JSON.stringify(await scroller.evaluate(element => ({ height: element.clientHeight, scrollHeight: element.scrollHeight, width: element.clientWidth,
+      svg: element.querySelector('[data-testid="web-ink"]')?.getBoundingClientRect().toJSON(), canvas: element.querySelector('canvas')?.getBoundingClientRect().toJSON() }))));
+  // Zoomed PDFs extend beyond the viewport; start the physical touch on its visible part.
+  const touchX = Math.round(paneBounds.x + paneBounds.width * .5), touchY = Math.round(bounds.y + 300);
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: touchX, y: touchY }] });
+  for (let step = 1; step <= 8; step++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: touchX, y: touchY - step * 15 }] });
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  assert.ok(await scroller.evaluate(element => element.scrollTop) > scrollBefore + 80);
+  assert.equal(await count(page), 7);
+  assert.equal(await page.getByRole("button", { name: "ペン", exact: true }).getAttribute("aria-pressed"), "true");
+  // The same scrollable page must stay still during a physical pen drag.
+  const afterFinger = await scroller.evaluate(element => element.scrollTop);
+  const penX = Math.round(paneBounds.x + paneBounds.width * .3), penY = Math.round(paneBounds.y + 350);
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: penX, y: penY, button: "left", clickCount: 1, pointerType: "pen" });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: penX + 90, y: penY + 100, button: "left", buttons: 1, pointerType: "pen" });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: penX + 90, y: penY + 100, button: "left", clickCount: 1, pointerType: "pen" });
+  await saved(page); assert.equal(await count(page), 8);
+  assert.equal(await scroller.evaluate(element => element.scrollTop), afterFinger);
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click(); await saved(page); assert.equal(await count(page), 7);
+  await page.getByLabel("表示倍率").selectOption("1");
+  await page.waitForFunction(() => !!document.querySelector('[data-testid="web-ink"]') && !(document.querySelector('.ink-tools button') as HTMLButtonElement)?.disabled);
+  await page.locator('.ink-options summary').click();
   await page.getByRole("checkbox", { name: "指でも書く" }).check();
+  await page.locator('.ink-options summary').click();
+  // Use current bounds after scrolling; a tap is a stroke only when explicitly enabled.
+  const currentTouchBox = (await page.getByTestId("web-ink").boundingBox())!;
+  touchAt.y = currentTouchBox.y + 300;
   await page.touchscreen.tap(touchAt.x, touchAt.y); await saved(page); assert.equal(await count(page), 8);
   await page.getByRole("button", { name: "元に戻す", exact: true }).click(); await saved(page); assert.equal(await count(page), 7);
   await page.screenshot({ path: path.join(directory, "tablet-writing.png"), fullPage: true });
+  await page.getByRole("button", { name: "集中表示", exact: true }).click();
+  await page.waitForFunction(() => !!document.querySelector('[data-testid="web-ink"]') && !(document.querySelector('.ink-tools button') as HTMLButtonElement)?.disabled);
+  assert.ok((await scroller.boundingBox())!.width > 1000);
+  assert.ok((await page.locator('.web-reader-tools').boundingBox())!.height < 55);
+  assert.ok((await page.locator('.ink-tools').boundingBox())!.height < 42);
+  await page.screenshot({ path: path.join(directory, "tablet-focus.png") });
+  await page.getByRole("button", { name: "集中表示を終了", exact: true }).click();
+  await page.waitForFunction(() => !!document.querySelector('[data-testid="web-ink"]') && !(document.querySelector('.ink-tools button') as HTMLButtonElement)?.disabled);
   // Page-specific ink and the next page's different aspect ratio.
   await page.getByRole("button", { name: "次のページ" }).click();
   await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 0);
+  assert.equal(await page.getByRole("button", { name: "ペン", exact: true }).getAttribute("aria-pressed"), "true");
   await page.getByRole("button", { name: "前のページ" }).click();
   await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 7);
   fs.writeFileSync(path.join(directory, "operations.json"), JSON.stringify([...operations.values()]));

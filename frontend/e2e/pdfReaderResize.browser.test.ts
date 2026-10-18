@@ -1,6 +1,6 @@
 /** Rendering and annotation readiness after tablet rotation / rapid resize. Synthetic Drive only. */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
@@ -9,7 +9,7 @@ import { chromium } from "playwright-core";
 
 async function exerciseResize(t: TestContext, delayedRenderer = false) {
   const frontend = path.resolve(import.meta.dirname, "..");
-  const server = await createServer({ configFile: path.join(frontend, "vite.web.config.ts"), logLevel: "error",
+  const server = await createServer({ cacheDir: path.resolve(frontend, "../output/pdf-reader-resize/vite-" + randomUUID()), configFile: path.join(frontend, "vite.web.config.ts"), logLevel: "error",
     server: { host: "127.0.0.1", port: 0, hmr: false },
     // Model a completed old canvas whose success notification is already queued when resized.
     // The real renderer is covered by the first case; this makes callback reordering deterministic.
@@ -68,6 +68,11 @@ async function exerciseResize(t: TestContext, delayedRenderer = false) {
     }, undefined, { timeout: 10000 });
   };
   await ready();
+  const cdp = await page.context().newCDPSession(page);
+  if (!delayedRenderer) {
+    const pane = (await page.getByRole("region", { name: "原文", exact: true }).boundingBox())!;
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: pane.x + 100, y: pane.y + 120, button: "left", clickCount: 1, pointerType: "pen" });
+  }
   // Resize while renders are outstanding, then require the final canvas AND ink editor to recover.
   for (let cycle = 0; cycle < (delayedRenderer ? 1 : 3); cycle++) {
     if (delayedRenderer) await page.evaluate(() => { (window as unknown as { __papeerHoldRenders: boolean }).__papeerHoldRenders = true; });
@@ -88,6 +93,10 @@ async function exerciseResize(t: TestContext, delayedRenderer = false) {
       });
     }
     await ready();
+    if (!delayedRenderer && cycle === 0) {
+      await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 100, y: 200, button: "left", clickCount: 1, pointerType: "pen" });
+      assert.equal(saved, 0, "rotation cancels an interrupted stroke without locking the next pen gesture");
+    }
     await page.getByLabel("表示倍率").selectOption("2");
     await page.getByLabel("表示倍率").selectOption("0.75");
     await page.getByLabel("表示倍率").selectOption("1");
