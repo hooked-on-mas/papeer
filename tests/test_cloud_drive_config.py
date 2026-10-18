@@ -48,10 +48,43 @@ def test_developer_file_and_env_override_are_not_exposed_in_status(tmp_path, mon
     assert credentials.client_secret == "private-desktop-value"
     assert "private-desktop-value" not in repr(credentials)
     assert "private-desktop-value" not in json.dumps(config.setup_status())
+    config.write_bundle(tmp_path)
+    assert json.loads((tmp_path / config.BUNDLE_CONFIG).read_text("utf-8"))["client_secret"] == "private-desktop-value"
     monkeypatch.setenv(config.CLIENT_ID_ENV, "789-override.apps.googleusercontent.com")
     assert config.desktop_oauth().client_id == "789-override.apps.googleusercontent.com"
     config.write_bundle(tmp_path)
-    assert json.loads((tmp_path / config.BUNDLE_CONFIG).read_text("utf-8"))["client_secret"] == "private-desktop-value"
+    assert json.loads((tmp_path / config.BUNDLE_CONFIG).read_text("utf-8")) == {
+        "client_id": "789-override.apps.googleusercontent.com"}
+
+
+@pytest.mark.parametrize("source", ["file", "bundle"])
+@pytest.mark.parametrize(("override_id", "override_secret", "expected_secret"), [
+    ("789-other.apps.googleusercontent.com", None, ""),
+    ("789-other.apps.googleusercontent.com", "", ""),
+    ("789-other.apps.googleusercontent.com", "new-secret", "new-secret"),
+    (None, None, "old-secret"),
+    ("456-fork.apps.googleusercontent.com", None, "old-secret"),
+    (None, "", ""),
+    (None, "  ", ""),
+])
+def test_overrides_do_not_mix_clients_or_restore_explicitly_cleared_secrets(
+    tmp_path, monkeypatch, source, override_id, override_secret, expected_secret,
+):
+    original_id = "456-fork.apps.googleusercontent.com"
+    path = tmp_path / config.BUNDLE_NAME
+    path.write_text(json.dumps({"client_id": original_id, "client_secret": "old-secret"}), "utf-8")
+    if source == "file":
+        monkeypatch.setenv(config.CONFIG_FILE_ENV, str(path))
+    else:
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    if override_id is not None:
+        monkeypatch.setenv(config.CLIENT_ID_ENV, override_id)
+    if override_secret is not None:
+        monkeypatch.setenv(config.CLIENT_SECRET_ENV, override_secret)
+    credentials = config.desktop_oauth()
+    assert credentials.client_id == (override_id or original_id)
+    assert credentials.client_secret == expected_secret
 
 
 def test_frozen_app_uses_the_bundled_configuration(tmp_path, monkeypatch):

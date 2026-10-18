@@ -11,6 +11,7 @@ import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import secrets
+import socket
 import sys
 import threading
 import time
@@ -25,6 +26,8 @@ from papeer.core.cloud_drive_config import desktop_oauth, setup_status
 
 SCOPE = "https://www.googleapis.com/auth/drive.file"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
+_AUTH_TIMEOUT = 180.0
+_CALLBACK_TIMEOUT = 5.0
 _lock = threading.RLock()
 _pending = False
 _error: str | None = None
@@ -126,9 +129,38 @@ def connect() -> dict:
     try:
         state, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
         answer: dict[str, str] = {}
+        deadline = time.monotonic() + _AUTH_TIMEOUT
 
         class Callback(BaseHTTPRequestHandler):
+            def setup(self):
+                self._expired = threading.Event()
+                request_timeout = min(_CALLBACK_TIMEOUT, max(0.001, deadline - time.monotonic()))
+                super().setup()
+                self.connection.settimeout(request_timeout)
+
+                def expire():
+                    self._expired.set()
+                    try:
+                        self.connection.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass  # The browser may already have closed the connection.
+
+                # A socket timeout alone restarts with every byte. Bound the entire request too,
+                # so partial/slow headers cannot hold handle_request() past the OAuth deadline.
+                self._expiry = threading.Timer(request_timeout, expire)
+                self._expiry.daemon = True
+                self._expiry.start()
+
+            def finish(self):
+                try:
+                    super().finish()
+                finally:
+                    self._expiry.cancel()
+
             def do_GET(self):
+                if self._expired.is_set() or time.monotonic() >= deadline:
+                    self.close_connection = True
+                    return
                 query = parse_qs(urlparse(self.path).query)
                 if urlparse(self.path).path != "/" or query.get("state") != [state]:
                     self.send_error(400)
@@ -154,10 +186,10 @@ def connect() -> dict:
         def finish():
             global _pending, _error
             try:
-                deadline = time.monotonic() + 180
                 while not answer and time.monotonic() < deadline:
+                    server.timeout = min(1, max(0, deadline - time.monotonic()))
                     server.handle_request()
-                if "code" not in answer:
+                if "code" not in answer or time.monotonic() >= deadline:
                     raise ValueError("Google接続がキャンセルされたか、時間切れになりました。")
                 values = {"grant_type": "authorization_code", "code": answer["code"],
                           "client_id": client_id, "redirect_uri": redirect, "code_verifier": verifier}

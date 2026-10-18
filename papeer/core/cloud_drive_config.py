@@ -59,7 +59,10 @@ def desktop_oauth() -> DesktopOAuth:
         if bundled.is_file():
             private = _read(bundled)
     client_id = os.environ.get(CLIENT_ID_ENV, "").strip() or private.get("client_id") or public.get("desktop_client_id", "")
-    secret = os.environ.get(CLIENT_SECRET_ENV, "").strip() or private.get("client_secret", "")
+    # A secret belongs to its client, not to the configuration file independently of its ID.
+    # An explicitly empty env override also clears a legacy secret instead of reviving it.
+    secret = (os.environ[CLIENT_SECRET_ENV].strip() if CLIENT_SECRET_ENV in os.environ else
+              private.get("client_secret", "") if client_id == private.get("client_id") else "")
     if not isinstance(client_id, str) or (client_id and not re.fullmatch(r"[A-Za-z0-9_-]+\.apps\.googleusercontent\.com", client_id)):
         raise ValueError("Google接続のデスクトップ用クライアントIDが不正です。")
     if not isinstance(secret, str) or len(secret) > 2048 or any(c in secret for c in "\r\n\x00"):
