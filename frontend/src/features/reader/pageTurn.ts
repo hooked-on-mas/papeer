@@ -1,0 +1,290 @@
+/**
+ * Turning pages from the wheel and the keyboard. The reader shows one page at a time, so scrolling
+ * on past the end of a page goes on to the next, and past its start back to the end of the previous.
+ */
+
+/** Where a scrolling pane sits against its top and bottom. */
+export interface PaneEdges {
+  atStart: boolean;
+  atEnd: boolean;
+}
+
+type ScrollMetrics = Pick<HTMLElement, "scrollTop" | "scrollHeight" | "clientHeight">;
+
+/** Within a pixel, since zoomed pages scroll to fractional positions. */
+export function paneEdges(pane: ScrollMetrics): PaneEdges {
+  return {
+    atStart: pane.scrollTop <= 1,
+    atEnd: pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 1,
+  };
+}
+
+/** The same edge rules for panning across an enlarged page. */
+export function paneHorizontalEdges(pane: Pick<HTMLElement, "scrollLeft" | "scrollWidth" | "clientWidth">,
+  sideways = true, reservedGutter = 0): PaneEdges {
+  if (!sideways) return { atStart: true, atEnd: true };
+  return {
+    atStart: pane.scrollLeft <= 1,
+    // Chromium includes the stable scrollbar gutter in scrollWidth but cannot scroll into it.
+    atEnd: pane.scrollLeft + pane.clientWidth >= pane.scrollWidth - reservedGutter - 1,
+  };
+}
+
+export function horizontalEdges(pane: HTMLElement): PaneEdges {
+  const style = getComputedStyle(pane);
+  const gutter = style.scrollbarGutter.includes("stable") ? pane.offsetWidth - pane.clientWidth : 0;
+  return paneHorizontalEdges(pane, style.overflowX !== "hidden", gutter);
+}
+
+export const SWIPE_TURN_DISTANCE = 72;
+
+/** Finger movement has the opposite sign to scrolling. Decide only when the finger lifts. */
+export function touchSwipePage(dx: number, maxY: number, edges: PaneEdges): -1 | 0 | 1 {
+  if (Math.abs(dx) < SWIPE_TURN_DISTANCE || Math.abs(dx) < maxY * 1.5) return 0;
+  return dx < 0 ? edges.atEnd ? 1 : 0 : edges.atStart ? -1 : 0;
+}
+
+/** The page `amount` pages on, among all pages or only the translated ones. */
+export function steppedPage({ current, amount, pageCount, translatedOnly, completed }: {
+  current: number; amount: number; pageCount: number; translatedOnly: boolean; completed: readonly number[];
+}): number {
+  if (translatedOnly) {
+    if (!completed.length) return current;
+    // The reader keeps the page within the filter; one outside it steps from the first.
+    const position = Math.max(0, completed.indexOf(current));
+    return completed[Math.max(0, Math.min(position + amount, completed.length - 1))];
+  }
+  const count = pageCount || current;
+  return Math.max(1, Math.min(current + amount, count));
+}
+
+/** The first or last page, among all pages or only the translated ones. */
+export function edgePage(edge: "first" | "last", { current, pageCount, translatedOnly, completed }: {
+  current: number; pageCount: number; translatedOnly: boolean; completed: readonly number[];
+}): number {
+  if (translatedOnly) return completed.length ? completed[edge === "first" ? 0 : completed.length - 1] : current;
+  return edge === "first" ? 1 : pageCount || current;
+}
+
+export interface WheelInput extends PaneEdges {
+  /** Movement along the chosen axis in pixels; positive goes to the next page. */
+  dy: number;
+  axis?: "vertical" | "horizontal";
+  /** Event time in milliseconds. */
+  time: number;
+  /** A mouse notch rather than a touchpad's stream of small steps. */
+  notch: boolean;
+}
+
+export interface WheelDecision {
+  /** 1 for the next page, -1 for the previous one, 0 to stay. */
+  turn: -1 | 0 | 1;
+  /** Keep the page still: the rest of a gesture that has just turned the page. */
+  swallow: boolean;
+}
+
+/** Wheel events closer together than this belong to one gesture, including a touchpad's inertia. */
+export const WHEEL_GESTURE_GAP_MS = 200;
+/** How far a touchpad must scroll on at the edge to turn the page. */
+export const TOUCHPAD_TURN_DISTANCE = 120;
+
+/**
+ * Decides, event by event, when the wheel turns the page. Only a gesture that starts at the edge
+ * counts: a scroll that merely reaches the end, and the inertia that carries it on, stop there, and
+ * one more notch or swipe after a pause turns the page. A gesture turns at most one page, and its
+ * remaining events are swallowed so that the new page stays at its start.
+ */
+export function createWheelPager({ horizontalDistance = TOUCHPAD_TURN_DISTANCE } = {}): (input: WheelInput) => WheelDecision {
+  let lastTime = -Infinity;
+  let direction = 0;
+  let eligible = false;
+  let spent = false;
+  let distance = 0;
+  let gestureAxis: "vertical" | "horizontal" = "vertical";
+  return ({ dy, time, notch, atStart, atEnd, axis = "vertical" }) => {
+    const dir = Math.sign(dy);
+    const gap = time - lastTime;
+    lastTime = time;
+    // Lock the axis through the gesture, including diagonal inertia after a turn.
+    if (gap <= WHEEL_GESTURE_GAP_MS && axis !== gestureAxis) return { turn: 0, swallow: spent };
+    if (gap > WHEEL_GESTURE_GAP_MS) gestureAxis = axis;
+    if (!dir) return { turn: 0, swallow: spent };
+    const edge = dir > 0 ? atEnd : atStart;
+    if (gap > WHEEL_GESTURE_GAP_MS || dir !== direction) {
+      // A reversal within a turned gesture is still inertia or jitter: keep it swallowed.
+      if (gap <= WHEEL_GESTURE_GAP_MS && spent) return { turn: 0, swallow: true };
+      direction = dir;
+      eligible = edge;
+      spent = false;
+      distance = 0;
+    }
+    if (spent) return { turn: 0, swallow: true };
+    if (!edge) eligible = false;
+    if (!eligible) return { turn: 0, swallow: false };
+    distance += Math.abs(dy);
+    if (!notch && distance < (axis === "horizontal" ? horizontalDistance : TOUCHPAD_TURN_DISTANCE)) return { turn: 0, swallow: false };
+    spent = true;
+    return { turn: dir > 0 ? 1 : -1, swallow: true };
+  };
+}
+
+/** Choose the axis from a short run of movement, not the first noisy touchpad event. */
+export function createReaderWheelPager() {
+  type Input = { dx: number; dy: number; time: number; notch: boolean; horizontal: PaneEdges; vertical: PaneEdges };
+  let pager = createWheelPager({ horizontalDistance: SWIPE_TURN_DISTANCE });
+  let lastTime = -Infinity;
+  let lastTurn = -Infinity;
+  let axis: "horizontal" | "vertical" | null = null;
+  let x = 0, y = 0;
+  let swallow = false;
+  let first: { horizontal: PaneEdges; vertical: PaneEdges } | null = null;
+  let directionX = 0, peakSpeed = 0, previousSpeed = 0, falling = 0;
+  let tail = false;
+  let tailSpeed = Infinity;
+  let candidate: { x: number; y: number; first: Input } | null = null;
+  const reset = (input: Input) => {
+    pager = createWheelPager({ horizontalDistance: SWIPE_TURN_DISTANCE });
+    axis = null; x = 0; y = 0; swallow = false; first = { horizontal: input.horizontal, vertical: input.vertical };
+    directionX = 0; peakSpeed = 0; previousSpeed = 0; falling = 0; tail = false; tailSpeed = Infinity; candidate = null;
+  };
+  return (input: Input) => {
+    let { dx, dy } = input;
+    const { time, notch } = input;
+    const gap = time - lastTime;
+    if (gap > WHEEL_GESTURE_GAP_MS) reset(input);
+    // Compare movement per millisecond, so a delayed event covering more time is not
+    // mistaken for acceleration. The first event and same-frame events use a frame interval.
+    const interval = gap > 0 && gap <= WHEEL_GESTURE_GAP_MS ? gap : 16;
+    const speed = Math.abs(dx) / interval;
+    const horizontal = Math.abs(dx) > Math.abs(dy) * 1.2;
+    if (axis === "horizontal" && !swallow && dx !== 0 && Math.sign(dx) !== directionX) {
+      // Before a turn the pager accepts reversals. Its inertia must follow that accepted
+      // direction rather than look like a new reverse stroke after the page has turned.
+      directionX = Math.sign(dx);
+      peakSpeed = 0; previousSpeed = 0; falling = 0; tail = false; tailSpeed = Infinity; candidate = null;
+    }
+    // WheelEvent has no finger-up or momentum phase. A renewed strong movement after a
+    // decaying tail marks another stroke, even without a 200ms gap.
+    const renewed = axis === "horizontal" && horizontal && Math.sign(dx) === directionX
+      && time - lastTurn >= 120 && tail && Math.abs(dx) >= 0.5 && speed >= tailSpeed * 2.5;
+    if (renewed) reset(input);
+    // Require a full deliberate horizontal movement to reverse or leave a vertical gesture;
+    // a few pixels of opposite jitter must not unlock another page turn.
+    if (horizontal && (axis === "vertical" || (axis === "horizontal" && swallow && Math.sign(dx) !== directionX))) {
+      if (!candidate || Math.sign(candidate.x) !== Math.sign(dx)) candidate = { x: 0, y: 0, first: input };
+      candidate.x += dx; candidate.y += dy;
+      if (Math.abs(candidate.x) >= SWIPE_TURN_DISTANCE && time - lastTurn >= 120) {
+        const next = candidate;
+        reset(next.first);
+        dx = next.x; dy = next.y;
+      }
+    } else if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) candidate = null;
+    if (Math.abs(dx) >= 0.5) {
+      peakSpeed = Math.max(peakSpeed, speed);
+      falling = speed < previousSpeed ? falling + 1 : 0;
+      if (falling >= 2 && speed <= peakSpeed * 0.5) tail = true;
+      if (tail) tailSpeed = Math.min(tailSpeed, speed);
+      previousSpeed = speed;
+    }
+    // Subpixel tail events must not keep the previous swipe locked indefinitely.
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 0.5) return { turn: 0, swallow, axis } as const;
+    lastTime = time;
+    let distance: number;
+    if (!axis) {
+      x += dx; y += dy;
+      if (!notch && (Math.max(Math.abs(x), Math.abs(y)) < 12
+        || Math.max(Math.abs(x), Math.abs(y)) < Math.min(Math.abs(x), Math.abs(y)) * 1.2)) {
+        return { turn: 0, swallow: false, axis } as const;
+      }
+      axis = Math.abs(x) > Math.abs(y) ? "horizontal" : "vertical";
+      if (axis === "horizontal") directionX = Math.sign(x);
+      distance = axis === "horizontal" ? x : y;
+    } else distance = axis === "horizontal" ? dx : dy;
+    const now = input[axis], start = first![axis];
+    const result = pager({ dy: distance, axis, time, notch: notch && axis === "vertical",
+      atStart: start.atStart && now.atStart, atEnd: start.atEnd && now.atEnd });
+    swallow = result.swallow;
+    if (result.turn) lastTurn = time;
+    return { ...result, axis };
+  };
+}
+
+/**
+ * What a key press lands on: text fields and widgets with their own arrow, Home and End keys (menus,
+ * tabs, the pane divider…) keep every key; buttons keep Space and Enter.
+ */
+export type KeyTarget = "editable" | "button" | "other";
+
+const EDITABLE = "input, textarea, select, [contenteditable]:not([contenteditable=false]), [role=textbox], [role=combobox], [role=listbox], [role=slider], [role=spinbutton], [role=menu], [role=menuitem], [role=tab], [role=tablist], [role=option], [role=grid], [role=tree], [role=treeitem], [role=radiogroup], [role=separator]";
+const BUTTON = "button, a[href], summary, [role=button], [role=link], [role=checkbox], [role=radio], [role=switch]";
+
+export function keyTarget(target: { closest?: (selector: string) => unknown } | null): KeyTarget {
+  if (!target || typeof target.closest !== "function") return "other";
+  if (target.closest(EDITABLE)) return "editable";
+  if (target.closest(BUTTON)) return "button";
+  return "other";
+}
+
+/**
+ * Whether `element` is on screen and usable: not within a part of the page that is hidden, by
+ * display or visibility, or inert, as the reader tab is while another tab is shown (AppShell keeps it
+ * mounted). Listeners on the window use it to leave keys to the tab that is shown.
+ */
+export function onScreen(element: Pick<Element, "closest"> & { checkVisibility?: Element["checkVisibility"] }): boolean {
+  if (element.closest("[inert]")) return false;
+  return typeof element.checkVisibility !== "function" || element.checkVisibility({ visibilityProperty: true });
+}
+
+/**
+ * Where a key press lands relative to the reader: inside it, on the page body or an element that
+ * holds the reader (the tab panel, focused by clicking the page), or elsewhere.
+ */
+export type KeyPlace = "inside" | "around" | "elsewhere";
+
+/**
+ * Whether a key press is the reader's. Only while the reader is shown; and when the press lands on
+ * the body or around the reader, only if the last click was in the reader, since clicking an empty
+ * spot of the side panel or the library also leaves the focus on the body.
+ */
+export function readerOwnsKey({ place, pointerInReader, readerVisible }: {
+  place: KeyPlace; pointerInReader: boolean; readerVisible: boolean;
+}): boolean {
+  if (!readerVisible) return false;
+  if (place === "inside") return true;
+  return place === "around" && pointerInReader;
+}
+
+export type ReaderKeyAction =
+  | { type: "scroll"; direction: 1 | -1 }
+  | { type: "turn"; amount: 1 | -1; toEnd: boolean }
+  | { type: "edge"; edge: "first" | "last" }
+  | { type: "history"; direction: "back" | "forward" };
+
+/**
+ * The reader's paging keys. PageDown and Space scroll by a screen and, at the end of the page, go on
+ * to the next; PageUp and Shift+Space go back likewise, to the end of the previous page. Home and End
+ * open the first and last pages, and Alt+←/→ go back and forward through link, contents and search jumps
+ * (also ⌘[ / ⌘], the Mac's keys for it in Safari and the Finder).
+ */
+export function readerKeyAction({ key, shiftKey, ctrlKey, altKey, metaKey, target, atStart, atEnd }: {
+  key: string; shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean; target: KeyTarget;
+} & PaneEdges): ReaderKeyAction | null {
+  if (target === "editable") return null;
+  if (metaKey && !ctrlKey && !altKey && !shiftKey && (key === "[" || key === "]"))
+    return { type: "history", direction: key === "[" ? "back" : "forward" };
+  if (ctrlKey || metaKey) return null;
+  if (altKey) {
+    if (shiftKey) return null;
+    if (key === "ArrowLeft") return { type: "history", direction: "back" };
+    if (key === "ArrowRight") return { type: "history", direction: "forward" };
+    return null;
+  }
+  let direction: 1 | -1;
+  if (key === "PageDown") direction = 1;
+  else if (key === "PageUp") direction = -1;
+  else if (key === " " && target !== "button") direction = shiftKey ? -1 : 1;
+  else if ((key === "Home" || key === "End") && !shiftKey) return { type: "edge", edge: key === "Home" ? "first" : "last" };
+  else return null;
+  if (direction > 0 ? atEnd : atStart) return { type: "turn", amount: direction, toEnd: direction < 0 };
+  return { type: "scroll", direction };
+}

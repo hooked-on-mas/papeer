@@ -1,0 +1,19 @@
+* text=auto eol=lf
+
+# Branches each add to [Unreleased]: keep both sides' lines on merge (check order and duplicates afterwards)
+CHANGELOG.md merge=union
+
+# Windows-specific files keep CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets
+*.otf binary
+*.ttf binary
+*.pfb binary
+*.bcmap binary
+*.pdf binary
+*.png binary
+*.ico binary
+*.icns binary
+*.zip binary

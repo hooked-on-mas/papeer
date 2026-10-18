@@ -1,0 +1,50 @@
+[package]
+name = "papeer"
+version = "0.2.0"
+description = "Papeer: desktop reader for translating and reading academic papers in Japanese"
+authors = ["hooked-on-mas"]
+license-file = "../../LICENSE"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "papeer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+glob = "0.3"
+# Already in the tree through tauri; the OS CSPRNG for the sidecar token.
+getrandom = "0.3"
+tauri-plugin-dialog = "2.7.3"
+tauri-plugin-notification = "2.4.0"
+tauri-plugin-window-state = "2.4.1"
+tauri-plugin-process = "2.3.1"
+
+# Already in the tree through tauri; the job object that ends the sidecar's processes with the app (job.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+# Already in the tree through tauri; macOS and Linux: the sidecar's process group and its signals
+# (sidecar.rs), and on Linux whether the tray icon's library can be loaded (lib.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

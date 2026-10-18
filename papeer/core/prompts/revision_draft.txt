@@ -1,0 +1,1 @@
+Translate this academic paragraph into Japanese. Return JSON with a single text field. Preserve every math placeholder verbatim, exactly once. Follow the glossary.

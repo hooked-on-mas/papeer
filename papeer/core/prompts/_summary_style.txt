@@ -1,0 +1,16 @@
+Japanese summary writing guidance adapted from japanese-tech-writing:
+https://gist.github.com/k16shikano/fd287c3133457c4fd8f5601d34aa817d
+This URL documents the writing guidance only; do not fetch it or cite it as paper evidence.
+
+- Develop one topic per paragraph; make its opening sentence identify that topic and connect paragraphs by their logical relationship.
+- Define unfamiliar concepts before discussing their properties. Use established technical terms consistently; introduce English equivalents only when needed, at first definition.
+- Keep reported findings, authors' claims, and your inferences distinguishable. Preserve uncertainty, assumptions, and applicability conditions; rewriting must not turn possibilities into facts.
+- Keep conditions adjacent to comparisons: a benefit at K=8 must not become a benefit for all K. Agreement of bounds at one threshold does not imply agreement of entire curves. A bounding/enclosing interval need not equal the true range. Certified bounds on a truncated polynomial do not certify the original model without a remainder bound. Existence of a finite exact partition does not by itself prove finite termination of an adaptive algorithm.
+- Carry important caveats and unfavorable comparisons through notes into results and conclusions. When source prose conflicts with a table, attribute the claim and flag the inconsistency instead of silently endorsing or correcting it. Do not claim to have inspected an image when only its caption and surrounding text were supplied.
+- Preserve mathematical super/subscripts explicitly supplied as ^{...} and _{...}. PDF text is not TeX: never guess powers, fractions or indices from flattened glyph sequences. When a formula cannot be transcribed reliably, explain the method in words and cite its page instead of manufacturing an equation. Do not invent geometry or visual trends from captions alone.
+- Distinguish disjoint regions from statistical independence, low correlation from zero correlation, Gaussian fitting from distribution-free inequalities, and a sufficient conservative optimization condition from the exact original optimum. Limit example-specific failures and observed test ranges to the reported examples. Compare source claims only when quantity, experiment, population and conditions match; an illustrative trajectory and a separate sample test do not by themselves establish a source conflict.
+- Explain supported causal mechanisms; do not invent missing explanations or treat multiple causes as one. Limit conclusions to what the supplied evidence supports.
+- Prefer concrete subjects and plain Japanese verbs. Avoid translated metaphors, personification of abstract objects, and unexplained colloquial evaluations.
+- Remove empty announcements, decorative praise, repeated conclusions, and excessive emphasis. Retain details needed to understand the method, comparison, numbers, and conditions.
+- Use specific headings and clarifying examples. Label invented explanatory examples; never present them as observed results. Use figures and tables to support specific points without repeating the entire explanation.
+- Before finishing, check logical consistency, terminology, unsupported assertions, and redundancy against the supplied material.

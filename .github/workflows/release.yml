@@ -1,0 +1,219 @@
+# Pushing a tag vX.Y.Z builds the installers of every platform with `just build` and attaches them to a
+# draft GitHub Release whose notes are the [X.Y.Z] section of CHANGELOG.md:
+#   Windows x64            NSIS setup .exe and MSI            (windows-latest)
+#   macOS Apple Silicon    .dmg, Papeer_X.Y.Z_aarch64.dmg     (macos-latest)
+#   macOS Intel            .dmg, Papeer_X.Y.Z_x64.dmg         (macos-15-intel)
+#   Linux x64              .deb, Papeer_X.Y.Z_amd64.deb       (ubuntu-22.04: glibc 2.35, so Ubuntu 22.04 and later)
+# Publish the draft by hand after checking it. Only the automatic GITHUB_TOKEN is used: nothing is signed
+# with a certificate (the Windows installers are unsigned; the Mac app and every program and library in it
+# carry an ad-hoc signature, tauri.macos.conf.json and tools/sign_sidecar.py, and are not notarized) and the
+# app has no updater, so no signing secrets are needed.
+#
+# Run by hand (Actions → Release → Run workflow), it builds the installers of a branch the same way and keeps
+# them as the run's artifacts, without a release: a trial before tagging. The repository is private, so the
+# runner minutes count against the plan's allowance (a Windows minute twice, a macOS minute ten times).
+# Estimated (not measured): one tag, or one run by hand, costs some 750-1100 minutes of it, nearly all for the
+# two Mac builds. macos-15-intel is the last Intel image GitHub offers: when it goes, drop the macos-x64 row
+# or build it on Apple Silicon under Rosetta.
+#
+# The build jobs only read the repository; only the release job, which runs no project code and no setup
+# actions, may write (create the release). Third-party actions are pinned to commit SHAs (the version is in
+# the comment); .github/dependabot.yml updates them weekly.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    strategy:
+      # The other platforms' installers are still worth a look when one fails.
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            installers: "nsis/*-setup.exe msi/*.msi"
+          - name: macos-arm64
+            os: macos-latest
+            installers: "dmg/*.dmg"
+          - name: macos-x64
+            os: macos-15-intel
+            installers: "dmg/*.dmg"
+          - name: linux-x64
+            os: ubuntu-22.04
+            installers: "deb/*.deb"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      # Build from the lock files as committed; fail instead of re-resolving.
+      UV_LOCKED: "1"
+      # The Windows runner's console code page cannot print the Japanese messages of the tools.
+      PYTHONUTF8: "1"
+    defaults:
+      run:
+        # bash on every runner (Git Bash on Windows), so each step is written once. `just build` runs its
+        # recipes in PowerShell on Windows and in sh elsewhere (justfile).
+        shell: bash
+    # No dependency caches: a cache saved on a tag ref is never reused, and a release is built from scratch.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+
+      # On a tag, every version must be the tag's; the Windows build also writes the release notes.
+      - name: Check the tag against every version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          uv run python tools/bump_version.py --check "$version"
+          mkdir -p release
+          if [ "$RUNNER_OS" = Windows ]; then
+            uv run python tools/bump_version.py --notes "$version" --output release/release-notes.md
+          fi
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 12
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          # No cache (see above); setup-node v5+ caches by itself when a package.json names npm.
+          package-manager-cache: false
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: stable
+
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: just
+
+      # What Tauri builds and bundles against on Linux (WebKitGTK 4.1, GTK 3, the tray's appindicator,
+      # librsvg for the icons, patchelf and file for the bundler).
+      - name: Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev libssl-dev patchelf file
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          uv sync --all-groups
+          pnpm --dir frontend install --frozen-lockfile
+
+      # code-version.txt and the bundle hash, the PyInstaller onedir sidecar (dist/sidecar), on macOS its ad-hoc
+      # signature (tools/sign_sidecar.py), its smoke test (tools/smoke_sidecar.py: the sidecar started in a
+      # throwaway folder; no real AI is called), the tested folder placed at frontend/src-tauri/sidecar for
+      # bundle.resources (tools/place_sidecar.py, then sidecar-sources.txt), `just check-sidecar`,
+      # `pnpm tauri build` (the bundles of tauri.conf.json and tauri.<platform>.conf.json).
+      - name: Build
+        run: just build
+
+      # The app is signed ad hoc as a whole (Tauri, signingIdentity "-"), and each program and library of the
+      # sidecar in its Resources on its own (tools/sign_sidecar.py): without a valid signature, Apple Silicon
+      # does not run arm64 code.
+      - name: Check the ad-hoc signatures
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          app=frontend/src-tauri/target/release/bundle/macos/Papeer.app
+          codesign --verify --deep --strict --verbose=2 "$app"
+          signature=$(codesign --display --verbose=2 "$app" 2>&1)
+          echo "$signature"
+          grep -q "Signature=adhoc" <<< "$signature"
+          uv run python tools/sign_sidecar.py --verify "$app/Contents/Resources/sidecar"
+
+      # The package's dependencies, and the sidecar's launcher and the command line client installed as programs (mode 755).
+      - name: Check the .deb
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          deb=$(ls frontend/src-tauri/target/release/bundle/deb/*.deb)
+          dpkg-deb --info "$deb"
+          grep -q libayatana-appindicator3-1 <<< "$(dpkg-deb --field "$deb" Recommends)"
+          launcher=$(dpkg-deb --contents "$deb" | grep -E '/sidecar/papeer-sidecar$')
+          echo "$launcher"
+          grep -q '^-rwxr-xr-x' <<< "$launcher"
+          cli=$(dpkg-deb --contents "$deb" | grep -E '/sidecar/papeer-cli$')
+          echo "$cli"
+          grep -q '^-rwxr-xr-x' <<< "$cli"
+
+      - name: Collect installers
+        env:
+          INSTALLERS: ${{ matrix.installers }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p release
+          bundle=frontend/src-tauri/target/release/bundle
+          for pattern in $INSTALLERS; do
+            # The pattern is a glob, meant to expand here.
+            # shellcheck disable=SC2206
+            files=("$bundle"/$pattern)
+            if [ "${#files[@]}" -ne 1 ]; then echo "インストーラーが 1 つではありません: $pattern: ${files[*]}" >&2; exit 1; fi
+            cp "${files[0]}" release/
+          done
+          ls -l release
+
+      # The installers (and, from the Windows build, release-notes.md): all the release job needs.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.name }}
+          path: release/
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release
+
+      - name: Attach to a draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(release/*.exe release/*.msi release/*.dmg release/*.deb)
+          # Windows setup and MSI, two Mac disk images, one Linux package.
+          if [ "${#files[@]}" -ne 5 ]; then echo "インストーラーが揃っていません: ${files[*]}" >&2; exit 1; fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # A re-run replaces the installers of the existing release and leaves its notes alone.
+            gh release upload "$TAG" "${files[@]}" --clobber
+          else
+            gh release create "$TAG" "${files[@]}" --draft --verify-tag \
+              --title "Papeer ${TAG#v}" --notes-file release/release-notes.md
+          fi

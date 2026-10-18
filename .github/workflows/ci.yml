@@ -1,0 +1,346 @@
+# Checks every pushed branch and every pull request on Windows and Linux (README「テストと lint」).
+# Three jobs run side by side:
+#   python   ruff, pyright, the generated files (frontend/openapi.json, the license inventory), pytest
+#            (Windows and Linux)
+#   frontend tsc, ESLint, node:test, vite build (Windows only: nothing in it depends on the platform)
+#   rust     cargo fmt --check, cargo clippy --release, cargo test --release (the release-only code is
+#            behind #[cfg(not(debug_assertions))] and is compiled only with --release) (Windows and Linux)
+#
+# Run by hand (Actions → CI → Run workflow), it can also check macOS (python and rust on an Apple Silicon
+# runner), build the sidecar on every platform and smoke-test it (`just build-sidecar`: the onedir
+# sidecar started in a throwaway folder, and the ignored tests of sidecar.rs that start it as the app
+# does), and make the license inventories of Linux and macOS (`licenses`: tools/license_inventory.py reads
+# the licenses from what is installed, so each platform's is made on it; commit the uploaded files). The repository is private, so runner minutes count against the plan's allowance: a Linux minute
+# counts once, a Windows minute twice and a macOS minute ten times; macOS and the sidecar builds are
+# therefore never run on a push. Estimated (not measured): a push costs some 60-80 minutes of the allowance,
+# mostly the Windows jobs counted twice; a manual run with macOS and the sidecar builds several hundred.
+#
+# A pull request from a branch of this repository uses the result of the push of that branch; only pull
+# requests from forks are checked as pull requests. A newer push to the same branch cancels the older run;
+# on main every commit has a group of its own, so each keeps its result.
+#
+# Nothing here calls a real AI: the tests replace the CLIs and APIs, and the runner has no claude, codex
+# or agy. Actions are pinned to commit SHAs like release.yml (the version is in the comment);
+# .github/dependabot.yml moves them.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: "macOS でも検査する（macOS の 1 分は 10 分として数えられる）"
+        type: boolean
+        default: false
+      sidecar:
+        description: "各 OS で sidecar をビルドしてスモークテストする（Windows・Linux、macOS を選べば Mac 2 種も）"
+        type: boolean
+        default: true
+      licenses:
+        description: "Linux（macOS を選べば Mac 2 種も）のライセンス台帳を作り、成果物にする（docs/ にコミットする）"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # One command per step: the runner's pwsh wrapper stops the step when that command fails. pwsh is on
+    # the Linux and macOS runners as well.
+    shell: pwsh
+
+jobs:
+  python:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    name: python (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.macos && '["windows-latest", "ubuntu-22.04", "macos-latest"]' || '["windows-latest", "ubuntu-22.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      # Test with the lock file as committed; fail instead of re-resolving.
+      UV_LOCKED: "1"
+      # The runner's console code page cannot print the Japanese messages of the tools and tests.
+      PYTHONUTF8: "1"
+      # pyright runs the copy bundled in its wheel with the Node.js set up below; skip its PyPI version lookup.
+      PYRIGHT_PYTHON_IGNORE_WARNINGS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # Node.js for pyright and for tests/test_openapi_schema.py, which makes schema.d.ts again with
+      # frontend/node_modules/openapi-typescript (the test is skipped without them).
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 12
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: uv sync
+        run: uv sync --locked
+
+      - name: pnpm install
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: ruff
+        run: uv run ruff check papeer sidecar tests tools
+
+      - name: pyright
+        run: uv run pyright
+
+      - name: frontend/openapi.json matches the sidecar
+        run: uv run python tools/export_openapi.py --check
+
+      - name: License inventory matches the lock files
+        run: uv run python tools/license_inventory.py --check
+
+      # The bundled fonts converted to TrueType (some 30 seconds to make; tests/conftest.py keeps them in
+      # pytest's cache folder). The file names carry the source's hash, so an older conversion is never used.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .pytest_cache/d/papeer-font-cache
+          key: font-cache-${{ runner.os }}-${{ hashFiles('papeer/core/assets/fonts/**', 'papeer/pdf/pdf_fonts.py', 'uv.lock') }}
+          restore-keys: font-cache-${{ runner.os }}-
+
+      # The Tesseract language data of the OCR tests (tessdata_fast 4.1.0 eng and jpn, some 6.5 MB, not in the
+      # repository): downloaded by tests/conftest.py and checked by SHA-256 when missing, then kept here.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .pytest_cache/d/papeer-tessdata
+          key: tessdata-fast-4.1.0
+
+      # PAPEER_TEST_DOWNLOAD_TESSDATA: download the language data if the cache has none, and fail (not skip)
+      # the OCR tests when that download fails.
+      - name: pytest
+        run: uv run pytest -q
+        env:
+          PAPEER_TEST_DOWNLOAD_TESSDATA: "1"
+
+  frontend:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 12
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: tsc
+        run: pnpm typecheck
+
+      - name: ESLint
+        run: pnpm lint
+
+      - name: node:test
+        run: pnpm test
+
+      - name: vite build
+        run: pnpm build
+
+      - name: Web Library build
+        run: pnpm build:web
+
+  rust:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    name: rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.macos && '["windows-latest", "ubuntu-22.04", "macos-latest"]' || '["windows-latest", "ubuntu-22.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      # tauri-build copies bundle.resources at build time and fails without the onedir sidecar folder
+      # (frontend/src-tauri/sidecar), which only `just build-sidecar` makes.
+      TAURI_CONFIG: '{"bundle":{"resources":[]}}'
+    defaults:
+      run:
+        working-directory: frontend/src-tauri
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # What Tauri builds against on Linux (WebKitGTK 4.1, GTK 3, the tray's appindicator, librsvg for icons).
+      - name: Linux libraries
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: frontend/src-tauri -> target
+          # Branches start from main's cache; saving one per branch would soon push it out of the 10 GB.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --release --all-targets -- -D warnings
+
+      # The unit tests in lib.rs and sidecar.rs with the release-only code compiled in (on Linux and macOS,
+      # the sidecar's process group, SIGTERM then SIGKILL, and Linux's PR_SET_PDEATHSIG). Without LTO and
+      # optimization: the release profile's are for the installer, and would make this build several times slower.
+      - name: cargo test
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "256"
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
+        run: cargo test --release
+
+  # By hand only. The onedir sidecar built as the release builds it (`just build-sidecar`: PyInstaller, the
+  # ad-hoc signature on macOS, the smoke test, the placing), then the ignored tests of sidecar.rs that start
+  # the built sidecar as the app does (it ends by itself after /shutdown, and when its stdin pipe closes).
+  sidecar:
+    if: github.event_name == 'workflow_dispatch' && inputs.sidecar
+    name: sidecar (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-latest is Apple Silicon (aarch64-apple-darwin), macos-15-intel an Intel Mac (x86_64-apple-darwin).
+        os: ${{ fromJSON(inputs.macos && '["windows-latest", "ubuntu-22.04", "macos-latest", "macos-15-intel"]' || '["windows-latest", "ubuntu-22.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      UV_LOCKED: "1"
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: just
+
+      - name: uv sync
+        run: uv sync --locked --all-groups
+
+      - name: just build-sidecar
+        run: just build-sidecar
+
+      - name: Linux libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: frontend/src-tauri -> target
+          save-if: false
+
+      - name: cargo test (the built sidecar)
+        working-directory: frontend/src-tauri
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "256"
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
+        run: cargo test --release sidecar -- --ignored
+
+  # By hand only. The license inventories of Linux and the two Macs (tools/license_inventory.py), each made on
+  # its own platform from the packages installed there; download the artifact and commit its files to docs/.
+  # Windows' inventory is made on a Windows PC (`just licenses`). `--check` in the python job then keeps each
+  # one in step with the lock files.
+  licenses:
+    if: github.event_name == 'workflow_dispatch' && inputs.licenses
+    name: licenses (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.macos && '["ubuntu-22.04", "macos-latest", "macos-15-intel"]' || '["ubuntu-22.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      UV_LOCKED: "1"
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 12
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: stable
+
+      - name: uv sync
+        run: uv sync --locked --all-groups
+
+      - name: pnpm install
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      # The inventory reads the crates offline: fetch them first (every platform's, as cargo fetch does).
+      - name: cargo fetch
+        run: cargo fetch --locked --manifest-path frontend/src-tauri/Cargo.toml
+
+      - name: License inventory
+        run: uv run python tools/license_inventory.py
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: license-inventory-${{ matrix.os }}
+          path: docs/dependency-license-inventory.*.json
+          if-no-files-found: error

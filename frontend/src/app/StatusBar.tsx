@@ -1,0 +1,100 @@
+import { useEffect } from "react";
+import { Gauge, Info, Loader2, Square, Undo2 } from "lucide-react";
+import { Popover } from "@base-ui/react/popover";
+import { Progress } from "@/components/ui/progress";
+import { providerLabel, useHealth, useProviders, useSettings, useUsageLimits } from "@/api/hooks";
+import { limitsDetails, limitsSummary, useLastUsage, usageDetails } from "@/lib/usage";
+import { useShallow } from "zustand/react/shallow";
+import { useStore } from "@/store";
+import { statusJob } from "@/features/jobs/jobSelectors";
+import { cancelVisibleJobs } from "@/features/jobs/jobEvents";
+import { JobListPopover } from "@/features/jobs/JobListPopover";
+import { undoMove } from "./actions";
+import { holdStatus } from "./statusExpiry";
+
+export function StatusBar() {
+  const statusMessage = useStore((s) => s.statusMessage);
+  // Other jobs' progress events leave the shown job and the count as they are, and the bar as it is.
+  const { job, running } = useStore(useShallow((s) => statusJob(s.activeJobs, s.activePaperId)));
+  const moveHistory = useStore((s) => s.moveHistory);
+  const { data: settings } = useSettings();
+  const { data: health } = useHealth();
+  const { data: providers } = useProviders();
+  const { data: limits } = useUsageLimits(settings?.provider);
+  const lastUsage = useLastUsage((s) => s.usage);
+  // Hidden while the pointer was on it (focus mode): the message must not stay held forever.
+  useEffect(() => () => holdStatus(false), []);
+
+  const message = job ? (job.message || "処理中...")
+    : running ? `バックグラウンドで ${running} 件のタスクが実行中です...` : statusMessage;
+  const percent = job?.total ? ((job.done ?? 0) / job.total) * 100 : null;
+
+  // Plan usage of the AI connection now selected; the last job's tokens when the service reports no plan.
+  const shownLimits = limits && limits.provider === settings?.provider && limits.windows.length ? limits : null;
+  const usageTitle = [
+    shownLimits ? "利用枠\n" + limitsDetails(shownLimits) : "",
+    lastUsage ? "直近のAI処理\n" + usageDetails(lastUsage) : "",
+  ].filter(Boolean).join("\n\n");
+
+  return (
+    <footer
+      className="h-8 border-t flex items-center px-3 gap-3 text-[0.75rem] text-muted-foreground shrink-0 bg-background"
+      onPointerEnter={() => holdStatus(true)}
+      onPointerLeave={() => holdStatus(false)}
+    >
+      {running > 0 && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary shrink-0" />}
+      {/* Screen readers hear the outcomes (statusMessage) here, not every step of a job's progress. */}
+      <span role="status" className="sr-only">{statusMessage}</span>
+      <span className="flex-1 truncate min-w-0 text-foreground/80" title={message} aria-hidden={message === statusMessage || undefined}>{message}</span>
+      {running > 0 && (
+        <>
+          <Progress value={percent} className="w-32 shrink-0" />
+          {job && (
+            <button
+              onClick={cancelVisibleJobs}
+              className="flex items-center gap-1 h-6 px-2 rounded border hover:bg-muted hover:text-foreground shrink-0"
+              title="表示中の論文の処理と、全体の処理を中止します（他の論文の処理は一覧から個別に中止できます）"
+            >
+              <Square className="w-3 h-3" /> 中止
+            </button>
+          )}
+        </>
+      )}
+      <JobListPopover />
+      {moveHistory.length > 0 && (
+        <button
+          onClick={undoMove}
+          className="flex items-center gap-1 h-6 px-2 rounded border hover:bg-muted hover:text-foreground shrink-0"
+          title="今回の起動中に行った論文の移動・フォルダー削除を、直前のものから取り消します。"
+        >
+          <Undo2 className="w-3 h-3" /> 元に戻す
+        </button>
+      )}
+      {shownLimits && (
+        <span
+          className={`shrink-0 flex items-center gap-1 tabular-nums ${shownLimits?.windows.some((w) => w.used_percent >= 80) ? "text-destructive" : ""}`}
+          title={usageTitle}
+        >
+          <Gauge className="w-3.5 h-3.5" />
+          {limitsSummary(shownLimits)}
+        </span>
+      )}
+      <Popover.Root>
+        <Popover.Trigger aria-label="AI・接続情報" title="接続先とAI使用量を確認"
+          className="flex h-6 shrink-0 items-center gap-1 rounded px-1.5 hover:bg-muted hover:text-foreground">
+          <Info className="size-3.5" aria-hidden="true" />AI情報
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Positioner side="top" align="end" sideOffset={6} className="z-50 outline-none">
+            <Popover.Popup className="w-[min(24rem,calc(100vw-2rem))] max-h-[70vh] overflow-y-auto rounded-lg border bg-popover p-3 text-[0.75rem] text-popover-foreground shadow-lg outline-none">
+              <Popover.Title className="mb-2 font-medium">AI・接続情報</Popover.Title>
+              <p>{providerLabel(providers, settings?.provider)}</p>
+              {usageTitle && <p className="mt-2 whitespace-pre-line break-words">{usageTitle}</p>}
+              {health?.version && <p className="mt-2 text-muted-foreground">Papeer {health.version} · 描画コード {health.code_version.slice(12, 24)}</p>}
+            </Popover.Popup>
+          </Popover.Positioner>
+        </Popover.Portal>
+      </Popover.Root>
+    </footer>
+  );
+}

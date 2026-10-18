@@ -1,0 +1,710 @@
+"""Smoke-test the packaged sidecar before it goes into an installer (`just smoke-sidecar`).
+
+Starts dist/sidecar/papeer-sidecar(.exe) (the onedir bundle `just build-sidecar` makes from sidecar.spec)
+the way Tauri does, with a random token and a free port, but in a throwaway environment: the data folder,
+every folder this PC's files are kept in (LOCALAPPDATA on Windows; the home folder and the XDG folders on
+macOS and Linux: papeer.core.paths) and the temporary folder (TEMP, TMP, TMPDIR) all point into a new
+temporary folder, so the user's library and device settings are never read or written, and it shows
+exactly that nothing is unpacked into the temporary folder (a PyInstaller onefile exe would make a _MEI*
+folder there, and leave it behind when killed). Then:
+
+1. /health answers; `version` is this checkout's MAJOR.MINOR.PATCH and `code_version` matches its
+   extraction, layout and PDF drawing code (papeer.core.code_version.RENDER_SOURCES). An exe built
+   before the version or that code changed fails here (rebuild it); a change to any other code does
+   not show in either value and is not noticed here (`just check-sidecar` compares the whole bundle).
+2. Authentication: routes refuse a missing or wrong token (401) and accept the right one, in the
+   Authorization header and in the `token` query parameter.
+3. The bundled prompts are the ones in papeer/core/prompts, and settings can be saved.
+4. The sample PDF (tests/fixtures/sample.pdf) is imported and its text extracted and searchable.
+5. It is translated through a stand-in OpenAI-compatible server that this script runs on 127.0.0.1
+   (never a real AI, nothing leaves the PC), so translated.pdf is typeset with the bundled Japanese
+   fonts: the check reads the fonts and text of that PDF. The instructions it receives must have
+   the shared prompt sections (papeer/core/prompts/_*.txt) in place of their markers.
+6. papeer-cli (the second launcher of the folder, next to the sidecar's) connects to this sidecar with
+   --url and the token in PAPEER_TOKEN, and `--json status`, `folder list` and `ls` answer with what the
+   steps above made (`python -m papeer.cli` with --source). It never starts a sidecar of its own here.
+7. /shutdown: the process ends by itself with exit code 0, and no _MEI* folder was made at any point.
+7. Started again as the app starts it (PAPEER_WATCH_STDIN=1, a pipe as its standard input), it ends by
+   itself with exit code 0 once the pipe closes, as when the app's process ends however it ends.
+8. macOS and Linux: started again, SIGTERM (what the app sends when /shutdown is not enough, and what
+   Linux sends when the app's process ends) ends it with exit code 0.
+
+Each step prints OK; the first failure prints what went wrong and the end of the sidecar's log,
+and the exit code is 1. The sidecar is stopped (killed if need be) and the temporary folder removed
+in every case, unless --keep asks to keep it for a look. `--source` runs the same checks against
+`python -m sidecar` from this checkout instead of the exe (no _MEI* checks), to try the script itself.
+`--exe` names another launcher, such as the one in a folder an installer was unpacked to; papeer-cli is
+taken from the same folder.
+"""
+from __future__ import annotations
+
+import argparse
+from contextlib import contextmanager
+from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from typing import Any, Iterator
+from unittest import mock
+import urllib.error
+import urllib.parse
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
+from papeer import __version__  # noqa: E402
+from papeer.core import paths  # noqa: E402
+from papeer.core.code_version import CLI_EXE, SIDECAR_DIR, SIDECAR_EXE, source_version  # noqa: E402
+from tools.bump_version import SEMVER  # noqa: E402 (the release version rule: MAJOR.MINOR.PATCH)
+
+# PyInstaller's output (sidecar.spec COLLECT); tools/place_sidecar.py copies the folder to SIDECAR_DIR once this passes.
+DEFAULT_EXE = ROOT / "dist" / SIDECAR_DIR.name / SIDECAR_EXE.name
+SAMPLE_PDF = ROOT / "tests" / "fixtures" / "sample.pdf"
+PROMPT_DIR = ROOT / "papeer" / "core" / "prompts"
+
+# Antivirus scanning can make the first launch of a new build slow. /shutdown itself waits up to 25 s
+# for jobs and requests (routes/system.py).
+HEALTH_TIMEOUT = 120.0
+JOB_TIMEOUT = 300.0
+EXIT_TIMEOUT = 45.0
+# One papeer-cli command (a first launch of a new build is scanned by antivirus, like the sidecar's).
+CLI_TIMEOUT = 90.0
+
+# papeer.layout.math_layout.MATH_TOKEN (tests/test_smoke_sidecar.py keeps the two the same).
+MATH_TOKEN = re.compile(r"\[\[PD_MATH_[A-Za-z0-9_]+\]\]")
+# What OpenAICompatProvider appends to the instruction of a structured (JSON) request.
+SCHEMA_MARKER = "Return JSON only, matching this schema"
+# A shared prompt section left unreplaced (papeer.core.prompts._SHARED).
+SHARED_MARKER = re.compile(r"\{\{[a-z_]+\}\}")
+STUB_TEXT = "スモークテストの訳文です。適応制御の追従誤差を検証した。"
+STUB_MODEL = "papeer-smoke-stub"
+
+# Launch variables that must not reach the sidecar: another token, data folder or no-auth flag
+# (PAPEER_*/PAPERDESK_*) and real API keys (the stand-in server needs none).
+INHERITED_PREFIXES = ("PAPEER_", "PAPERDESK_")
+API_KEY_VARIABLES = frozenset({"OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY"})
+
+
+class SmokeFailure(Exception):
+    """A check failed; the message says what was expected."""
+
+
+# --- Pure helpers (tests/test_smoke_sidecar.py) ---
+
+def is_semver(value: Any) -> bool:
+    return isinstance(value, str) and SEMVER.fullmatch(value) is not None
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def pc_folders(pc_dir: Path) -> dict[str, str]:
+    """The variables every folder of this PC that papeer uses is made from (papeer.core.paths), under `pc_dir`.
+
+    LOCALAPPDATA on Windows; the home folder (~/Library/... on macOS) and the XDG base folders on Linux.
+    HOME is left alone on Windows, where Python does not read it (Path.home() is USERPROFILE).
+    """
+    folders = {
+        "LOCALAPPDATA": pc_dir / "localappdata",
+        "XDG_DATA_HOME": pc_dir / "xdg-data",
+        "XDG_STATE_HOME": pc_dir / "xdg-state",
+        "XDG_CACHE_HOME": pc_dir / "xdg-cache",
+        "XDG_CONFIG_HOME": pc_dir / "xdg-config",
+    }
+    if os.name != "nt":
+        folders["HOME"] = pc_dir / "home"
+    return {name: str(path) for name, path in folders.items()}
+
+
+def sidecar_environment(base: dict[str, str], *, data_dir: Path, pc_dir: Path, temp_dir: Path,
+                        token: str, port: int) -> dict[str, str]:
+    """The sidecar's environment: the caller's, minus Papeer variables and API keys, plus the smoke folders."""
+    env = {name: value for name, value in base.items()
+           if not name.upper().startswith(INHERITED_PREFIXES) and name.upper() not in API_KEY_VARIABLES}
+    env.update({
+        "PAPEER_DATA_DIR": str(data_dir),
+        # Device settings (PapeerSync), logs and caches stay in the smoke folder on every platform.
+        **pc_folders(pc_dir),
+        # A onefile bootloader would unpack into the temporary folder (GetTempPath reads TMP first on
+        # Windows, the POSIX bootloader TMPDIR): a folder of our own shows that the onedir sidecar makes
+        # no _MEI* folder.
+        "TEMP": str(temp_dir),
+        "TMP": str(temp_dir),
+        "TMPDIR": str(temp_dir),
+        "PAPEER_TOKEN": token,
+        "PAPEER_PORT": str(port),
+        # The stand-in AI server is on 127.0.0.1: never send its requests through a system proxy.
+        "NO_PROXY": "127.0.0.1,localhost",
+    })
+    return env
+
+
+def device_directory_in(env: dict[str, str]) -> Path:
+    """Where a sidecar with environment `env` keeps this PC's files (papeer.core.paths.device_directory)."""
+    with mock.patch.dict(os.environ, env, clear=True):
+        return paths.device_directory()
+
+
+def mei_folders(temp_dir: Path) -> list[Path]:
+    """PyInstaller onefile extraction folders in temp_dir (the onedir sidecar makes none)."""
+    if not temp_dir.is_dir():
+        return []
+    return sorted(path for path in temp_dir.glob("_MEI*") if path.is_dir())
+
+
+def check_health(body: Any, expected_version: str, expected_code: str) -> None:
+    if not isinstance(body, dict) or body.get("status") != "ok":
+        raise SmokeFailure(f"/health の応答が不正です: {body!r}")
+    version = body.get("version")
+    if not is_semver(version):
+        raise SmokeFailure(f"/health の version が MAJOR.MINOR.PATCH ではありません: {version!r}")
+    if version != expected_version:
+        raise SmokeFailure(f"/health の version {version} がソースの版 {expected_version} と違います。"
+                           "`just build-sidecar` で作り直してください。")
+    code = body.get("code_version")
+    if code != expected_code:
+        raise SmokeFailure(f"/health の code_version がソースと一致しません（exe: {code}, ソース: {expected_code}）。"
+                           "exe が古い可能性があります。`just build-sidecar` で作り直してください。")
+
+
+def cli_launcher(sidecar_exe: Path) -> Path:
+    """The papeer-cli beside a sidecar launcher (they share the folder and its _internal)."""
+    return sidecar_exe.with_name(CLI_EXE.name)
+
+
+def check_cli_status(body: Any) -> None:
+    """`papeer-cli --json status` against the running sidecar of this checkout (a job may still be running)."""
+    instance = body.get("instance") if isinstance(body, dict) else None
+    if not isinstance(body, dict) or body.get("running") is not True or not isinstance(instance, dict):
+        raise SmokeFailure(f"status の結果が不正です: {body!r}")
+    if instance.get("version") != __version__:
+        raise SmokeFailure(f"status の版 {instance.get('version')!r} がソースの版 {__version__} と違います。")
+    pid = instance.get("pid")
+    if not isinstance(pid, int) or pid <= 0 or not isinstance(instance.get("port"), int):
+        raise SmokeFailure(f"status に sidecar の pid・ポートがありません: {instance!r}")
+    if not isinstance(body.get("jobs"), list):
+        raise SmokeFailure(f"status にジョブの一覧がありません: {body!r}")
+
+
+def job_outcome(job: Any, job_id: str) -> dict[str, Any] | None:
+    """The finished job from GET /api/jobs/{job_id}, None while it runs; SmokeFailure when it failed or was cancelled."""
+    if not isinstance(job, dict) or job.get("job_id") != job_id:
+        raise SmokeFailure(f"ジョブ {job_id} の応答が不正です: {job!r}")
+    if job.get("running"):
+        return None
+    if job.get("status") != "succeeded":
+        raise SmokeFailure(f"ジョブ {job.get('kind')} が {job.get('status')} で終わりました: {job.get('error')}")
+    return job
+
+
+def stub_answer(instruction: str, data: str) -> str:
+    """The stand-in AI's reply, shaped like tests/test_workflow.py's FakeProvider."""
+    if SCHEMA_MARKER not in instruction:
+        return STUB_TEXT
+    payload = json.loads(data)
+    if isinstance(payload, dict) and "existing_terms" in payload:
+        return json.dumps({"domain": "制御理論", "terms": []})
+    if isinstance(payload, dict) and "source_parts" in payload:
+        # Formula-marker recovery: keep every math part, replace the prose.
+        parts = [part if part.get("kind") == "math" else {"kind": "text", "text": STUB_TEXT}
+                 for part in payload["source_parts"]]
+        return json.dumps({"parts": parts}, ensure_ascii=False)
+    # The first request of a batch sends {"blocks": [...]}, the fallback {"texts": [...]}.
+    units = (payload.get("blocks", payload.get("texts", payload)) if isinstance(payload, dict) else payload)
+    if not isinstance(units, list):
+        return json.dumps({"translations": []})
+    return json.dumps({"translations": [
+        {"id": unit["id"], "text": " ".join([STUB_TEXT, *MATH_TOKEN.findall(unit.get("text", ""))])}
+        for unit in units]}, ensure_ascii=False)
+
+
+def expected_prompts(folder: Path = PROMPT_DIR) -> dict[str, str]:
+    """The built-in prompts as papeer.core.prompts.defaults() returns them.
+
+    Files starting with "_" are sections shared by several prompts, not prompts; that they are
+    bundled shows in the translation requests (StubAI.unexpanded).
+    """
+    return {path.stem: path.read_text("utf-8").strip() for path in sorted(folder.glob("*.txt"))
+            if not path.stem.startswith("_")}
+
+
+def pdf_fonts_and_text(data: bytes) -> tuple[set[str], str]:
+    import pymupdf
+
+    with pymupdf.open(stream=data, filetype="pdf") as pdf:
+        fonts = {font[3] for page in pdf for font in page.get_fonts()}
+        text = "".join(str(page.get_text()) for page in pdf)
+    return fonts, text
+
+
+def check_translated_pdf(data: bytes) -> None:
+    if not data.startswith(b"%PDF"):
+        raise SmokeFailure("translated.pdf が PDF ではありません。")
+    fonts, text = pdf_fonts_and_text(data)
+    if not any("PapeerSerif" in name for name in fonts):
+        raise SmokeFailure(f"translated.pdf に同梱の日本語フォント（PapeerSerif）が埋め込まれていません: {sorted(fonts)}")
+    if STUB_TEXT[:8] not in text.replace("\n", ""):
+        raise SmokeFailure("translated.pdf に訳文がありません。")
+
+
+def log_tail(path: Path, lines: int = 40) -> str:
+    if not path.is_file():
+        return ""
+    data = path.read_bytes()
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        text = data.decode("mbcs" if os.name == "nt" else "latin-1", errors="replace")
+    return "\n".join(text.splitlines()[-lines:])
+
+
+# --- The stand-in OpenAI-compatible server ---
+
+class StubAI:
+    """/v1/chat/completions on 127.0.0.1 that answers every request with stub_answer.
+
+    `unexpanded` counts instructions still holding a {{name}} marker of a shared prompt section
+    (papeer.core.prompts.expand), which happens when the section's file is not bundled.
+    """
+
+    def __init__(self) -> None:
+        self.requests = 0
+        self.unexpanded = 0
+        stub = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler's naming)
+                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                if not self.path.endswith("/chat/completions"):
+                    self.send_error(404)
+                    return
+                try:
+                    messages = json.loads(body)["messages"]
+                    content = stub_answer(messages[0]["content"], messages[-1]["content"])
+                except (ValueError, KeyError, IndexError, TypeError) as exc:
+                    self.send_error(400, str(exc))
+                    return
+                stub.requests += 1
+                if SHARED_MARKER.search(messages[0]["content"]):
+                    stub.unexpanded += 1
+                reply = json.dumps({"choices": [{"message": {"role": "assistant", "content": content},
+                                                 "finish_reason": "stop"}],
+                                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(reply)))
+                self.end_headers()
+                self.wfile.write(reply)
+
+            def log_message(self, format: str, *args: Any) -> None:
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, name="stub-ai", daemon=True)
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.server.server_address[1]}/v1"
+
+    def __enter__(self) -> "StubAI":
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+# --- Talking to the sidecar ---
+
+@dataclass
+class Reply:
+    status: int
+    body: bytes
+
+    def json(self) -> Any:
+        return json.loads(self.body)
+
+
+class Client:
+    def __init__(self, port: int, token: str) -> None:
+        self.base = f"http://127.0.0.1:{port}"
+        self.token = token
+        # 127.0.0.1 only: a proxy from the environment or the Windows settings must not get in between.
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def request(self, method: str, path: str, *, token: str | None = None, body: Any = None,
+                query: dict[str, str] | None = None, timeout: float = 30.0) -> Reply:
+        url = self.base + path + ("?" + urllib.parse.urlencode(query) if query else "")
+        data = json.dumps(body).encode() if body is not None else None
+        headers = {"Content-Type": "application/json"} if data is not None else {}
+        if token is not None:
+            headers["Authorization"] = "Bearer " + token
+        try:
+            with self.opener.open(urllib.request.Request(url, data=data, headers=headers, method=method),
+                                  timeout=timeout) as response:
+                return Reply(response.status, response.read())
+        except urllib.error.HTTPError as error:
+            return Reply(error.code, error.read())
+
+    def call(self, method: str, path: str, **kwargs: Any) -> Any:
+        """An authenticated request that must succeed; its JSON body."""
+        reply = self.request(method, path, token=self.token, **kwargs)
+        if reply.status != 200:
+            raise SmokeFailure(f"{method} {path} が HTTP {reply.status} を返しました: "
+                               f"{reply.body[:500].decode('utf-8', 'replace')}")
+        return reply.json()
+
+
+class Smoke:
+    def __init__(self, command: list[str], cwd: Path, root: Path, frozen: bool, out: Any,
+                 cli_command: list[str] | None = None) -> None:
+        self.command = command
+        self.cli_command = cli_command
+        self.cwd = cwd
+        self.frozen = frozen
+        self.out = out
+        self.data_dir = root / "data"
+        self.pc_dir = root / "pc"
+        self.temp_dir = root / "temp"
+        self.log_path = root / "sidecar.log"
+        self.input_dir = root / "input"
+        for folder in (self.data_dir, self.pc_dir, self.temp_dir, self.input_dir):
+            folder.mkdir(parents=True)
+        self.token = secrets.token_urlsafe(32)
+        self.port = free_port()
+        self.client = Client(self.port, self.token)
+        self.env = sidecar_environment(dict(os.environ), data_dir=self.data_dir, pc_dir=self.pc_dir,
+                                       temp_dir=self.temp_dir, token=self.token, port=self.port)
+        if os.name != "nt":
+            Path(self.env["HOME"]).mkdir()
+        # Where it must keep this PC's settings, by the rules of papeer.core.paths on this platform.
+        self.device_dir = device_directory_in(self.env)
+        self.process: subprocess.Popen | None = None
+        self._log_file: Any = None
+
+    @contextmanager
+    def step(self, name: str) -> Iterator[None]:
+        started = time.monotonic()
+        try:
+            yield
+        except SmokeFailure as exc:
+            raise SmokeFailure(f"{name}: {exc}") from None
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise SmokeFailure(f"{name}: {type(exc).__name__}: {exc}") from exc
+        print(f"OK  {name} ({time.monotonic() - started:.1f} 秒)", file=self.out, flush=True)
+
+    def alive(self) -> None:
+        if self.process is not None and self.process.poll() is not None:
+            raise SmokeFailure(f"sidecar が終了しました（終了コード {self.process.returncode}）。")
+
+    def start(self, *, watch_stdin: bool = False) -> None:
+        """Start the sidecar (again, once it has ended); with watch_stdin as the app does, a pipe as its stdin."""
+        env = dict(self.env, PAPEER_WATCH_STDIN="1") if watch_stdin else self.env
+        if self._log_file is None:
+            self._log_file = self.log_path.open("wb")
+        # macOS and Linux: a process group of its own, which stop() ends with everything the sidecar started in it.
+        group: dict[str, Any] = {} if os.name == "nt" else {"start_new_session": True}
+        self.process = subprocess.Popen(self.command, cwd=self.cwd, env=env,
+                                        stdin=subprocess.PIPE if watch_stdin else subprocess.DEVNULL,
+                                        stdout=self._log_file, stderr=subprocess.STDOUT, **group)
+
+    def wait_for_health(self) -> Any:
+        deadline = time.monotonic() + HEALTH_TIMEOUT
+        while True:
+            self.alive()
+            try:
+                reply = self.client.request("GET", "/health", timeout=5)
+                if reply.status == 200:
+                    return reply.json()
+            except (urllib.error.URLError, ConnectionError, TimeoutError, socket.timeout):
+                pass
+            if time.monotonic() > deadline:
+                raise SmokeFailure(f"{HEALTH_TIMEOUT:.0f} 秒待っても /health が応答しません。")
+            time.sleep(0.25)
+
+    def wait_for_job(self, job_id: str) -> dict[str, Any]:
+        # The sidecar keeps the last finished jobs (FINISHED_JOBS_KEPT in sidecar/jobs.py).
+        deadline = time.monotonic() + JOB_TIMEOUT
+        while True:
+            self.alive()
+            job = job_outcome(self.client.call("GET", f"/api/jobs/{job_id}"), job_id)
+            if job is not None:
+                return job
+            if time.monotonic() > deadline:
+                raise SmokeFailure(f"ジョブ {job_id} が {JOB_TIMEOUT:.0f} 秒で終わりません。")
+            time.sleep(0.25)
+
+    def run(self) -> None:
+        with StubAI() as stub:
+            with self.step("起動と /health"):
+                self.start()
+                check_health(self.wait_for_health(), __version__, source_version(ROOT))
+                self.check_nothing_unpacked()
+            with self.step("認証（トークンなし・誤り 401、正しいトークン 200）"):
+                self.check_authentication()
+            with self.step("同梱のプロンプトと設定の保存"):
+                self.check_prompts_and_settings(stub)
+            with self.step("サンプル PDF の取り込みとテキスト抽出"):
+                paper_id = self.check_import()
+            with self.step("翻訳（ローカルの代役 API）と同梱フォントでの PDF 作成"):
+                self.check_translation(paper_id, stub)
+            if self.cli_command is not None:
+                with self.step("papeer-cli が sidecar に接続して status・folder list・ls を実行"):
+                    self.check_cli(paper_id)
+            with self.step("/shutdown で終了"):
+                self.check_shutdown()
+        with self.step("アプリの終了（標準入力のパイプが閉じる）で終了"):
+            self.check_exit_when_the_app_is_gone()
+        if os.name != "nt":
+            with self.step("SIGTERM で終了"):
+                self.check_exit_on_sigterm()
+        with self.step("ログにエラーがないこと"):
+            if "Traceback" in log_tail(self.log_path, lines=100_000):
+                raise SmokeFailure("sidecar のログに Traceback があります。")
+
+    def check_authentication(self) -> None:
+        cases = [
+            ("GET", "/api/settings", None, None, 401),
+            ("GET", "/api/settings", "not-the-token", None, 401),
+            ("GET", "/api/settings", None, {"token": "not-the-token"}, 401),
+            ("POST", "/shutdown", None, None, 401),
+            ("GET", "/api/settings", self.token, None, 200),
+            ("GET", "/api/jobs", None, {"token": self.token}, 200),
+        ]
+        for method, path, token, query, expected in cases:
+            reply = self.client.request(method, path, token=token, query=query)
+            if reply.status != expected:
+                how = "正しいトークン" if self.token in (token, (query or {}).get("token")) else "トークンなし・誤り"
+                raise SmokeFailure(f"{method} {path}（{how}）が HTTP {reply.status} を返しました（期待: {expected}）。")
+
+    def check_prompts_and_settings(self, stub: StubAI) -> None:
+        expected = expected_prompts()
+        for path in ("/api/prompts/defaults", "/api/prompts"):
+            if self.client.call("GET", path) != expected:
+                raise SmokeFailure(f"{path} が papeer/core/prompts の内容と一致しません。")
+        self.client.call("PUT", "/api/settings", body={
+            "provider": "api", "model": STUB_MODEL, "translation_concurrency": 1,
+            "provider_options": {"api": {"base_url": stub.base_url, "model": STUB_MODEL}}})
+        settings = self.client.call("GET", "/api/settings")
+        if settings.get("provider") != "api" or settings["provider_options"]["api"].get("base_url") != stub.base_url:
+            raise SmokeFailure(f"保存した設定が読み戻せません: {settings!r}")
+        # The API URL is this PC's setting (paths.device_directory(): %LOCALAPPDATA%\PapeerSync on Windows,
+        # ~/Library/Application Support/PapeerSync on macOS, $XDG_STATE_HOME/papeer on Linux), the rest the library's.
+        if not (self.data_dir / "settings.json").is_file():
+            raise SmokeFailure("設定が一時データフォルダーに保存されていません。")
+        if not self.device_dir.is_dir():
+            raise SmokeFailure(f"この PC の設定が一時フォルダーの {self.device_dir} に保存されていません。")
+
+    def check_import(self) -> str:
+        source = self.input_dir / "smoke-sample.pdf"
+        shutil.copy2(SAMPLE_PDF, source)
+        started = self.client.call("POST", "/api/papers/import", body={"paths": [str(source)]})
+        job = self.wait_for_job(started["job_id"])
+        paper_ids = job["result"]["paper_ids"]
+        if len(paper_ids) != 1:
+            raise SmokeFailure(f"取り込み結果が不正です: {job['result']!r}")
+        paper_id = paper_ids[0]
+        paper = self.client.call("GET", f"/api/papers/{paper_id}")
+        if paper.get("pages") != 2:
+            raise SmokeFailure(f"ページ数が 2 ではありません: {paper.get('pages')!r}")
+        found = self.client.call("GET", f"/api/papers/{paper_id}/search", query={"q": "adaptive controller"})
+        if not found.get("total"):
+            raise SmokeFailure("抽出したテキストから \"adaptive controller\" が見つかりません。")
+        return paper_id
+
+    def check_translation(self, paper_id: str, stub: StubAI) -> None:
+        started = self.client.call("POST", f"/api/papers/{paper_id}/translate", body={})
+        self.wait_for_job(started["job_id"])
+        if not stub.requests:
+            raise SmokeFailure("代役 API に翻訳のリクエストが届いていません。")
+        if stub.unexpanded:
+            raise SmokeFailure("翻訳の指示に共通部分の目印（{{...}}）が残っています。"
+                               "papeer/core/prompts/_*.txt が同梱されていない可能性があります。")
+        reply = self.client.request("GET", f"/api/papers/{paper_id}/files/translated.pdf", token=self.token)
+        if reply.status != 200:
+            raise SmokeFailure(f"translated.pdf を取得できません（HTTP {reply.status}）。")
+        check_translated_pdf(reply.body)
+
+    def run_cli(self, *arguments: str) -> Any:
+        """One papeer-cli command against this sidecar; its --json result. The token is in the environment
+        (PAPEER_TOKEN, as the CLI's documentation advises), not in the arguments."""
+        assert self.cli_command is not None
+        command = [*self.cli_command, "--json", "--no-spawn", "--url", self.client.base, *arguments]
+        try:
+            done = subprocess.run(command, cwd=self.cwd, env=self.env, stdin=subprocess.DEVNULL,
+                                  capture_output=True, timeout=CLI_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            raise SmokeFailure(f"papeer-cli {' '.join(arguments)} が {CLI_TIMEOUT:.0f} 秒で終わりません。") from None
+        if done.returncode != 0:
+            raise SmokeFailure(f"papeer-cli {' '.join(arguments)} の終了コードが {done.returncode} です: "
+                               f"{done.stderr.decode('utf-8', 'replace').strip()[-500:]}")
+        try:
+            return json.loads(done.stdout.decode("utf-8"))
+        except ValueError:
+            raise SmokeFailure(f"papeer-cli {' '.join(arguments)} の標準出力が JSON ではありません: "
+                               f"{done.stdout[:200]!r}") from None
+
+    def check_cli(self, paper_id: str) -> None:
+        check_cli_status(self.run_cli("status"))
+        folders = self.run_cli("folder", "list")
+        if not isinstance(folders, dict) or folders.get("folders") != [] or folders.get("unfiled") != 1:
+            raise SmokeFailure(f"folder list の結果が、取り込んだ 1 件（未分類）と合いません: {folders!r}")
+        papers = self.run_cli("ls")
+        if not isinstance(papers, list) or [row.get("id") for row in papers] != [paper_id]:
+            raise SmokeFailure(f"ls の結果が取り込んだ論文 {paper_id} と合いません: {papers!r}")
+        self.check_nothing_unpacked()
+
+    def check_shutdown(self) -> None:
+        assert self.process is not None
+        body = self.client.call("POST", "/shutdown")
+        if body.get("status") != "shutting down" or not body.get("stopped"):
+            raise SmokeFailure(f"/shutdown の応答が不正です: {body!r}")
+        try:
+            code = self.process.wait(EXIT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            raise SmokeFailure(f"/shutdown の後 {EXIT_TIMEOUT:.0f} 秒たってもプロセスが終了しません。") from None
+        if code != 0:
+            raise SmokeFailure(f"終了コードが 0 ではありません: {code}")
+        self.check_nothing_unpacked()
+
+    def wait_for_exit(self, after: str) -> None:
+        """The sidecar ends by itself, with exit code 0, within EXIT_TIMEOUT."""
+        assert self.process is not None
+        try:
+            code = self.process.wait(EXIT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            raise SmokeFailure(f"{after}後 {EXIT_TIMEOUT:.0f} 秒たってもプロセスが終了しません。") from None
+        if code != 0:
+            raise SmokeFailure(f"{after}後の終了コードが 0 ではありません: {code}")
+
+    def check_exit_when_the_app_is_gone(self) -> None:
+        # Tauri starts it with PAPEER_WATCH_STDIN=1 and a pipe it never writes to, which closes when the
+        # app's process ends (sidecar/routes/system.py watch_stdin).
+        self.start(watch_stdin=True)
+        self.wait_for_health()
+        assert self.process is not None and self.process.stdin is not None
+        self.process.stdin.close()
+        self.wait_for_exit("標準入力のパイプを閉じた")
+
+    def check_exit_on_sigterm(self) -> None:
+        self.start()
+        self.wait_for_health()
+        assert self.process is not None
+        self.process.send_signal(signal.SIGTERM)
+        self.wait_for_exit("SIGTERM を送った")
+
+    def check_nothing_unpacked(self) -> None:
+        """The onedir sidecar runs from its folder; a _MEI* folder means a onefile exe (see sidecar.spec)."""
+        found = mei_folders(self.temp_dir) if self.frozen else []
+        if found:
+            raise SmokeFailure("一時フォルダーに展開フォルダーが作られました（onefile の exe では？ sidecar.spec は onedir）: "
+                               + ", ".join(path.name for path in found))
+
+    def stop(self) -> None:
+        """Make sure the sidecar (and any process it started) is gone."""
+        if self.process is not None and self.process.poll() is None:
+            if os.name == "nt":
+                # /T also ends the processes the sidecar started.
+                subprocess.run(["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            else:
+                # Its process group (start): the sidecar and the processes it started in the group.
+                try:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            try:
+                self.process.wait(15)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(15)
+            print("sidecar を強制終了しました。", file=self.out)
+        if self._log_file is not None:
+            self._log_file.close()
+
+
+def remove_tree(path: Path) -> bool:
+    """Delete a folder; False if it is still there after a few seconds of retrying."""
+    # A process that was just killed can hold its files for a moment.
+    for attempt in range(10):
+        shutil.rmtree(path, ignore_errors=True)
+        if not path.exists():
+            return True
+        if attempt < 9:
+            time.sleep(0.5)
+    return False
+
+
+def run_smoke(command: list[str], *, cwd: Path | None, frozen: bool, keep: bool = False, out: Any = None,
+              cli_command: list[str] | None = None) -> int:
+    """Run every check against `command` (and the papeer-cli `cli_command`, when given); 0 when all pass,
+    1 (after saying why) when one fails."""
+    out = sys.stdout if out is None else out
+    root = Path(tempfile.mkdtemp(prefix="papeer-smoke-"))
+    smoke: Smoke | None = None
+    try:
+        # Inside the try: a failure while preparing the folders must not leave `root` behind either.
+        smoke = Smoke(command, cwd or root, root, frozen, out, cli_command)
+        smoke.run()
+    except SmokeFailure as exc:
+        assert smoke is not None  # only smoke.run() raises SmokeFailure
+        print(f"\nスモークテスト失敗: {exc}", file=out)
+        smoke.stop()  # also closes the log file
+        tail = log_tail(smoke.log_path)
+        if tail:
+            print("--- sidecar のログ（末尾） ---\n" + tail, file=out)
+        return 1
+    finally:
+        if smoke is not None:
+            smoke.stop()
+        if keep:
+            print(f"一時フォルダーを残しました: {root}", file=out)
+        elif not remove_tree(root):
+            print(f"一時フォルダーを消せませんでした: {root}", file=out)
+    print("スモークテストに成功しました。", file=out)
+    return 0
+
+
+def main(argv: list[str] | None = None, out: Any = None) -> int:
+    out = sys.stdout if out is None else out
+    parser = argparse.ArgumentParser(description="配布用 sidecar のスモークテスト（README「ビルド」）")
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--exe", type=Path, default=DEFAULT_EXE,
+                        help=f"試す sidecar（onedir のフォルダーの中の exe。既定: {DEFAULT_EXE.relative_to(ROOT)}）")
+    target.add_argument("--source", action="store_true", help="exe ではなくこのチェックアウトの python -m sidecar を試す")
+    parser.add_argument("--keep", action="store_true", help="一時フォルダー（データ・ログ）を消さずに残す")
+    args = parser.parse_args(argv)
+
+    if args.source:
+        print("対象: python -m sidecar（ソース）", file=out)
+        return run_smoke([sys.executable, "-m", "sidecar"], cwd=ROOT, frozen=False, keep=args.keep, out=out,
+                         cli_command=[sys.executable, "-m", "papeer.cli"])
+    exe = args.exe.resolve()
+    cli = cli_launcher(exe)
+    for launcher in (exe, cli):
+        if not launcher.is_file():
+            print(f"スモークテスト失敗: {launcher} がありません。先に `just build-sidecar` を実行してください。", file=out)
+            return 1
+    print(f"対象: {exe}（papeer-cli: {cli.name}）", file=out)
+    return run_smoke([str(exe)], cwd=None, frozen=True, keep=args.keep, out=out, cli_command=[str(cli)])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

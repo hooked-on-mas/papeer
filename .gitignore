@@ -1,0 +1,38 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# PyInstaller
+/build/
+/dist/
+code-version.txt
+sidecar-sources.txt
+
+# Secrets
+.env
+
+# Local generated output and scratch files
+/output/
+/tmp/
+/experiments/
+
+# Frontend (Tauri + Vite)
+/frontend/node_modules/
+/frontend/dist/
+/frontend/web-dist/
+/frontend/.vite/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Parallel work trees
+/.worktrees/

@@ -1,0 +1,2 @@
+"""Papeer FastAPI sidecar backend."""
+

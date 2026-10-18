@@ -1,0 +1,1540 @@
+import { newNotebook, moveNotebook, showHoldings } from "@/features/notebooks/NotebookDialogs";
+import { useInkPdfExport } from "@/features/reader/inkControls";
+import { useNotebooks } from "@/features/notebooks/notebooks";
+import { useTagChoices } from "@/api/tagChoices";
+import { useAttachments, type Attachment } from "@/api/attachments";
+import { importAttachmentFiles } from "@/api/documents";
+import { openDocument } from "@/features/documents/documentState";
+import { queryClient } from "@/lib/queryClient";
+import { showError } from "@/components/errorDialog";
+import { memoChildren } from "./memoChildren";
+import { linkPapers, removeItemLink, useItemLinks } from "@/api/itemLinks";
+import { canDropLink, linkedItemsByOwner } from "./itemLinks";
+import { chooseItemLink } from "./ItemLinkDialog";
+import { expandMemoOwner, openMemo, useMemoSelection } from "@/features/notes/memoState";
+import {
+  memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject,
+} from "react";
+import { create } from "zustand";
+import { useQuery } from "@tanstack/react-query";
+import { measureElement, useVirtualizer, type Range, type Virtualizer } from "@tanstack/react-virtual";
+import { api, unwrap } from "@/api/client";
+import {
+  DndContext, DragOverlay, KeyboardSensor, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors,
+  type Announcements, type ClientRect, type CollisionDetection, type DragEndEvent, type DragOverEvent, type DragStartEvent,
+  type KeyboardCodes, type KeyboardCoordinateGetter, type UniqueIdentifier,
+} from "@dnd-kit/core";
+import {
+  ArrowUpDown, BookOpen, ChevronDown, ChevronRight, CircleAlert, Copy, Download, Edit2, ExternalLink, FilePlus2, FileText, Folder,
+  FolderOpen, FolderPlus, Link2, Loader2, NotebookPen, Plus, Save, Search, Sparkles, Tag, Trash2, Undo2, X,
+} from "lucide-react";
+import { paperDisplayName, useCollections, usePaperList, type PaperData } from "@/api/hooks";
+import { useStore } from "@/store";
+import {
+  ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuLabel, ContextMenuRadioGroup,
+  ContextMenuRadioItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  chooseNewCollection, copyBibtex, createFolder, deleteFolder, exportFolderBibtex, importPdfs, movePaper,
+  openPaperFile, openPaperFolder, renameFolder, renamePaperFile, saveOriginal, setPaperReadStatus, tagPaper, undoLabel, undoMove,
+} from "@/app/actions";
+import { deletePapers, movePapers, movePapersToNewCollection, setPapersReadStatus, tagPapers, tagPapersWithNew } from "@/app/bulkActions";
+import { useDropTarget } from "@/app/fileDrop";
+import { useShownOrganization } from "@/app/useOrganizing";
+import { usePendingImports, type PendingImport } from "@/app/pendingImports";
+import { allFolderPaths, buildTree, filterPapers, revealOpenings, type FolderNode } from "./libraryTree";
+import {
+  createLineSizes, isRequestedLine, linesToRender, OVERSCAN, pinnedLines, shouldVirtualize, treeLines, viewAnchors, type LineBox,
+  type TreeLine, type ChildLine,
+} from "./treeLines";
+import { useUiScale } from "@/app/uiScale";
+import { normalizeCollection } from "@/lib/collectionPath";
+import {
+  dropRowAt, folderKey, nextDropRow, paperKey, rowAfterRemoval, treeKeyAction, treeRows, typeaheadMatch, type DropRow,
+  type TreeKeyAction,
+} from "./treeKeys";
+import { requestTreeFocus, takeTreeFocus, updateTreeFocus, useTreeFocus } from "./treeFocus";
+import {
+  papersActedOn, pruneSelection, rowAfterRemovingRows, selectAllPapers, selectRange, toggleSelection,
+} from "./paperSelection";
+import { changeSelection, clearSelection, openPaper, usePaperSelection } from "./selectionStore";
+import { stopBulk, useBulkProgress } from "@/app/bulkState";
+import { LibraryTags } from "./LibraryTags";
+import { TagChip } from "@/components/ui/TagChip";
+import { PaperStatusBadge } from "@/components/ui/PaperStatusBadge";
+import { paperTranslationStatus } from "@/lib/paperStatus";
+import { itemCapabilities } from "@/lib/itemKinds";
+import { allOrganizable, organizableItems } from "./organizePlan";
+import { besideCursor } from "./dragOverlay";
+import { TRANSLATION_JOBS } from "@/features/jobs/jobKinds";
+import { paperJobState, runningPaperJob } from "@/features/jobs/jobSelectors";
+import { useRebuilding } from "@/features/reader/rebuildJobs";
+import { showJobFailure, useJobFailures } from "@/features/jobs/jobFailures";
+import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
+import { QK } from "@/lib/queryKeys";
+import { SORT_LABELS } from "@/lib/librarySort";
+import { withShortcutLabels } from "@/lib/platform";
+import { isImeKey } from "@/lib/imeKeys";
+
+// Keep the title visible in narrow rows; author and file name remain in the full tooltip.
+const libraryPaperTitle = (paper: PaperData) => paper.title || paperDisplayName(paper);
+
+/** `html`: a document the item holds (its text, read as markup); it opens that document, with no page. */
+type LibraryHit = { paper_id: string; title: string; side: "metadata" | "original" | "translated" | "html"; page: number | null; snippet: string;
+  attachment_id?: string; attachment_title?: string };
+
+// Defaults that keep their identity from one render to the next, so that the memoized list and tree hold while loading.
+const NO_PAPERS: PaperData[] = [];
+const NO_COLLECTIONS: string[] = [];
+
+/**
+ * Folder under a paper dragged in the tree, and the other papers dragged with it (selected together);
+ * kept here so that only the rows it enters and leaves, and the papers dragged, render again. `active`
+ * is the paper dragged, whose row a long library keeps rendered while it is (see pinnedLines). Exported
+ * for tests/renderSmoke.test.mjs, as useMenuRow.
+ */
+export const useDragOver = create<{ path: string | null; notebook: string | null; paperIds: ReadonlySet<string> | null; active: string | null }>(
+  () => ({ path: null, notebook: null, paperIds: null, active: null }));
+
+/** The row whose context menu is open, which a long library keeps rendered while it is (see pinnedLines). */
+export const useMenuRow = create<{ key: string | null }>(() => ({ key: null }));
+
+/** Keeps `useMenuRow` on the row whose menu is open; another row's menu may open before this one closes. */
+const menuOpenChange = (key: string) => (open: boolean) =>
+  useMenuRow.setState((s) => (open ? { key } : s.key === key ? { key: null } : s));
+
+/** The keyboard focus of the rows: a ring when focused from the keyboard, in the theme's ring color. */
+const FOCUS_RING = "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring focus-visible:rounded-sm";
+
+// Choosing a folder or opening a paper (a click, Enter; see openPaper) ends selecting several papers: the
+// tree has its one selected row again, and a Shift range starts from the row chosen.
+function selectFolder(path: string) {
+  clearSelection(folderKey(path));
+  const store = useStore.getState();
+  store.setSelectedFolder(path);
+  store.setCurrentCollection(path);
+}
+
+// Deleting or renaming a row removes it, and its focus would fall to the page, where the arrows turn the
+// PDF's pages: the keys go on to the row after the deleted one (see rowAfterRemoval), or to the renamed
+// folder under its new path.
+// A paper in a selection of several deletes the selection (see papersActedOn), and the keys go on to
+// the row after the paper that stays.
+function deletePaperRow(paperId: string) {
+  const rows = useTreeFocus.getState().rows;
+  const ids = papersActedOn(usePaperSelection.getState(), rows, paperId);
+  const next = rowAfterRemovingRows(rows, paperKey(paperId), new Set(ids.map(paperKey)));
+  void deletePapers(ids).then((deleted) => { if (deleted && next) requestTreeFocus(next); });
+}
+
+function deleteFolderRow(path: string, papers: PaperData[] | null) {
+  const next = rowAfterRemoval(useTreeFocus.getState().rows, folderKey(path));
+  void deleteFolder(path, papers).then((deleted) => { if (deleted && next) requestTreeFocus(next); });
+}
+
+function renameFolderRow(path: string) {
+  void renameFolder(path).then((renamed) => { if (renamed !== null) requestTreeFocus(folderKey(renamed)); });
+}
+
+/** How long a paper to show that the library does not list yet is waited for (see reveal-paper). */
+const REVEAL_WAIT_MS = 5000;
+
+/** The keys that move in the tree, which a button in a row passes on to it. */
+const MOVE_KEYS = new Set(["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"]);
+
+/** The moves that Shift extends the selection with, from the anchor to the row moved to. */
+const RANGE_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
+
+// Dragging a paper with the keyboard (dnd-kit's KeyboardSensor): Space picks it up, ↑↓ go from folder to
+// folder, and Space or Enter puts it down; Esc and Tab put it back. Enter does not pick it up, since it
+// opens the paper.
+const KEYBOARD_CODES: KeyboardCodes = { start: ["Space"], end: ["Space", "Enter"], cancel: ["Escape", "Tab"] };
+
+const dropRows = (containers: Iterable<{ id: UniqueIdentifier }>, rects: { get(id: UniqueIdentifier): ClientRect | undefined }): DropRow[] =>
+  Array.from(containers).flatMap((container) => {
+    const rect = rects.get(container.id);
+    return rect ? [{ id: String(container.id), top: rect.top, bottom: rect.bottom }] : [];
+  });
+
+/** ↑↓ move the dragged paper's middle onto the middle of the folder row above or below (see nextDropRow). */
+const keyboardCoordinates: KeyboardCoordinateGetter = (event, { currentCoordinates, context }) => {
+  const direction = event.code === "ArrowDown" ? 1 : event.code === "ArrowUp" ? -1 : 0;
+  const { collisionRect, droppableContainers, droppableRects } = context;
+  if (!direction || !collisionRect) return undefined;
+  event.preventDefault();
+  const middle = collisionRect.top + collisionRect.height / 2;
+  const target = nextDropRow(dropRows(droppableContainers.getEnabled(), droppableRects), middle, direction);
+  return target ? { x: currentCoordinates.x, y: currentCoordinates.y + (target.top + target.bottom) / 2 - middle } : undefined;
+};
+
+/** The folder under the pointer, or, dragging with the keyboard, which has no pointer, the one under the paper's middle. */
+const detectCollisions: CollisionDetection = (args) => {
+  if (args.pointerCoordinates) return pointerWithin(args);
+  const { collisionRect, droppableContainers, droppableRects } = args;
+  const id = dropRowAt(dropRows(droppableContainers, droppableRects), collisionRect.top + collisionRect.height / 2);
+  const container = droppableContainers.find((c) => String(c.id) === id);
+  return container ? [{ id: container.id, data: { droppableContainer: container, value: 0 } }] : [];
+};
+
+const folderLabel = (id: UniqueIdentifier) => String(id).replace(/^folder:/, "") || "未分類";
+
+function DragLinkHint() {
+  const linking = useDragOver(s => s.notebook !== null);
+  return linking ? <span className="flex items-center gap-1 text-primary text-xs"><Link2 className="size-3" />紐づけ（置き場所はそのまま）</span> : null;
+}
+
+/** Takes the keyboard focus when the tree asked for this row (see requestTreeFocus). */
+function useFocusRequest(ref: RefObject<HTMLElement | null>, requested: boolean) {
+  useEffect(() => {
+    if (!requested || !takeTreeFocus()) return;
+    ref.current?.focus({ preventScroll: true });
+    ref.current?.scrollIntoView({ block: "nearest" });
+  }, [ref, requested]);
+}
+
+export function LibrarySidebar() {
+  const undoHistory = useStore((s) => s.moveHistory);
+  const lastUndo = undoHistory[undoHistory.length - 1];
+  const undoText = undoLabel(lastUndo);
+  const { data: readingStatuses = [] } = useTagChoices("status");
+  const librarySearch = useStore((s) => s.librarySearch);
+  const setLibrarySearch = useStore((s) => s.setLibrarySearch);
+  const sortOrder = useStore((s) => s.sortOrder);
+  const setSortOrder = useStore((s) => s.setSortOrder);
+  const currentCollection = useStore((s) => s.currentCollection);
+  const setExpandedCollections = useStore((s) => s.setExpandedCollections);
+
+  const [searchText, setSearchText] = useState(librarySearch);
+  useEffect(() => setSearchText(librarySearch), [librarySearch]);
+  useEffect(() => {
+    const timer = setTimeout(() => setLibrarySearch(searchText), 200);
+    return () => clearTimeout(timer);
+  }, [searchText, setLibrarySearch]);
+
+  const [tagFilter, setTagFilter] = useState("");
+  const [readFilter, setReadFilter] = useState("");
+  const filtered = !!librarySearch.trim() || !!tagFilter || !!readFilter;
+  const { data: paperList, isSuccess: papersLoaded, isError: papersFailed, refetch: reloadPapers } = usePaperList("", sortOrder);
+  const { data: notebooks = NO_PAPERS } = useNotebooks();
+  const allPapers = useMemo(() => [...(paperList ?? NO_PAPERS), ...notebooks.filter(row => row.parent_id)], [paperList, notebooks]);
+  useEffect(() => {
+    if (papersLoaded && tagFilter && !allPapers.some(paper => paper.tags?.includes(tagFilter))) setTagFilter("");
+  }, [allPapers, papersLoaded, tagFilter]);
+  // A reading status is a PDF's: a library of notebooks only has nothing to filter by.
+  const readFilterShown = !allPapers.length || allPapers.some(paper => itemCapabilities(paper).readStatus);
+  useEffect(() => {
+    if (papersLoaded && readFilter && !readFilterShown) setReadFilter("");
+  }, [papersLoaded, readFilter, readFilterShown]);
+  const { data: searchResults, isFetching: searching, isError: searchError } = useQuery({
+    queryKey: [QK.librarySearch, librarySearch],
+    // Typing on stops the request of the previous words (their results would only be thrown away).
+    queryFn: async ({ signal }) => await unwrap(api.GET("/api/library-search", {
+      params: { query: { q: librarySearch } }, signal })) as { results: LibraryHit[]; limited: boolean },
+    enabled: !!librarySearch.trim(),
+  });
+  // Memoized, as is the tree built from it: a new list each render would render every row again.
+  const matches = useMemo(() => librarySearch.trim() ? new Set(searchResults?.results.map(hit => hit.paper_id)) : null,
+    [librarySearch, searchResults]);
+  const papers = useMemo(() => filterPapers(allPapers, { tag: tagFilter, readStatus: readFilter, matches }),
+    [allPapers, tagFilter, readFilter, matches]);
+  const hits = useMemo(() => {
+    const shown = new Set(papers.map(p => p.id));
+    return searchResults?.results.filter(hit => shown.has(hit.paper_id)) ?? [];
+  }, [papers, searchResults]);
+  const { data: collectionList, isError: collectionsFailed, refetch: reloadCollections } = useCollections();
+  const collections = collectionList ?? NO_COLLECTIONS;
+  // Cached data remains usable during refetches. Missing data is never an empty library.
+  const libraryLoading = paperList === undefined || collectionList === undefined;
+  const libraryFailed = (paperList === undefined && papersFailed) || (collectionList === undefined && collectionsFailed);
+  const pending = usePendingImports((s) => s.items);
+  const tree = useMemo(() => buildTree(collections, papers, pending, filtered), [collections, papers, pending, filtered]);
+
+  // The same function until the tree changes, so that the memoized rows keep their props; each row
+  // selects whether it is open itself.
+  const setExpanded = useCallback((path: string, expanded: boolean) => {
+    const current = new Set(useStore.getState().expandedCollections ?? allFolderPaths(tree));
+    if (expanded) current.add(path);
+    else current.delete(path);
+    setExpandedCollections([...current]);
+  }, [tree, setExpandedCollections]);
+
+  // The lines the tree lays out, with the PDFs being added (see treeLines.ts); none while the search's
+  // results replace the tree.
+  const expandedCollections = useStore((s) => s.expandedCollections);
+  const { data: attachments = [] } = useAttachments();
+  const { data: itemLinks = [] } = useItemLinks();
+  const hideLibraryLinks = useStore(s => s.hideLibraryLinks);
+  const linksByOwner = useMemo(() => linkedItemsByOwner(itemLinks, allPapers), [itemLinks, allPapers]);
+  const expandedPapers = useMemoSelection(s => s.expanded);
+  const childrenByOwner = useMemo(() => {
+    const byOwner = new Map<string, Attachment[]>();
+    for (const row of attachments) {
+      const rows = byOwner.get(row.owner_id) ?? [];
+      rows.push(row); byOwner.set(row.owner_id, rows);
+    }
+    return byOwner;
+  }, [attachments]);
+  const lines = useMemo(() => {
+    if (librarySearch.trim()) return [];
+    const open = expandedCollections && new Set(expandedCollections);
+    return treeLines(tree, (path) => filtered || !open || open.has(path), {
+      of: paper => memoChildren(childrenByOwner.get(paper.id) ?? [], notebooks.filter(row => row.parent_id === paper.id),
+        hideLibraryLinks ? [] : linksByOwner.get(paper.id) ?? []), isOpen: id => expandedPapers.includes(id),
+    });
+  }, [tree, expandedCollections, expandedPapers, childrenByOwner, notebooks, filtered, librarySearch, hideLibraryLinks, linksByOwner]);
+  // The rows on screen, for the keyboard (see treeKeys.ts): the same lines.
+  const rows = useMemo(() => treeRows(lines, libraryPaperTitle), [lines]);
+  // Before paint, so that the row that takes the Tab key is right as soon as the rows are, and papers
+  // that left the screen leave the selection before anything can be done to them.
+  useLayoutEffect(() => {
+    updateTreeFocus({ rows });
+    changeSelection((selection) => pruneSelection(selection, rows));
+  }, [rows]);
+
+  // The paper dragged, and every paper dragged with it (itself alone, or the selection it is in).
+  const [dragging, setDragging] = useState<{ paper: PaperData; ids: string[] } | null>(null);
+  const draggedIds = useRef<string[]>([]);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    // The list scrolls to the folder at once, not smoothly: a long library measures the rows scrolled
+    // past and moves the list to keep them in place, which would stop a smooth scroll short.
+    useSensor(KeyboardSensor, { keyboardCodes: KEYBOARD_CODES, coordinateGetter: keyboardCoordinates, scrollBehavior: "auto" }),
+  );
+  const paperLabel = (id: UniqueIdentifier) => {
+    const paper = allPapers.find((p) => p.id === id);
+    return paper ? paperDisplayName(paper) : "論文";
+  };
+  // Several papers dragged together are named by their count.
+  const draggedLabel = (id: UniqueIdentifier) =>
+    draggedIds.current.length > 1 ? `${draggedIds.current.length}件の論文` : `「${paperLabel(id)}」`;
+  const dropLabel = (id: UniqueIdentifier) => String(id).startsWith("link:")
+    ? `「${paperLabel(String(id).slice(5))}」に紐づけ` : `「${folderLabel(id)}」へ移動`;
+  const announcements: Announcements = {
+    onDragStart: ({ active }) => `${draggedLabel(active.id)}を持ち上げました。`,
+    onDragOver: ({ over }) => over ? dropLabel(over.id) : "移動先・紐づけ先はありません。",
+    onDragEnd: ({ active, over }) => over
+      ? `${draggedLabel(active.id)}を${dropLabel(over.id)}します。` : `${draggedLabel(active.id)}を元の場所に戻しました。`,
+    onDragCancel: ({ active }) => `${draggedLabel(active.id)}の移動を取り消しました。`,
+  };
+
+  const endDrag = () => {
+    clearTimeout(hoverTimer.current);
+    setDragging(null);
+    useDragOver.setState({ path: null, notebook: null, paperIds: null, active: null });
+  };
+  const onDragStart = (event: DragStartEvent) => {
+    const id = String(event.active.id);
+    const paper = papers.find((p) => p.id === id);
+    // A paper in a selection of several takes the selection with it.
+    const ids = papersActedOn(usePaperSelection.getState(), useTreeFocus.getState().rows, id);
+    draggedIds.current = ids;
+    setDragging(paper ? { paper, ids } : null);
+    useDragOver.setState({ active: id, ...(ids.length > 1 ? { paperIds: new Set(ids) } : {}) });
+  };
+  const onDragOver = (event: DragOverEvent) => {
+    const over = event.over ? String(event.over.id) : null;
+    const notebook = over?.startsWith("link:") ? over.slice(5) : null;
+    const target = over?.startsWith("folder:") ? over.slice(7) : null;
+    if (target === useDragOver.getState().path && notebook === useDragOver.getState().notebook) return;
+    useDragOver.setState({ path: target, notebook });
+    clearTimeout(hoverTimer.current);
+    // Hovering a closed folder opens it, so papers can be dropped into subfolders.
+    if (target !== null) hoverTimer.current = setTimeout(() => setExpanded(target, true), 700);
+  };
+  const onDragEnd = (event: DragEndEvent) => {
+    const ids = draggedIds.current;
+    endDrag();
+    if (!event.over) return;
+    const over = String(event.over.id);
+    if (over.startsWith("link:")) {
+      const target = allPapers.find(row => row.id === over.slice(5));
+      if (canDropLink(ids, target, allPapers)) void linkPapers(ids, target!.id);
+      return;
+    }
+    if (!over.startsWith("folder:")) return;
+    const paperId = String(event.active.id);
+    const destination = String(event.over.id).replace(/^folder:/, "");
+    const byKeyboard = event.activatorEvent?.type === "keydown";
+    void (ids.length > 1 ? movePapers(ids, destination) : movePaper(paperId, destination)).then((moved) => {
+      // The keys stay on the paper, in the folder it moved to once the library shows it there.
+      if (moved && byKeyboard) requestTreeFocus(paperKey(paperId), normalizeCollection(destination));
+    });
+  };
+
+  // The tree's keys (see treeKeyAction), and typing a name's first letters to move to it. Only keys the
+  // tree uses are stopped, so that Ctrl+Z and the app's shortcuts still work from a row.
+  const treeRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const treeList = useRef<TreeListHandle>(null);
+  const waitingReveal = useRef<{ paperId: string; focus: boolean; at: number } | null>(null);
+  const typed = useRef({ text: "", at: 0 });
+  const focusRow = (key: string) => {
+    const row = treeRef.current?.querySelector<HTMLElement>(`[data-tree-key="${CSS.escape(key)}"]`);
+    // In a long library a row out of view is not rendered: it takes the focus once scrolled to (TreeList).
+    if (row) row.focus({ preventScroll: true });
+    else requestTreeFocus(key);
+    treeList.current?.scrollTo(key);
+  };
+  const applyTreeKey = (action: TreeKeyAction) => {
+    if (action.type === "focus") focusRow(action.key);
+    else if (action.type === "expand" || action.type === "collapse") {
+      // Only folders open here; a paper's rows have nothing to open them with until they are given (PaperChildren).
+      if (action.row.kind === "folder") setExpanded(action.row.id, action.type === "expand");
+      else if (action.row.kind === "paper") expandMemoOwner(action.row.id, action.type === "expand");
+    } else if (action.type === "activate") {
+      if (action.row.kind === "paper") openPaper(action.row.id, action.row.folder);
+      else if (action.row.kind === "folder") selectFolder(action.row.id);
+      else {
+        const line = lines.find(line => line.key === action.row.key);
+        if (line && line.kind !== "folder" && line.kind !== "paper" && line.kind !== "pending") activateChild(line);
+      }
+    }
+  };
+  const onTreeKeyDown = (e: KeyboardEvent<HTMLDivElement>, capture: boolean) => {
+    // While a paper is dragged with the keyboard, the keys are the drag's.
+    if (dragging || e.defaultPrevented || isImeKey(e.nativeEvent) || e.altKey) return;
+    const target = e.target as HTMLElement;
+    const item = target.closest<HTMLElement>("[role=treeitem][data-tree-key]");
+    if (!item?.dataset.treeKey) return;
+    const current = item.dataset.treeKey;
+    const onRow = item === target;
+    // Keys on a row are taken as they bubble up, after the row's own (Delete, and Space for dnd-kit). A
+    // button in a row (clicked, so focused) keeps Enter and letters, and the tags stop every key; the keys
+    // that move are taken from it on the way down, so that they still move.
+    if (capture ? onRow || !MOVE_KEYS.has(e.key) : !onRow) return;
+    const rows = useTreeFocus.getState().rows;
+    const stop = () => { e.preventDefault(); e.stopPropagation(); };
+    // Selecting several papers: Ctrl+Space toggles the paper, Shift+Space and Shift+↑↓/Home/End select
+    // from the anchor, Ctrl+A every paper on screen, Esc goes back to the one selected row. Other keys
+    // with Ctrl are left to the app (Ctrl+Z, Ctrl+L…).
+    const command = e.ctrlKey || e.metaKey;
+    if (command && !e.shiftKey && e.key.toLowerCase() === "a") {
+      stop();
+      changeSelection(selectAllPapers);
+      return;
+    }
+    if (command && e.key === " ") {
+      stop();
+      changeSelection((selection, rows, open) => toggleSelection(selection, rows, current, open));
+      return;
+    }
+    if (command) return;
+    if (e.key === "Escape" && usePaperSelection.getState().ids !== null) {
+      stop();
+      clearSelection(usePaperSelection.getState().anchor);
+      return;
+    }
+    if (e.shiftKey && e.key === " ") {
+      stop();
+      changeSelection((selection, rows, open) => selectRange(selection, rows, current, open));
+      return;
+    }
+    if (e.key === "F2") {
+      // F2 renames the row the keys are on, which may not be the selected one.
+      const row = rows.find((r) => r.key === current);
+      stop();
+      if (row?.kind === "paper") {
+        if (itemCapabilities(allPapers.find((p) => p.id === row.id)).rename) void renamePaperFile(row.id);
+      } else if (row?.kind === "folder" && row.id) renameFolderRow(row.id);
+      return;
+    }
+    const action = treeKeyAction(rows, current, e.key, { canCollapse: !filtered });
+    if (action) {
+      stop();
+      if (e.shiftKey && action.type === "focus" && RANGE_KEYS.has(e.key)) {
+        const target = action.key;
+        changeSelection((selection, rows, open) => selectRange(selection, rows, target, open, { from: current }));
+      }
+      applyTreeKey(action);
+      return;
+    }
+    // Space on a folder does nothing rather than scroll the list; on a paper, dnd-kit has taken it to start a drag.
+    if (e.key === " ") {
+      stop();
+      return;
+    }
+    if (Array.from(e.key).length === 1) {
+      const now = Date.now();
+      const text = (now - typed.current.at < 700 ? typed.current.text : "") + e.key;
+      typed.current = { text, at: now };
+      const match = typeaheadMatch(rows, current, text);
+      stop();
+      if (match) focusRow(match);
+    }
+  };
+
+  useEffect(() => {
+    // Citations and Ctrl+L reveal the paper: open its ancestors and scroll to it, or focus it.
+    const reveal = ({ paperId, focus }: { paperId: string; focus: boolean }) => {
+      const paper = allPapers.find((p) => p.id === paperId);
+      const expandedCollections = useStore.getState().expandedCollections;
+      if (paper) {
+        // The folders to open; the paper rows it names (for an item another holds) have nothing to open them yet.
+        const { folders, papers: owners } = revealOpenings(paper, (id) => allPapers.find((p) => p.id === id));
+        owners.forEach(id => expandMemoOwner(id, true));
+        // A tag or reading-state filter that leaves the row out (an independent note reached from the PDF
+        // it is linked to carries neither) is lifted, only that one. A search is left: it replaces the
+        // tree with its results, and Ctrl+L reveals the open paper without losing the words typed.
+        const row = (paper.parent_id && allPapers.find((p) => p.id === paper.parent_id)) || paper;
+        const lifts = !useStore.getState().librarySearch.trim() && (!!tagFilter || !!readFilter)
+          && filterPapers([row], { tag: tagFilter, readStatus: readFilter, matches: null }).length === 0;
+        if (lifts) {
+          if (tagFilter && !row.tags?.includes(tagFilter)) setTagFilter("");
+          if (readFilter && !(itemCapabilities(row).readStatus && row.read_status === readFilter)) setReadFilter("");
+        }
+        // Every folder is open while the setting is unset; the filtered tree lacks folders the lifted
+        // filter brings back, so writing its folders out would close them.
+        if (!(lifts && !expandedCollections)) {
+          const next = new Set(expandedCollections ?? allFolderPaths(tree));
+          folders.forEach((folder) => next.add(folder));
+          if (next.size !== expandedCollections?.length) setExpandedCollections([...next]);
+        }
+      }
+      const key = paper?.parent_id ? `owned:${paper.parent_id}:${paperId}` : paperKey(paperId);
+      if (focus) requestTreeFocus(key);
+      else setTimeout(() => treeList.current?.scrollTo(key), 50);
+    };
+    // An item just made is not in the list until the library has loaded it again: shown once it is.
+    const waiting = waitingReveal.current;
+    if (waiting && Date.now() - waiting.at < REVEAL_WAIT_MS && allPapers.some((p) => p.id === waiting.paperId)) {
+      waitingReveal.current = null;
+      reveal(waiting);
+    }
+    const offReveal = onAppEvent("reveal-paper", (detail) => {
+      if (allPapers.some((p) => p.id === detail.paperId)) reveal(detail);
+      else waitingReveal.current = { ...detail, at: Date.now() };
+    });
+    // Ctrl+L: the row the keys were on while it is on screen, else the open paper, else the row that
+    // takes the Tab key; the search box when the tree is empty.
+    const offFocus = onAppEvent("focus-library", () => {
+      const { rows, focused, tabStop } = useTreeFocus.getState();
+      const { activePaperId, selectedFolder } = useStore.getState();
+      if (focused !== null && rows.some((row) => row.key === focused)) requestTreeFocus(focused);
+      else if (activePaperId && selectedFolder === null && allPapers.some((p) => p.id === activePaperId)) reveal({ paperId: activePaperId, focus: true });
+      else if (tabStop !== null) requestTreeFocus(tabStop);
+      else document.getElementById("library-search")?.focus();
+    });
+    return () => { offReveal(); offFocus(); };
+  }, [papers, allPapers, tree, tagFilter, readFilter, setExpandedCollections]);
+
+  const clearSearch = () => {
+    setSearchText("");
+    setLibrarySearch("");
+    document.getElementById("library-search")?.focus();
+  };
+  const clearFilters = () => {
+    clearSearch();
+    setTagFilter(""); setReadFilter("");
+  };
+
+  return (
+    <div className="flex flex-col h-full text-[0.8125rem] select-none" onKeyDown={(event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest("input, textarea, [contenteditable=true], [role=dialog]")) return;
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "z" && lastUndo) {
+        event.preventDefault();
+        void undoMove();
+      }
+    }}>
+      <div className="p-2 space-y-2 shrink-0">
+        <button onClick={() => newNotebook()} className="w-full flex items-center justify-center gap-2 border h-8 rounded-md hover:bg-muted"><NotebookPen className="size-4" />ノートを作る</button>
+        <button
+          onClick={importPdfs}
+          title={withShortcutLabels(`追加するPDFを「${currentCollection || "未分類"}」へ入れます。（Ctrl+O）`)}
+          className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground h-8 rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+        >
+          <FilePlus2 className="w-4 h-4" />
+          PDF を追加
+        </button>
+        <div className="flex items-center gap-1 px-0.5">
+          <div className="min-w-0 flex-1 text-[0.75rem] text-muted-foreground truncate" title={currentCollection || "未分類"}>
+            追加先：{currentCollection || "未分類"}
+          </div>
+          {/* The papers not in a folder: the usual ones to sort after adding PDFs (OrganizeDialog.tsx). */}
+          <button
+            onClick={() => emitAppEvent("open-organize-dialog", { source: "" })}
+            className="w-6 h-6 flex items-center justify-center rounded hover:bg-muted shrink-0"
+            title="未分類の論文をAIで内容別にフォルダー分け…"
+            aria-label="未分類の論文をAIで内容別にフォルダー分けする"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-muted-foreground" />
+          </button>
+        </div>
+        {lastUndo && <button onClick={undoMove} title={withShortcutLabels(`${undoText}（ライブラリ内で Ctrl+Z）`)}
+          className="w-full flex items-center justify-center gap-2 h-7 border rounded-md hover:bg-muted disabled:opacity-40 disabled:cursor-default">
+          <Undo2 className="w-3.5 h-3.5" /> 元に戻す
+        </button>}
+        <div className="flex gap-1.5">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              id="library-search"
+              type="text"
+              placeholder="タイトル・本文を検索"
+              aria-label="ライブラリを検索"
+              title={withShortcutLabels("タイトル・ファイル名・本文・フォルダー名を検索（Ctrl+Shift+F）")}
+              className="w-full h-8 pl-8 pr-7 rounded-md bg-background border text-[0.8125rem] focus:outline-none focus:ring-2 focus:ring-ring"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape" && !isImeKey(e.nativeEvent)) clearSearch(); }}
+            />
+            {searchText && (
+              <button
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                onClick={clearSearch}
+                aria-label="検索を解除"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className="w-8 h-8 flex items-center justify-center border rounded-md hover:bg-muted shrink-0"
+              title={`並べ替え：${SORT_LABELS[sortOrder]}`}
+              aria-label={`並べ替え：${SORT_LABELS[sortOrder]}`}
+            >
+              <ArrowUpDown className="w-4 h-4 text-muted-foreground" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuRadioGroup value={String(sortOrder)} onValueChange={(v) => setSortOrder(Number(v))}>
+                {SORT_LABELS.map((label, index) => (
+                  <DropdownMenuRadioItem key={label} value={String(index)}>{label}</DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <button
+            onClick={() => createFolder(null)}
+            className="w-8 h-8 flex items-center justify-center border rounded-md hover:bg-muted shrink-0"
+            title="フォルダーを作成"
+          >
+            <FolderPlus className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+        {readFilterShown && <div className="flex gap-1.5">
+          <select aria-label="読書状態で絞り込み" className="min-w-0 flex-1 border rounded bg-background h-7 px-1 text-xs" value={readFilter} onChange={e => setReadFilter(e.target.value)}>
+            <option value="">すべての読書状態</option>{Array.from(new Set([...readingStatuses, ...allPapers.filter(p => itemCapabilities(p).readStatus).map(p => p.read_status).filter((s): s is string => !!s)])).map(status => <option key={status}>{status}</option>)}
+          </select>
+        </div>}
+        <LibraryTags papers={allPapers} selected={tagFilter} onSelect={setTagFilter} />
+      </div>
+
+      <DndContext sensors={sensors} collisionDetection={detectCollisions} accessibility={{
+        announcements,
+        screenReaderInstructions: {
+          draggable: "スペースキーで持ち上げ、上下の矢印キーでフォルダーか独立ノートを選び、スペースキーで確定。フォルダーへは移動、ノートへは紐づけ。Esc で取り消し。",
+        },
+      }}
+        onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={endDrag}>
+        {/* The tree's blank part has a menu of its own (a row's menu opens first, and stops this one). */}
+        <ContextMenu>
+        <ContextMenuTrigger
+          ref={scrollRef}
+          className="flex-1 overflow-auto outline-none"
+          tabIndex={-1}
+          title={withShortcutLabels("右クリックで名前変更・子フォルダー作成・ノート作成。論文をドラッグしてフォルダーへ移動。Ctrl・Shift+クリックで複数選択（F2：名前変更、Delete：削除）")}
+        >
+          {libraryLoading && (
+            <div className="px-4 py-4" aria-busy={!libraryFailed}>
+              {libraryFailed ? (
+                <div className="text-[0.75rem] text-muted-foreground">
+                  <p role="status">ライブラリを読み込めませんでした。</p>
+                  <button className="mt-2 rounded-md border px-3 py-1 hover:bg-muted text-foreground" onClick={() => {
+                    void reloadPapers();
+                    void reloadCollections();
+                  }}>再試行</button>
+                </div>
+              ) : (
+                <>
+                  <p role="status" className="text-[0.75rem] text-muted-foreground mb-4">ライブラリを読み込んでいます…</p>
+                  <div aria-hidden="true" className="space-y-3">
+                    {["w-4/5", "w-3/5", "w-5/6", "w-2/3"].map((width) => (
+                      <div key={width} className={`h-4 rounded bg-muted ${width}`} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {!libraryLoading && librarySearch.trim() && <div className="px-2 pt-1 text-xs">
+            {searching && <p className="p-2 text-muted-foreground">検索中…</p>}
+            {searchError && <p className="p-2 text-destructive">検索できませんでした。</p>}
+            {hits.map((hit, index) => <button key={index} className="w-full border-b text-left p-2 hover:bg-muted" onClick={() => {
+              const store = useStore.getState(); store.setSelectedFolder(null); store.setTranslatedOnly(false);
+              store.setActivePaperId(hit.paper_id, hit.page ?? undefined);
+              store.setCurrentCollection(allPapers.find(p => p.id === hit.paper_id)?.collection_name ?? "");
+              store.setActiveTab("reader");
+              if (hit.side === "html" && hit.attachment_id) openDocument(hit.paper_id, hit.attachment_id);
+              else if (hit.page) store.setReaderJump({ paperId: hit.paper_id, page: hit.page, side: hit.side === "translated" ? "translated" : "original", text: librarySearch, anchor_y: 0 });
+            }}><span className="block font-medium truncate">{hit.title}</span>
+              <span className="text-primary">{{ metadata: "論文情報", original: "原文", translated: "訳文", html: "資料" }[hit.side]}{hit.page && ` p.${hit.page}`}{hit.side === "html" && hit.attachment_title ? `「${hit.attachment_title}」` : ""}</span>
+              <span className="block text-muted-foreground line-clamp-2">{hit.snippet}</span></button>)}
+            {searchResults?.limited && <p className="p-2 text-muted-foreground">先頭200件を表示しています。検索語を追加して絞り込めます。</p>}
+          </div>}
+          {!libraryLoading && !librarySearch.trim() && (
+            <TreeList ref={treeList} lines={lines} scrollRef={scrollRef} treeRef={treeRef}
+              onKeyDownCapture={(e) => onTreeKeyDown(e, true)} onKeyDown={(e) => onTreeKeyDown(e, false)}
+              rowProps={{ papers: paperList ?? null, collections, filtered, setExpanded, onTagSelect: setTagFilter }} />
+          )}
+          {!libraryLoading && (!librarySearch.trim() || (!searching && !searchError)) && papers.length === 0 && pending.length === 0 && (
+            <div className="px-4 py-6 text-center text-muted-foreground text-[0.75rem] leading-relaxed">
+              {filtered
+                ? "見つかりませんでした。検索語や絞り込みを変更してください。"
+                : "PDFを追加するか、フォルダーへドロップして読み始めましょう。"}
+            </div>
+          )}
+          {filtered && (
+            <div className="px-2 py-1">
+              <button onClick={clearFilters} className="w-full h-7 rounded-md border text-[0.75rem] hover:bg-muted">
+                検索・絞り込みを解除
+              </button>
+            </div>
+          )}
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-56">
+          <ContextMenuItem onClick={() => newNotebook()}><NotebookPen className="size-4 mr-2" />ノートを作る…</ContextMenuItem>
+          <ContextMenuItem onClick={() => void createFolder(null)}><FolderPlus className="size-4 mr-2" />フォルダーを作成…</ContextMenuItem>
+          <ContextMenuItem onClick={() => void importPdfs()}><FilePlus2 className="size-4 mr-2" />PDFを追加…</ContextMenuItem>
+        </ContextMenuContent>
+        </ContextMenu>
+        <DragOverlay dropAnimation={null} modifiers={[besideCursor]}>
+          {dragging && (
+            <div className="px-3 py-1.5 rounded-md bg-card border shadow-md text-[0.8125rem] max-w-[16.25rem] truncate">
+              <DragLinkHint />
+              {dragging.ids.length > 1
+                ? <><span className="font-medium tabular-nums">{dragging.ids.length} 件の論文</span>
+                  <span className="block truncate text-xs text-muted-foreground">{paperDisplayName(dragging.paper)} ほか</span></>
+                : paperDisplayName(dragging.paper)}
+            </div>
+          )}
+        </DragOverlay>
+      </DndContext>
+
+      <div className="px-3 py-1.5 text-[0.75rem] text-muted-foreground border-t shrink-0 tabular-nums flex items-center gap-2">
+        <span>{libraryLoading ? libraryFailed ? "読み込みできませんでした" : "読み込み中…" : `${papers.length} 件の論文`}</span>
+        <SelectionStatus />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * How many papers are selected together, with a button that clears the selection; while an action on
+ * several papers runs, its progress, with a button that stops it. Apart from the sidebar, so that a
+ * change renders this line only.
+ */
+function SelectionStatus() {
+  const count = usePaperSelection((s) => s.ids?.size ?? 0);
+  const progress = useBulkProgress((s) => s.progress);
+  if (progress) {
+    return <>
+      <span className="text-foreground truncate">
+        {progress.label}…（{Math.min(progress.ran + 1, progress.total)}/{progress.total}）{progress.stopping ? " 中止しています" : ""}
+      </span>
+      <button onClick={stopBulk} disabled={progress.stopping} title="送信中の 1 件が終わったところで止めます。残りは処理しません。"
+        className="ml-auto shrink-0 rounded px-1.5 hover:bg-muted hover:text-foreground disabled:opacity-50">中止</button>
+    </>;
+  }
+  if (!count) return null;
+  return <>
+    <span className="text-foreground">· {count} 件を選択中</span>
+    <button onClick={() => clearSelection(usePaperSelection.getState().anchor)} title="複数選択を解除します（一覧で Esc）"
+      className="ml-auto rounded px-1.5 hover:bg-muted hover:text-foreground">解除</button>
+  </>;
+}
+
+/** What the sidebar asks of the tree's list. */
+type TreeListHandle = {
+  /** Scrolls the row or line `key` into view, rendering it first when it is out of view in a long library. */
+  scrollTo: (key: string) => void;
+};
+
+/** The root font size in px, which the rows' rem sizes follow (設定「文字の大きさ」). */
+function rootFontPx(scale: number): number {
+  if (typeof document === "undefined") return 16 * scale;
+  return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16 * scale;
+}
+
+/** How tall the list is taken to be before it is measured: the first rows to render (also on the server). */
+const initialHeight = () => (typeof window !== "undefined" && window.innerHeight) || 800;
+
+/**
+ * Where the view is, from the rows on screen (see viewAnchors): read before a new set of lines is
+ * committed, so that the view can keep its place. None at the top of the list, which stays at the top.
+ */
+function readViewAnchors(tree: HTMLElement | null, scroller: HTMLElement | null, lines: TreeLine[]) {
+  if (!tree || !scroller || scroller.scrollTop <= 0) return [];
+  const boxes: LineBox[] = [];
+  for (const element of tree.children) {
+    const key = lines[Number((element as HTMLElement).dataset.index)]?.key;
+    if (key === undefined) continue;
+    const { top, bottom } = element.getBoundingClientRect();
+    boxes.push({ key, top, bottom });
+  }
+  return viewAnchors(boxes, scroller.getBoundingClientRect().top);
+}
+
+/**
+ * The tree's rows (see treeLines.ts). A long library (shouldVirtualize) renders only the rows in view,
+ * with a few beyond them (OVERSCAN) and the rows that must stay (pinnedLines), each placed at its
+ * offset in a list as tall as all of them; the rows are measured as they render, since a paper's row
+ * is taller with tags or a wrapped status line. A shorter one renders every row in the page's flow.
+ * Apart from the sidebar, so that scrolling renders this list only.
+ */
+function TreeList({ ref, lines, scrollRef, treeRef, onKeyDown, onKeyDownCapture, rowProps }: {
+  ref: RefObject<TreeListHandle | null>;
+  lines: TreeLine[];
+  scrollRef: RefObject<HTMLDivElement | null>;
+  treeRef: RefObject<HTMLDivElement | null>;
+  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
+  onKeyDownCapture: (e: KeyboardEvent<HTMLDivElement>) => void;
+  rowProps: RowProps;
+}) {
+  const virtualize = shouldVirtualize(lines.length);
+  const index = useMemo(() => new Map(lines.map((line, at) => [line.key, at])), [lines]);
+  const scale = useUiScale((s) => s.scale);
+  const remPx = useMemo(() => rootFontPx(scale), [scale]);
+  const tabStop = useTreeFocus((s) => s.tabStop);
+  const focused = useTreeFocus((s) => s.focused);
+  const requested = useTreeFocus((s) => s.pending?.key ?? null);
+  const requestedFolder = useTreeFocus((s) => s.pending?.folder);
+  const menuRow = useMenuRow((s) => s.key);
+  const dragged = useDragOver((s) => s.active);
+  // The row with the focus in it, also on one of its buttons (▸, +N, a failure's icon), which the
+  // keys' focus (`focused`) does not follow.
+  const [within, setWithin] = useState<string | null>(null);
+  const pinned = useMemo(
+    () => virtualize
+      ? pinnedLines(lines, index, [tabStop, focused, within, requested, menuRow, dragged && paperKey(dragged)], dragged !== null)
+      : [],
+    [virtualize, lines, index, tabStop, focused, within, requested, menuRow, dragged]);
+  const rangeExtractor = useCallback((range: Range) => linesToRender(range, pinned), [pinned]);
+  // The lines not measured yet are taken to be as tall as those of their kind measured so far.
+  const [sizes] = useState(createLineSizes);
+  const estimateSize = useCallback((at: number) => sizes.estimate(lines[at], remPx), [sizes, lines, remPx]);
+  const measureLine = useCallback(
+    (element: HTMLDivElement, entry: ResizeObserverEntry | undefined, instance: Virtualizer<HTMLDivElement, HTMLDivElement>) => {
+      const size = measureElement(element, entry, instance);
+      const line = lines[instance.indexFromElement(element)];
+      if (line) sizes.record(line, size);
+      return size;
+    }, [sizes, lines]);
+  const getItemKey = useCallback((at: number) => lines[at].key, [lines]);
+  const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    enabled: virtualize,
+    count: lines.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize,
+    measureElement: measureLine,
+    getItemKey,
+    rangeExtractor,
+    overscan: OVERSCAN,
+    // The space above and below the rows (py-1 when every row is rendered), kept when scrolling to a row.
+    paddingStart: remPx / 4,
+    paddingEnd: remPx / 4,
+    scrollPaddingStart: remPx / 4,
+    scrollPaddingEnd: remPx / 4,
+    initialRect: { width: 0, height: initialHeight() },
+    // Where the list is when it starts rendering only the rows in view (a row added past 200 lines).
+    initialOffset: () => scrollRef.current?.scrollTop ?? 0,
+  });
+
+  const scrollTo = useCallback((key: string) => {
+    const at = index.get(key);
+    if (at === undefined) return;
+    if (virtualize) virtualizer.scrollToIndex(at, { align: "auto" });
+    else treeRef.current?.querySelector(`[data-index="${at}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [index, virtualize, virtualizer, treeRef]);
+  useImperativeHandle(ref, () => ({ scrollTo }), [scrollTo]);
+
+  // The rows measured so far are in px: a new root font size (設定「文字の大きさ」) measures them again.
+  // Before the view's place is put back below, which uses the new sizes.
+  const measuredAt = useRef(remPx);
+  useLayoutEffect(() => {
+    if (measuredAt.current === remPx) return;
+    measuredAt.current = remPx;
+    sizes.reset();
+    virtualizer.measure();
+    virtualizer.elementsCache.forEach((element) => virtualizer.measureElement(element));
+  }, [virtualizer, sizes, remPx]);
+
+  // The view keeps its place when lines above it change (a paper added, moved or deleted, a folder
+  // opened): the rows on screen are read here, in the render of the new lines, before the commit moves
+  // them, and the first of them still there is put back where it was once committed. A list rendering
+  // every row in the page's flow has the browser's own scroll anchoring, but not one that starts or
+  // stops rendering only the rows in view, nor one that renders only them.
+  const committed = useRef<{ lines: TreeLine[]; virtualize: boolean } | null>(null);
+  const anchors = useRef<{ key: string; offset: number }[]>([]);
+  if (committed.current && committed.current.lines !== lines && (committed.current.virtualize || virtualize)) {
+    anchors.current = readViewAnchors(treeRef.current, scrollRef.current, committed.current.lines);
+    // Starting to render only the rows in view: the rows' heights are those laid out in the page, which
+    // the estimates would otherwise miss where status lines wrap (a narrow sidebar, 125% or 150%), and
+    // the list would jump when the rows are measured again after the view's place is put back.
+    if (!committed.current.virtualize && virtualize && treeRef.current) {
+      for (const element of treeRef.current.children) {
+        const line = committed.current.lines[Number((element as HTMLElement).dataset.index)];
+        if (line) sizes.record(line, element.getBoundingClientRect().height);
+      }
+    }
+  }
+  useLayoutEffect(() => {
+    const before = committed.current;
+    committed.current = { lines, virtualize };
+    const kept = anchors.current;
+    anchors.current = [];
+    const scroller = scrollRef.current;
+    if (!before || before.lines === lines || !scroller) return;
+    const anchor = kept.find((candidate) => index.has(candidate.key));
+    if (anchor) {
+      const at = index.get(anchor.key)!;
+      if (virtualize) {
+        const start = virtualizer.measurementsCache[at]?.start;
+        // A limit accepted: moving the list here stops a smooth scroll in progress (the wheel's, the
+        // keyboard's) when rows above the view change height or place while it runs.
+        if (start !== undefined && Math.abs(start - anchor.offset - scroller.scrollTop) > 0.5) virtualizer.scrollToOffset(start - anchor.offset);
+      } else {
+        const element = treeRef.current?.querySelector(`[data-index="${at}"]`);
+        if (element) scroller.scrollTop += element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchor.offset;
+      }
+    }
+    // Every row is in the page again: the one with the focus is kept in view.
+    if (before.virtualize && !virtualize) {
+      const active = document.activeElement;
+      if (active && treeRef.current?.contains(active)) active.closest("[role=treeitem]")?.scrollIntoView({ block: "nearest" });
+    }
+  }, [lines, index, virtualize, virtualizer, scrollRef, treeRef]);
+
+  // A row asked to take the focus (requestTreeFocus: a key that moves out of view, a paper revealed,
+  // the row after one deleted) is rendered as it is pinned; this brings it into view. A paper moved
+  // with the keyboard is scrolled to once the library shows it in its new folder.
+  useEffect(() => {
+    const at = requested === null ? undefined : index.get(requested);
+    if (requested !== null && at !== undefined && isRequestedLine(lines[at], requestedFolder)) scrollTo(requested);
+  }, [requested, requestedFolder, index, lines, scrollTo]);
+
+  // A PDF dropped or chosen shows at once as being added: scrolled into view as it appears.
+  const shownPending = useRef(new Set<string>());
+  useEffect(() => {
+    const pending = lines.filter((line) => line.kind === "pending").map((line) => line.key);
+    const added = pending.filter((key) => !shownPending.current.has(key));
+    shownPending.current = new Set(pending);
+    if (added.length) scrollTo(added[added.length - 1]);
+  }, [lines, scrollTo]);
+
+  // The rows under a paper (attachment, owned, link) have no component yet: none are laid out (PaperChildren).
+  const row = (line: TreeLine) => line.kind === "folder"
+    ? <FolderRow node={line.node} level={line.level} setSize={line.setSize} posInSet={line.posInSet} {...rowProps} />
+    : line.kind === "pending"
+      ? <PendingRow item={line.item} level={line.level} setSize={line.setSize} posInSet={line.posInSet} />
+      : line.kind === "paper"
+        ? <PaperRow paper={line.paper} expanded={line.expanded} expandable={line.expandable} level={line.level} setSize={line.setSize} posInSet={line.posInSet}
+          collections={rowProps.collections} onTagSelect={rowProps.onTagSelect} />
+        : <MemoChildRow line={line} />;
+
+  return (
+    // The browser's scroll anchoring is off while only the rows in view render: the view's place is
+    // kept above, and would otherwise be moved twice.
+    <div ref={treeRef} role="tree" aria-label="ライブラリ" aria-multiselectable="true"
+      className={virtualize ? "relative" : "py-1"}
+      style={virtualize ? { height: virtualizer.getTotalSize(), overflowAnchor: "none" } : undefined}
+      onKeyDownCapture={onKeyDownCapture} onKeyDown={onKeyDown}
+      onFocus={(e) => setWithin(e.target.closest("[data-tree-key]")?.getAttribute("data-tree-key") ?? null)}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setWithin(null); }}>
+      {virtualize
+        ? virtualizer.getVirtualItems().map((item) => (
+          <div key={item.key} ref={virtualizer.measureElement} data-index={item.index} role="none"
+            className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${item.start}px)` }}>
+            {row(lines[item.index])}
+          </div>
+        ))
+        : lines.map((line, at) => <div key={line.key} data-index={at} role="none">{row(line)}</div>)}
+    </div>
+  );
+}
+
+/** Delete on the focused row itself, not on a nested button such as the tag toggle. */
+const isDeleteKey = (e: KeyboardEvent<HTMLElement>) => (e.key === "Delete" || e.key === "Backspace") && e.target === e.currentTarget;
+
+/**
+ * Props the rows pass down unchanged. They keep their identity from one render to the next (stable
+ * callbacks, query data), so that the memoized rows render again only for their own changes.
+ */
+type RowProps = {
+  onTagSelect: (name: string) => void;
+  /** The whole library, unfiltered: deleting a folder counts every paper in it. Null until it has loaded. */
+  papers: PaperData[] | null;
+  collections: string[];
+  /** Searching or filtering, which shows every folder open. */
+  filtered: boolean;
+  setExpanded: (path: string, expanded: boolean) => void;
+};
+
+/** The row's place in the tree, for assistive technology (see treeLines). */
+type LinePlace = { level: number; setSize: number; posInSet: number };
+
+function activateChild(line: ChildLine) {
+  if (line.kind === "owned") { useStore.getState().setActiveTab("reader"); openPaper(line.child.id, line.owner.collection_name); return; }
+  if (line.kind === "link") { useStore.getState().setActiveTab("reader"); openPaper(line.child.id, line.child.collection ?? ""); return; }
+  if (line.kind === "more") {
+    showHoldings(line.owner, !useStore.getState().hideLibraryLinks);
+    return;
+  }
+  if (line.kind === "attachment") {
+    if (!itemCapabilities(line.owner).memo) return;
+    openPaper(line.owner.id, line.owner.collection_name);
+    if (line.child.format === "html") openDocument(line.owner.id, line.child.id);
+    else openMemo(line.owner.id, line.child.id);
+  }
+}
+
+function MemoChildRow({ line }: { line: ChildLine }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const tabStop = useTreeFocus(s => s.tabStop === line.key);
+  useFocusRequest(ref, useTreeFocus(s => s.pending?.key === line.key));
+  const row = <div ref={ref} role="treeitem" data-tree-key={line.key} aria-level={line.level}
+    aria-setsize={line.setSize} aria-posinset={line.posInSet} aria-selected={false} tabIndex={tabStop ? 0 : -1}
+    onFocus={e => { if (e.target === e.currentTarget) updateTreeFocus({ focused: line.key }); }} onClick={() => activateChild(line)}
+    className={`flex cursor-pointer items-center gap-1.5 py-1 pr-2 text-[0.75rem] leading-5 text-muted-foreground hover:bg-muted/60 ${FOCUS_RING}`}
+    style={{ paddingLeft: `${(line.level - 1) * 16 + 8}px` }} title={line.child.title}>
+    {line.kind === "link" ? <span aria-hidden="true">↗</span> : line.kind === "owned" ? <NotebookPen className="size-3 shrink-0" /> : line.kind === "attachment" && line.child.format === "html" ? <span aria-hidden="true">🌐</span> : line.kind !== "more" && <FileText className="size-3 shrink-0" />}<span className="truncate">{line.child.title}</span>
+  </div>;
+  if (line.kind !== "link") return row;
+  return <ContextMenu onOpenChange={menuOpenChange(line.key)}><ContextMenuTrigger role="none">{row}</ContextMenuTrigger>
+    <ContextMenuContent>
+      <ContextMenuItem onClick={() => activateChild(line)}>開く</ContextMenuItem>
+      <ContextMenuItem onClick={() => emitAppEvent("reveal-paper", { paperId: line.child.id, focus: true })}><FolderOpen className="size-4 mr-2" />フォルダー内で表示</ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={() => void removeItemLink(line.owner.id, line.child.id)}><Link2 className="size-4 mr-2" />紐づけを外す</ContextMenuItem>
+    </ContextMenuContent></ContextMenu>;
+}
+
+function FolderRowView({ node, level, setSize, posInSet, papers, filtered, setExpanded }: { node: FolderNode } & LinePlace & RowProps) {
+  const { setNodeRef } = useDroppable({ id: `folder:${node.path}` });
+  const key = folderKey(node.path);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const ref = useCallback((element: HTMLDivElement | null) => { setNodeRef(element); rowRef.current = element; }, [setNodeRef]);
+  // Whether this row takes the Tab key, or was asked to take the focus; see treeFocus.ts.
+  const tabStop = useTreeFocus((s) => s.tabStop === key);
+  useFocusRequest(rowRef, useTreeFocus((s) => s.pending?.key === key));
+  const hasContents = node.children.length + node.papers.length + node.pending.length > 0;
+  // Booleans, so that selecting, opening or dragging over another row leaves this one as it is.
+  const chosen = useStore((s) => s.selectedFolder === node.path);
+  // While several papers are selected, folders are not; the chosen one keeps its mark, as the folder
+  // new PDFs go into.
+  // Only the chosen folder's row follows the selection.
+  const selected = usePaperSelection((s) => chosen && s.ids === null);
+  const expanded = useStore((s) => filtered || s.expandedCollections === null || s.expandedCollections.includes(node.path));
+  const draggedOver = useDragOver((s) => s.path === node.path);
+  const osDraggedOver = useDropTarget((s) => s.target === node.path);
+  const highlighted = draggedOver || osDraggedOver;
+
+  return (
+    <ContextMenu onOpenChange={menuOpenChange(key)}>
+      <ContextMenuTrigger role="none">
+        <div
+          ref={ref}
+          role="treeitem"
+          aria-level={level}
+          aria-setsize={setSize}
+          aria-posinset={posInSet}
+          aria-expanded={hasContents ? expanded : undefined}
+          aria-selected={selected}
+          aria-label={`${node.name}（${node.count}件）`}
+          data-tree-key={key}
+          data-drop-collection={node.path}
+          className={`flex items-center h-[1.875rem] cursor-pointer group border-l-2 ${FOCUS_RING} ${
+            selected ? "bg-accent" : "hover:bg-muted/60"} ${chosen ? "border-primary" : "border-transparent"
+          } ${highlighted ? "outline-2 outline-primary -outline-offset-2 rounded-sm" : ""}`}
+          style={{ paddingLeft: `${(level - 1) * 16 + 6}px`, paddingRight: "8px" }}
+          tabIndex={tabStop ? 0 : -1}
+          onFocus={(e) => { if (e.target === e.currentTarget) updateTreeFocus({ focused: key }); }}
+          onClick={(e) => {
+            // Shift selects the papers from the anchor down to here; Ctrl leaves the selection as it is.
+            if (e.shiftKey) changeSelection((selection, rows, open) => selectRange(selection, rows, key, open, { add: e.ctrlKey || e.metaKey }));
+            else if (!e.ctrlKey && !e.metaKey) selectFolder(node.path);
+          }}
+          onDoubleClick={() => setExpanded(node.path, !expanded)}
+          onKeyDown={(e) => { if (node.path && isDeleteKey(e)) { e.preventDefault(); deleteFolderRow(node.path, papers); } }}
+          // The full path of a subfolder; not the name again, which the label already says.
+          title={node.path === node.name ? undefined : node.path || "フォルダー未指定のPDF"}
+        >
+          {/* Out of the Tab order: ←→ open and close the folder from the row. */}
+          <button
+            tabIndex={-1}
+            className="w-4 h-4 flex items-center justify-center mr-1 text-muted-foreground shrink-0"
+            onClick={(e) => { e.stopPropagation(); setExpanded(node.path, !expanded); }}
+            aria-label={expanded ? "閉じる" : "開く"}
+          >
+            {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          </button>
+          {expanded ? <FolderOpen className="mr-2 h-4 w-4 text-muted-foreground shrink-0" />
+            : <Folder className="mr-2 h-4 w-4 text-muted-foreground shrink-0" />}
+          <span className="flex-1 truncate">{node.name}</span>
+          <span className="text-[0.75rem] text-muted-foreground tabular-nums ml-2">{node.count}</span>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={() => newNotebook({ collection: node.path })}>
+          <NotebookPen className="w-4 h-4 mr-2" /> ここにノートを作る…
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => createFolder(node.path)}>
+          <FolderPlus className="w-4 h-4 mr-2" /> {node.path ? "子フォルダーを作成…" : "フォルダーを作成…"}
+        </ContextMenuItem>
+        {/* The papers directly in the folder (those of 未分類 for it), not its subfolders'; a notebook is not one to
+            sort. While searching, the rows hold only the matches, so the dialog says if there are none. */}
+        <ContextMenuItem disabled={!filtered && !organizableItems(node.papers).length}
+          onClick={() => emitAppEvent("open-organize-dialog", { source: node.path })}>
+          <Sparkles className="w-4 h-4 mr-2" /> AIで内容別に分ける…
+        </ContextMenuItem>
+        {node.path && (
+          <>
+            <ContextMenuItem onClick={() => renameFolderRow(node.path)}>
+              <Edit2 className="w-4 h-4 mr-2" /> 名前を変更…
+            </ContextMenuItem>
+            {/* The folder's papers and its subfolders', as its count shows them. */}
+            <ContextMenuItem disabled={!node.count} onClick={() => void exportFolderBibtex(node.path)}>
+              <Download className="w-4 h-4 mr-2" /> BibTeX を書き出す…
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={() => deleteFolderRow(node.path, papers)} className="text-destructive">
+              <Trash2 className="w-4 h-4 mr-2" /> フォルダーを削除
+            </ContextMenuItem>
+          </>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+/** Renders again only when its folder or the shared props change, or one of the values it selects. */
+const FolderRow = memo(FolderRowView);
+
+/**
+ * A PDF whose import job has not finished yet: its file name, then its page count once known. The list
+ * scrolls it into view as it appears (TreeList).
+ */
+function PendingRow({ item, level, setSize, posInSet }: { item: PendingImport } & LinePlace) {
+  return (
+    <div
+      role="treeitem"
+      aria-level={level}
+      aria-setsize={setSize}
+      aria-posinset={posInSet}
+      aria-disabled="true"
+      className="flex items-start py-1 border-l-2 border-transparent cursor-default text-muted-foreground"
+      style={{ paddingLeft: `${(level - 1) * 16 + 8}px`, paddingRight: "8px" }}
+      title={`${item.name}
+追加中…`}
+    >
+      <Loader2 className="h-4 w-4 mr-2 mt-0.5 animate-spin text-primary shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div className="truncate leading-5">{item.name}</div>
+        <div className="mt-0.5 text-[0.75rem] leading-4 truncate tabular-nums">
+          {item.pages ? `${item.pages}ページ · ` : ""}追加中…
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Memoized, with values selected for this paper only: opening a paper renders its row and the one
+ * left, and a job's progress events render its paper's row only when what the row shows changes.
+ */
+const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, setSize, posInSet, collections, onTagSelect }: { paper: PaperData; expanded: boolean; expandable: boolean; collections: string[]; onTagSelect: (name: string) => void } & LinePlace) {
+  const memoCount = (useAttachments().data?.filter(row => row.owner_id === paper.id).length ?? 0)
+    + (useNotebooks().data?.filter(row => row.parent_id === paper.id).length ?? 0);
+  const hideLinks = useStore(s => s.hideLibraryLinks);
+  const { data: links = [] } = useItemLinks();
+  const [allTags, setAllTags] = useState(false);
+  // A treeitem, not dnd-kit's default button; the row itself starts a drag from the keyboard, not a button in it.
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({ id: paper.id, attributes: { role: "treeitem" } });
+  const { data: originals = NO_PAPERS } = usePaperList("", useStore(s => s.sortOrder));
+  const draggedIds = useDragOver(s => s.paperIds);
+  const draggedId = useDragOver(s => s.active);
+  const canLinkDrop = canDropLink(draggedIds ? [...draggedIds] : draggedId ? [draggedId] : [], paper, originals);
+  const linkCount = hideLinks ? 0 : links.filter(link => {
+    const target = link.a === paper.id ? link.b : link.b === paper.id ? link.a : null;
+    return target !== null && originals.some(row => row.id === target);
+  }).length;
+  const { setNodeRef: setDropRef } = useDroppable({ id: `link:${paper.id}`, disabled: !canLinkDrop });
+  const linkOver = useDragOver(s => s.notebook === paper.id);
+  const key = paperKey(paper.id);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const ref = useCallback((element: HTMLDivElement | null) => {
+    setNodeRef(element);
+    setDropRef(element);
+    setActivatorNodeRef(element);
+    rowRef.current = element;
+  }, [setNodeRef, setActivatorNodeRef, setDropRef]);
+  // Open, and selected: the same until several papers are selected, when the open one keeps its mark
+  // whether or not it is among them.
+  const isActive = useStore((s) => s.activePaperId === paper.id && s.selectedFolder === null);
+  const selected = usePaperSelection((s) => s.ids === null ? null : s.ids.has(paper.id)) ?? isActive;
+  const draggedAlong = useDragOver((s) => !!s.paperIds?.has(paper.id));
+  const jobState = useStore((s) => paperJobState(s.activeJobs, paper.id, TRANSLATION_JOBS));
+  const running = jobState !== "idle";
+  const translating = jobState === "translating";
+  const failure = useJobFailures((s) => s.failures[paper.id]);
+  const collection = normalizeCollection(paper.collection_name || "");
+  const tabStop = useTreeFocus((s) => s.tabStop === key);
+  // After a move with the keyboard, only the row in the folder it moved to takes the focus.
+  useFocusRequest(rowRef, useTreeFocus((s) => s.pending?.key === key && (s.pending.folder === undefined || s.pending.folder === collection)));
+
+  // 「保存済みの訳文でPDFを作り直す」 is said as such, as in the header.
+  const rebuilding = useRebuilding(useStore((s) => runningPaperJob(s.activeJobs, paper.id, ["translate"])?.job_id));
+  const translation = paperTranslationStatus(paper, translating, undefined, { rebuilding });
+  const showProgress = ["partial", "translating", "paused"].includes(translation.status) && translation.pages > 0;
+
+  return (
+    <ContextMenu onOpenChange={menuOpenChange(key)}>
+      <ContextMenuTrigger role="none">
+        <div
+          ref={ref}
+          id={`paper-row-${paper.id}`}
+          {...listeners}
+          {...attributes}
+          aria-roledescription={undefined}
+          aria-level={level}
+          aria-setsize={setSize}
+          aria-posinset={posInSet}
+          aria-selected={selected}
+          aria-expanded={expandable ? expanded : undefined}
+          aria-current={isActive ? "true" : undefined}
+          tabIndex={tabStop ? 0 : -1}
+          data-tree-key={key}
+          data-drop-collection={collection}
+          data-memo-owner={itemCapabilities(paper).memo && !paper.parent_id ? paper.id : undefined}
+          onDragOver={e => { if (itemCapabilities(paper).memo && !paper.parent_id && e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
+          onDrop={e => {
+            if (!itemCapabilities(paper).memo || paper.parent_id || !e.dataTransfer.files.length) return;
+            e.preventDefault(); e.stopPropagation();
+            void importAttachmentFiles(paper.id, Array.from(e.dataTransfer.files), queryClient).catch(error => showError(error, "メモ・資料を取り込めませんでした"));
+          }}
+          onFocus={(e) => { if (e.target === e.currentTarget) updateTreeFocus({ focused: key }); }}
+          onClick={(e) => {
+            // Ctrl toggles the paper in the selection, Shift selects from the anchor (Ctrl+Shift adds
+            // that range); a plain click opens it.
+            if (e.shiftKey) changeSelection((selection, rows, open) => selectRange(selection, rows, key, open, { add: e.ctrlKey || e.metaKey }));
+            else if (e.ctrlKey || e.metaKey) changeSelection((selection, rows, open) => toggleSelection(selection, rows, key, open));
+            else openPaper(paper.id, collection);
+          }}
+          onKeyDown={(e) => {
+            // Not while it is dragged with the keyboard, when the keys are the drag's.
+            if (isDragging) return;
+            if (isDeleteKey(e)) { e.preventDefault(); deletePaperRow(paper.id); return; }
+            // Space alone picks it up; Ctrl+Space and the like are left for selecting.
+            if (!e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) listeners?.onKeyDown?.(e);
+          }}
+          className={`flex items-start py-1 cursor-pointer border-l-2 ${FOCUS_RING} ${linkOver ? "outline-2 outline-primary -outline-offset-2 rounded-sm cursor-alias" : ""} ${
+            selected ? "bg-accent" : "hover:bg-muted/60"} ${isActive ? "border-primary" : "border-transparent"
+          } ${isDragging || draggedAlong ? "opacity-40" : ""}`}
+          style={{ paddingLeft: `${(level - 1) * 16 + 8}px`, paddingRight: "8px" }}
+          title={`${paperDisplayName(paper)}\nファイル名：${paper.original_name ?? ""}`}
+        >
+          {expandable && <button tabIndex={-1} aria-label={expanded ? "持ち物を閉じる" : "持ち物を開く"} aria-expanded={expanded}
+            className="mt-0.5 shrink-0 rounded hover:bg-muted" onPointerDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); expandMemoOwner(paper.id, !expanded); }}>
+            {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+          </button>}
+          {itemCapabilities(paper).notebook ? <NotebookPen className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" /> : <FileText className="h-4 w-4 mr-2 mt-0.5 text-muted-foreground shrink-0" />}
+          <div className="flex-1 min-w-0">
+            <div className="truncate leading-5">{libraryPaperTitle(paper)}</div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.75rem] leading-4 text-muted-foreground tabular-nums">
+              {/* An item that is not translated (a notebook) has no translation status: its pages instead. */}
+              {translation.applicable ? <>
+                <PaperStatusBadge status={translation.status} text={translation.text} description={translation.description}
+                  hasSummary={!!paper.has_article} className="gap-1 [&>span:first-child]:py-0" />
+                <span title={translation.description}>{translation.count}</span>
+                {showProgress && <div role="progressbar" aria-label="訳文を保存済みのページ" aria-valuemin={0} aria-valuemax={translation.pages}
+                  aria-valuenow={translation.completed} aria-valuetext={translation.description} title={translation.description}
+                  className="h-1 w-10 overflow-hidden rounded-full bg-muted-foreground/10">
+                  <div className={`h-full rounded-full transition-[width] ${translating ? "bg-primary" : "bg-amber-500/60"}`} style={{ width: `${translation.progress}%` }} />
+                </div>}
+              </> : <span>{paper.pages ?? 0}ページ</span>}
+              {/* A notebook is written, not read: its pages, with no reading status. */}
+              {itemCapabilities(paper).readStatus && <>
+                <span aria-hidden="true">·</span>
+                <span>{paper.read_status || "未設定"}</span>
+              </>}
+              {running && !translating && <span className="text-primary">· AI処理中</span>}
+            </div>
+            {!!paper.tags?.length && <div className="mt-1 flex flex-wrap items-center gap-1 [&>span]:leading-4">
+              {(allTags ? paper.tags : paper.tags.slice(0, 2)).map(name => <TagChip key={name} name={name} tabIndex={-1} onClick={() => onTagSelect(name)} />)}
+              {paper.tags.length > 2 && <button tabIndex={-1} className="rounded px-1 text-[0.75rem] text-muted-foreground hover:bg-muted" title={paper.tags.join("、")}
+                onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setAllTags(!allTags); }}>
+                {allTags ? "閉じる" : `+${paper.tags.length - 2}`}</button>}
+            </div>}
+          </div>
+          {memoCount > 0 && <span className="ml-1 mt-0.5 text-xs text-muted-foreground" aria-label={`持ち物 ${memoCount}件`}>{memoCount}</span>}
+          {linkCount > 0 && <span className="ml-1 mt-0.5 text-xs text-muted-foreground" aria-label={`紐づけ ${linkCount}件`}>↗{linkCount}</span>}
+          {running && !translating && <Loader2 className="w-3.5 h-3.5 ml-1 mt-0.5 animate-spin text-primary shrink-0" />}
+          {failure && <button type="button" className="ml-1 mt-0.5 shrink-0 rounded text-destructive hover:bg-destructive/10"
+            title={`${failure.title}（クリックで詳細）`} aria-label={`${failure.title}。詳細を表示`}
+            onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); showJobFailure(paper.id); }}>
+            <CircleAlert className="w-3.5 h-3.5" aria-hidden="true" /></button>}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-56">
+        <PaperMenu paper={paper} collection={collection} collections={collections} />
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+});
+
+/**
+ * A paper's context menu: the paper's own items, or, for a paper in a selection of several, what can be
+ * done to them all (the menu of a paper outside the selection is that paper's own, and leaves the
+ * selection as it is). Rendered only while the menu is open, so that the rows need not follow the selection.
+ */
+function PaperMenu({ paper, collection, collections }: { paper: PaperData; collection: string; collections: string[] }) {
+  const ids = useMemo(() => papersActedOn(usePaperSelection.getState(), useTreeFocus.getState().rows, paper.id), [paper.id]);
+  const caps = itemCapabilities(paper);
+  if (ids.length > 1) return <SelectionMenu ids={ids} paperId={paper.id} collections={collections} />;
+  if (caps.notebook) return <NotebookMenu paper={paper} collection={collection} collections={collections} />;
+  return (
+    <>
+      {!paper.parent_id && <ContextMenuItem onClick={() => newNotebook({ owner: paper })}><NotebookPen className="size-4 mr-2" />専用ノートを作る…</ContextMenuItem>}
+      {(caps.linkPaper || caps.linkNotebook) && <ContextMenuItem onClick={() => chooseItemLink(paper)}><Link2 className="size-4 mr-2" />{caps.linkNotebook ? "関連論文を追加…" : "ノートに紐づける…"}</ContextMenuItem>}
+      <ContextMenuItem onClick={() => emitAppEvent("open-paper-details", { paperId: paper.id })}>
+        <FileText className="w-4 h-4 mr-2" /> 論文情報・整理
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>
+          <Folder className="w-4 h-4 mr-2" /> 分類を変更
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-56 max-h-[320px] overflow-y-auto">
+          {["", ...collections].map((c) => (
+            <ContextMenuCheckboxItem key={c || "(unfiled)"} checked={c === collection} onClick={() => movePaper(paper.id, c)}>
+              {c || "未分類"}
+            </ContextMenuCheckboxItem>
+          ))}
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => chooseNewCollection(paper.id, collection)}>新しい分類を入力…</ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <PaperOrganizeItems paper={paper} />
+      <ContextMenuSeparator />
+      {caps.rename && <ContextMenuItem onClick={() => renamePaperFile(paper.id)}>
+        <Edit2 className="w-4 h-4 mr-2" /> ファイル名を変更…
+      </ContextMenuItem>}
+      {caps.originalPdf && <>
+        <ContextMenuItem onClick={() => openPaperFile(paper.id, "original.pdf")}>
+          <ExternalLink className="w-4 h-4 mr-2" /> 原文PDFを開く
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => saveOriginal(paper.id)}>
+          <Save className="w-4 h-4 mr-2" /> 原文PDFを名前を付けて保存…
+        </ContextMenuItem>
+      </>}
+      <ContextMenuItem onClick={() => openPaperFolder(paper.id)}>
+        <FolderOpen className="w-4 h-4 mr-2" /> 保存フォルダーを開く
+      </ContextMenuItem>
+      {caps.bibliography && <ContextMenuItem onClick={() => void copyBibtex([paper.id])}>
+        <Copy className="w-4 h-4 mr-2" /> BibTeX をコピー
+      </ContextMenuItem>}
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={() => deletePaperRow(paper.id)} className="text-destructive">
+        <Trash2 className="w-4 h-4 mr-2" /> ライブラリから削除
+      </ContextMenuItem>
+    </>
+  );
+}
+
+/**
+ * A notebook's context menu: the PDF's menu without what is a paper's (原文PDF, BibTeX, the reading status),
+ * with the notebook's own wording (名前, フォルダー).
+ */
+function NotebookMenu({ paper, collection, collections }: { paper: PaperData; collection: string; collections: string[] }) {
+  const caps = itemCapabilities(paper);
+  const { exporting, exportPdf } = useInkPdfExport();
+  // Held by another item, a notebook is placed with its owner, and only an independent one holds and is linked.
+  const independent = !paper.parent_id;
+  return (
+    <>
+      {caps.rename && <ContextMenuItem onClick={() => renamePaperFile(paper.id)}>
+        <Edit2 className="w-4 h-4 mr-2" /> 名前を変更…
+        <ContextMenuShortcut>F2</ContextMenuShortcut>
+      </ContextMenuItem>}
+      {independent && caps.linkNotebook && <ContextMenuItem onClick={() => chooseItemLink(paper)}><Link2 className="size-4 mr-2" />関連論文を追加…</ContextMenuItem>}
+      {independent && <ContextMenuItem onClick={() => newNotebook({ owner: paper })}><NotebookPen className="size-4 mr-2" />専用ノートを作る…</ContextMenuItem>}
+      <ContextMenuItem onClick={() => moveNotebook(paper)}><Folder className="size-4 mr-2" />持ち主を変更・独立させる…</ContextMenuItem>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger disabled={!independent}>
+          <Folder className="w-4 h-4 mr-2" /> フォルダーを移動
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-56 max-h-[320px] overflow-y-auto">
+          {["", ...collections].map((c) => (
+            <ContextMenuCheckboxItem key={c || "(unfiled)"} checked={c === collection} onClick={() => movePaper(paper.id, c)}>
+              {c || "未分類"}
+            </ContextMenuCheckboxItem>
+          ))}
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => chooseNewCollection(paper.id, collection, { notebook: true })}>新しいフォルダーを入力…</ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <PaperOrganizeItems paper={paper} />
+      <ContextMenuItem onClick={() => emitAppEvent("open-paper-details", { paperId: paper.id })}>
+        <FileText className="w-4 h-4 mr-2" /> 情報・整理
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem disabled={exporting} onClick={() => void exportPdf(paper.id, "original")}>
+        <Download className="w-4 h-4 mr-2" /> {exporting ? "出力中…" : "書き込み付きPDFとして保存…"}
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => openPaperFolder(paper.id)}>
+        <FolderOpen className="w-4 h-4 mr-2" /> 保存フォルダーを開く
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={() => deletePaperRow(paper.id)} className="text-destructive">
+        <Trash2 className="w-4 h-4 mr-2" /> ライブラリから削除
+      </ContextMenuItem>
+    </>
+  );
+}
+
+/**
+ * One paper's reading status and tags, each saved as it is chosen. The tags' list stays open, so that
+ * several go on or off in a row; the marks show what was chosen at once, with the changes still being
+ * saved over the row as loaded (useShownOrganization).
+ */
+function PaperOrganizeItems({ paper }: { paper: PaperData }) {
+  const { data: tagChoices = NO_COLLECTIONS } = useTagChoices("paper");
+  const { data: statuses = NO_COLLECTIONS } = useTagChoices("status");
+  const { tags, status } = useShownOrganization(paper.id, paper.tags, paper.read_status ?? "");
+  const names = [...new Set([...tagChoices, ...tags])];
+  return (
+    <>
+      {itemCapabilities(paper).readStatus && <ContextMenuSub>
+        <ContextMenuSubTrigger>
+          <BookOpen className="w-4 h-4 mr-2" /> 読書状態
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-56 max-h-[320px] overflow-y-auto">
+          <ContextMenuRadioGroup value={status} onValueChange={(value: string) => {
+            if (value !== status) void setPaperReadStatus(paper.id, value);
+          }}>
+            {!!status && !statuses.includes(status) && <ContextMenuRadioItem value={status} disabled>{status}（削除済み）</ContextMenuRadioItem>}
+            {statuses.map((name) => <ContextMenuRadioItem key={name} value={name}>{name}</ContextMenuRadioItem>)}
+          </ContextMenuRadioGroup>
+          {!statuses.length && <ContextMenuItem disabled>読書状態がありません</ContextMenuItem>}
+        </ContextMenuSubContent>
+      </ContextMenuSub>}
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>
+          <Tag className="w-4 h-4 mr-2" /> タグ{tags.length ? `（${tags.length}）` : ""}
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-56 max-h-[320px] overflow-y-auto">
+          {names.map((name) => (
+            <ContextMenuCheckboxItem key={name} checked={tags.includes(name)} closeOnClick={false}
+              onCheckedChange={(checked: boolean) => void tagPaper(paper.id, name, checked)}>
+              <span className="min-w-0 break-all">{name}</span>
+            </ContextMenuCheckboxItem>
+          ))}
+          {!names.length && <ContextMenuItem disabled>タグはまだありません</ContextMenuItem>}
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => void tagPapersWithNew([paper.id])}>
+            <Plus className="w-4 h-4 mr-2" /> 新しいタグを付ける…
+          </ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+    </>
+  );
+}
+
+/** Moving, tagging, setting the reading status of and deleting the selected papers `ids`. */
+function SelectionMenu({ ids, paperId, collections }: { ids: string[]; paperId: string; collections: string[] }) {
+  const sortOrder = useStore((s) => s.sortOrder);
+  const { data: listed = NO_PAPERS } = usePaperList("", sortOrder);
+  const { data: tagChoices = NO_COLLECTIONS } = useTagChoices("paper");
+  const { data: statuses = NO_COLLECTIONS } = useTagChoices("status");
+  const selected = useMemo(() => {
+    const wanted = new Set(ids);
+    return listed.filter((p) => wanted.has(p.id));
+  }, [ids, listed]);
+  // The reading status is the PDFs' only: a notebook among them is left as it is.
+  const readable = useMemo(() => selected.filter((p) => itemCapabilities(p).readStatus).map((p) => p.id), [selected]);
+  // Tags that any of them has, to take off; and every tag, to put on.
+  const onSome = [...new Set(selected.flatMap((p) => p.tags ?? []))];
+  const tags = [...new Set([...tagChoices, ...onSome])];
+  return (
+    <>
+      <ContextMenuGroup>
+        <ContextMenuLabel>{ids.length}件の論文を選択中</ContextMenuLabel>
+      </ContextMenuGroup>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>
+          <Folder className="w-4 h-4 mr-2" /> まとめて分類を変更
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-56 max-h-[320px] overflow-y-auto">
+          {["", ...collections].map((c) => (
+            <ContextMenuItem key={c || "(unfiled)"} onClick={() => void movePapers(ids, c)}>{c || "未分類"}</ContextMenuItem>
+          ))}
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => void movePapersToNewCollection(ids, "")}>新しい分類を入力…</ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      {/* The selection as it is, from any folders; new folders go under the folder they share (organizePlan.commonFolder).
+          Not for a selection with an item that is not sorted by what it says (a notebook), as with BibTeX below. */}
+      <ContextMenuItem disabled={!allOrganizable(selected)} onClick={() => emitAppEvent("open-organize-dialog", { paperIds: ids })}>
+        <Sparkles className="w-4 h-4 mr-2" /> AIで内容別に分ける…
+      </ContextMenuItem>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>
+          <Tag className="w-4 h-4 mr-2" /> タグを付ける
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-56 max-h-[320px] overflow-y-auto">
+          {tags.map((name) => (
+            <ContextMenuItem key={name} onClick={() => void tagPapers(ids, name, true)}>
+              <span className="min-w-0 break-all">{name}</span>
+            </ContextMenuItem>
+          ))}
+          {!tags.length && <ContextMenuItem disabled>タグはまだありません</ContextMenuItem>}
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => void tagPapersWithNew(ids)}>
+            <Plus className="w-4 h-4 mr-2" /> 新しいタグを付ける…
+          </ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger disabled={!onSome.length}>
+          <Tag className="w-4 h-4 mr-2" /> タグを外す
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-56 max-h-[320px] overflow-y-auto">
+          {onSome.map((name) => (
+            <ContextMenuItem key={name} onClick={() => void tagPapers(ids, name, false)}>
+              <span className="min-w-0 break-all">{name}</span>
+            </ContextMenuItem>
+          ))}
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      {!!readable.length && <ContextMenuSub>
+        <ContextMenuSubTrigger>
+          <BookOpen className="w-4 h-4 mr-2" /> {readable.length < ids.length ? "読書状態を変更（PDFのみ）" : "読書状態を変更"}
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-56 max-h-[320px] overflow-y-auto">
+          {statuses.map((status) => (
+            <ContextMenuItem key={status} onClick={() => void setPapersReadStatus(readable, status)}>{status}</ContextMenuItem>
+          ))}
+          {!statuses.length && <ContextMenuItem disabled>読書状態がありません</ContextMenuItem>}
+        </ContextMenuSubContent>
+      </ContextMenuSub>}
+      {/* Not for a selection with an item that has no bibliography (a notebook). */}
+      <ContextMenuItem disabled={!selected.every((item) => itemCapabilities(item).bibliography)} onClick={() => void copyBibtex(ids)}>
+        <Copy className="w-4 h-4 mr-2" /> {ids.length}件の BibTeX をコピー
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={() => clearSelection(usePaperSelection.getState().anchor)}>
+        <X className="w-4 h-4 mr-2" /> 選択を解除
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={() => deletePaperRow(paperId)} className="text-destructive">
+        <Trash2 className="w-4 h-4 mr-2" /> {ids.length}件をライブラリから削除
+      </ContextMenuItem>
+    </>
+  );
+}

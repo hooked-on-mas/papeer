@@ -1,0 +1,270 @@
+@import "tailwindcss";
+
+@media (prefers-reduced-motion: no-preference) {
+  .reference-node { animation: reference-appear 350ms ease-out; transition: opacity 180ms ease; }
+  @keyframes reference-appear { from { opacity: 0; } }
+}
+@import "@fontsource-variable/geist";
+
+/* dark: follows the theme setting (data-theme), not only the OS preference. */
+@custom-variant dark {
+  &:where([data-theme=dark], [data-theme=dark] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where([data-theme=system], [data-theme=system] *) {
+      @slot;
+    }
+  }
+}
+
+@theme {
+  /* Japanese: Windows, macOS, then what Linux distributions install (fonts-noto-cjk, Source Han, IPA). */
+  --font-sans: "Geist Variable", "Yu Gothic UI", "Hiragino Sans", "Noto Sans CJK JP", "Noto Sans JP", "Source Han Sans JP", "IPAexGothic", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-secondary: var(--muted);
+  --color-secondary-foreground: var(--foreground);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--primary-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-reader-bg: var(--reader-bg);
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+}
+
+:root {
+  --map-group-1: oklch(0.58 0.16 245);
+  --map-group-2: oklch(0.56 0.15 155);
+  --map-group-3: oklch(0.60 0.17 55);
+  --map-group-4: oklch(0.57 0.16 310);
+  --map-group-5: oklch(0.57 0.17 15);
+  --map-group-6: oklch(0.57 0.12 200);
+  --map-group-7: oklch(0.58 0.15 85);
+  --map-group-8: oklch(0.57 0.13 275);
+  --background: oklch(0.985 0.004 80);
+  --foreground: oklch(0.22 0.01 260);
+  --card: oklch(1 0 0);
+  --muted: oklch(0.955 0.005 80);
+  --muted-foreground: oklch(0.50 0.01 260);
+  --border: oklch(0.90 0.006 80);
+  --accent: oklch(0.94 0.02 250);
+  --primary: oklch(0.55 0.16 250);
+  --primary-foreground: oklch(0.99 0 0);
+  --destructive: oklch(0.58 0.2 25);
+  --success: oklch(0.62 0.15 150);
+  --warning: oklch(0.75 0.15 80);
+  --ring: var(--primary);
+  --sidebar: var(--muted);
+  --reader-bg: oklch(0.94 0.006 80);
+  color-scheme: light;
+}
+
+/* Dark tokens apply when chosen explicitly, or when following a dark system theme. */
+:root[data-theme="dark"] {
+  --background: oklch(0.17 0.006 260);
+  --foreground: oklch(0.93 0.005 80);
+  --card: oklch(0.21 0.006 260);
+  --muted: oklch(0.24 0.006 260);
+  --muted-foreground: oklch(0.68 0.008 260);
+  --border: oklch(0.29 0.006 260);
+  --accent: oklch(0.27 0.03 250);
+  --primary: oklch(0.72 0.14 250);
+  --primary-foreground: oklch(0.15 0.02 250);
+  --destructive: oklch(0.70 0.18 25);
+  --success: oklch(0.75 0.14 150);
+  --warning: oklch(0.82 0.14 80);
+  --ring: var(--primary);
+  --sidebar: oklch(0.15 0.006 260);
+  --reader-bg: oklch(0.13 0.005 260);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    --background: oklch(0.17 0.006 260);
+    --foreground: oklch(0.93 0.005 80);
+    --card: oklch(0.21 0.006 260);
+    --muted: oklch(0.24 0.006 260);
+    --muted-foreground: oklch(0.68 0.008 260);
+    --border: oklch(0.29 0.006 260);
+    --accent: oklch(0.27 0.03 250);
+    --primary: oklch(0.72 0.14 250);
+    --primary-foreground: oklch(0.15 0.02 250);
+    --destructive: oklch(0.70 0.18 25);
+    --success: oklch(0.75 0.14 150);
+    --warning: oklch(0.82 0.14 80);
+    --ring: var(--primary);
+    --sidebar: oklch(0.15 0.006 260);
+    --reader-bg: oklch(0.13 0.005 260);
+    color-scheme: dark;
+  }
+}
+
+/* In the base layer so utilities such as border-transparent still win. */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  /* The window itself never scrolls; without this a touchpad swipe that reaches the
+     root makes WebView2 rubber-band the whole app. */
+  html, body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Typography styles for Prose */
+.prose {
+  max-width: 72ch;
+  margin: 0 auto;
+  font-size: 0.9375rem;
+  line-height: 1.8;
+}
+
+.prose p {
+  margin-bottom: 0.9em;
+}
+
+.prose h1, .prose h2, .prose h3 {
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+/* Article typography is scoped so chat and notes retain their compact layout. */
+.summary-page {
+  min-height: 100%;
+  background: var(--background);
+}
+
+.summary-prose {
+  max-width: none;
+  font-size: 0.9375rem;
+  line-height: 1.95;
+  overflow-wrap: anywhere;
+  line-break: strict;
+}
+
+.summary-prose > :first-child { margin-top: 0; }
+.summary-prose p { margin: 0 0 1em; }
+.summary-prose :is(h1, h2, h3, h4) {
+  color: var(--foreground);
+  font-weight: 700;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+.summary-prose h1 {
+  font-size: 1.65em;
+  margin: 0 0 1em;
+  padding-bottom: 0.5em;
+  border-bottom: 1px solid var(--border);
+  letter-spacing: -0.025em;
+}
+.summary-prose h2 {
+  font-size: 1.3em;
+  margin: 1.6em 0 0.7em;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid var(--border);
+}
+.summary-prose h3 { font-size: 1.12em; margin: 1.4em 0 0.6em; }
+.summary-prose h4 { font-size: 1em; margin: 1.2em 0 0.5em; }
+.summary-prose strong { font-weight: 700; }
+.summary-prose :is(ul, ol) { padding-left: 1.6em; margin: 1em 0 1.5em; }
+.summary-prose ul { list-style: disc; }
+.summary-prose ol { list-style: decimal; }
+.summary-prose li { padding-left: 0.3em; margin: 0.5em 0; }
+.summary-prose li::marker { color: var(--muted-foreground); }
+.summary-prose li > p { margin-bottom: 0.6em; }
+.summary-prose blockquote {
+  margin: 1.5em 0;
+  padding: 1em 1.3em;
+  border-left: 3px solid var(--primary);
+  background: var(--muted);
+  border-radius: 0 6px 6px 0;
+}
+.summary-prose blockquote > :last-child { margin-bottom: 0; }
+.summary-prose hr { border: 0; border-top: 1px solid var(--border); margin: 2em 0; }
+.summary-prose .katex { font-size: 1.08em; }
+.summary-prose .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 1.5em 0;
+  padding: 1em;
+  background: var(--muted);
+  border-radius: 8px;
+}
+.summary-prose .katex-display > .katex { white-space: nowrap; }
+.summary-prose img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.8em auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+}
+.summary-prose table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  margin: 1.5em 0;
+}
+.summary-prose :is(th, td) { padding: 0.7em 1em; border: 1px solid var(--border); text-align: left; }
+.summary-prose th { background: var(--muted); font-weight: 600; }
+.summary-prose pre { margin: 1.5em 0; line-height: 1.65; }
+.summary-prose pre code { padding: 0; background: transparent; }
+.summary-prose .citation-link { vertical-align: baseline; white-space: nowrap; }
+
+/* Indeterminate progress (no done/total in the job message). */
+[data-slot="progress-indicator"][data-indeterminate] {
+  width: 35%;
+  animation: pd-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes pd-indeterminate {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
