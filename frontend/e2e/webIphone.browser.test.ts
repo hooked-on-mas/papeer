@@ -58,7 +58,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     };
     const file = (id: string, mime: string) => ({ id, mime, size: blobs[id].length, sha256: createHash("sha256").update(blobs[id]).digest("hex") });
     const manifest = { version: 1, revision: "iphone", updated_at: "2026-10-19T00:00:00Z", folder_id: "folder",
-      items: [{ id: paper, title: "iPhoneでも長い論文タイトルを表示してPDFを読む", collection_name: "調査 / テスト" }],
+      items: [{ id: paper, title: "iPhoneでも長い論文タイトルを表示してPDFを読む — 日本語訳・原文と手書きメモを確認するための資料", collection_name: "調査 / テスト" }],
       attachments: [{ id: "memo", owner_id: paper, title: "iPhone読書メモ", format: "md" }],
       files: { [`papers/${paper}/original.pdf`]: file("pdf", "application/pdf"), [`papers/${paper}/translated.pdf`]: file("jp", "application/pdf"),
         [`papers/${paper}/attachments/memo.md`]: file("memo", "text/markdown"),
@@ -110,7 +110,13 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight), true);
       const bounds = (await region.boundingBox())!;
       assert.ok(bounds.width >= width - 4, "PDF uses the full phone width");
-      assert.ok(bounds.y <= 52 && bounds.height >= height - 90, `PDF height ${bounds.height} at ${width}x${height}; reading opens without choosing focus mode`);
+      assert.ok(bounds.y <= 80 && bounds.height >= height - 118, `PDF height ${bounds.height} at ${width}x${height}; reading opens without choosing focus mode`);
+      const title = page.getByRole("heading", { name: manifest.items[0].title, exact: true });
+      assert.equal(await title.isVisible(), true);
+      assert.equal(await title.getAttribute("title"), manifest.items[0].title);
+      assert.equal((await title.boundingBox())!.height, 28, "long titles stay in a compact single line");
+      assert.equal(await title.evaluate(element => getComputedStyle(element).textOverflow), "ellipsis");
+      if (width <= 430) assert.ok(await title.evaluate(element => element.scrollWidth > element.clientWidth), "long titles truncate rather than reducing PDF height");
       assert.equal(await page.getByLabel("表示する資料").count(), 0, "no raw file selector on phones");
       assert.equal(await page.locator(".ink-tools").count(), 0, "writing tools are opt-in");
       assert.equal(await page.locator(".web-document-header").isVisible(), false);
@@ -135,7 +141,12 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     for (const [width, height] of [[320, 480], [375, 667], [390, 664], [430, 760]]) {
       await page.setViewportSize({ width, height }); await fits(width, height);
       await capture(`${width}x${height}-japanese`);
-      if (width === 320) { await openMenu(); await capture("320-menu"); await closeMenu(); }
+      if (width === 320) {
+        await openMenu();
+        const popup = (await page.locator(".web-display-options > div").boundingBox())!;
+        assert.ok(popup.y + popup.height <= height, "the menu fits below the title on short screens");
+        await capture("320-menu"); await closeMenu();
+      }
     }
     await page.setViewportSize({ width: 390, height: 664 }); await fits(390, 664);
     await page.screenshot({ path: path.join(output, "portrait.png") });

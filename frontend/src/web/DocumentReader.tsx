@@ -11,7 +11,7 @@ import { documentPlaceKey, getDocumentPlace, saveDocumentPlace } from "./reading
 import { Ellipsis, ZoomIn, ZoomOut } from "lucide-react";
 import { PHONE_LAYOUT_QUERY } from "./phoneLayout";
 
-export type PhoneReaderControls = { leading: ReactNode; language: ReactNode; menu: ReactNode };
+export type PhoneReaderControls = { title: string; leading: ReactNode; language: ReactNode; menu: ReactNode };
 
 export function DocumentReader({ artifact, runtime, store, controls, phoneControls }: {
   artifact: ArtifactView; runtime: DriveLibraryRuntime; store?: AnnotationStore; controls?: ReactNode; phoneControls?: PhoneReaderControls;
@@ -67,6 +67,7 @@ export function DocumentReader({ artifact, runtime, store, controls, phoneContro
       </select></label>}
   </>;
   return <div className="web-document-reader">
+    {phone && phoneControls && <h1 className="web-reader-title" title={phoneControls.title}>{phoneControls.title}</h1>}
     <div className="web-reader-tools" aria-label="本文の表示操作">
       {phone && phoneControls?.leading}
       <div className="web-page-navigation">

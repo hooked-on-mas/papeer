@@ -104,6 +104,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
     </Button>
   </>;
   const phoneControls: PhoneReaderControls = {
+    title: item?.title ?? artifact?.label ?? "ライブラリ",
     leading: <Button variant="ghost" size="icon" aria-label="ライブラリ" onClick={() => setCollapsed(value => !value)}><PanelLeft /></Button>,
     language: originalPdf && translatedPdf && (artifact?.role === "original" || artifact?.role === "translated")
       ? <button className="web-language-switch" aria-label={artifact.role === "translated" ? "原文を表示" : "日本語訳を表示"} title={artifact.role === "translated" ? "原文に切り替える" : "日本語訳に切り替える"}

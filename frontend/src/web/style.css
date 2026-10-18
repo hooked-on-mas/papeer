@@ -170,12 +170,13 @@
   .web-sidebar-overlay [data-slot="library-expand"] { min-width: 44px; min-height: 44px; }
   .site-footer { padding: 3px 8px; }
   .pwa-install > summary { padding: 6px 8px; }
-  /* Reading starts with one bar, including Japanese/original switching. */
+  /* A compact title sits above the reading controls, including Japanese/original switching. */
   .phone-reading .web-document-header,
   .phone-reading .web-reader-main > [data-slot="tabs"] > :has(> [role="tablist"]),
   .phone-reading .web-pdf-pane > .asset-heading,
   .web-app:has(.phone-reading) > .site-footer,
   .web-app:has(.phone-reading) .pwa-install { display: none; }
+  .web-reader-title { height: 28px; flex-shrink: 0; margin: 0; padding: 4px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .875rem; line-height: 20px; font-weight: 600; }
   .phone-reading .web-reader-tools { gap: 2px; padding: 2px; }
   .phone-reading .web-page-navigation > input { width: 32px; }
   .phone-reading .web-page-navigation { flex: 1; min-width: 0; }
@@ -185,7 +186,7 @@
   .phone-reading .web-reader-tools .web-language-switch { width: 72px; height: 44px; padding: 0; font-size: .75rem; font-weight: 600; display: flex; gap: 3px; align-items: center; justify-content: center; }
   .web-language-switch svg { width: 12px; height: 12px; }
   .web-language-label { font-size: .75rem; white-space: nowrap; }
-  .web-display-options > div { max-height: calc(100dvh - 60px); overflow: auto; overscroll-behavior: contain; font-size: .875rem; }
+  .web-display-options > div { max-height: calc(100dvh - 88px); overflow: auto; overscroll-behavior: contain; font-size: .875rem; }
   .web-display-options > div > button, .web-display-options > div > a { min-height: 44px; display: flex; align-items: center; justify-content: flex-start; padding: 6px 8px; }
   .web-reading-title { font-size: .8125rem; overflow-wrap: anywhere; padding-block: 8px; border-top: 1px solid var(--border); }
   .web-display-options .header-actions { display: block; }

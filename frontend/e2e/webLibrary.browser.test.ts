@@ -140,7 +140,7 @@ test("Web Library reads PDF, memo, HTML and chat privately on desktop and mobile
   await page.getByRole("tree", { name: "ライブラリ", exact: true }).getByRole("treeitem").filter({ hasText: "Adaptive Control" }).click();
   await page.locator(".react-pdf__Page canvas").waitFor();
   assert.equal(await page.getByLabel("表示する資料").count(), 0, "phone readers do not choose raw artifact files");
-  assert.ok((await page.getByRole("region", { name: "原文", exact: true }).boundingBox())!.height > 730, "phone opens directly into a tall reading area");
+  assert.ok((await page.getByRole("region", { name: "原文", exact: true }).boundingBox())!.height > 702, "phone opens directly into a tall reading area with a compact title");
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.screenshot({ path: path.join(screenshots, "mobile-reading.png"), fullPage: true });
   await page.getByLabel("読書メニュー", { exact: true }).click();
