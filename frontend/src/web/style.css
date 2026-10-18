@@ -110,7 +110,7 @@
 .web-account-trigger { display: flex; align-items: center; justify-content: center; }
 .web-account-label { display: none; }
 .web-account-menu [role="menuitem"] { min-height: 44px; }
-.web-pdf-pane { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 2px; }
+.web-pdf-pane { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y; padding: 0 2px; }
 .web-pdf-pane > .asset-heading { padding: 2px 6px; font-size: .75rem; }
 .web-reader-tools + [data-slot="resizable-panel-group"] { overflow: hidden; }
 .reader-focus .web-document-header,

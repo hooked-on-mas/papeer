@@ -206,6 +206,56 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     assert.equal(await translated.locator(".web-pdf-surface").evaluate(surface => surface.style.transform), "", "interrupted pinch clears its preview");
     assert.equal(await page.getByLabel("表示倍率").inputValue(), "2", "cancelled pinch keeps the previous zoom");
     await page.getByRole("button", { name: "幅に合わせる", exact: true }).tap(); await ready();
+    // iOS sends gesturestart BEFORE the second touchstart. Its GestureEvent target
+    // can be the PDF viewport/common ancestor, rather than the canvas or ink surface.
+    const safariPinch = await translated.evaluate(pane => {
+      const surface = pane.querySelector<HTMLElement>(".web-pdf-surface")!;
+      const bounds = pane.getBoundingClientRect(), x = bounds.left + 150, y = bounds.top + 150;
+      const touch = (type: string, half: number) => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "touches", { value: type === "touchend" ? [] : half === 0
+          ? [{ identifier: 1, clientX: x, clientY: y }]
+          : [{ identifier: 1, clientX: x - half, clientY: y }, { identifier: 2, clientX: x + half, clientY: y }] });
+        return !pane.dispatchEvent(event);
+      };
+      const gesture = (type: string, scale: number) => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperties(event, { scale: { value: scale }, clientX: { value: x }, clientY: { value: y } });
+        // Model a common-ancestor target outside the surface. The first finger owns the PDF gesture.
+        return !document.body.dispatchEvent(event);
+      };
+      touch("touchstart", 0);
+      const safariStart = gesture("gesturestart", 1);
+      const start = touch("touchstart", 50);
+      const safariMove = gesture("gesturechange", 2);
+      const preview = getComputedStyle(surface).transform;
+      const move = touch("touchmove", 100);
+      const safariEnd = gesture("gestureend", 2);
+      const end = touch("touchend", 0);
+      return { safariStart, start, safariMove, move, safariEnd, end, preview };
+    });
+    assert.ok(safariPinch.safariStart && safariPinch.safariMove && safariPinch.safariEnd, "Safari gesture notifications cancel native viewport zoom before touchstart #2");
+    assert.ok(safariPinch.start && safariPinch.move && safariPinch.end, "a pinch starting on the PDF viewport/whitespace is handled");
+    assert.match(safariPinch.preview, /^matrix\(2,/);
+    await ready();
+    assert.equal(await page.getByLabel("表示倍率").inputValue(), "2");
+    assert.deepEqual(await page.getByLabel("本文の表示操作").boundingBox(), headerBeforePinch);
+    await capture("safari-viewport-pinch-css");
+    await page.getByRole("button", { name: "幅に合わせる", exact: true }).tap(); await ready();
+    const safariOnly = await translated.evaluate(pane => {
+      const bounds = pane.getBoundingClientRect();
+      return ["gesturestart", "gesturechange", "gestureend"].map((type, index) => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperties(event, { scale: { value: index ? 1.75 : 1 }, clientX: { value: bounds.left + 150 }, clientY: { value: bounds.top + 150 } });
+        return !document.body.dispatchEvent(event);
+      });
+    });
+    assert.ok(safariOnly.every(Boolean), "Safari gesture-only input is handled on the viewport");
+    await ready();
+    assert.equal(await page.getByLabel("表示倍率").inputValue(), "1.75");
+    await page.getByRole("button", { name: "幅に合わせる", exact: true }).tap(); await ready();
+    assert.equal(await page.evaluate(() => document.body.dispatchEvent(new Event("gesturestart", { bubbles: true, cancelable: true }))), true,
+      "gestures outside the PDF are not intercepted after its fingers lift");
     await page.getByRole("button", { name: "次のページ", exact: true }).tap();
     await translated.locator('[data-page-number="2"] canvas').waitFor();
     await page.getByRole("button", { name: "前のページ", exact: true }).tap();
