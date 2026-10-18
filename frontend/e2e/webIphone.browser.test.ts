@@ -11,7 +11,7 @@ import { chromium, webkit, devices } from "playwright-core";
 for (const engine of ["webkit", "chromium"] as const) {
   test(`iPhone reading, full-width PDF, controls, ink and rotation (${engine})`, { timeout: 150_000 }, async t => {
     const frontend = path.resolve(import.meta.dirname, "..");
-    const output = path.resolve(frontend, "../output/iphone-review", engine);
+    const output = path.resolve(process.env.PAPEER_SCREENSHOT_DIR || path.resolve(frontend, "../output/iphone-review"), engine);
     fs.mkdirSync(output, { recursive: true });
     const server = await createServer({ cacheDir: path.join(output, "vite-" + randomUUID()),
       configFile: path.join(frontend, "vite.web.config.ts"), logLevel: "error",
@@ -25,6 +25,7 @@ for (const engine of ["webkit", "chromium"] as const) {
       userAgent: engine === "webkit" ? devices["iPhone 13"].userAgent : undefined });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
+    const capture = async (name: string) => page.screenshot({ path: path.join(output, name + ".png"), scale: "css" });
     t.after(async () => {
       await page.screenshot({ path: path.join(output, "final.png") }).catch(() => {});
       if (errors.length) console.error(errors);
@@ -124,18 +125,31 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     assert.equal(await page.getByText("保存ライブラリ", { exact: false }).isVisible(), false);
     await openMenu();
     assert.equal(await page.getByLabel("保存ライブラリ").locator("option").count(), 2);
+    assert.equal(await page.getByLabel("保存ライブラリ").evaluate(select => {
+      const range = document.createRange(); range.selectNodeContents(select.closest("label")!.firstChild!);
+      return range.getClientRects().length;
+    }), 1, "the library label stays on one line instead of one character per row");
     await closeMenu();
     assert.match(await translated.locator(".react-pdf__Page").textContent() ?? "", /日本語訳を読みやすく表示する/);
     assert.equal(await original.count(), 0, "saved Japanese translation opens without file selection");
     for (const [width, height] of [[320, 480], [375, 667], [390, 664], [430, 760]]) {
       await page.setViewportSize({ width, height }); await fits(width, height);
+      await capture(`${width}x${height}-japanese`);
+      if (width === 320) { await openMenu(); await capture("320-menu"); await closeMenu(); }
     }
     await page.setViewportSize({ width: 390, height: 664 }); await fits(390, 664);
     await page.screenshot({ path: path.join(output, "portrait.png") });
+    await capture("portrait-css");
+    await openMenu(); await capture("menu-css"); await closeMenu();
     await page.getByRole("button", { name: "原文を表示", exact: true }).tap();
     await fits(390, 664, original);
     assert.match(await original.locator(".react-pdf__Page").textContent() ?? "", /Adaptive Control/);
     await page.screenshot({ path: path.join(output, "original.png") });
+    await capture("original-css");
+    await page.getByRole("button", { name: "本文を拡大", exact: true }).tap();
+    assert.equal(await page.getByLabel("表示倍率").inputValue(), "1.5");
+    await ready(original); await capture("original-150-css");
+    await page.getByRole("button", { name: "幅に合わせる", exact: true }).tap();
     await page.getByRole("button", { name: "日本語訳を表示", exact: true }).tap();
     await ready();
     await page.getByRole("button", { name: "次のページ", exact: true }).tap();
@@ -145,6 +159,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await page.getByRole("button", { name: "ライブラリ", exact: true }).tap();
     const search = page.getByLabel("ライブラリを検索");
     await search.fill("iPhone");
+    await capture("library-css");
     assert.ok(Number(await search.evaluate(element => parseFloat(getComputedStyle(element).fontSize))) >= 16);
     await page.getByRole("treeitem").filter({ hasText: "iPhoneでも長い" }).tap();
     assert.equal(await page.getByRole("complementary", { name: "ライブラリ一覧", exact: true }).count(), 0);
@@ -158,6 +173,9 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await page.getByRole("button", { name: "ペン", exact: true }).waitFor();
     assert.equal(await ink.evaluate(element => getComputedStyle(element).touchAction), "pinch-zoom");
     await page.getByLabel("書き込み設定", { exact: true }).tap();
+    await capture("ink-settings-css");
+    const colorBox = (await page.getByLabel("書き込みの色").boundingBox())!;
+    assert.ok(colorBox.width >= 44 && colorBox.height >= 44, "color control is a full swatch, not a clipped hex string");
     await page.getByLabel("指でも書く", { exact: true }).check();
     await page.getByLabel("書き込み設定", { exact: true }).tap();
     area = (await ink.boundingBox())!;
@@ -169,6 +187,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await page.touchscreen.tap(area.x + 120, area.y + 140);
     const memo = page.getByLabel("PDFに追加するメモ");
     await memo.fill("iPhoneからの追記");
+    await capture("memo-input-css");
     assert.ok(await memo.evaluate(element => parseFloat(getComputedStyle(element).fontSize)) >= 16);
     await page.setViewportSize({ width: 390, height: 360 });
     await page.getByRole("button", { name: "メモを保存", exact: true }).tap();
@@ -200,12 +219,34 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await openMenu(); await page.getByLabel("表示倍率").selectOption("1"); await closeMenu();
     await fits(844, 390);
     await page.screenshot({ path: path.join(output, "landscape.png") });
+    await capture("landscape-css");
+    await openMenu(); await capture("landscape-menu-css"); await closeMenu();
     await page.setViewportSize({ width: 390, height: 664 });
     await openMenu();
     await page.getByRole("button", { name: "メモを開く", exact: true }).tap();
     await page.getByRole("heading", { name: "iPhone読書メモ", exact: true }).waitFor();
+    await capture("saved-memo-css");
     await page.getByRole("tab", { name: "本文", exact: true }).tap();
     await fits(390, 664);
+    await page.emulateMedia({ colorScheme: "dark" });
+    const contrast = await page.getByRole("button", { name: "ライブラリ", exact: true }).evaluate(async element => {
+      getComputedStyle(element).color; // Flush the new media style before observing transitions.
+      await Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => {})));
+      const context = document.createElement("canvas").getContext("2d")!;
+      const luminance = (color: string) => {
+        context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+        const channels = [...context.getImageData(0, 0, 1, 1).data].slice(0, 3).map(value => {
+          const s = value / 255; return s <= .04045 ? s / 12.92 : ((s + .055) / 1.055) ** 2.4;
+        });
+        return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+      };
+      const foreground = luminance(getComputedStyle(element).color);
+      const background = luminance(getComputedStyle(element.closest(".web-reader-tools")!).backgroundColor);
+      return (Math.max(foreground, background) + .05) / (Math.min(foreground, background) + .05);
+    });
+    await capture("dark-css");
+    assert.ok(contrast >= 4.5, `library icon foreground contrast in dark mode: ${contrast}`);
+    await page.emulateMedia({ colorScheme: "light" });
     if (engine === "chromium") {
       await writing(true);
       await page.getByLabel("書き込み設定", { exact: true }).tap();

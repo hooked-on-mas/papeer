@@ -90,7 +90,7 @@ function App() {
         };
   const actions = <div className="header-actions">
     {phone && signedIn ? <DropdownMenu>
-      <DropdownMenuTrigger className="web-account-trigger" aria-label="Google接続メニュー"><UserRound aria-hidden="true" /></DropdownMenuTrigger>
+      <DropdownMenuTrigger className="web-account-trigger" aria-label="Google接続メニュー"><UserRound aria-hidden="true" /><span className="web-account-label">Google接続</span></DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48 web-account-menu">
         <DropdownMenuItem disabled={busy || !online} onClick={refresh}>更新</DropdownMenuItem>
         <DropdownMenuItem disabled={busy || !online || sdkStatus !== "ready"} onClick={() => void login()}>再ログイン</DropdownMenuItem>

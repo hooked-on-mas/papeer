@@ -8,7 +8,7 @@ import { PdfReader } from "./PdfReader";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { prepareWebNavigation } from "./textDrafts";
 import { documentPlaceKey, getDocumentPlace, saveDocumentPlace } from "./readingPlace";
-import { Ellipsis } from "lucide-react";
+import { Ellipsis, ZoomIn, ZoomOut } from "lucide-react";
 import { PHONE_LAYOUT_QUERY } from "./phoneLayout";
 
 export type PhoneReaderControls = { leading: ReactNode; language: ReactNode; menu: ReactNode };
@@ -73,6 +73,8 @@ export function DocumentReader({ artifact, runtime, store, controls, phoneContro
       <PageNavigatorView paperId={artifact.id} currentPage={page} count={maxPage} atStart={page <= 1} atEnd={page >= maxPage}
         compact shortcuts={false} inputId="web-page-input" onJump={jump} onMove={delta => jump(page + delta)} />
       </div>
+      {phone && <button className="web-quick-zoom" aria-label={zoom === 1 ? "本文を拡大" : "幅に合わせる"} title={zoom === 1 ? "150%に拡大" : "幅に合わせる"}
+        aria-pressed={zoom !== 1} onClick={() => setZoom(zoom === 1 ? 1.5 : 1)}>{zoom === 1 ? <ZoomIn aria-hidden="true" /> : <ZoomOut aria-hidden="true" />}</button>}
       {phone && phoneControls?.language}
       {phone ? <details className="web-display-options">
         <summary aria-label="読書メニュー" title="読書メニュー"><Ellipsis aria-hidden="true" /></summary>

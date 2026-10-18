@@ -207,7 +207,7 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
           onClick={() => { if (!prepareWebNavigation()) return; gesture.current = undefined; touches.current.clear(); setPreview(undefined); setTool(value); }}><Icon aria-hidden="true" /><span className="sr-only">{label}</span></button>)}
       {!phone && historyTools}
       <details className="ink-options"><summary title="書き込み設定" aria-label="書き込み設定"><Settings2 aria-hidden="true" /></summary>
-        <div><label>色 <input type="color" aria-label="書き込みの色" value={color} onChange={e => setColor(e.target.value)} /></label>
+        <div><label className="ink-color-control">色 <span className="ink-color-swatch" style={{ backgroundColor: color }}><input type="color" aria-label="書き込みの色" value={color} onChange={e => setColor(e.target.value)} /></span></label>
           <label>太さ <select aria-label="ペンの太さ" value={width} onChange={e => setWidth(Number(e.target.value))}>
             <option value={.002}>細い</option><option value={.003}>標準</option><option value={.006}>太い</option></select></label>
           <label><input type="checkbox" checked={finger} onChange={e => setFinger(e.target.checked)} /> 指でも書く</label>
