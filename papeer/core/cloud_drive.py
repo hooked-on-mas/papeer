@@ -1,4 +1,4 @@
-"""One-way library publication to private Google Drive files, with a commit-last web manifest."""
+"""Private Drive publication with a commit-last manifest and additive browser-ink import."""
 from __future__ import annotations
 
 from contextlib import closing
@@ -15,9 +15,9 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 import uuid
 
-from papeer.core import cloud_drive_auth, drive_sync
+from papeer.core import cloud_drive_auth, drive_sync, cloud_annotations
 from papeer.core.backup import DATABASE_FILES
-from papeer.core.fileio import atomic_write_text, ensure_free_space, is_temporary
+from papeer.core.fileio import atomic_write_bytes, atomic_write_text, ensure_free_space, is_temporary
 from papeer.core.paths import device_directory, library_key, PaperFiles
 from papeer.core.storage import Library
 from papeer.pdf.pdf_ink import annotated_pdf
@@ -137,8 +137,8 @@ def snapshot(lib: Library, target: Path, cancel) -> dict:
             quoted = '"' + name.replace('"', '""') + '"'
             tables[name] = [dict(record) for record in db.execute("SELECT * FROM " + quoted)]
     # SQLite remains the lossless copy, including any binary columns; JSON is for browsing.
-    (target / "library-data.json").write_text(json.dumps(tables, ensure_ascii=False,
-        default=lambda value: {"binary_hex": value.hex()}), "utf-8")
+    atomic_write_text(target / "library-data.json", json.dumps(tables, ensure_ascii=False,
+        default=lambda value: {"binary_hex": value.hex()}))
     papers = tables.get("papers", [])
     for paper in papers:
         check_cancel(cancel)
@@ -151,7 +151,17 @@ def snapshot(lib: Library, target: Path, cancel) -> dict:
             if strokes or highlights:
                 dest = target / "web" / paper_id / f"{side}-annotated.pdf"
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(annotated_pdf(source_pdf, strokes, highlights, stable_id=True))
+                atomic_write_bytes(dest, annotated_pdf(source_pdf, strokes, highlights, stable_id=True))
+    # The editable browser reader uses the original PDF with the same vector strokes as the PC.
+    # Baked PDFs remain available as downloads and for older browser releases.
+    browser_ink = {"version": 1, "pages": {}, "applied": [row["id"] for row in tables.get("web_annotation_ops", [])]}
+    for paper in papers:
+        for side in ("original", "translated"):
+            ink, highlights = lib.ink_by_page(paper["id"], side), lib.highlights_by_page(paper["id"], side)
+            for page in ink.keys() | highlights.keys():
+                browser_ink["pages"][f"{paper['id']}/{side}/{page}"] = {
+                    "strokes": ink.get(page, []), "highlights": highlights.get(page, [])}
+    atomic_write_text(target / "web-annotations.json", json.dumps(browser_ink, ensure_ascii=False))
     return {"version": 1, "items": papers, "attachments": tables.get("attachments", [])}
 
 
@@ -161,9 +171,12 @@ def publish(lib: Library, cancel, progress, *, force: bool = False) -> dict:
         drive = Drive()
         if cloud_drive_auth.status()["connecting"]:
             raise ValueError("Googleへの接続を完了してからアップロードしてください。")
+        if saved.get("manifest_id"):
+            progress("Webの書き込みを取り込んでいます…")
+            cloud_annotations.import_operations(lib, drive, saved["manifest_id"], cancel)
         fingerprint = drive_sync.fingerprint(lib, cancel)
         # Navigation alone does not trigger another upload. Verify the previous manifest still exists.
-        if not force and saved.get("fingerprint") == fingerprint and saved.get("manifest_id"):
+        if not force and saved.get("web_ink_version") == 1 and saved.get("fingerprint") == fingerprint and saved.get("manifest_id"):
             drive.json(API + "/" + saved["manifest_id"] + "?fields=id")
             saved["error"] = None
             save_state(lib.root, saved)
@@ -200,16 +213,16 @@ def publish(lib: Library, cancel, progress, *, force: bool = False) -> dict:
                     "size": path.stat().st_size, "mime": mimetypes.guess_type(path.name)[0] or "application/octet-stream"}
             check_cancel(cancel)
             timestamp = datetime.now(timezone.utc).isoformat()
-            manifest.update({"files": entries, "updated_at": timestamp, "revision": uuid.uuid4().hex})
+            manifest.update({"files": entries, "updated_at": timestamp, "revision": uuid.uuid4().hex, "folder_id": folder})
             manifest_path = target / "manifest.json"
-            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), "utf-8")
+            atomic_write_text(manifest_path, json.dumps(manifest, ensure_ascii=False))
             previous = existing.get("papeer-library.json")
             metadata = {"name": "papeer-library.json", "properties": {"papeer": "library-v1"}}
             if not previous:
                 metadata["parents"] = [folder]
             manifest_id = drive.upload(manifest_path, metadata, cancel, previous["id"] if previous else None)
         saved.update({"last_upload": timestamp, "error": None, "fingerprint": fingerprint,
-                      "manifest_id": manifest_id, "files": len(entries)})
+                      "manifest_id": manifest_id, "files": len(entries), "web_ink_version": 1})
         save_state(lib.root, saved)
         return {"uploaded": uploaded, "files": len(entries)}
     except Exception:  # Preserve the old published manifest; surface the original safe job error.

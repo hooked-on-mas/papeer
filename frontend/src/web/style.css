@@ -77,3 +77,17 @@ select { border: 1px solid #d6ded3; background: #fff; border-radius: 6px; paddin
 }
 
 .site-footer { padding: 18px 28px; border-top: 1px solid #dce2da; color: #7b8778; font-size: .75rem; }
+.ink-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px; background: #fff; border: 1px solid #dce2da; border-radius: 8px; }
+.ink-tools button[aria-pressed="true"] { background: #2e5141; color: #fff; }
+.ink-tools label { display: inline-flex; align-items: center; gap: 5px; font-size: .75rem; }
+.ink-tools input[type="color"] { width: 32px; height: 32px; border: 0; padding: 0; }
+.ink-save { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: .75rem; padding: 10px 0; }
+.ink-save button { font-size: .75rem; }
+.ink-help { color: #69746b; font-size: .75rem; line-height: 1.7; }
+.ink-page { position: relative; }
+.web-ink { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; }
+.web-ink.reading { pointer-events: none; }
+.web-ink.writing { cursor: crosshair; user-select: none; -webkit-user-select: none; }
+.web-ink > * { pointer-events: none; }
+.ink-text { background: #fff; border: 1px solid #ced8ca; padding: 16px; margin: 12px 0; }
+.ink-text textarea { display: block; width: 100%; min-height: 80px; font: inherit; margin: 8px 0; }

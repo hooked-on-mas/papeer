@@ -1,9 +1,10 @@
 import type { JobHandlers } from "@/features/jobs/jobHandlers";
 import { QK } from "@/lib/queryKeys";
+import { reloadCloudInk } from "@/features/reader/inkStore";
 
 export const settingsJobHandlers: JobHandlers = {
   "cloud-upload": {
-    refresh: () => [["cloud-drive"]],
+    refresh: () => { void reloadCloudInk(); return [["cloud-drive"], [QK.inkPages]]; },
     succeeded: (event, { done }) => done(`Google Driveに保存しました（全${event.result.files}ファイル、今回${event.result.uploaded}ファイル転送）。`),
   },
   // A sync records the library in this PC's history (設定 → バックアップ).

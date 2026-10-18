@@ -16,7 +16,7 @@ declare global {
 export type Item = { id: string; title?: string; original_name?: string; kind?: string; parent_id?: string | null;
   collection_name?: string; [key: string]: unknown };
 export type DriveFile = { id: string; sha256: string; size: number; mime: string };
-export type Manifest = { version: 1; updated_at: string; revision: string; items: Item[];
+export type Manifest = { version: 1; updated_at: string; revision: string; items: Item[]; folder_id?: string;
   attachments: { id: string; owner_id: string; format: string; title: string }[]; files: Record<string, DriveFile> };
 export type LibraryChoice = { id: string; name: string; modifiedTime: string };
 export type Database = Record<string, Record<string, unknown>[]>;
@@ -47,13 +47,14 @@ export class DriveSession {
 
   signOut() { this.generation++; this.token = ""; this.expires = 0; }
 
-  private async request(path: string, signal?: AbortSignal): Promise<Response> {
+  private async request(path: string, signal?: AbortSignal, init: RequestInit = {}, upload = false): Promise<Response> {
     if (!this.token || Date.now() >= this.expires) throw new Error("ログインの有効期限が切れました。再度Googleでログインしてください。");
     const generation = this.generation;
-    const response = await fetch(API + path, { headers: { Authorization: `Bearer ${this.token}` }, signal, cache: "no-store" });
+    const response = await fetch((upload ? "https://www.googleapis.com/upload/drive/v3/files" : API) + path,
+      { ...init, headers: { ...init.headers, Authorization: `Bearer ${this.token}` }, signal, cache: "no-store" });
     if (generation !== this.generation) throw new Error("ログイン状態が変わりました。再読み込みしてください。");
     if (!response.ok) throw new Error(response.status === 401 ? "再度Googleでログインしてください。"
-      : `Driveから読み込めませんでした (${response.status})。同じGoogleアカウント・OAuthプロジェクトか確認してください。`);
+      : `Driveとの通信に失敗しました (${response.status})。接続・空き容量・Googleアカウントを確認して再試行してください。`);
     return response;
   }
 
@@ -75,6 +76,38 @@ export class DriveSession {
     return parseManifest(await (await this.request(`/${encodeURIComponent(id)}?alt=media`)).json());
   }
 
+  async annotationFiles(libraryId: string, signal?: AbortSignal): Promise<{ id: string; name: string; size: string }[]> {
+    if (!/^[\w-]+$/.test(libraryId)) throw new Error("ライブラリIDが不正です。");
+    const files: { id: string; name: string; size: string }[] = [];
+    let pageToken = "";
+    do {
+      const params = new URLSearchParams({ q: "trashed = false and properties has { key='papeer' and value='ink-v1' }"
+        + ` and properties has { key='library' and value='${libraryId}' }`,
+        fields: "nextPageToken,files(id,name,size)", pageSize: "1000" });
+      if (pageToken) params.set("pageToken", pageToken);
+      const page = await (await this.request("?" + params, signal)).json();
+      files.push(...page.files); pageToken = page.nextPageToken ?? "";
+    } while (pageToken);
+    return files;
+  }
+
+  async annotation(id: string, signal?: AbortSignal): Promise<unknown> {
+    return (await this.request(`/${encodeURIComponent(id)}?alt=media`, signal)).json();
+  }
+
+  async saveAnnotation(libraryId: string, folderId: string | undefined, id: string, operation: unknown): Promise<void> {
+    // Small immutable JSON files: neither the snapshot nor another device's edits are overwritten.
+    const folder = folderId || (await (await this.request(`/${encodeURIComponent(libraryId)}?fields=parents`)).json()).parents?.[0];
+    if (!folder || !/^[\w-]+$/.test(folder)) throw new Error("保存フォルダーが見つかりません。PCから再アップロードしてください。");
+    const boundary = "papeer_" + crypto.randomUUID();
+    const metadata = { name: `ink-${id}.json`, parents: [folder], mimeType: "application/json",
+      properties: { papeer: "ink-v1", library: libraryId } };
+    const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`
+      + `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(operation)}\r\n--${boundary}--`;
+    await this.request("?uploadType=multipart&fields=id", undefined,
+      { method: "POST", headers: { "Content-Type": `multipart/related; boundary=${boundary}` }, body }, true);
+  }
+
   async file(file: DriveFile, signal?: AbortSignal): Promise<Blob> {
     const buffer = await (await this.request(`/${encodeURIComponent(file.id)}?alt=media`, signal)).arrayBuffer();
     if (buffer.byteLength !== file.size) throw new Error("ファイルが完全に届きませんでした。再読み込みしてください。");
@@ -88,6 +121,7 @@ export function parseManifest(value: unknown): Manifest {
   const m = value as Manifest | null;
   if (!m || m.version !== 1 || !Array.isArray(m.items) || !Array.isArray(m.attachments)
     || !m.files || typeof m.files !== "object" || typeof m.updated_at !== "string" || typeof m.revision !== "string"
+    || (m.folder_id !== undefined && (typeof m.folder_id !== "string" || !/^[\w-]+$/.test(m.folder_id)))
     || m.items.some(item => !item || typeof item.id !== "string" || !/^[a-f0-9]{32}$/.test(item.id))
     || m.attachments.some(a => !a || typeof a.id !== "string" || typeof a.owner_id !== "string" || typeof a.title !== "string")
     || Object.entries(m.files).some(([name, file]) => !name || name.startsWith("/") || name.includes("\\")
@@ -99,9 +133,12 @@ export function parseManifest(value: unknown): Manifest {
 }
 
 export function itemFiles(manifest: Manifest, itemId: string): string[] {
-  const paths = Object.keys(manifest.files).filter(p => p.startsWith(`papers/${itemId}/`) || p.startsWith(`web/${itemId}/`));
-  const rank = (p: string) => p.endsWith("original-annotated.pdf") ? 0 : p.endsWith("translated-annotated.pdf") ? 1
-    : p.endsWith("original.pdf") ? 2 : p.endsWith("translated.pdf") ? 3 : p.endsWith(".md") ? 4 : p.endsWith(".html") ? 5 : 6;
+  const paths = Object.keys(manifest.files).filter(p => p.startsWith(`papers/${itemId}/`) || p.startsWith(`web/${itemId}/`))
+    .filter(p => !p.endsWith("-annotated.pdf") || !manifest.files["web-annotations.json"]
+      || !manifest.files[p.replace(/^web\//, "papers/").replace("-annotated.pdf", ".pdf")]);
+  const rank = (p: string) => p.endsWith("original-annotated.pdf") ? 0 : p.endsWith("original.pdf") ? 1
+    : p.endsWith("translated-annotated.pdf") ? 2 : p.endsWith("translated.pdf") ? 3
+    : p.endsWith(".md") ? 4 : p.endsWith(".html") ? 5 : 6;
   return paths.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 }
 

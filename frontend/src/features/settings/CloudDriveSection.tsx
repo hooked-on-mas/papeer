@@ -49,8 +49,8 @@ export function CloudDriveHost() {
     return () => { clearTimeout(initial); clearInterval(interval); };
   }, []);
   return <Dialog open={!!job}><DialogContent showCloseButton={false}>
-    <DialogTitle>Google Driveへアップロード</DialogTitle>
-    <DialogDescription>PDF・手書き・読書データを保存しています。この処理中は編集を一時停止します。</DialogDescription>
+    <DialogTitle>Google Driveと同期</DialogTitle>
+    <DialogDescription>Webの書き込みを取り込み、PDF・手書き・読書データを保存しています。この処理中は編集を一時停止します。</DialogDescription>
     <p role="status">{job?.message}</p>
     <Button variant="outline" onClick={() => { if (job) void requestCancel(job.job_id).catch(showError); }}>中止</Button>
   </DialogContent></Dialog>;
@@ -71,7 +71,7 @@ export function CloudDriveSection() {
   };
   return <section className="space-y-3 rounded-lg border p-4">
     <h3 className="font-medium">Google Drive API・Web閲覧</h3>
-    <p>原文・翻訳PDF、手書きノート、付箋、メモ、資料、チャットなどライブラリ全体をGoogle Driveへ保存します。Web版は同じGoogleアカウントでログインして閲覧できます。</p>
+    <p>原文・翻訳PDF、手書きノート、付箋、メモ、資料、チャットなどをDrive APIで直接保存します。Web版で閲覧・PDFへの書き込みができ、次回同期時にPCへ取り込みます。同期フォルダーは不要です。</p>
     {error && <p role="alert">Google Driveの設定を取得できませんでした。</p>}
     {data?.supported === false && <p>APIへのアップロードはWindows版で設定してください。</p>}
     {data?.supported && !data.connected && <>

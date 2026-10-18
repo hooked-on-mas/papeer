@@ -123,7 +123,19 @@ export class InkPage {
     this.active = false; this.version++;
     try { localStorage.removeItem(this.draftKey); } catch { /* Optional journal. */ }
   }
+  reload = async () => {
+    if (this.snapshot.dirty || this.saving) return;
+    if (this.loading) await this.loading;
+    if (this.snapshot.dirty || this.saving) return;
+    this.undoStack = []; this.redoStack = [];
+    this.update({ ready: false });
+    await this.load();
+    emitAppEvent("ink-changed", { paperId: this.paperId });
+  };
 }
+
+/** Cloud upload first imports browser edits under the exclusive snapshot lock. */
+export function reloadCloudInk() { return Promise.all([...pages.values()].map(entry => entry.reload())); }
 
 export function cachedInkPages(paperId: string) {
   return [...pages.values()].filter(entry => entry.paperId === paperId && entry.snapshot.ready)

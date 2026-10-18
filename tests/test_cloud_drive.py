@@ -31,12 +31,15 @@ class MemoryDrive:
         identity = url.split("/")[-1].split("?")[0]
         if identity not in self.files:
             raise ValueError("missing")
+        if "alt=media" in url:
+            return json.loads(self.files[identity][1])
         return {"id": identity}
 
     def list(self, query):
         return [{"id": identity, "name": metadata["name"], "size": len(data),
                  "sha256Checksum": hashlib.sha256(data).hexdigest()}
-                for identity, (metadata, data) in self.files.items()]
+                for identity, (metadata, data) in self.files.items()
+                if (metadata.get("properties", {}).get("papeer") == "ink-v1") == ("ink-v1" in query)]
 
     def upload(self, path, metadata, cancel, file_id=None):
         name = metadata["name"]

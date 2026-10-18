@@ -4,12 +4,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { DriveSession, fileLabel, itemFiles, type Database, type Item, type LibraryChoice, type Manifest } from "./drive";
 import { PdfReader } from "./PdfReader";
+import { AnnotationStore } from "./annotations";
 import "./style.css";
 
 const session = new DriveSession();
 const title = (item: Item) => String(item.title || item.original_name || "無題");
 
-function Asset({ path, manifest }: { path: string; manifest: Manifest }) {
+function Asset({ path, manifest, annotations }: { path: string; manifest: Manifest; annotations?: AnnotationStore }) {
   const [data, setData] = useState<{ url: string; text: string }>();
   const [error, setError] = useState("");
   useEffect(() => {
@@ -32,8 +33,8 @@ function Asset({ path, manifest }: { path: string; manifest: Manifest }) {
   const html = "<!doctype html><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; form-action 'none'; base-uri 'none'\">" + data.text;
   return <>
     <div className="asset-heading"><span>{fileLabel(path, manifest)}</span>
-      <a href={data.url} download={path.split("/").pop()}>ダウンロード ↓</a></div>
-    {path.endsWith(".pdf") ? <PdfReader url={data.url} />
+      <a href={data.url} download={path.split("/").pop()}>{/^papers\/.+\/(original|translated)\.pdf$/.test(path) ? "PDF本体を保存 ↓" : "ダウンロード ↓"}</a></div>
+    {path.endsWith(".pdf") ? <PdfReader url={data.url} path={path} manifest={manifest} store={annotations} />
       : path.endsWith(".md") ? <article className="prose"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{
         img: ({ src, alt }) => <MemoImage src={src} alt={alt} path={path} manifest={manifest} />,
         a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer">{children}</a>,
@@ -91,13 +92,22 @@ function ReadingData({ item, manifest }: { item: Item; manifest: Manifest }) {
   </article>;
 }
 
-function Library({ manifest }: { manifest: Manifest }) {
+function Library({ manifest, libraryId }: { manifest: Manifest; libraryId: string }) {
+  const [annotations, setAnnotations] = useState<AnnotationStore>();
+  useEffect(() => {
+    const store = new AnnotationStore(session, libraryId, manifest);
+    setAnnotations(store); void store.start();
+    const retry = () => { void store.retry(); };
+    const timer = setInterval(retry, 30000);
+    window.addEventListener("online", retry); window.addEventListener("focus", retry);
+    return () => { clearInterval(timer); window.removeEventListener("online", retry); window.removeEventListener("focus", retry); store.dispose(); };
+  }, [manifest, libraryId]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(manifest.items[0]?.id || "");
   const [path, setPath] = useState("");
   const [reading, setReading] = useState(false);
   const item = manifest.items.find(p => p.id === selected);
-  const files = item ? itemFiles(manifest, item.id) : Object.keys(manifest.files).sort();
+  const files = item ? itemFiles(manifest, item.id) : Object.keys(manifest.files).filter(p => /^(papers|web)\//.test(p)).sort();
   const selectedPath = files.includes(path) ? path : files[0];
   const visible = manifest.items.filter(p => JSON.stringify(p).toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const choose = (id: string) => { setSelected(id); setPath(""); setReading(false); };
@@ -123,7 +133,7 @@ function Library({ manifest }: { manifest: Manifest }) {
         </div>
       </div>
       <div className="document-body">{reading && item ? <ReadingData key={item.id} item={item} manifest={manifest} />
-        : selectedPath ? <Asset key={`${manifest.revision}:${selectedPath}`} path={selectedPath} manifest={manifest} />
+        : selectedPath ? <Asset key={`${manifest.revision}:${selectedPath}`} path={selectedPath} manifest={manifest} annotations={annotations} />
         : <p className="empty">まだファイルがありません。Windows版でアップロードしてください。</p>}</div>
     </main>
   </div>;
@@ -166,13 +176,13 @@ function App() {
     {libraries.length > 1 && <label className="library-picker">保存ライブラリ <select value={selected} disabled={busy}
       onChange={e => void run(() => load(e.target.value))}>{libraries.map((library, i) =>
         <option key={library.id} value={library.id}>ライブラリ {i + 1} · {new Date(library.modifiedTime).toLocaleString()}</option>)}</select></label>}
-    {manifest ? <Library key={manifest.revision} manifest={manifest} /> : <main className="welcome">
+    {manifest ? <Library key={`${selected}:${manifest.revision}`} manifest={manifest} libraryId={selected} /> : <main className="welcome">
       <div className="eyebrow">YOUR READING, EVERYWHERE</div>
       <h1>いつもの論文とノートを、<br />ブラウザーでも。</h1>
       <p>Windows版Papeerで保存した翻訳PDF、手書きノート、<br />メモやチャットを、Google Driveから開けます。</p>
       {!signedIn ? <button className="primary" disabled={busy} onClick={() => void login()}>Googleでログインして開く →</button>
         : !busy && <p className="empty">保存されたライブラリが見つかりません。Windows版の「保存先・同期 → Google Drive API」でアップロードし、同じGoogleアカウントで開いてください。</p>}
-      <div className="welcome-note">閲覧専用 · ファイルはあなたのGoogle Driveに保存</div>
+      <div className="welcome-note">PDFへの手書き・文字メモに対応 · あなたのGoogle Driveに保存</div>
     </main>}
     <footer className="site-footer">Papeer · <a href="https://github.com/hooked-on-mas/papeer" target="_blank" rel="noreferrer">ソースコード</a> · <a href="./licenses.md" target="_blank" rel="noreferrer">ライセンス</a> · <a href="./geist-OFL.txt" target="_blank" rel="noreferrer">フォント</a></footer>
   </>;
