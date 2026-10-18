@@ -123,6 +123,69 @@ def test_unchanged_upload_is_skipped_and_changed_memo_reuses_pdf(library):
     assert remote.manifest()["files"][f"papers/{identity}/original.pdf"]["id"] == original_id
 
 
+def test_snapshot_retains_partial_translation_page_mapping(library, tmp_path):
+    lib, _, _, _ = library
+    source = tmp_path / "three-pages.pdf"
+    with pymupdf.open() as pdf:
+        for number in range(3):
+            pdf.new_page().insert_text((40, 40), f"source {number + 1}")
+        pdf.save(source)
+    identity, _ = lib.import_pdf(source)
+    files = PaperFiles(lib.folder(identity))
+    run_id = "a" * 32
+    preview = files.translation_pages / run_id / "page-2.pdf"
+    preview.parent.mkdir(parents=True)
+    with pymupdf.open() as pdf:
+        pdf.new_page().insert_text((40, 40), "translated source page 2")
+        pdf.save(preview)
+    files.translation_preview.write_text(json.dumps({"run_id": run_id, "complete": False, "total_pages": 3,
+                                                    "pages": [2], "target_pages": [1, 2, 3]}), "utf-8")
+    target = tmp_path / "snapshot"
+    target.mkdir()
+    cloud.snapshot(lib, target, threading.Event())
+    mapping = json.loads((target / "web-reading.json").read_text("utf-8"))["items"][identity]
+    assert mapping == {"pageCount": 3, "translatedPages": {
+        "1": None, "2": {"artifactPath": f"papers/{identity}/translation-pages/{run_id}/page-2.pdf", "page": 1}, "3": None}}
+    assert (target / mapping["translatedPages"]["2"]["artifactPath"]).read_bytes() == preview.read_bytes()
+
+
+def test_old_snapshot_gets_page_metadata_without_a_library_edit(library):
+    lib, identity, _, remote = library
+    publish(lib)
+    previous = remote.manifest()["revision"]
+    saved = cloud.state(lib.root)
+    saved.pop("web_reading_version")
+    cloud.save_state(lib.root, saved)
+    publish(lib)
+    manifest = remote.manifest()
+    assert manifest["revision"] != previous
+    metadata = json.loads(remote.files[manifest["files"]["web-reading.json"]["id"]][1])
+    assert metadata["items"][identity]["pageCount"] == 1
+    assert cloud.state(lib.root)["web_reading_version"] == 1
+    count = len(remote.calls)
+    assert publish(lib)["uploaded"] == 0
+    assert len(remote.calls) == count
+
+
+@pytest.mark.parametrize("error", [KeyError("complete"), TypeError("invalid metadata")])
+def test_invalid_old_page_metadata_does_not_block_library_publication(library, monkeypatch, error):
+    lib, identity, book_id, remote = library
+    original = cloud.reading_state
+
+    def reading(lib, paper_id):
+        if paper_id == identity:
+            raise error
+        return original(lib, paper_id)
+
+    monkeypatch.setattr(cloud, "reading_state", reading)
+    publish(lib)
+    manifest = remote.manifest()
+    metadata = json.loads(remote.files[manifest["files"]["web-reading.json"]["id"]][1])
+    assert identity not in metadata["items"]
+    assert book_id in metadata["items"]
+    assert f"papers/{identity}/original.pdf" in manifest["files"]
+
+
 @pytest.mark.parametrize("failure", ["all", "papeer-library.json"])
 def test_failed_publish_preserves_previous_view_and_can_retry(library, failure):
     lib, identity, _, remote = library

@@ -1,3 +1,4 @@
+import { libraryItemTitle } from "../runtime/libraryItems";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api, ApiError, unwrap } from "./client";
 import type { components } from "./schema";
@@ -180,11 +181,7 @@ export function useHealth() {
 
 /** "Smith (2024) Title", as the old library and header labelled papers. */
 export function paperDisplayName(paper: Pick<PaperData, "title" | "original_name" | "first_author" | "publication_year">): string {
-  const author = (paper.first_author || "").trim();
-  const year = (paper.publication_year || "").trim();
-  const prefix = [author, year ? `(${year})` : ""].filter(Boolean).join(" ");
-  const title = paper.title || paper.original_name || "";
-  return prefix ? `${prefix} ${title}` : title;
+  return libraryItemTitle(paper);
 }
 
 export function useProviders() {

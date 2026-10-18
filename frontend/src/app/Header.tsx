@@ -28,6 +28,7 @@ import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
 import { useRebuilding } from "@/features/reader/rebuildJobs";
 import { withShortcutLabels } from "@/lib/platform";
 import { isImeKey } from "@/lib/imeKeys";
+import { WorkspaceHeader } from "@/components/WorkspaceChrome";
 
 /**
  * A notebook's name in the header: pressing it (or F2) turns it into a field to rename it in place;
@@ -105,7 +106,7 @@ export function Header() {
 
   if (!activePaperId) {
     return (
-      <header className="h-13 border-b flex items-center px-3 shrink-0 bg-background/50">
+      <WorkspaceHeader className="px-3 justify-start">
         {toggleSidebar}
         {!uiStateLoaded ? (
           <div aria-hidden="true" className="flex flex-col gap-1.5">
@@ -117,7 +118,7 @@ export function Header() {
             <h1 className="text-[0.9375rem] font-semibold">論文を選んで、読み始めよう</h1>
           </div>
         )}
-      </header>
+      </WorkspaceHeader>
     );
   }
 
@@ -141,7 +142,7 @@ export function Header() {
   const pageText = `${notebook?.pages.length ?? paper?.pages ?? 0}ページ`;
 
   return (
-    <header className="h-13 border-b flex items-center pl-3 pr-4 justify-between shrink-0 bg-background/50">
+    <WorkspaceHeader>
       {toggleSidebar}
       <div className="flex flex-col min-w-0 flex-1 pr-4">
         {paper && caps.notebook ? <NotebookTitle paper={paper} /> : <h1
@@ -254,7 +255,7 @@ export function Header() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-    </header>
+    </WorkspaceHeader>
   );
 }
 

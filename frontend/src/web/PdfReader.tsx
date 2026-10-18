@@ -1,17 +1,21 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent, type ReactNode } from "react";
-import { Document, Page, pdfjs } from "react-pdf";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent, type ReactNode } from "react";
+import { PdfDocument as Document, PdfPage as Page } from "../features/reader/PdfDocument";
+import { PageNavigatorView } from "../features/reader/PageNavigatorView";
+import { cappedPixelRatio } from "../features/reader/canvasBudget";
 import { InkDrawing } from "../features/reader/InkDrawing";
 import { fitInk, hitInk, textPoints, type InkStroke, type Point } from "../features/reader/inkGeometry";
 import { AnnotationStore, type Anchor } from "./annotations";
-import type { Manifest } from "./drive";
-import "react-pdf/dist/Page/TextLayer.css";
+import type { AnnotationTarget } from "../runtime/contracts";
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
-const options = { cMapUrl: "./pdfjs/cmaps/", cMapPacked: true, standardFontDataUrl: "./pdfjs/standard_fonts/" };
 type Tool = "read" | "pen" | "highlighter" | "eraser" | "text";
 
-export function PdfReader({ url, path, manifest, store }: { url: string; path: string; manifest: Manifest; store?: AnnotationStore }) {
-  const [pages, setPages] = useState(0), [page, setPage] = useState(1);
+export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 1, navigation = true }: {
+  url: string; target?: AnnotationTarget; store?: AnnotationStore; pageNumber?: number;
+  onPageCount?: (count: number) => void; zoom?: number; navigation?: boolean;
+}) {
+  const [pages, setPages] = useState(0), [localPage, setPage] = useState(1);
+  const page = pageNumber ?? localPage;
+  useEffect(() => { if (pages > 0) onPageCount?.(pages); }, [pages, onPageCount]);
   const [width, setWidth] = useState(700), [ratio, setRatio] = useState(1.414);
   const container = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -20,31 +24,38 @@ export function PdfReader({ url, path, manifest, store }: { url: string; path: s
     observer.observe(container.current);
     return () => observer.disconnect();
   }, []);
-  const match = /^papers\/([a-f0-9]{32})\/(original|translated)\.pdf$/.exec(path);
-  const anchor: Anchor | undefined = match ? { paper_id: match[1], side: match[2] as Anchor["side"],
-    source_sha256: manifest.files[path].sha256, page } : undefined;
-  const [renderedPage, setRenderedPage] = useState(0);
-  const document = <Document file={url} options={options} loading="PDFを読み込んでいます…" error="PDFを表示できません。ダウンロードしてご確認ください。"
+  const anchor: Anchor | undefined = target ? { paper_id: target.paperId, side: target.side, source_sha256: target.sourceSha256, page } : undefined;
+  // Match react-pdf's integer CSS canvas width, rather than tracking subpixel layout noise.
+  const drawnWidth = Math.max(1, Math.floor(width * zoom));
+  const pixelRatio = cappedPixelRatio(window.devicePixelRatio, drawnWidth, drawnWidth * ratio);
+  const render = useMemo(() => ({ key: `${url}:${page}:${drawnWidth}:${pixelRatio}` }), [url, page, drawnWidth, pixelRatio]);
+  const activeRender = useRef<typeof render | null>(render);
+  const [rendered, setRendered] = useState<typeof render | null>(null);
+  useLayoutEffect(() => {
+    activeRender.current = render;
+    return () => { activeRender.current = null; };
+  }, [render]);
+  const document = <Document file={url} loading="PDFを読み込んでいます…" error="PDFを表示できません。ダウンロードしてご確認ください。"
     onLoadSuccess={({ numPages }) => setPages(numPages)}>
-    <Page pageNumber={page} width={width} renderAnnotationLayer={false} onLoadSuccess={pdf => {
+    <Page key={render.key} pageNumber={page} width={drawnWidth} devicePixelRatio={pixelRatio}
+      renderAnnotationLayer={false} onLoadSuccess={pdf => {
       const viewport = pdf.getViewport({ scale: 1 }); setRatio(viewport.height / viewport.width);
-    }} onRenderSuccess={() => setRenderedPage(page)} />
+    }} onRenderSuccess={() => {
+      // A cancelled old canvas can finish late. It must not enable or disable the current editor.
+      if (activeRender.current === render) setRendered(render);
+    }} onRenderError={() => { if (activeRender.current === render) setRendered(null); }} />
   </Document>;
   return <div className="pdf" ref={container}>
-    <div className="pdf-tools">
-      <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}>← 前</button>
-      <label>ページ <input aria-label="ページ番号" type="number" min="1" max={pages || 1} value={page}
-        onChange={e => setPage(Math.max(1, Math.min(pages || 1, Number(e.target.value) || 1)))} /> / {pages || "…"}</label>
-      <button disabled={page >= pages} onClick={() => setPage(p => p + 1)}>次 →</button>
-    </div>
-    {store && anchor ? <EditablePage key={`${path}:${page}`} store={store} anchor={anchor} ratio={ratio}
-      enabled={renderedPage === page}>{document}</EditablePage>
+    {navigation && <div className="pdf-tools"><PageNavigatorView paperId={url} currentPage={page} count={pages} compact shortcuts={false}
+      atStart={page <= 1} atEnd={page >= pages} onJump={setPage} onMove={delta => setPage(value => Math.max(1, Math.min(pages || 1, value + delta)))} /></div>}
+    {store && anchor ? <EditablePage key={`${url}:${page}`} store={store} anchor={anchor} ratio={ratio} pageWidth={drawnWidth}
+      enabled={rendered === render}>{document}</EditablePage>
       : <><p className="ink-help">書き込みを有効にするには、最新版のPCアプリからアップロードし、原文または日本語訳を開いてください。</p>{document}</>}
   </div>;
 }
 
-function EditablePage({ store, anchor, ratio, enabled, children }: { store: AnnotationStore; anchor: Anchor; ratio: number;
-  enabled: boolean; children: ReactNode }) {
+function EditablePage({ store, anchor, ratio, enabled, pageWidth, children }: { store: AnnotationStore; anchor: Anchor; ratio: number;
+  enabled: boolean; pageWidth: number; children: ReactNode }) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const [tool, setTool] = useState<Tool>("read"), [color, setColor] = useState("#d93c36"), [width, setWidth] = useState(.003);
   const [finger, setFinger] = useState(false), [preview, setPreview] = useState<InkStroke>();
@@ -132,7 +143,7 @@ function EditablePage({ store, anchor, ratio, enabled, children }: { store: Anno
       } catch { /* Store reports the error. */ }
     }}><label>文字メモ <textarea aria-label="PDFに追加するメモ" value={text.value} maxLength={2000} autoFocus onChange={e => setText({ ...text, value: e.target.value })} /></label>
       <button type="submit" disabled={!text.value.trim()}>メモを保存</button><button type="button" onClick={() => setText(undefined)}>キャンセル</button></form>}
-    <div className="ink-page">{children}
+    <div className="ink-page" style={{ width: pageWidth }}>{children}
       {enabled && <svg className={`web-ink ${tool === "read" ? "reading" : "writing"}`} data-testid="web-ink" aria-label="PDF書き込み面"
         viewBox={`0 0 1000 ${1000 * ratio}`} style={{ touchAction: finger && tool !== "read" ? "none" : "pan-x pan-y pinch-zoom" }}
         onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => { gesture.current = undefined; setPreview(undefined); }}

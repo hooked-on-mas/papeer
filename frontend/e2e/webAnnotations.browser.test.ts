@@ -74,7 +74,16 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   const open = async (p: Page) => {
     await p.goto(webUrl);
     await p.getByRole("button", { name: "Googleでログインして開く →" }).click();
-    await p.getByLabel("表示する資料").selectOption(`papers/${paper}/translated.pdf`);
+    await p.getByLabel("表示する資料").selectOption({ label: "日本語訳" });
+    await p.getByRole("region", { name: "原文", exact: true }).locator("canvas").waitFor();
+    await p.getByRole("region", { name: "日本語訳", exact: true }).locator("canvas").waitFor();
+    await p.getByRole("button", { name: "次のページ", exact: true }).click();
+    await p.getByRole("region", { name: "原文", exact: true }).locator('[data-page-number="2"] canvas').waitFor();
+    await p.getByRole("region", { name: "日本語訳", exact: true }).locator('[data-page-number="2"] canvas').waitFor();
+    await p.getByRole("button", { name: "前のページ", exact: true }).click();
+    await p.getByRole("region", { name: "原文", exact: true }).locator('[data-page-number="1"] canvas').waitFor();
+    await p.screenshot({ path: path.join(directory, "paired-reading.png") });
+    await p.getByLabel("本文の表示方法").selectOption("single");
     await p.getByRole("button", { name: "ペン", exact: true }).waitFor({ state: "visible" });
     await p.waitForFunction(() => !(document.querySelector('.ink-tools button[aria-pressed]') as HTMLButtonElement)?.disabled);
   };
@@ -141,16 +150,17 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   await page.getByRole("button", { name: "元に戻す", exact: true }).click(); await saved(page); assert.equal(await count(page), 7);
   await page.screenshot({ path: path.join(directory, "tablet-writing.png"), fullPage: true });
   // Page-specific ink and the next page's different aspect ratio.
-  await page.getByRole("button", { name: "次 →" }).click();
+  await page.getByRole("button", { name: "次のページ" }).click();
   await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 0);
-  await page.getByRole("button", { name: "← 前" }).click();
+  await page.getByRole("button", { name: "前のページ" }).click();
   await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 7);
   fs.writeFileSync(path.join(directory, "operations.json"), JSON.stringify([...operations.values()]));
   assert.equal(fixture("import").strokes, 7);
   readSnapshot("import");
   assert.deepEqual(blobs.get(manifest!.files[`papers/${paper}/translated.pdf`].id), originalPdf);
   await page.getByRole("button", { name: "更新", exact: true }).click();
-  await page.getByLabel("表示する資料").selectOption(`papers/${paper}/translated.pdf`);
+  await page.getByLabel("表示する資料").selectOption({ label: "日本語訳" });
+  await page.getByLabel("本文の表示方法").selectOption("single");
   await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 7);
   await saved(page); // Imported operations aren't drawn twice on top of PC ink.
   await page.setViewportSize({ width: 390, height: 844 });

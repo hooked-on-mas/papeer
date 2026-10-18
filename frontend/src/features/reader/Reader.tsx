@@ -7,7 +7,7 @@ import { useItemCapabilities, useReading, type ReadingData } from "@/api/hooks";
 import { backendUrl } from "@/api/client";
 import { PdfPane } from "./PdfPane";
 import { ReaderToolbar } from "./ReaderToolbar";
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
+import { ReaderSplit } from "./ReaderSplit";
 import { importPdfs } from "@/app/actions";
 import { ContinueReading } from "@/features/library/ContinueReading";
 import { navigateTo } from "./navigation";
@@ -161,20 +161,8 @@ export function Reader() {
           翻訳済みのページはまだありません。完了すると自動で表示します。
         </div>
       ) : (
-        <ResizablePanelGroup
-          // Another set of panels is another layout.
-          key={caps.split ? "split" : "single"}
-          orientation="horizontal"
-          className="flex-1 min-h-0"
-          onLayoutChanged={(layout) => {
-            if (!caps.split) return;
-            const left = layout.original;
-            const total = (layout.original ?? 0) + (layout.translated ?? 0);
-            if (left !== undefined && total > 0) setReaderSplit(left / total);
-          }}
-        >
-          <ResizablePanel id="original" defaultSize={caps.split ? `${readerSplit * 100}%` : "100%"} minSize="15%" className="flex flex-col">
-            <div className="flex-1 relative min-h-0" role="region" aria-label="原文">
+        <ReaderSplit fraction={readerSplit} onResize={setReaderSplit}
+          original={<div className="flex-1 relative min-h-0" role="region" aria-label="原文">
               <PdfPane
                 url={leftUrl}
                 inkPage={reading ? { paperId: activePaperId, page: currentPage } : undefined}
@@ -191,14 +179,8 @@ export function Reader() {
                 caption="原文"
                 inkToolbarSlot={inkToolbarSlot}
               />
-            </div>
-          </ResizablePanel>
-
-          {caps.split && <>
-          <ResizableHandle className="w-1 bg-border hover:bg-primary/60 transition-colors cursor-col-resize z-10" />
-
-          <ResizablePanel id="translated" defaultSize={`${(1 - readerSplit) * 100}%`} minSize="15%" className="flex flex-col">
-            <div className="flex-1 relative min-h-0" role="region" aria-label={caption}>
+            </div>}
+          translated={caps.split ? (<div className="flex-1 relative min-h-0" role="region" aria-label={caption}>
               <PdfPane
                 url={rightUrl}
                 inkPage={{ paperId: activePaperId, page: currentPage }}
@@ -226,10 +208,8 @@ export function Reader() {
                 )}
                 inkToolbarSlot={inkToolbarSlot}
               />
-            </div>
-          </ResizablePanel>
-          </>}
-        </ResizablePanelGroup>
+            </div>) : undefined}
+        />
       )}
     </div>
   );

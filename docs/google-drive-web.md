@@ -4,6 +4,10 @@ Windows版からGoogle Drive APIでライブラリを直接保存し、GitHub Pa
 
 Webでは翻訳開始・AI接続設定・新しいチャット送信を提供せず、PCで作成した解説やチャット履歴を読みます。環境による操作の違いと書き込みの保存仕様は [Webプラットフォーム計画](web-platform-plan.md) を参照してください。
 
+PCとWebはReactの画面枠・タブ・PDF描画・ページ移動・原文と訳文の分割表示を共通化しています。PCではsidecarから、WebではDrive APIから資料を取得します。WebにはCodexやAI接続の設定、翻訳開始ボタンを表示しません。設計と責務の分担は [ランタイム構成](runtime-architecture.md) を参照してください。
+
+Webの原文・訳文の並列表示は、PCが保存したページ対応表を使います。途中まで翻訳した資料も、訳文が存在するページだけを正しい原文ページと並べます。対応表のない古いアップロードは単独表示を使い、更新版PCから一度アップロードすると並列表示できます。PDFへの書き込みは原文または完成した日本語訳で行えます。
+
 ## Google Cloud の設定
 
 同じ Google Cloud プロジェクトで Google Drive API を有効にし、デスクトップアプリ用とウェブアプリケーション用の OAuth クライアントを用意します。両方ともスコープは `https://www.googleapis.com/auth/drive.file` です。このアプリが作ったファイルだけを対象とし、Drive 全体へのアクセスや一般公開は要求しません。テスト公開中なら利用する Google アカウントをテストユーザーに追加してください。
@@ -37,18 +41,20 @@ https://hooked-on-mas.github.io
 
 通常の利用者がGoogle Cloudの設定を作成したり、資格情報を入力したりする必要はありません。公式配布版は `papeer/core/assets/google-oauth.json` にある公開のデスクトップ用クライアントIDとPKCEを使います。Web用IDとは別で、同じGoogle Cloudプロジェクトに作成したデスクトップアプリ用IDを使います。
 
-GoogleのデスクトップOAuth文書では `client_secret` は任意とされていますが、この公式クライアントでは正規のPKCE認証・アクセス許可後にGoogleが `client_secret` を要求することを確認しました。Google公式SDKと同様、配布側がデスクトップ用IDと `client_secret` を組み込み、PKCE・stateも引き続き使います。デスクトップクライアントはpublic clientなので、配布した値を秘密として保持できる前提にはしません。実トークン取得・更新の成功は、必要な配布設定を組み込んだ後に確認します。
+GoogleのデスクトップOAuth文書では `client_secret` は任意とされていますが、この公式クライアントでは正規のPKCE認証・アクセス許可後にGoogleが `client_secret` を要求することを確認しました。Google公式SDKと同様、配布側がデスクトップ用IDと `client_secret` を組み込み、PKCE・stateも引き続き使います。デスクトップクライアントはpublic clientなので、配布した値を秘密として保持できる前提にはしません。この公式Windowsビルドでは、配布設定の組み込み後に実際のGoogle認証、DPAPI保存、更新トークンによる再取得、更新後トークンでのDrive APIアクセス成功を確認しました（2026-10-18）。
 
 フォーク版を公開配布する場合は、配布者自身のGoogle CloudプロジェクトでWindows用・Web用のIDを用意します。ソースの公開設定を変更するか、ビルド時に次を指定します。クライアントIDは秘密情報ではありません。
 
 ```powershell
-$env:PAPEER_GOOGLE_OAUTH_CONFIG_FILE = 'C:\private\google-desktop-oauth.json'
+$env:PAPEER_GOOGLE_OAUTH_CONFIG_FILE = Join-Path $env:LOCALAPPDATA 'PapeerDeveloper\credentials\google-desktop-oauth.json'
 just build
 ```
 
 GitHub Actionsの公式Windows Releaseでは、Repository secret `GOOGLE_DESKTOP_CLIENT_SECRET` をビルドステップだけに渡します。Repository variable `GOOGLE_DESKTOP_CLIENT_ID` でIDを上書きする場合、シークレットも同じクライアントの値にしてください。Web側の `GOOGLE_WEB_CLIENT_ID` は同じプロジェクトのWeb用IDに設定します。Webビルドへシークレットは渡しません。公式Windowsタグビルドは、実クライアントで必要と判明している設定が不足していればビルド前に停止します。設定不備がある開発ビルドは「Googleに接続」を無効化し、対応版への更新を案内します。
 
 `just build-sidecar` は `build/google-desktop-oauth.json` を生成して配布用sidecarへ取り込みます。この生成ファイルはGit管理外です。含める設定はsidecarの内容ハッシュでも照合し、古い設定のsidecarを誤って配布しないようにします。
+
+ダウンロードした元のデスクトップOAuth JSONは、リポジトリ・worktree・ライブラリの外で保管します。Windowsでのローカル配布ビルド用の推奨場所は上記の `%LOCALAPPDATA%\PapeerDeveloper\credentials\google-desktop-oauth.json` です。フォルダーとファイルへのアクセスを現在のWindowsユーザーとSYSTEMへ限定し、Google Driveへのアップロード対象に含めません。これは配布者のビルド設定で、一般利用者の接続トークンを保存する `PapeerSync` とは別です。ビルド時だけパスを指定し、インストール済みアプリの起動に元JSONを必要としません。
 
 既存接続のトークン更新には、保存済みのデスクトップ用IDと対応する `client_secret` を使います。配布者によるローカルビルドでは `PAPEER_GOOGLE_OAUTH_CONFIG_FILE` にGoogleからダウンロードしたデスクトップ用JSONのローカルパスを指定する方法、または `PAPEER_GOOGLE_DESKTOP_CLIENT_SECRET` の明示指定も残します。IDを別クライアントへ上書きした場合、元のJSON・同梱設定のシークレットは引き継ぎません。シークレットの環境変数を空に明示設定した場合も省略します。これらは一般利用者の設定画面には表示しません。資格情報JSON・シークレット・ユーザーのトークンをGitへ登録したり、ログへ出したりしないでください。配布物に同梱する値は、ビルド時に隠しても配布後に秘密として保持できません。
 

@@ -28,7 +28,7 @@ PCへ追記を取り込み ← Driveの追記ファイル ← Webで手書き・
 | 削除・フォルダー整理・復元 | 利用可能 | 提供しない |
 | Drive認証 | デスクトップOAuth、DPAPI | Web OAuth、トークンはメモリーのみ |
 
-`frontend/src/app/AppShell.tsx` と `frontend/src/web/main.tsx` をそれぞれのビルド入口にする。同じPC上のChromeもWebとして動く。PDF描画用の `InkDrawing.tsx` と座標・当たり判定はPCとWebで共用する。ライブラリ全体や左右分割リーダーの完全な共通UI化は今後の作業で、現在のWebは独立した画面である。
+`frontend/src/app/AppShell.tsx` と `frontend/src/web/main.tsx` をそれぞれのhost入口にする。同じPC上のChromeもWebとして動く。画面枠、サイドバー枠、ヘッダー、タブ、ページ操作、PDF描画設定、左右分割、手書き描画・座標を共用する。WebはDrive用閲覧adapterを使い、PCの終了・job監視や設定画面は起動しない。具体的な責務と契約は[Astraによる設計](runtime-architecture.md)を参照。
 
 ## 書き込みの保存と競合
 
@@ -50,4 +50,4 @@ Pointer EventsでApple Pencil・マウスを扱い、通常は指の操作をス
 
 ## 今後の範囲
 
-Web翻訳・AI APIキー入力・ChatGPTログイン・Web上のチャット生成は実装しない。左右分割表示・倍率操作・完全な共通UI・PC付箋や既存メモのWeb編集・ページ構成の変更は次の改善候補とする。
+Web翻訳・AI APIキー入力・ChatGPTログイン・Web上のチャット生成は提供しない方針で確定する。左右分割表示・倍率操作・主要な画面部品の共通化は対応済み。PC付箋や既存メモのWeb編集・ページ構成変更は今回の範囲に含めない。

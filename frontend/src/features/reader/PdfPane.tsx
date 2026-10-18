@@ -1,12 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Document, Page, pdfjs } from "react-pdf";
+import { PdfDocument as Document, PdfPage as Page } from "./PdfDocument";
 import type { PageCallback } from "react-pdf/dist/shared/types.js";
 import type { PDFDocumentProxy, TextContent, TextItem } from "pdfjs-dist/types/src/display/api";
-// The legacy build, as for the main thread (vite.config.ts pdfjsLegacy): the worker must be the same release.
-import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
-import "react-pdf/dist/Page/AnnotationLayer.css";
-import "react-pdf/dist/Page/TextLayer.css";
 import { MessageSquareText } from "lucide-react";
 import { authToken } from "@/api/client";
 import { shell } from "@/shell";
@@ -34,9 +30,6 @@ import { createPlaceKeeper, scrollForPlace, type PaneView } from "./readingPlace
 import { pageAppearance } from "./pageAppearance";
 import { inkToolbarSide } from "./readerBars";
 import { usePdfTouch, usePdfTouchOwner } from "./usePdfTouch";
-
-// Bundled worker, cMaps and fonts keep PDFs (including CJK text) readable offline.
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 /** What a menu over the page is given (see PdfPaneProps.pageMenu). */
 export interface PageMenuProps {

@@ -16,7 +16,7 @@ scenario("986px の窓で右パネルを開いても、PDF の右が欠けない
 
   const before = (await pageFits(page))[0];
   await toggleSidePanel(page, "メモ");
-  await page.getByRole("button", { name: "テンプレートを使う" }).waitFor();
+  await page.getByRole("button", { name: "新規メモ", exact: true }).waitFor();
   // The page is laid out again at the narrower width (after a short wait for the drag to settle).
   await waitFor(async () => {
     const [first] = await pageFits(page);

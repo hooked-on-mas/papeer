@@ -1,5 +1,5 @@
 // pdf.js's legacy build is the one the app loads (vite.config.ts pdfjsLegacy): react-pdf's imports of
-// `pdfjs-dist` and of its viewer module, and the worker PdfPane.tsx names. The modern build needs JavaScript
+// `pdfjs-dist` and of its viewer module, and the worker PdfDocument.tsx names. The modern build needs JavaScript
 // that macOS's WKWebView and Linux's WebKitGTK may not have yet, and would show no PDF there.
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -42,7 +42,7 @@ test("react-pdf gets pdf.js's legacy build", async () => {
 });
 
 test("the worker is the legacy build of the same release", () => {
-  const pane = fs.readFileSync(path("../src/features/reader/PdfPane.tsx"), "utf8");
+  const pane = fs.readFileSync(path("../src/features/reader/PdfDocument.tsx"), "utf8");
   const workers = [...pane.matchAll(/from "(pdfjs-dist\/[^"]*worker[^"]*)"/g)].map((match) => match[1]);
   assert.deepEqual(workers, ["pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"]);
 });

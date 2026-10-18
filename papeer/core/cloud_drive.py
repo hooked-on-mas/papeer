@@ -19,6 +19,7 @@ from papeer.core import cloud_drive_auth, drive_sync, cloud_annotations
 from papeer.core.backup import DATABASE_FILES
 from papeer.core.fileio import atomic_write_bytes, atomic_write_text, ensure_free_space, is_temporary
 from papeer.core.paths import device_directory, library_key, PaperFiles
+from papeer.core.reading_state import reading_state
 from papeer.core.storage import Library
 from papeer.pdf.pdf_ink import annotated_pdf
 from papeer.providers import check_cancel
@@ -114,6 +115,20 @@ class Drive:
 
 def snapshot(lib: Library, target: Path, cancel) -> dict:
     """Caller holds the sidecar snapshot guard. Retain all library data and a browser-readable DB view."""
+    # Match the desktop's original-page -> translated-artifact mapping, including partial runs.
+    # Resolve before copying: reading_state may populate the local extraction cache.
+    reading = {}
+    with lib.connection() as connection:
+        paper_ids = [row[0] for row in connection.execute("SELECT id FROM papers")]
+    for paper_id in paper_ids:
+        check_cancel(cancel)
+        try:
+            state = reading_state(lib, paper_id)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            continue  # A damaged old document remains downloadable; don't invent a page mapping.
+        reading[paper_id] = {"pageCount": state["page_count"], "translatedPages": {
+            number: {"artifactPath": f"papers/{paper_id}/{page['file']}", "page": page["index"] + 1} if page else None
+            for number, page in state["translated_pages"].items()}}
     files = []
     for path in lib.root.rglob("*"):
         check_cancel(cancel)
@@ -168,6 +183,7 @@ def snapshot(lib: Library, target: Path, cancel) -> dict:
     # The editable browser reader uses the original PDF with the same vector strokes as the PC.
     # Baked PDFs remain available as downloads and for older browser releases.
     atomic_write_text(target / "web-annotations.json", json.dumps(browser_ink, ensure_ascii=False))
+    atomic_write_text(target / "web-reading.json", json.dumps({"version": 1, "items": reading}, ensure_ascii=False))
     return {"version": 1, "items": papers, "attachments": tables.get("attachments", [])}
 
 
@@ -182,7 +198,8 @@ def publish(lib: Library, cancel, progress, *, force: bool = False) -> dict:
             cloud_annotations.import_operations(lib, drive, saved["manifest_id"], cancel)
         fingerprint = drive_sync.fingerprint(lib, cancel)
         # Navigation alone does not trigger another upload. Verify the previous manifest still exists.
-        if not force and saved.get("web_ink_version") == 1 and saved.get("fingerprint") == fingerprint and saved.get("manifest_id"):
+        if (not force and saved.get("web_ink_version") == 1 and saved.get("web_reading_version") == 1
+                and saved.get("fingerprint") == fingerprint and saved.get("manifest_id")):
             drive.json(API + "/" + saved["manifest_id"] + "?fields=id")
             saved["error"] = None
             save_state(lib.root, saved)
@@ -228,7 +245,7 @@ def publish(lib: Library, cancel, progress, *, force: bool = False) -> dict:
                 metadata["parents"] = [folder]
             manifest_id = drive.upload(manifest_path, metadata, cancel, previous["id"] if previous else None)
         saved.update({"last_upload": timestamp, "error": None, "fingerprint": fingerprint,
-                      "manifest_id": manifest_id, "files": len(entries), "web_ink_version": 1})
+                      "manifest_id": manifest_id, "files": len(entries), "web_ink_version": 1, "web_reading_version": 1})
         save_state(lib.root, saved)
         return {"uploaded": uploaded, "files": len(entries)}
     except Exception:  # Preserve the old published manifest; surface the original safe job error.

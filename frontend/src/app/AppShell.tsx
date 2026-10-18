@@ -5,7 +5,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { FilePlus2, NotebookPen, Settings2 } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { WorkspaceRoot, WorkspaceSidebar, WorkspaceTabList } from "@/components/WorkspaceChrome";
+import { Tabs, TabsContent, TabsTrigger } from "@/components/ui/tabs";
 import { api, unwrap } from "@/api/client";
 import { showToast } from "@/components/toast";
 import { usePaper } from "@/api/hooks";
@@ -408,7 +409,7 @@ export function AppShell() {
   }, hotkeyOptions);
 
   return (
-    <div className="flex h-screen w-full flex-col bg-background text-foreground overflow-hidden">
+    <WorkspaceRoot>
       <ConnectionBanner />
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
         {!focusMode && !sidebarCollapsed && (
@@ -421,25 +422,14 @@ export function AppShell() {
               onResize={(size) => useStore.getState().setSidebarWidth(Math.round(size.inPixels))}
               className="bg-sidebar flex flex-col border-r"
             >
-              <div
-                className="h-12 flex items-center gap-2 px-4 font-semibold text-[0.9375rem] shrink-0 cursor-pointer hover:bg-muted/50 transition-colors"
-                onClick={() => useStore.getState().setSidebarCollapsed(true)}
-                title={withShortcutLabels("左パネルを閉じる（Ctrl+B）")}
-              >
-                <span className="flex size-8 shrink-0 items-center justify-center">
-                  <img src="/papeer.png" alt="" className="size-8 object-contain" />
-                </span>
-                Papeer
-              </div>
-              <div className="flex-1 min-h-0">
+              <WorkspaceSidebar onCollapse={() => useStore.getState().setSidebarCollapsed(true)}
+                collapseTitle={withShortcutLabels("左パネルを閉じる（Ctrl+B）")} footer={<button
+                  className="h-10 border-t flex items-center gap-2 px-4 shrink-0 text-[0.8125rem] hover:bg-muted/50 transition-colors text-left"
+                  onClick={() => setIsSettingsOpen(true)}>
+                  <Settings2 className="w-4 h-4 text-muted-foreground" /> 接続・設定
+                </button>}>
                 <LibrarySidebar />
-              </div>
-              <button
-                className="h-10 border-t flex items-center gap-2 px-4 shrink-0 text-[0.8125rem] hover:bg-muted/50 transition-colors text-left"
-                onClick={() => setIsSettingsOpen(true)}
-              >
-                <Settings2 className="w-4 h-4 text-muted-foreground" /> 接続・設定
-              </button>
+              </WorkspaceSidebar>
             </ResizablePanel>
             <ResizableHandle className="w-1 bg-border hover:bg-primary/60 transition-colors cursor-col-resize" />
           </>
@@ -470,8 +460,7 @@ export function AppShell() {
           <ReferenceReturnBar />
 
           <Tabs value={shownTab} onValueChange={(value) => setActiveTab(String(value))} className="flex-1 flex flex-col min-h-0 gap-0">
-            <div hidden={focusMode} className="border-b px-4 shrink-0 bg-background/50">
-              <TabsList variant="line" className="h-10 bg-transparent border-b-0 space-x-2">
+            <WorkspaceTabList hidden={focusMode}>
                 <TabsTrigger value="reader" title={withShortcutLabels("Ctrl+1")}>{caps.notebook ? "ノート" : "本文"}</TabsTrigger>
                 {tabAvailable(caps, "summary") && <TabsTrigger value="summary" title={withShortcutLabels("Ctrl+2")}>サマリー</TabsTrigger>}
                 {tabAvailable(caps, "chat") && <TabsTrigger value="chat" title={withShortcutLabels("Ctrl+3")}>
@@ -485,8 +474,7 @@ export function AppShell() {
                 {tabAvailable(caps, "notes") && <TabsTrigger value="notes" title={withShortcutLabels("Ctrl+4")}>メモ</TabsTrigger>}
                 {tabAvailable(caps, "sticky-notes") && <TabsTrigger value="sticky-notes" title={withShortcutLabels("Ctrl+5")}>付箋</TabsTrigger>}
                 {tabAvailable(caps, "references") && <TabsTrigger value="references" title={withShortcutLabels("Ctrl+6")}>論文マップ</TabsTrigger>}
-              </TabsList>
-            </div>
+            </WorkspaceTabList>
 
             <div className="relative flex-1 flex flex-col min-h-0">
               {!activePaperId && !uiStateLoaded ? <StartupReader /> : (
@@ -531,6 +519,6 @@ export function AppShell() {
       <Lightbox />
       <TranslationDialogHost />
       <DropOverlay />
-    </div>
+    </WorkspaceRoot>
   );
 }
