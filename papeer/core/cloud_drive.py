@@ -140,6 +140,9 @@ def snapshot(lib: Library, target: Path, cancel) -> dict:
     atomic_write_text(target / "library-data.json", json.dumps(tables, ensure_ascii=False,
         default=lambda value: {"binary_hex": value.hex()}))
     papers = tables.get("papers", [])
+    operations = [json.loads(row["operation"]) for row in tables.get("web_annotation_ops", [])]
+    web_origins = {op["stroke"]["id"]: op["source_sha256"] for op in operations if op["action"] == "add"}
+    browser_ink = {"version": 1, "pages": {}, "applied": [op["id"] for op in operations]}
     for paper in papers:
         check_cancel(cancel)
         paper_id = paper["id"]
@@ -148,19 +151,22 @@ def snapshot(lib: Library, target: Path, cancel) -> dict:
             if not source_pdf.is_file():
                 continue
             strokes, highlights = lib.ink_by_page(paper_id, side), lib.highlights_by_page(paper_id, side)
+            if web_origins:
+                with source_pdf.open("rb") as stream:
+                    source_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+                # Even previously imported Web strokes must not drift onto a regenerated PDF.
+                # Keep the PC database and ledger intact; only this browser snapshot is filtered.
+                strokes = {page: [s for s in items if web_origins.get(s["id"], source_sha) == source_sha]
+                           for page, items in strokes.items()}
+            for page in strokes.keys() | highlights.keys():
+                browser_ink["pages"][f"{paper_id}/{side}/{page}"] = {
+                    "strokes": strokes.get(page, []), "highlights": highlights.get(page, [])}
             if strokes or highlights:
                 dest = target / "web" / paper_id / f"{side}-annotated.pdf"
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_bytes(dest, annotated_pdf(source_pdf, strokes, highlights, stable_id=True))
     # The editable browser reader uses the original PDF with the same vector strokes as the PC.
     # Baked PDFs remain available as downloads and for older browser releases.
-    browser_ink = {"version": 1, "pages": {}, "applied": [row["id"] for row in tables.get("web_annotation_ops", [])]}
-    for paper in papers:
-        for side in ("original", "translated"):
-            ink, highlights = lib.ink_by_page(paper["id"], side), lib.highlights_by_page(paper["id"], side)
-            for page in ink.keys() | highlights.keys():
-                browser_ink["pages"][f"{paper['id']}/{side}/{page}"] = {
-                    "strokes": ink.get(page, []), "highlights": highlights.get(page, [])}
     atomic_write_text(target / "web-annotations.json", json.dumps(browser_ink, ensure_ascii=False))
     return {"version": 1, "items": papers, "attachments": tables.get("attachments", [])}
 

@@ -86,6 +86,20 @@ def test_other_pdf_version_or_page_does_not_receive_ink(setup):
     assert [s["id"] for s in lib.ink(paper, "translated", 1)] == ["pc"]
 
 
+def test_regenerated_pdf_does_not_display_previously_imported_web_ink(setup, tmp_path):
+    lib, paper, files, op = setup
+    added = op(); apply(lib, added)
+    with pymupdf.open(files.translated_pdf) as pdf:
+        pdf[0].insert_text((40, 80), "Regenerated translation")
+        pdf.saveIncr()
+    target = tmp_path / "new-snapshot"; target.mkdir()
+    snapshot(lib, target, threading.Event())
+    exported = json.loads((target / "web-annotations.json").read_text("utf-8"))
+    assert [s["id"] for s in exported["pages"][f"{paper}/translated/1"]["strokes"]] == ["pc"]
+    assert len(lib.ink(paper, "translated", 1)) == 2  # Preserve PC data and the recovery ledger.
+    assert added["id"] in exported["applied"]
+
+
 def test_invalid_operations_do_not_partially_apply_or_delete_pc_ink(setup):
     lib, paper, _, op = setup
     with pytest.raises(ValueError):
