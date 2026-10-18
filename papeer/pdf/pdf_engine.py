@@ -798,6 +798,11 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
             raster_images = []
             for item in page.get_image_info():
                 image = fitz.Rect(item["bbox"])
+                # A scanned page is the background beneath OCR text, not an illustration
+                # to flow around. Actual OCR figures remain protected by page_blocks.
+                if (any(entry["page"] == number + 1 for entry in document.get("ocr_applied", []))
+                        and (image & bounds).get_area() >= bounds.get_area() * .9):
+                    continue
                 if raster_crosses_prose(page, image):
                     continue
                 if not any((image & rect).get_area() >= image.get_area() * .95 for rect in inline_ink):

@@ -773,6 +773,7 @@ class CliSafetyTests(unittest.TestCase):
             self.assertEqual(env.get("KEEP_THIS"), "1")
             self.assertFalse([name for name in env if name.upper().startswith(("PAPEER_", "PAPERDESK_"))])
 
+    @patch("papeer.providers.common._windows", new=lambda: True)
     def test_script_shims_run_their_js_entry_with_node_or_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
@@ -806,6 +807,7 @@ class CliSafetyTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, r"agyの実行ファイル\(\.exe\)が必要.*pnpm・yarn"):
                     agy.command()
 
+    @patch("papeer.providers.common._windows", new=lambda: True)
     def test_program_named_in_npm_and_pnpm_shims_runs_directly(self):
         """Without the known npm entry, the program on the shim's %* line runs (JS with node, .exe as it is)."""
         with tempfile.TemporaryDirectory() as directory:

@@ -107,13 +107,11 @@ def test_a_long_path_is_never_truncated_and_a_too_long_one_is_refused():
 
 
 def test_a_folder_with_a_percent_sign_cannot_go_into_an_expandable_value():
-    store = FakeStore(PathValue(r"C:\Tools", REG_EXPAND_SZ))
+    directory = r"C:\100%\sidecar"
     with pytest.raises(CliError, match="%"):
-        run(store, executable=Path(r"C:\100%\sidecar\papeer-cli.exe"))
-    assert store.writes == []
-    plain = FakeStore(PathValue(r"C:\Tools", REG_SZ))
-    run(plain, executable=Path(r"C:\100%\sidecar\papeer-cli.exe"))
-    assert plain.value.text == r"C:\Tools;C:\100%\sidecar"
+        setup_path.with_directory(PathValue(r"C:\Tools", REG_EXPAND_SZ), directory, ENVIRON)
+    plain = setup_path.with_directory(PathValue(r"C:\Tools", REG_SZ), directory, ENVIRON)
+    assert plain == PathValue(r"C:\Tools;C:\100%\sidecar", REG_SZ)
 
 
 def test_an_unnotified_broadcast_is_reported_but_the_change_stays():

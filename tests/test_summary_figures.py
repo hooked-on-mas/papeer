@@ -205,14 +205,12 @@ def test_article_only_passes_grounded_assets_to_both_stages(tmp_path):
     with patch.object(library, "document", return_value=document):
         PaperService(library, provider, threading.Event()).article(paper_id)
     assert len(provider.inputs) == 2
+    [image_path] = files.summary_images()
     for data in provider.inputs:
         assert data.count("![figure") == 1
         assert "Single attention and multi-head attention." in data
-        assert any("](media/p1i1.png)" in line
+        assert any(f"](media/{image_path.name})" in line
                    and " — Figure 2: Single attention and multi-head attention." in line
                    for line in data.splitlines())
-        assert "p1i2.png" not in data
-        assert "p1i3.png" not in data
-    assert len(files.summary_images()) == 1
-    with fitz.open(files.summary_images()[0]) as image:
+    with fitz.open(image_path) as image:
         assert image[0].rect.width > image[0].rect.height * 2

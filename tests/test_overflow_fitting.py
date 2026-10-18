@@ -144,11 +144,24 @@ def test_overflow_warning_estimates_a_length_that_fits(tmp_path):
 
 
 def test_a_box_too_small_for_any_readable_length_has_no_estimate(tmp_path):
-    blocks = fenced("b", [40, 100, 245, 111])
+    # Even the compact leading for short equation lead-ins cannot fit one readable line.
+    blocks = fenced("b", [40, 100, 245, 108])
     blocks[1]["text"] = "where x is the state and u is the input of the system"
     report, _ = build(tmp_path, blocks, {"b": japanese(60)})
     [warning] = report["readability_warnings"]
     assert warning["char_budget"] is None and warning["chars"] == 60
+
+
+def test_compact_leading_budget_fits_a_readable_short_equation_lead_in(tmp_path):
+    blocks = fenced("b", [40, 100, 245, 111])
+    blocks[1]["text"] = "where x is the state and u is the input of the system"
+    report, _ = build(tmp_path, blocks, {"b": japanese(60)})
+    [warning] = report["readability_warnings"]
+    assert "b" in report["compact_blocks"]
+    assert 0 < warning["char_budget"] < 60
+    report, spans = build(tmp_path, blocks, {"b": japanese(warning["char_budget"])}, "budget.pdf")
+    assert report["readability_warnings"] == []
+    assert min(size for _, size in spans) >= 8
 
 
 def test_a_warning_names_the_translation_block_of_a_continued_paragraph(tmp_path):

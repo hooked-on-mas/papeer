@@ -224,6 +224,22 @@ def test_japanese_with_windows_ocr(tessdata, tmp_path):
     assert not re.search(r"[぀-鿿] [぀-鿿]", text)
 
 
+def test_scanned_background_is_not_an_obstacle_to_saved_ocr_text(tmp_path):
+    source = scan_pdf(tmp_path, "synth_en_2col")
+    with fitz.open(source) as pdf:
+        width, height = pdf[0].rect.width, pdf[0].rect.height
+    document = {"title": "Saved OCR", "page_count": 1, "pages": [{"number": 1, "width": width, "height": height}],
+                "ocr_applied": [{"page": 1}], "blocks": [{"id": "p1b1", "page": 1, "kind": "text",
+                    "bbox": [40, 60, 280, 120], "text": "A paragraph recovered by OCR.", "font_size": 10,
+                    "formulas": []}]}
+    output = tmp_path / "translated.pdf"
+    report = build_translated_pdf(source, document, {"p1b1": "保存したOCRから訳文を表示します。"}, output)
+    assert report["pages"] == 1
+    with fitz.open(output) as pdf:
+        assert "保存したOCRから訳文を表示します。" in pdf[0].get_text()
+        assert pdf[0].get_images(), "the scan remains beneath the translated text"
+
+
 def test_translated_pdf_of_an_ocr_page(tessdata, tmp_path):
     source = scan_pdf(tmp_path, "synth_en_2col", 1.5)
     document = extract_pdf(source, options(tessdata))

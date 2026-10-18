@@ -466,7 +466,8 @@ class WorkflowTests(unittest.TestCase):
                          "pathlib.Path(out).write_text('回答',encoding='utf-8')\n", "utf-8")
         settings = Settings(provider_options={"codex": {"cli_path": str(shim)}}, timeout_seconds=30)
         node = lambda name, *args, **kwargs: sys.executable if name == "node" else None  # noqa: E731
-        with patch("shutil.which", side_effect=node), \
+        with patch("papeer.providers.common._windows", return_value=True), \
+                patch("shutil.which", side_effect=node), \
                 patch.dict(os.environ, {"PAPEER_TOKEN": "sidecar-token", "KEEP_THIS": "1"}):
             result = create_provider(settings, self.cancel).generate(
                 "read", "日本語 & test `literal` $(literal) %PATH% ^& |")

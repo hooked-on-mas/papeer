@@ -61,6 +61,7 @@ def test_bump_rewrites_only_the_project_version(repo):
     major, minor, patch = parse_version(current)
     target = f"{major}.{minor + 1}.0"
     before = {spot.path: (repo / spot.path).read_bytes().decode("utf-8") for spot in SPOTS}
+    expected_notes = release_notes((repo / CHANGELOG).read_text(encoding="utf-8"), "Unreleased")
 
     bump(target, root=repo, today=date(2026, 10, 1), out=io.StringIO())
 
@@ -76,7 +77,7 @@ def test_bump_rewrites_only_the_project_version(repo):
     assert f"[Unreleased]: https://github.com/fukao-m/paperdesk/compare/v{target}...HEAD" in log
     assert f"[{target}]: https://github.com/fukao-m/paperdesk/releases/tag/v{target}" in log
     notes = release_notes(log, target)
-    assert notes.startswith("### ") and "[Unreleased]" not in notes and "## [" not in notes
+    assert notes == expected_notes and "[Unreleased]" not in notes and "## [" not in notes
 
 
 def test_bump_refuses_a_lower_or_the_same_version_and_writes_nothing(repo):

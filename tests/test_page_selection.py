@@ -33,7 +33,9 @@ from test_workflow import FakeProvider
 # as sent: with the shared Japanese style section (_translation_style.txt) filled in.
 # 2026-09-28: the style section moved out to be shared with the recovery prompts (the same
 # instructions reordered, with small wording changes) without raising BUILTIN_PROMPT_REVISION.
-BUILTIN_TRANSLATION_PROMPT_SHA256 = 'd2220d95f79a04f2e08dbf26051f2b40bfcfe99b66c951e31e019918d25aad7c'
+# 2026-10-17: explicitly include algorithm instructions in the existing requirement to
+# translate all prose. Keep revision 1: this clarification does not invalidate saved translations.
+BUILTIN_TRANSLATION_PROMPT_SHA256 = 'a5a92afd442cc8a6288343b142829ffc4e36047ba1c4a997a8249927490b0417'
 
 
 class PageSelectionTests(unittest.TestCase):

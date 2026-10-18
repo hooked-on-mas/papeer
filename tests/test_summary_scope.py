@@ -131,14 +131,16 @@ def test_selected_pages_exclude_other_text_and_figures_and_preserve_source_numbe
     assert response.status_code == 200
     wait_for_job(response.json()["job_id"])
     assert len(provider.calls) == 2
+    image_ids = {block["page"]: block["id"] for block in lib.document(identity)["blocks"]
+                 if block.get("kind") == "figure"}
     for _, data in provider.calls:
         for page in [3, 4, 7]:
             assert f"UNIQUE_PAGE_{page:03d}" in data
             assert f"[{identity}:p{page}]" in data
-            assert f"media/p{page}i1.png" in data
+            assert f"media/{image_ids[page]}.png" in data
         for page in [1, 2, 5, 6, 8, 30]:
             assert f"UNIQUE_PAGE_{page:03d}" not in data
-            assert f"media/p{page}i1.png" not in data
+            assert f"media/{image_ids[page]}.png" not in data
     assert "partial-document summary" in provider.calls[-1][0]
     article = PaperFiles(lib.folder(identity)).article_md.read_text("utf-8")
     assert article.startswith("> サマリー対象：PDF p.3-4, 7（全30ページ中3ページ）")

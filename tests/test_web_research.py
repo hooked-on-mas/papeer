@@ -1,11 +1,14 @@
 """Research keeps its evidence; PDF import and summary have independent outcomes."""
 import io
 import json
+import re
 import shutil
 import socket
 import threading
 import time
 from types import SimpleNamespace
+
+from _summary_responses import clean_summary_response
 
 from fastapi.testclient import TestClient
 import pymupdf as fitz
@@ -44,6 +47,21 @@ def evidence(**updates):
                       "version": "著者最終稿"}], **updates}
 
 
+def summary_reply(data):
+    try:
+        request = json.loads(data)
+    except ValueError:
+        request = None
+    if isinstance(request, dict) and "source_pages" in request and "article" in request:
+        answer = json.loads(clean_summary_response(data))
+        for point in answer.get("coverage", []):
+            source = next(unit for unit in request["source_pages"] if unit["page"] == point["page"])
+            point.update(evidence_id=source["evidence_spans"][0]["id"], evidence="")
+        return json.dumps(answer)
+    citations = list(dict.fromkeys(re.findall(r"\[[a-f0-9]{32}:p\d+\]", data)))
+    return "PDFの本文に基づく回答です。" + (" " + " ".join(citations) if citations else "")
+
+
 class ResearchProvider(ProviderBackend):
     spec = ProviderSpec("test", "Test", "Test", "cli", web_search=True)
 
@@ -60,7 +78,7 @@ class ResearchProvider(ProviderBackend):
             if isinstance(self.summary_failure, Cancelled):
                 self.cancel.set()
             raise self.summary_failure
-        return "PDFの本文に基づく回答です。"
+        return summary_reply(data)
 
     def search_web(self, instruction, data, schema=None):
         self.web.append((instruction, json.loads(data)))
@@ -848,14 +866,21 @@ def test_cli_research_chat_and_pdf_import_share_the_same_api(api_env, monkeypatc
 
     def execute(**kwargs):
         prompt = kwargs["prompt_bytes"].decode("utf-8")
+        if provider_id == "antigravity":
+            prompt = json.loads(prompt)["message"]["content"]
         command = kwargs["command"]
         searching = ((command[command.index("--tools") + 1] != "") if provider_id == "claude"
                      else command[command.index("--agent") + 1] == "papeer-web")
         if not searching:
             assert "--dangerously-skip-permissions" not in command
+            payload, _ = json.JSONDecoder().raw_decode(prompt.split("DOCUMENT_DATA_JSON:\n", 1)[1])
+            answer = summary_reply(payload if isinstance(payload, str) else json.dumps(payload))
             if provider_id == "claude":
-                return json.dumps({"type": "result", "is_error": False, "result": "本文から作成したサマリー。"}), ""
-            return json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "本文から作成したサマリー。"}}), ""
+                result = {"type": "result", "is_error": False, "result": answer}
+                if "--json-schema" in command:
+                    result["structured_output"] = json.loads(answer)
+                return json.dumps(result), ""
+            return json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": answer}}), ""
         result = ({"answer": "外部情報を確認しました [Web 1]。", "sources": evidence()["sources"], "papers": [evidence()]}
                   if "Answer the question in Japanese" in prompt else evidence())
         if provider_id == "claude":
@@ -878,5 +903,5 @@ def test_cli_research_chat_and_pdf_import_share_the_same_api(api_env, monkeypatc
     imported = import_reference(client, source, key, pdf_index=0, create_summary=True)
     assert imported.status == "succeeded", imported.error
     assert imported.result["record"]["paper_id"] != source and imported.result["added"]
-    assert imported.result["record"]["has_summary"]
+    assert imported.result["record"]["has_summary"], imported.result["record"]["summary_error"]
     assert len(lib.papers()) == 2
