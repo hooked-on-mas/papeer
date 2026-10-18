@@ -28,4 +28,3 @@ class InkStroke(BaseModel):
             if abs(c[0] - b[0] - d[0] + a[0]) > 1e-6 or abs(c[1] - b[1] - d[1] + a[1]) > 1e-6:
                 raise ValueError("テキストの枠座標が不正です。")
         return self
-

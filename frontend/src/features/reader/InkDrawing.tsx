@@ -25,4 +25,3 @@ export function InkDrawing({ stroke, ratio, inkColor = asPicked }: { stroke: Ink
     : <polyline points={stroke.points.map(([x, y]) => `${x * 1000},${y * height}`).join(" ")} fill="none" stroke={color}
       strokeWidth={stroke.width * 1000} strokeLinecap="round" strokeLinejoin="round" opacity={opacity} />;
 }
-
