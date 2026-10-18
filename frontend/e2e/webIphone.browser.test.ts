@@ -163,6 +163,49 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await page.getByRole("button", { name: "幅に合わせる", exact: true }).tap();
     await page.getByRole("button", { name: "日本語訳を表示", exact: true }).tap();
     await ready();
+    // WebKit's automation has no multi-touch input API. Exercise its actual TouchEvent
+    // listeners with cancelable events; real two-finger input is covered by Chromium below.
+    const headerBeforePinch = (await page.getByLabel("本文の表示操作").boundingBox())!;
+    const syntheticPinch = await translated.locator(".web-pdf-surface").evaluate(surface => {
+      const bounds = surface.getBoundingClientRect(), x = bounds.left + 190, y = bounds.top + 220;
+      const send = (type: string, half: number) => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "touches", { value: type === "touchend" || type === "touchcancel" ? []
+          : [{ identifier: 1, clientX: x - half, clientY: y }, { identifier: 2, clientX: x + half, clientY: y }] });
+        return !surface.dispatchEvent(event);
+      };
+      const start = send("touchstart", 50), move = send("touchmove", 100);
+      const preview = getComputedStyle(surface).transform;
+      const end = send("touchend", 0);
+      return { start, move, end, preview };
+    });
+    assert.ok(syntheticPinch.start && syntheticPinch.move && syntheticPinch.end, "PDF pinch cancels viewport zoom");
+    assert.match(syntheticPinch.preview, /^matrix\(2,/);
+    await ready();
+    assert.equal(await page.getByLabel("表示倍率").inputValue(), "2");
+    const headerAfterPinch = (await page.getByLabel("本文の表示操作").boundingBox())!;
+    assert.deepEqual(headerAfterPinch, headerBeforePinch, "pinch leaves the header in place at its original size");
+    const anchoredScroll = await translated.evaluate(element => ({ left: element.scrollLeft, top: element.scrollTop }));
+    assert.ok(anchoredScroll.left >= 180 && anchoredScroll.top >= 210, "the document stays anchored under the pinch midpoint");
+    await page.getByRole("button", { name: "原文を表示", exact: true }).tap();
+    await ready(original);
+    assert.equal(await page.getByLabel("表示倍率").inputValue(), "2", "language switching keeps the zoom");
+    assert.deepEqual(await page.getByLabel("本文の表示操作").boundingBox(), headerBeforePinch);
+    await capture("pinch-original-css");
+    await page.getByRole("button", { name: "日本語訳を表示", exact: true }).tap();
+    await ready(); await capture("pinch-japanese-css");
+    assert.equal(await page.getByLabel("表示倍率").inputValue(), "2");
+    await translated.locator(".web-pdf-surface").evaluate(surface => {
+      for (const type of ["touchstart", "touchmove", "touchcancel"]) {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "touches", { value: [{ identifier: 1, clientX: 100, clientY: 250 },
+          { identifier: 2, clientX: type === "touchmove" ? 300 : 200, clientY: 250 }] });
+        surface.dispatchEvent(event);
+      }
+    });
+    assert.equal(await translated.locator(".web-pdf-surface").evaluate(surface => surface.style.transform), "", "interrupted pinch clears its preview");
+    assert.equal(await page.getByLabel("表示倍率").inputValue(), "2", "cancelled pinch keeps the previous zoom");
+    await page.getByRole("button", { name: "幅に合わせる", exact: true }).tap(); await ready();
     await page.getByRole("button", { name: "次のページ", exact: true }).tap();
     await translated.locator('[data-page-number="2"] canvas').waitFor();
     await page.getByRole("button", { name: "前のページ", exact: true }).tap();
@@ -275,6 +318,47 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
       assert.ok(await translated.evaluate(element => element.scrollTop) > 80);
       assert.equal(await page.locator("[data-ink-id]").count(), drawn);
+      // Playwright's touch IDs are separate from CDP's. Use mouse clicks after CDP input.
+      if (!await menu.evaluate(element => (element.parentElement as HTMLDetailsElement).open)) await menu.click();
+      await page.getByRole("button", { name: "書き込みを終了", exact: true }).click();
+      await page.getByRole("button", { name: "幅に合わせる", exact: true }).click(); await ready();
+      await translated.evaluate(element => element.scrollTo(0, 0));
+      const header = (await page.getByLabel("本文の表示操作").boundingBox())!;
+      const viewportScale = await page.evaluate(() => visualViewport!.scale);
+      const start = (await translated.boundingBox())!;
+      const centerX = start.x + 190, centerY = start.y + 200;
+      const points = (half: number) => [{ id: 1, x: centerX - half, y: centerY }, { id: 2, x: centerX + half, y: centerY }];
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: points(50) });
+      for (const half of [60, 75, 90, 100]) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: points(half) });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await ready();
+      assert.equal(await page.getByLabel("表示倍率").inputValue(), "2", "real two-finger input enlarges the PDF");
+      assert.equal(await page.evaluate(() => visualViewport!.scale), viewportScale, "real pinch does not enlarge the viewport");
+      assert.deepEqual(await page.getByLabel("本文の表示操作").boundingBox(), header);
+      await page.getByRole("button", { name: "原文を表示", exact: true }).click(); await ready(original);
+      assert.equal(await page.getByLabel("表示倍率").inputValue(), "2");
+      await capture("native-pinch-language-css");
+      await page.getByRole("button", { name: "日本語訳を表示", exact: true }).click(); await ready();
+      await translated.evaluate(element => element.scrollTo(0, 0));
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ id: 1, x: centerX, y: centerY + 100 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ id: 1, x: centerX, y: centerY - 50 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      assert.ok(await translated.evaluate(element => element.scrollTop) > 80, "one finger still scrolls the enlarged PDF");
+      assert.deepEqual(await page.getByLabel("本文の表示操作").boundingBox(), header);
+      await menu.click(); await page.getByRole("button", { name: "書き込みを開始", exact: true }).click();
+      await page.getByRole("button", { name: "ペン", exact: true }).click();
+      await page.getByLabel("書き込み設定", { exact: true }).click();
+      await page.getByLabel("指でも書く", { exact: true }).check();
+      await page.getByLabel("書き込み設定", { exact: true }).click();
+      const beforeWritingPinch = await page.locator("[data-ink-id]").count();
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: points(50) });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: points(75) });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await ready();
+      assert.equal(await page.getByLabel("表示倍率").inputValue(), "3");
+      assert.equal(await page.locator("[data-ink-id]").count(), beforeWritingPinch, "pinching in finger-writing mode adds no accidental ink");
+      assert.equal(await page.evaluate(() => visualViewport!.scale), viewportScale);
+      await capture("native-pinch-writing-css");
     }
     await menu.click();
     await page.getByRole("button", { name: "Google接続メニュー", exact: true }).click();

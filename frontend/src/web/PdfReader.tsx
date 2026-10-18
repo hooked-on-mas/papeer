@@ -10,6 +10,7 @@ import { AlertCircle, Check, Eraser, Hand, Highlighter, Loader2, Pen, Redo2, Ref
 import { prepareWebNavigation, registerNavigationGuard, textDrafts, type TextDraft } from "./textDrafts";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { PHONE_LAYOUT_QUERY } from "./phoneLayout";
+import { usePdfPinchZoom } from "./usePdfPinchZoom";
 
 type Tool = "read" | "pen" | "highlighter" | "eraser" | "text";
 
@@ -19,9 +20,9 @@ const SavedInk = memo(function SavedInk({ ink, ratio }: { ink: PageInk; ratio: n
     {ink.strokes.map(stroke => <g key={stroke.id} data-ink-id={stroke.id}><InkDrawing stroke={stroke} ratio={ratio} /></g>)}</>;
 });
 
-export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 1, navigation = true, editing = true }: {
+export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 1, onZoom, navigation = true, editing = true }: {
   url: string; target?: AnnotationTarget; store?: AnnotationStore; pageNumber?: number;
-  onPageCount?: (count: number) => void; zoom?: number; navigation?: boolean; editing?: boolean;
+  onPageCount?: (count: number) => void; zoom?: number; onZoom?: (zoom: number) => void; navigation?: boolean; editing?: boolean;
 }) {
   const [pages, setPages] = useState(0), [localPage, setPage] = useState(1);
   const page = pageNumber ?? localPage;
@@ -30,6 +31,7 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
   const [tool, setTool] = useState<Tool>("pen"), [color, setColor] = useState("#d93c36"), [inkWidth, setInkWidth] = useState(.003);
   const [finger, setFinger] = useState(false);
   const container = useRef<HTMLDivElement>(null);
+  usePdfPinchZoom(container, zoom, onZoom, `${url}:${page}`);
   useEffect(() => {
     if (!container.current) return;
     const observer = new ResizeObserver(([entry]) => setWidth(Math.max(1, entry.contentRect.width)));
@@ -64,7 +66,7 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
     {store && anchor ? <EditablePage key={`${url}:${page}`} store={store} anchor={anchor} ratio={ratio} pageWidth={drawnWidth}
       tool={editing ? tool : "read"} editing={editing} setTool={setTool} color={color} setColor={setColor} width={inkWidth} setWidth={setInkWidth} finger={finger} setFinger={setFinger}
       enabled={rendered === render}>{document}</EditablePage>
-      : <>{editing && <p className="ink-help">書き込みを有効にするには、最新版のPCアプリからアップロードし、原文または日本語訳を開いてください。</p>}{document}</>}
+      : <>{editing && <p className="ink-help">書き込みを有効にするには、最新版のPCアプリからアップロードし、原文または日本語訳を開いてください。</p>}<div className="web-pdf-surface" style={{ width: drawnWidth, minHeight: drawnWidth * ratio }}>{document}</div></>}
   </div>;
 }
 
@@ -122,7 +124,7 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
   const down = (e: PointerEvent<SVGSVGElement>) => {
     if (e.pointerType === "touch" && !finger) {
       // Drawing disables browser panning for *all* pointer types, including Pencil.
-      // Route a single finger to the PDF scroller instead; native pinch zoom stays available.
+      // Route a single finger to the PDF scroller; the PDF host handles two-finger zoom.
       if (!gesture.current) { touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); e.currentTarget.setPointerCapture(e.pointerId); }
       return;
     }
@@ -241,7 +243,10 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
       } catch { /* Store reports the error. */ }
     }}><label>文字メモ <textarea aria-label="PDFに追加するメモ" value={text.value} maxLength={2000} autoFocus onChange={e => editText({ ...text, value: e.target.value })} /></label>
       <button type="submit" disabled={!text.value.trim()}>メモを保存</button><button type="button" onClick={() => editText(undefined)}>キャンセル</button></form>}
-    <div className="ink-page" style={{ width: pageWidth }}>{children}
+    <div className="ink-page web-pdf-surface" style={{ width: pageWidth, minHeight: pageWidth * ratio }}
+      onTouchStartCapture={event => {
+        if (event.touches.length > 1) { gesture.current = undefined; touches.current.clear(); setPreview(failed.current); }
+      }}>{children}
       {enabled && <svg className={`web-ink ${tool === "read" ? "reading" : "writing"}`} data-testid="web-ink" aria-label="PDF書き込み面"
         viewBox={`0 0 1000 ${1000 * ratio}`} style={{ touchAction: tool === "read" ? "auto" : finger ? "none" : "pinch-zoom" }}
         onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={cancel} onLostPointerCapture={cancel}>

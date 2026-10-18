@@ -44,6 +44,7 @@
 .asset-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; font-size: .75rem; padding-bottom: 12px; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .asset-heading a { white-space: nowrap; }
 .pdf { width: 100%; margin: 0; }
+.web-pdf-surface { touch-action: pan-x pan-y; }
 .pdf-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-bottom: 12px; font-size: .75rem; }
 .pdf-tools input { width: 58px; padding: 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--background); }
 .react-pdf__Page { box-shadow: 0 2px 8px #0002; }
