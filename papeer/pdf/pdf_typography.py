@@ -392,18 +392,20 @@ def reading_space(block: dict, style: TextStyle, blocks: list[dict], bounds: fit
     barriers += obstacles
     fixed = [fitz.Rect(b["bbox"]) for b in blocks
              if b.get("kind") in {"formula", "table", "reference", "figure", "algorithm"}] + obstacles
-    fixed_boxes = {tuple(box) for box in fixed}
+    fixed_boxes = {(box.x0, box.y0, box.x1, box.y1) for box in fixed}
     for other in barriers:
         if other.x1 <= rect.x0 or other.x0 >= rect.x1:
             continue
         if other.y1 <= source.y0:
             gap = source.y0 - other.y1
             padding = max(3, gap / 2 - 3)
-            top = max(top, other.y1 + padding if tuple(other) in fixed_boxes else (other.y1 + source.y0) / 2 + min(3, gap / 4))
+            top = max(top, other.y1 + padding if (other.x0, other.y0, other.x1, other.y1) in fixed_boxes
+                      else (other.y1 + source.y0) / 2 + min(3, gap / 4))
         elif other.y0 >= source.y1:
             gap = other.y0 - source.y1
             padding = max(3, gap / 2 - 3)
-            bottom = min(bottom, other.y0 - padding if tuple(other) in fixed_boxes else (source.y1 + other.y0) / 2 - min(3, gap / 4))
+            bottom = min(bottom, other.y0 - padding if (other.x0, other.y0, other.x1, other.y1) in fixed_boxes
+                         else (source.y1 + other.y0) / 2 - min(3, gap / 4))
         else:
             # A figure or neighboring box alongside this text is not free space.
             top, bottom = max(top, source.y0), min(bottom, source.y1)

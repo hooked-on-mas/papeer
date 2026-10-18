@@ -118,6 +118,8 @@ class WindowsUserPath:
     TIMEOUT_MS = 5000
 
     def read(self) -> PathValue | None:
+        if sys.platform != "win32":
+            raise OSError("Windows PATH storage is only available on Windows")
         import winreg
 
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.SUBKEY, 0, winreg.KEY_READ) as key:
@@ -130,12 +132,16 @@ class WindowsUserPath:
         return PathValue(text, kind)
 
     def write(self, value: PathValue) -> None:
+        if sys.platform != "win32":
+            raise OSError("Windows PATH storage is only available on Windows")
         import winreg
 
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.SUBKEY, 0, winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, self.NAME, 0, value.kind, value.text)
 
     def notify(self) -> bool:
+        if sys.platform != "win32":
+            return False
         import ctypes
 
         user32 = ctypes.WinDLL("user32", use_last_error=True)

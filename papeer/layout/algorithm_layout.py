@@ -66,7 +66,7 @@ def unruled_algorithm_steps(items):
             box = fitz.Rect(chunk[0]["bbox"])
             for line in chunk[1:]:
                 box |= fitz.Rect(line["bbox"])
-            value = dict(item, lines=chunk, bbox=list(box))
+            value = dict(item, lines=chunk, bbox=[box.x0, box.y0, box.x1, box.y1])
             if identity is not None:
                 value["algorithm_step"] = identity
                 value["algorithm_right"] = ranges[int(identity.split("s")[0][1:])][1]
@@ -83,7 +83,8 @@ def unruled_algorithm_steps(items):
         else:
             target = grouped[identity]
             target["lines"].extend(item["lines"])
-            target["bbox"] = list(fitz.Rect(target["bbox"]) | fitz.Rect(item["bbox"]))
+            box = fitz.Rect(target["bbox"]) | fitz.Rect(item["bbox"])
+            target["bbox"] = [box.x0, box.y0, box.x1, box.y1]
     for item in grouped.values():
         item["algorithm_size"] = Counter(round(s["size"], 1) for line in item["lines"]
                                          for s in line["spans"] for c in s["chars"] if c["c"].strip()).most_common(1)[0][0]

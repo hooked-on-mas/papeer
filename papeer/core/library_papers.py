@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+from typing import TYPE_CHECKING
 import unicodedata
 import uuid
 
@@ -52,6 +53,10 @@ def search_forms(query: str) -> list[str]:
 
 class PaperRecords(LibraryBase):
     """The papers of the library (papers, pages) and their files."""
+
+    if TYPE_CHECKING:
+        # ItemRelations supplies this method in storage.Library's combined mixins.
+        def owned_notebooks(self, owner_id: str) -> list[str]: ...
 
     def import_pdf(self, source: Path, collection_name: str = "", ocr: OcrRun | None = None) -> tuple[str, bool]:
         """Add a PDF (or find the paper it already is); (paper ID, whether it is new).

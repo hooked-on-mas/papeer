@@ -180,20 +180,20 @@ def tighten_type3_geometry(page, items):
                         x, y = char["origin"]
                         box = bounds.get((round(x, 2), round(y, 2)))
                         if box is not None:
-                            char["bbox"] = tuple(box)
+                            char["bbox"] = (box.x0, box.y0, box.x1, box.y1)
                     if char["c"].strip() or span.get("math_font") and ord(char["c"]) < 32:
                         chars.append(fitz.Rect(char["bbox"]))
             if chars:
                 box = fitz.Rect(chars[0])
                 for other in chars[1:]:
                     box |= other
-                line["bbox"] = tuple(box)
+                line["bbox"] = (box.x0, box.y0, box.x1, box.y1)
                 boxes.append(box)
         if boxes:
             box = fitz.Rect(boxes[0])
             for other in boxes[1:]:
                 box |= other
-            item["bbox"] = tuple(box)
+            item["bbox"] = (box.x0, box.y0, box.x1, box.y1)
     if names:
         _attach_unmapped_math_images(page, items, bounds)
     for item in items:
@@ -249,9 +249,10 @@ def _attach_unmapped_math_images(page, items, bounds):
                    + max(box.x0 - c["bbox"][2], c["bbox"][0] - box.x1, 0) * .1)
         index, _ = min(neighbors, key=lambda value: abs(center.y - value[1]["origin"][1])
                        + max(box.x0 - value[1]["bbox"][2], value[1]["bbox"][0] - box.x1, 0))
-        char = dict(c='\ufffc', origin=(box.x0, base["origin"][1]), bbox=tuple(box), ink_bbox=list(box))
+        coordinates = (box.x0, box.y0, box.x1, box.y1)
+        char = dict(c='\ufffc', origin=(box.x0, base["origin"][1]), bbox=coordinates, ink_bbox=list(coordinates))
         span = dict(font='PD-MathImage', flags=0, size=size, math_font=True, chars=[char])
-        items[index]["lines"].append(dict(bbox=tuple(box), spans=[span], dir=(1, 0)))
+        items[index]["lines"].append(dict(bbox=coordinates, spans=[span], dir=(1, 0)))
 
 
 def _rebuild_type3_rows(item):
@@ -295,7 +296,8 @@ def _rebuild_type3_rows(item):
             box |= fitz.Rect(char["bbox"])
         spans = [dict(font=c["font"], flags=c["flags"], size=c["size"], math_font=c["math_font"], chars=[c])
                  for c in row]
-        lines.append(dict(bbox=list(box), spans=spans, dir=(1, 0), merged=True, regions=[list(box)]))
+        coordinates = (box.x0, box.y0, box.x1, box.y1)
+        lines.append(dict(bbox=list(coordinates), spans=spans, dir=(1, 0), merged=True, regions=[list(coordinates)]))
     item["lines"] = lines
 
 
