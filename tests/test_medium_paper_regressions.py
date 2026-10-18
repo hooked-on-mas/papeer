@@ -4,8 +4,7 @@ from unittest.mock import patch
 
 import pymupdf as fitz
 
-from papeer.layout.math_layout import (_math_ranges, _text_size, _display,
-                                       annotate_math_fonts, layout_blocks)
+from papeer.layout.math_layout import (_math_ranges, _text_size, annotate_math_fonts, layout_blocks)
 from papeer.pdf.pdf_engine import _fit_around_images, _without_images, _fit_story_canvas
 from papeer.pdf.pdf_math_crops import page_glyph_bounds
 from papeer.pdf.pdf_typography import font_archive, text_html, TextStyle
