@@ -1,0 +1,32 @@
+# Web版のインストールと更新
+
+公開先は https://hooked-on-mas.github.io/papeer/ 。サーバーの追加は不要で、GitHub PagesとGoogle Drive APIを使う。
+
+## インストール
+
+- iPad・iPhone：Safariで開き、共有メニューの「ホーム画面に追加」を選ぶ。「Webアプリとして開く」があればオンにする。
+- PC・Android：画面下の「アプリとして使う」を開く。対応ブラウザーでインストールボタンが出る。出ない場合はブラウザーのメニューからインストールする。
+
+インストール後も閲覧・書き込み・Drive同期はブラウザー版と同じ。Googleログインは起動後に行い、アクセストークンを端末に永続保存しない。通常のSafariタブとホーム画面アプリでは保存領域が分かれる場合があるため、それぞれでログインする。Webからの翻訳やAI設定は提供しない。
+
+## オフラインの範囲
+
+初回オンライン起動後、アプリ本体をオフラインで開ける。PDF・ノートの一覧や本文はDriveから取得するため、閉じてからオフラインで資料を開き直す機能は提供しない。Googleログイン、資料の追加取得、Driveへの送信には通信が必要。
+
+すでに開いているPDFへの未送信の追記は、従来どおりブラウザー内に保存して再送する。再起動後はオンラインで同じライブラリにログインして再送する。文字メモは配置を確定した時点で下書き保存の対象となる。ブラウザーのサイトデータ削除やOSによる保存領域の消去には耐えない。画面に保存エラーがあるときは、閉じる前に確認する。
+
+Service Workerが保存するのは、ビルド時に列挙した公開HTML・JavaScript・CSS・フォント・アイコン・manifestだけ。Googleログイン、Drive API、PDF、ライブラリ情報、アクセストークンはキャッシュしない。汎用的なruntime cacheやAPIへの代替応答は作らない。既存の追記下書きはService Workerのキャッシュとは別で、更新時に削除しない。
+
+## 更新
+
+新しいアプリ本体がダウンロードできると更新案内を表示する。書き込みを終えてから、Papeerのタブとホーム画面アプリをすべて閉じ、開き直す。読書中の強制再読み込みや`skipWaiting`による切替は行わない。古い本体のキャッシュは、新しいWorkerの有効化時に同じ公開パスの分だけ削除する。端末の空き容量や通信の問題で準備できない場合は案内を表示し、次回起動時に再試行する。
+
+`frontend/webPwa.ts`はWebビルド限定のViteプラグイン。manifestのid/start_url/scopeとアイコン、Worker URLは相対パスで、`/papeer/`にも対応する。内容ハッシュでキャッシュを更新する。PCのTauriビルドではWorkerを出力・登録しない。外部ライブラリやサーバーは追加しない。
+
+## 検証
+
+`frontend`で`pnpm build:web`後に`node --test e2e/webPwa.browser.test.ts`。Edgeの隔離した一時プロファイルで、`/papeer/`配信、インストール条件、アイコン取得、HTTPキャッシュ無効時のオフライン起動、公開資産のみのキャッシュ、複数タブをまたぐ更新待機、下書き保持を検証する。実公開先の検証には`PAPEER_PWA_TEST_URL=https://hooked-on-mas.github.io/papeer/`を設定する。Google認証・Driveの試験リクエストにはダミー応答を使う。
+
+iPad用のmanifest、Apple touch icon、safe areaと案内を実装し、iPad相当の画面サイズも確認する。iPad実機への追加操作とSafariのGoogle認証は実機確認が別途必要。
+
+参考：[Appleのホーム画面追加手順](https://support.apple.com/ja-jp/guide/ipad/ipad8f1f7a29/ipados)、[Service Workerの更新と待機](https://web.dev/learn/pwa/update)。

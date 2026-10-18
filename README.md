@@ -6,6 +6,8 @@
 
 Windows版からGoogle Drive APIへライブラリ全体を保存し、GitHub Pages上のWeb版でPDF・手書きノート・メモ・付箋・チャットを閲覧できます。設定と配信手順は [Google Drive APIとWeb閲覧](docs/google-drive-web.md) を参照してください。
 
+Web版はiPadのホーム画面やPCへPWAとして追加できます。アプリ本体はオフラインでも開けますが、資料の取得とDrive保存には通信が必要です。[インストール・更新・オフラインの範囲](docs/web-pwa.md)。
+
 | 機能 | 内容 |
 | --- | --- |
 | 日本語訳 | PDF からテキストを抽出して AI で翻訳し、原文と同じレイアウトの日本語 PDF を生成 |

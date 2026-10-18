@@ -4,12 +4,13 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import { pdfjsLegacy } from "./vite.config.ts";
+import { webPwa } from "./webPwa.ts";
 
 export default defineConfig({
   root: path.resolve(import.meta.dirname, "web"),
   publicDir: path.resolve(import.meta.dirname, "public"),
   base: "./",
-  plugins: [react(), tailwindcss(), {
+  plugins: [react(), tailwindcss(), webPwa(), {
     name: "web-runtime-boundary",
     generateBundle() {
       for (const moduleId of this.getModuleIds()) {

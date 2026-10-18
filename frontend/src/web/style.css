@@ -1,6 +1,13 @@
 @import "../index.css";
 @source "../";
 
+.web-app { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.pwa-status { position: relative; flex-shrink: 0; font-size: .75rem; background: var(--background); }
+.pwa-status > p { padding: 6px 12px; border-top: 1px solid var(--border); }
+.pwa-install > summary { padding: 4px 12px; cursor: pointer; color: var(--muted-foreground); }
+.pwa-install-help { position: absolute; z-index: 40; bottom: 100%; right: 8px; width: min(380px, calc(100vw - 16px)); max-height: 60dvh; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--background); box-shadow: 0 4px 20px #0002; }
+.pwa-install-help p { margin: 8px 0; line-height: 1.7; }
+
 /* The desktop owns the tokens and typography; only Web layout and content live here. */
 @layer base {
   .web-app :where(button:not([data-slot])) { border: 1px solid var(--border); background: var(--background); padding: 5px 9px; border-radius: 6px; font: inherit; color: inherit; cursor: pointer; }

@@ -5,10 +5,12 @@ import { WorkspaceHeader, WorkspaceRoot } from "../components/WorkspaceChrome";
 import { Button } from "../components/ui/button";
 import { createDriveLibraryRuntime, type DriveLibraryRuntime } from "./libraryRuntime";
 import { WebLibrary } from "./WebLibrary";
+import { PwaStatus, useConnectivity } from "./PwaStatus";
 import "./style.css";
 
 const session = new DriveSession();
 function App() {
+  const online = useConnectivity();
   const [signedIn, setSignedIn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -34,12 +36,12 @@ function App() {
     if (found.length) await load(found[0].id);
   });
   const actions = <div className="header-actions">
-        {signedIn && <Button variant="outline" size="sm" disabled={busy} onClick={() => void run(async () => {
+        {signedIn && <Button variant="outline" size="sm" disabled={busy || !online} onClick={() => void run(async () => {
           const found = await session.libraries(); setLibraries(found);
           if (found.length) await load(found.some(f => f.id === selected) ? selected : found[0].id);
           else { runtime?.dispose(); setRuntime(undefined); setManifest(undefined); }
         })}>更新</Button>}
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => void login()}>{signedIn ? "再ログイン" : "Googleでログイン"}</Button>
+        <Button variant="outline" size="sm" disabled={busy || !online} onClick={() => void login()}>{signedIn ? "再ログイン" : "Googleでログイン"}</Button>
         {signedIn && <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
           runtime?.dispose(); setRuntime(undefined); session.signOut(); setSignedIn(false); setManifest(undefined); setLibraries([]); setSelected(""); setError("");
         }}>ログアウト</Button>}
@@ -55,10 +57,11 @@ function App() {
     {manifest && runtime ? <WebLibrary key={runtime.scope.sessionKey} runtime={runtime} session={session} manifest={manifest} actions={actions} /> : <main className="welcome">
       <h1>論文を選んで、読み始めよう</h1>
       <p>Windows版Papeerで保存した翻訳PDF、手書きノート、<br />メモやチャットを、Google Driveから開けます。</p>
-      {!signedIn ? <Button disabled={busy} onClick={() => void login()}>Googleでログインして開く →</Button>
+      {!signedIn ? <Button disabled={busy || !online} onClick={() => void login()}>Googleでログインして開く →</Button>
         : !busy && <p className="empty">保存されたライブラリが見つかりません。Windows版の「保存先・同期 → Google Drive API」でアップロードし、同じGoogleアカウントで開いてください。</p>}
       <div className="welcome-note">PDFへの手書き・文字メモに対応 · あなたのGoogle Driveに保存</div>
     </main>}
+    <PwaStatus online={online} />
     <footer className="site-footer"><span>{manifest ? `Drive保存 ${new Date(manifest.updated_at).toLocaleString()}` : "Papeer · Web"}</span>
       <span><a href="https://github.com/hooked-on-mas/papeer" target="_blank" rel="noreferrer">ソースコード</a> · <a href="./licenses.md" target="_blank" rel="noreferrer">ライセンス</a> · <a href="./geist-OFL.txt" target="_blank" rel="noreferrer">フォント</a></span></footer>
   </WorkspaceRoot>;
