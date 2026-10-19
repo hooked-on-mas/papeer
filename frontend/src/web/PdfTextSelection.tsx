@@ -80,15 +80,17 @@ export function PdfTextSelection({ container, enabled }: { container: RefObject<
       press = { id: touch.identifier, x: touch.clientX, y: touch.clientY };
       timer = setTimeout(() => {
         if (!press || !enabled) return;
-        // Let iOS keep its native word/handles if it has already selected text.
         const selection = getSelection();
         if (!selection) return;
-        if (!selection.isCollapsed && selection.rangeCount && root.contains(selection.anchorNode)) {
-          const box = selection.getRangeAt(0).getBoundingClientRect();
-          if (press.x >= box.left - 6 && press.x <= box.right + 6 && press.y >= box.top - 6 && press.y <= box.bottom + 6) return;
-        }
         const caret = caretAt(root, press.x, press.y);
-        if (!caret) return;
+        // Let iOS keep its native word and handles. A native word stays inside the pressed
+        // text run; anything larger is iOS selecting the whole page, which is replaced.
+        const native = !selection.isCollapsed && selection.rangeCount ? selection.getRangeAt(0) : undefined;
+        if (native && caret && native.startContainer === caret.node && native.endContainer === caret.node) return;
+        if (!caret) {
+          if (native && root.contains(native.commonAncestorContainer) && !(native.commonAncestorContainer instanceof Text)) selection.removeAllRanges();
+          return;
+        }
         press.range = wordAt(caret);
         selection.removeAllRanges(); selection.addRange(press.range.cloneRange());
         root.setAttribute("data-touch-selecting", "");

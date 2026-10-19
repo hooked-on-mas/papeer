@@ -170,6 +170,12 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
         Object.defineProperty(event, "touches", { value: [{ identifier: 79, clientX: at.x, clientY: at.y }] });
         return !element.dispatchEvent(event);
       }, point), false, "a single finger is not cancelled, preserving native long-press selection");
+      assert.deepEqual(await region.evaluate(element => [".react-pdf__Page", "canvas", ".textLayer", ".textLayer span"]
+        .map(selector => getComputedStyle(element.querySelector(selector)!).webkitUserSelect)), ["none", "none", "none", "text"],
+      "only PDF text runs are selectable, so iOS cannot select the whole page");
+      // iOS selects the enclosing block when its long-press misses a glyph.
+      await region.evaluate(element => getSelection()!.selectAllChildren(element.querySelector(".react-pdf__Page")!));
+      await page.waitForFunction(text => { const value = getSelection()?.toString() ?? ""; return !!value.trim() && text.includes(value); }, quote);
       await page.getByRole("toolbar", { name: "選択した文字の操作", exact: true }).waitFor();
       const selected = await page.evaluate(() => getSelection()?.toString() ?? "");
       assert.ok(selected.trim() && quote.includes(selected), "long-press selects real PDF text without setting a selection in the test");
