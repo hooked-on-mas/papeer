@@ -69,6 +69,33 @@ def test_ci_checks_windows_and_linux_on_every_push_and_macos_only_by_hand():
     assert _platforms(sidecar, macos=True) == ["windows-latest", "ubuntu-22.04", "macos-latest", "macos-15-intel"]
 
 
+def test_pages_cannot_deploy_without_the_web_browser_regressions():
+    pages = _load("pages.yml")
+    assert set(pages["jobs"]["deploy"]["needs"]) == {"build", "browser-tests"}
+    assert pages["jobs"]["browser-tests"]["uses"] == "./.github/workflows/web-tests.yml"
+    web = _load("web-tests.yml")
+    assert "workflow_call" in web[True]
+    assert web[True]["push"]["branches-ignore"] == ["main"]  # main is run once by Pages.
+    assert web["permissions"] == {"contents": "read"}
+    browser = web["jobs"]["browser"]
+    assert browser["runs-on"] == "windows-latest"
+    assert not browser.get("continue-on-error")
+    for step in browser["steps"]:
+        assert not step.get("continue-on-error")
+        if "uses" in step:
+            assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", step["uses"])
+    runs = _runs(browser)
+    assert "node frontend/node_modules/playwright-core/cli.js install webkit" in runs
+    regression = next(command for command in runs if "pnpm --dir frontend test:web" in command)
+    assert "exit $result" in regression and "$result = $LASTEXITCODE" in regression
+    for command in ["uv sync --locked", "pnpm --dir frontend typecheck", "pnpm --dir frontend lint",
+                    "pnpm --dir frontend test", "pnpm --dir frontend build:web"]:
+        assert runs.index(command) < runs.index(regression)
+    # Changes to the gate or to PC export/import must also run the release gate on main.
+    for path in ["frontend/**", ".github/workflows/web-tests.yml", "papeer/**", "sidecar/schemas/ink.py", "uv.lock"]:
+        assert path in pages[True]["push"]["paths"] and path in web[True]["pull_request"]["paths"]
+
+
 def test_ci_pins_actions_to_the_same_commits_as_the_release():
     release = _load("release.yml")
     pinned = {step["uses"].split("@")[0]: step["uses"]

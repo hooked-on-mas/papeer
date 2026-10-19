@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "node --test \"tests/*.test.*\"",
+    "test:web": "node scripts/test-web.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests && tsc --noEmit -p e2e",
     "lint": "eslint --max-warnings 0 .",
     "gen-api": "openapi-typescript openapi.json --default-non-nullable false -o src/api/schema.d.ts"

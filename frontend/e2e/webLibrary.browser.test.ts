@@ -15,6 +15,11 @@ test("Web Library reads PDF, memo, HTML and chat privately on desktop and mobile
   const browser = await chromium.launch({ channel: "msedge", headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  // Playwright's serviceWorkers:block init script reads navigator.serviceWorker
+  // inside the deliberately opaque HTML sandbox, causing its own SecurityError.
+  // A fresh context plus a blocked worker script prevents registration without
+  // injecting into that sandbox or weakening the application's CSP.
+  await page.context().route("**/sw.js*", route => route.abort());
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   t.after(() => { if (errors.length) console.error("Web page errors:", errors); });

@@ -42,7 +42,7 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   await server.listen(); t.after(() => server.close());
   const webUrl = process.env.PAPEER_WEB_TEST_URL || server.resolvedUrls!.local[0];
   const browser = await chromium.launch({ channel: "msedge", headless: true }); t.after(() => browser.close());
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1200 }, hasTouch: true });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1200 }, hasTouch: true, serviceWorkers: "block" });
   const errors: string[] = [], forbidden: string[] = [];
   t.after(() => { if (errors.length) console.error("Web page errors:", errors); });
   context.on("page", page => {

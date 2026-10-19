@@ -1,0 +1,66 @@
+name: Web browser regression
+
+on:
+  # main is checked by Pages through workflow_call before deployment; avoid duplicate runs.
+  push:
+    branches-ignore: [main]
+    paths: ['frontend/**', '.github/workflows/web-tests.yml', '.github/workflows/pages.yml', 'papeer/**', 'sidecar/schemas/ink.py', 'pyproject.toml', 'uv.lock']
+  pull_request:
+    paths: ['frontend/**', '.github/workflows/web-tests.yml', '.github/workflows/pages.yml', 'papeer/**', 'sidecar/schemas/ink.py', 'pyproject.toml', 'uv.lock']
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 12
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: uv sync --locked
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - run: pnpm --dir frontend typecheck
+      - run: pnpm --dir frontend lint
+      - run: pnpm --dir frontend test
+      - run: pnpm --dir frontend build:web
+      - name: Install the WebKit engine (Edge is included in the Windows runner)
+        run: node frontend/node_modules/playwright-core/cli.js install webkit
+      - name: Run all Web browser regressions
+        run: |
+          New-Item -ItemType Directory -Path output -Force | Out-Null
+          pnpm --dir frontend test:web *> output/web-browser-tests.log
+          $result = $LASTEXITCODE
+          Get-Content output/web-browser-tests.log
+          exit $result
+      - name: Keep test logs and synthetic fixture screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-browser-results
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            output/web-browser-tests.log
+            output/iphone-review/**/*.png
+            output/reader-interactions/**/*.png
+            output/pwa/*.png

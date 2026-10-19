@@ -7,6 +7,11 @@ on:
     paths:
       - 'frontend/**'
       - '.github/workflows/pages.yml'
+      - '.github/workflows/web-tests.yml'
+      - 'papeer/**'
+      - 'sidecar/schemas/ink.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
 
 permissions:
   contents: read
@@ -16,6 +21,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  browser-tests:
+    uses: ./.github/workflows/web-tests.yml
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -42,7 +49,7 @@ jobs:
         with:
           path: frontend/web-dist
   deploy:
-    needs: build
+    needs: [build, browser-tests]
     runs-on: ubuntu-latest
     permissions:
       pages: write

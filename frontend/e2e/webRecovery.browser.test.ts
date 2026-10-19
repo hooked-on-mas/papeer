@@ -23,7 +23,7 @@ test("Web recovers login, reads, scratch text and reading position without showi
     configFile: path.join(frontend, "vite.web.config.ts"), logLevel: "error", server: { host: "127.0.0.1", port: 0, hmr: false } });
   await server.listen(); t.after(() => server.close());
   const browser = await chromium.launch({ channel: "msedge", headless: true }); t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1366, height: 1024 } });
+  const page = await browser.newPage({ viewport: { width: 1366, height: 1024 }, serviceWorkers: "block" });
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   const paper = "a".repeat(32), other = "c".repeat(32);
   let failPdf = true, badMapping = false, anotherAccount = false, revision = 1, uploads = 0;

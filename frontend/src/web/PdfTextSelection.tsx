@@ -48,19 +48,25 @@ export function PdfTextSelection({ container, enabled }: { container: RefObject<
   const [text, setText] = useState("");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const touchCopied = useRef(false);
+  const selectedText = useRef("");
+  const copyEpoch = useRef(0);
   useEffect(() => {
     const root = container.current;
     if (!root) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let press: { id: number; x: number; y: number; range?: Range } | undefined;
     let suppressClick = false;
-    let previousText = "";
     const pens = new Set<number>();
     const update = () => {
-      if (document.activeElement?.closest(".web-text-selection-tools")) return;
       const selection = getSelection();
       const value = selection?.rangeCount && root.contains(selection.getRangeAt(0).commonAncestorContainer) ? selection.toString() : "";
-      if (value !== previousText) { previousText = value; setText(value); setCopyState("idle"); }
+      // Focusing Copy/the manual fallback may collapse the native range. Preserve
+      // that passage, but always accept a new nonempty selection (even while focused).
+      if (!value && (!selection || selection.isCollapsed) && document.activeElement?.closest(".web-text-selection-tools")) return;
+      if (value !== selectedText.current) {
+        selectedText.current = value; copyEpoch.current++;
+        setText(value); setCopyState("idle");
+      }
     };
     const cancel = () => {
       clearTimeout(timer); timer = undefined; press = undefined;
@@ -147,8 +153,13 @@ export function PdfTextSelection({ container, enabled }: { container: RefObject<
   }, [container, enabled]);
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(text); setCopyState("copied"); }
-    catch { setCopyState("error"); }
+    const epoch = ++copyEpoch.current, value = selectedText.current;
+    try {
+      await navigator.clipboard.writeText(value);
+      if (epoch === copyEpoch.current && value === selectedText.current) setCopyState("copied");
+    } catch {
+      if (epoch === copyEpoch.current && value === selectedText.current) setCopyState("error");
+    }
   };
   if (!text.trim()) return null;
   return <div className="web-text-selection-tools" role="toolbar" aria-label="選択した文字の操作">
@@ -166,7 +177,9 @@ export function PdfTextSelection({ container, enabled }: { container: RefObject<
         if (touchCopied.current) { touchCopied.current = false; return; }
         void copy();
       }}>{copyState === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copyState === "copied" ? "コピーしました" : "コピー"}</button>
-    <button aria-label="文字選択を解除" onClick={() => { getSelection()?.removeAllRanges(); setText(""); }}><X aria-hidden="true" /></button>
+    <button aria-label="文字選択を解除" onClick={() => {
+      selectedText.current = ""; copyEpoch.current++; getSelection()?.removeAllRanges(); setText("");
+    }}><X aria-hidden="true" /></button>
     {copyState === "error" && <label role="alert">コピーできませんでした。下の文字を選択してコピーしてください。
       <textarea readOnly aria-label="コピーする文字" value={text} onFocus={event => event.currentTarget.select()} /></label>}
   </div>;

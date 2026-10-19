@@ -33,7 +33,7 @@ async function exerciseResize(t: TestContext, delayedRenderer = false) {
     } }] : [] });
   await server.listen(); t.after(() => server.close());
   const browser = await chromium.launch({ channel: "msedge", headless: true }); t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1200 }, hasTouch: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1200 }, hasTouch: true, serviceWorkers: "block" });
   const paper = "a".repeat(32);
   const blobs: Record<string, Buffer> = {
     pdf: fs.readFileSync(path.resolve(frontend, "../tests/fixtures/sample.pdf")),

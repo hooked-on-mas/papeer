@@ -4,6 +4,79 @@ import { DriveSession, fileLabel, itemFiles, parseManifest, type Manifest } from
 
 const id = "a".repeat(32);
 const hash = "b".repeat(64);
+
+test("popup/consent/SDK failures can retry, and an expired grant makes no Drive request", async t => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window"), originalFetch = globalThis.fetch;
+  let mode = "denied", calls = 0;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { google: { accounts: { oauth2: {
+    initTokenClient: (options: { callback: (response: object) => void; error_callback: () => void }) => ({ requestAccessToken: () => {
+      if (mode === "denied") options.callback({ error: "access_denied", error_description: "private-description" });
+      else if (mode === "popup") options.error_callback();
+      else if (mode === "throw") throw new Error("private-description");
+      else options.callback({ access_token: "fixture-token", expires_in: 1 });
+    } }),
+  } } } } });
+  globalThis.fetch = async () => { calls++; return Response.json({ files: [] }); };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window");
+  });
+  t.mock.timers.enable({ apis: ["Date"], now: 1000 });
+  const session = new DriveSession();
+  for (mode of ["denied", "popup", "throw"]) {
+    await assert.rejects(session.signIn(), error => error instanceof Error && !error.message.includes("private-description"));
+    await assert.rejects(session.libraries(), /ログイン/);
+  }
+  mode = "ok"; await session.signIn(); t.mock.timers.tick(1001);
+  await assert.rejects(session.libraries(), /有効期限/); assert.equal(calls, 0);
+  await session.signIn(); assert.deepEqual(await session.libraries(), []); assert.equal(calls, 1);
+});
+
+test("Drive HTTP errors are actionable without leaking response bodies, and the same session can retry", async t => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window"), originalFetch = globalThis.fetch;
+  let status = 401;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { google: { accounts: { oauth2: {
+    initTokenClient: (options: { callback: (response: object) => void }) => ({ requestAccessToken: () => options.callback({ access_token: "fixture", expires_in: 100 }) }),
+  } } } } });
+  globalThis.fetch = async () => status === 200 ? Response.json({ files: [] }) : new Response("private-server-body", { status });
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window");
+  });
+  const session = new DriveSession(); await session.signIn();
+  for (status of [401, 403, 429, 503]) await assert.rejects(session.libraries(), error => error instanceof Error
+    && (status === 401 ? error.message.includes("ログイン") : error.message.includes(String(status)))
+    && !error.message.includes("private-server-body"));
+  status = 200; assert.deepEqual(await session.libraries(), []);
+});
+
+test("annotation uploads use the Drive upload endpoint and validated parent metadata", async t => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window"), originalFetch = globalThis.fetch;
+  let parent = "fixture-folder";
+  const calls: { url: string; init?: RequestInit }[] = [];
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { google: { accounts: { oauth2: {
+    initTokenClient: (options: { callback: (response: object) => void }) => ({ requestAccessToken: () => options.callback({ access_token: "fixture", expires_in: 100 }) }),
+  } } } } });
+  globalThis.fetch = async (input, init) => { calls.push({ url: String(input), init }); return Response.json({ parents: [parent], id: "event" }); };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window");
+  });
+  const session = new DriveSession(); await session.signIn();
+  const op = { note: "日本語の書き込み" };
+  await session.saveAnnotation("library", undefined, "operation-id", op);
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].url, /library\?fields=parents$/);
+  assert.match(calls[1].url, /^https:\/\/www.googleapis.com\/upload\/drive\/v3\/files\?uploadType=multipart/);
+  assert.equal(calls[1].init?.method, "POST");
+  const body = String(calls[1].init?.body);
+  assert.ok(body.includes(JSON.stringify(op)) && body.includes('"parents":["fixture-folder"]') && body.includes('"library":"library"'));
+  assert.ok(calls.every(call => new Headers(call.init?.headers).get("Authorization") === "Bearer fixture"));
+  parent = "../invalid";
+  await assert.rejects(session.saveAnnotation("library", undefined, "operation-id", op), /保存フォルダー/);
+  assert.equal(calls.length, 3, "an invalid parent is not uploaded");
+  await assert.rejects(session.annotationFiles("invalid' query"), /不正/);
+});
 function manifest(): Manifest {
   return { version: 1, updated_at: "2026-10-18T00:00:00Z", revision: "revision", items: [{ id, title: "論文" }],
     attachments: [{ id: "memo", owner_id: id, title: "読書メモ", format: "md" }], files: {
