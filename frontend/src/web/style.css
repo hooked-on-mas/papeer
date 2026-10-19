@@ -43,12 +43,18 @@
 
 .asset-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; font-size: .75rem; padding-bottom: 12px; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .asset-heading a { white-space: nowrap; }
-.pdf { width: 100%; margin: 0; }
+.pdf { position: relative; width: 100%; margin: 0; }
 .web-pdf-surface { touch-action: pan-x pan-y; }
 /* iOS long-press off a glyph selects the enclosing block (the canvas or the whole text layer).
-   Only the text runs are selectable; the touch fallback picks the nearest word for the rest. */
+   Only the text runs are selectable by mouse or trackpad. */
 .web-pdf-surface, .web-pdf-surface .textLayer { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-.web-pdf-surface .textLayer :is(span:not([role="img"]), br) { user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
+.web-pdf-surface .textLayer :is(span:not([role="img"]), br) { user-select: text; -webkit-user-select: text; }
+/* Touch selection is PdfTextSelection's own: iOS does not select the transparent text, and
+   its long-press gesture would cancel the page's touches. */
+@media (hover: none) and (pointer: coarse) {
+  .web-pdf-surface .textLayer :is(span:not([role="img"]), br) { user-select: none; -webkit-user-select: none; }
+}
+.web-touch-selection { position: absolute; z-index: 3; pointer-events: none; border-radius: 2px; background: color-mix(in oklch, var(--primary) 30%, transparent); }
 .web-text-selection-tools { position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: calc(40px + env(safe-area-inset-bottom)); z-index: 30; display: flex; align-items: center; gap: 4px; max-width: calc(100vw - 24px); padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); box-shadow: 0 2px 12px #0002; }
 .web-text-selection-tools button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; min-width: 44px; font-size: .875rem; }
 .web-text-selection-tools svg { width: 18px; height: 18px; }

@@ -48,10 +48,18 @@ async function gesture(target: Locator, type: string, scale: number, x: number, 
   }, { type, scale, x, y });
 }
 
+/** Select a whole text run: by mouse where the text is natively selectable, else by long press and drag. */
 async function select(page: Page, line = 0) {
   const span = page.locator('.textLayer span').nth(line), box = (await span.boundingBox())!;
-  await page.mouse.move(box.x + 1, box.y + box.height / 2); await page.mouse.down();
-  await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 8 }); await page.mouse.up();
+  const y = box.y + box.height / 2, run = await span.textContent();
+  if (await page.evaluate(() => matchMedia("(hover: none) and (pointer: coarse)").matches)) {
+    await touch(span, "touchstart", box.x + 1, y); await settle();
+    await touch(span, "touchmove", box.x + box.width - 1, y); await touch(span, "touchend", box.x + box.width - 1, y, 0);
+    await page.waitForFunction(text => document.querySelector('output[aria-label="選択中の文字"]')?.textContent === text, run);
+    return run!;
+  }
+  await page.mouse.move(box.x + 1, y); await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 1, y, { steps: 8 }); await page.mouse.up();
   await page.getByRole("button", { name: "選択した文字をコピー", exact: true }).waitFor();
   return page.evaluate(() => getSelection()!.toString());
 }
@@ -62,7 +70,7 @@ async function hold(page: Page, line = 0) {
   await touch(span, "touchstart", x, y);
   return { span, x, y };
 }
-const settle = () => new Promise(resolve => setTimeout(resolve, 700)); // Application long-press threshold is 600ms.
+const settle = () => new Promise(resolve => setTimeout(resolve, 700)); // Application long-press threshold is 500ms.
 
 for (const engine of ["webkit", "chromium"] as const) test(`isolated PDF interactions (${engine})`, { timeout: 180_000 }, async parent => {
   const frontend = path.resolve(import.meta.dirname, "..");
@@ -147,17 +155,23 @@ for (const engine of ["webkit", "chromium"] as const) test(`isolated PDF interac
     }
   });
 
-  await parent.test("native selection is preserved and a long press can extend across text runs", async t => {
-    const page = await open(t), native = await select(page);
+  await parent.test("a long press selects a word, extends across text runs and a tap dismisses it", async t => {
+    const page = await open(t), selected = page.getByLabel("選択中の文字", { exact: true });
+    await select(page);
     const { span, x, y } = await hold(page); await settle();
-    assert.equal(await page.evaluate(() => getSelection()?.toString()), native);
-    assert.equal(await touch(span, "touchend", x, y, 0), false, "native selection is not replaced or cancelled");
-    await page.getByRole("button", { name: "文字選択を解除", exact: true }).click();
+    assert.equal(await selected.textContent(), "Alpha", "a long press replaces the previous selection with the pressed word");
+    assert.equal(await page.evaluate(() => getSelection()?.toString()), "", "the touch selection is drawn, not native");
+    assert.ok(await page.locator(".web-touch-selection").count() > 0);
+    assert.equal(await touch(span, "touchend", x, y, 0), true, "the long press does not become a click");
+    await touch(span, "touchstart", x, y); await touch(span, "touchend", x, y, 0);
+    assert.equal(await page.getByRole("toolbar").count(), 0, "a tap dismisses the touch selection");
+    assert.equal(await page.locator(".web-touch-selection").count(), 0);
     const at = await hold(page); await page.getByRole("toolbar").waitFor();
     const second = (await page.locator('.textLayer span').nth(1).boundingBox())!;
     await touch(at.span, "touchmove", second.x + second.width - 3, second.y + second.height / 2);
-    const extended = await page.evaluate(() => getSelection()!.toString());
-    assert.match(extended, /Alpha/); assert.match(extended, /日本語/);
+    await page.waitForFunction(() => /日本語/.test(document.querySelector('output[aria-label="選択中の文字"]')?.textContent ?? ""));
+    const extended = await selected.textContent() ?? "";
+    assert.match(extended, /^Alpha beta gamma\.\n日本語/, "pdf.js line breaks are kept");
     await touch(at.span, "touchend", at.x, at.y, 0);
     await page.getByRole("button", { name: "選択した文字をコピー", exact: true }).tap();
     assert.deepEqual(await page.evaluate(() => (window as any).__copy.writes), [extended]);

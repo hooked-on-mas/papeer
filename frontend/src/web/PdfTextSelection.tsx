@@ -43,13 +43,52 @@ function wordAt({ node, offset }: Caret): Range {
   return range;
 }
 
-/** Preserve native selection, with a long-press fallback and a visible copy action. */
+type Mark = { left: number; top: number; width: number; height: number };
+
+/** The range's text and highlight boxes (relative to `base`), keeping pdf.js line breaks. */
+function describe(range: Range, base: DOMRect): { text: string; marks: Mark[] } {
+  const scope = range.commonAncestorContainer;
+  const nodes: Node[] = [];
+  if (scope instanceof Text) nodes.push(scope);
+  else {
+    const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) if (range.intersectsNode(node)) nodes.push(node);
+  }
+  let text = "";
+  const marks: Mark[] = [];
+  for (const node of nodes) {
+    // Range.toString() drops the <br> between pdf.js text lines.
+    if (node instanceof HTMLBRElement) { text += "\n"; continue; }
+    if (!(node instanceof Text)) continue;
+    const from = node === range.startContainer ? range.startOffset : 0, to = node === range.endContainer ? range.endOffset : node.length;
+    if (to <= from) continue;
+    text += node.data.slice(from, to);
+    const part = document.createRange(); part.setStart(node, from); part.setEnd(node, to);
+    for (const box of part.getClientRects()) {
+      if (box.width && box.height) marks.push({ left: box.left - base.left, top: box.top - base.top, width: box.width, height: box.height });
+    }
+  }
+  return { text, marks };
+}
+
+/**
+ * Native selection for mouse and trackpad. Touch selection is drawn here instead: iOS does not
+ * select pdf.js's transparent text, and its own long-press gesture cancels the page's touches.
+ */
 export function PdfTextSelection({ container, enabled }: { container: RefObject<HTMLDivElement | null>; enabled: boolean }) {
   const [text, setText] = useState("");
+  const [marks, setMarks] = useState<Mark[]>([]);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const touchCopied = useRef(false);
   const selectedText = useRef("");
+  const touchRange = useRef<Range | undefined>(undefined);
   const copyEpoch = useRef(0);
+  const show = (value: string) => {
+    if (value === selectedText.current) return;
+    selectedText.current = value; copyEpoch.current++;
+    setText(value); setCopyState("idle");
+  };
+  const clearTouch = () => { touchRange.current = undefined; setMarks([]); };
   useEffect(() => {
     const root = container.current;
     if (!root) return;
@@ -60,13 +99,19 @@ export function PdfTextSelection({ container, enabled }: { container: RefObject<
     const update = () => {
       const selection = getSelection();
       const value = selection?.rangeCount && root.contains(selection.getRangeAt(0).commonAncestorContainer) ? selection.toString() : "";
+      // A touch selection has no native range; only a new native selection replaces it.
+      if (!value && touchRange.current) return;
+      if (value && touchRange.current) clearTouch();
       // Focusing Copy/the manual fallback may collapse the native range. Preserve
       // that passage, but always accept a new nonempty selection (even while focused).
       if (!value && (!selection || selection.isCollapsed) && document.activeElement?.closest(".web-text-selection-tools")) return;
-      if (value !== selectedText.current) {
-        selectedText.current = value; copyEpoch.current++;
-        setText(value); setCopyState("idle");
-      }
+      show(value);
+    };
+    const select = (range: Range) => {
+      touchRange.current = range;
+      const { text, marks } = describe(range, root.getBoundingClientRect());
+      setMarks(marks); show(text);
+      getSelection()?.removeAllRanges();
     };
     const cancel = () => {
       clearTimeout(timer); timer = undefined; press = undefined;
@@ -80,29 +125,19 @@ export function PdfTextSelection({ container, enabled }: { container: RefObject<
       press = { id: touch.identifier, x: touch.clientX, y: touch.clientY };
       timer = setTimeout(() => {
         if (!press || !enabled) return;
-        const selection = getSelection();
-        if (!selection) return;
         const caret = caretAt(root, press.x, press.y);
-        // Let iOS keep its native word and handles. A native word stays inside the pressed
-        // text run; anything larger is iOS selecting the whole page, which is replaced.
-        const native = !selection.isCollapsed && selection.rangeCount ? selection.getRangeAt(0) : undefined;
-        if (native && caret && native.startContainer === caret.node && native.endContainer === caret.node) return;
-        if (!caret) {
-          if (native && root.contains(native.commonAncestorContainer) && !(native.commonAncestorContainer instanceof Text)) selection.removeAllRanges();
-          return;
-        }
+        if (!caret) return;
         press.range = wordAt(caret);
-        selection.removeAllRanges(); selection.addRange(press.range.cloneRange());
         root.setAttribute("data-touch-selecting", "");
-        update();
-      }, 600);
+        select(press.range);
+      }, 500);
     };
     const move = (event: TouchEvent) => {
       if (!press) return;
       if (event.touches.length !== 1 || event.touches[0].identifier !== press.id) { cancel(); return; }
       const touch = event.touches[0];
       if (!press.range) {
-        if (Math.hypot(touch.clientX - press.x, touch.clientY - press.y) > 8) cancel();
+        if (Math.hypot(touch.clientX - press.x, touch.clientY - press.y) > 10) cancel();
         return;
       }
       event.preventDefault();
@@ -112,11 +147,12 @@ export function PdfTextSelection({ container, enabled }: { container: RefObject<
       const position = range.comparePoint(caret.node, caret.offset);
       if (position < 0) range.setStart(caret.node, caret.offset);
       if (position > 0) range.setEnd(caret.node, caret.offset);
-      const selection = getSelection();
-      selection?.removeAllRanges(); selection?.addRange(range); update();
+      select(range);
     };
     const end = (event: TouchEvent) => {
       if (press?.range) { event.preventDefault(); suppressClick = true; }
+      // A tap on the page dismisses a touch selection, as it does natively.
+      else if (press && touchRange.current) { clearTouch(); show(""); }
       cancel();
     };
     const click = (event: MouseEvent) => {
@@ -164,7 +200,9 @@ export function PdfTextSelection({ container, enabled }: { container: RefObject<
     }
   };
   if (!text.trim()) return null;
-  return <div className="web-text-selection-tools" role="toolbar" aria-label="選択した文字の操作">
+  return <>{marks.map((mark, i) => <div key={i} className="web-touch-selection" aria-hidden="true" style={mark} />)}
+  <div className="web-text-selection-tools" role="toolbar" aria-label="選択した文字の操作">
+    <output className="sr-only" aria-label="選択中の文字">{text}</output>
     <button aria-label="選択した文字をコピー"
       onPointerDown={event => { touchCopied.current = false; event.preventDefault(); }}
       onKeyDown={() => { touchCopied.current = false; }}
@@ -180,9 +218,9 @@ export function PdfTextSelection({ container, enabled }: { container: RefObject<
         void copy();
       }}>{copyState === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copyState === "copied" ? "コピーしました" : "コピー"}</button>
     <button aria-label="文字選択を解除" onClick={() => {
-      selectedText.current = ""; copyEpoch.current++; getSelection()?.removeAllRanges(); setText("");
+      selectedText.current = ""; copyEpoch.current++; clearTouch(); getSelection()?.removeAllRanges(); setText("");
     }}><X aria-hidden="true" /></button>
     {copyState === "error" && <label role="alert">コピーできませんでした。下の文字を選択してコピーしてください。
       <textarea readOnly aria-label="コピーする文字" value={text} onFocus={event => event.currentTarget.select()} /></label>}
-  </div>;
+  </div></>;
 }

@@ -136,17 +136,23 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       }
     };
     await ready();
+    // Touch selections are drawn by the reader rather than held in the native Selection.
+    const selection = async () => await page.getByLabel("選択中の文字", { exact: true }).count()
+      ? await page.getByLabel("選択中の文字", { exact: true }).textContent() ?? "" : "";
+    const coarse = await page.evaluate(() => matchMedia("(hover: none) and (pointer: coarse)").matches);
     const copySelection = async (mouse = false) => {
-      const selected = await page.evaluate(() => getSelection()?.toString() ?? "");
+      const selected = await selection();
       assert.ok(selected.trim());
       const copy = page.getByRole("button", { name: "選択した文字をコピー", exact: true });
       if (mouse) await copy.click(); else await copy.tap();
       await page.getByText("コピーしました", { exact: true }).waitFor();
       assert.equal(await page.evaluate(() => navigator.clipboard.readText()), selected);
       await page.getByRole("button", { name: "文字選択を解除", exact: true }).click();
-      assert.equal(await page.evaluate(() => getSelection()?.toString() ?? ""), "");
+      assert.equal(await selection(), "");
+      assert.equal(await page.locator(".web-touch-selection").count(), 0);
     };
     const selectText = async (region = translated, quote = "日本語訳を読みやすく表示する") => {
+      if (coarse) return; // A touch-only phone has no mouse drag; the text is not natively selectable.
       const span = region.locator(".textLayer span").filter({ hasText: quote }).first();
       await span.waitFor();
       const box = (await span.boundingBox())!;
@@ -169,23 +175,21 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
         const event = new Event("touchstart", { bubbles: true, cancelable: true });
         Object.defineProperty(event, "touches", { value: [{ identifier: 79, clientX: at.x, clientY: at.y }] });
         return !element.dispatchEvent(event);
-      }, point), false, "a single finger is not cancelled, preserving native long-press selection");
+      }, point), false, "a single finger is not cancelled before the long press");
       assert.deepEqual(await region.evaluate(element => [".react-pdf__Page", "canvas", ".textLayer", ".textLayer span"]
-        .map(selector => getComputedStyle(element.querySelector(selector)!).webkitUserSelect)), ["none", "none", "none", "text"],
-      "only PDF text runs are selectable, so iOS cannot select the whole page");
-      // iOS selects the enclosing block when its long-press misses a glyph.
-      await region.evaluate(element => getSelection()!.selectAllChildren(element.querySelector(".react-pdf__Page")!));
-      await page.waitForFunction(text => { const value = getSelection()?.toString() ?? ""; return !!value.trim() && text.includes(value); }, quote);
+        .map(selector => getComputedStyle(element.querySelector(selector)!).webkitUserSelect)), ["none", "none", "none", coarse ? "none" : "text"],
+      "iOS can neither select the whole page nor start its own long-press selection on the text");
       await page.getByRole("toolbar", { name: "選択した文字の操作", exact: true }).waitFor();
-      const selected = await page.evaluate(() => getSelection()?.toString() ?? "");
+      const selected = await selection();
       assert.ok(selected.trim() && quote.includes(selected), "long-press selects real PDF text without setting a selection in the test");
+      assert.ok(await page.locator(".web-touch-selection").count() > 0, "the touch selection is highlighted");
       if (extend) {
         await target.evaluate((element, at) => {
           const event = new Event("touchmove", { bubbles: true, cancelable: true });
           Object.defineProperty(event, "touches", { value: [{ identifier: 79, clientX: at.x, clientY: at.y }] });
           element.dispatchEvent(event);
         }, { x: Math.min(box.x + box.width - 3, 370), y: point.y });
-        assert.ok((await page.evaluate(() => getSelection()?.toString() ?? "")).length > selected.length, "dragging after long-press extends the selection");
+        await page.waitForFunction(length => (document.querySelector('output[aria-label="選択中の文字"]')?.textContent ?? "").length > length, selected.length);
       }
       await target.evaluate(element => {
         const event = new Event("touchend", { bubbles: true, cancelable: true });
@@ -488,7 +492,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       await translated.evaluate(element => element.scrollTo(0, 0));
       const title = (await translated.locator(".textLayer span").filter({ hasText: "日本語訳を読みやすく表示する" }).first().boundingBox())!;
       await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ id: 17, x: title.x + 3, y: title.y + title.height / 2 }] });
-      await page.waitForFunction(() => !!getSelection()?.toString().trim());
+      await page.getByLabel("選択中の文字", { exact: true }).waitFor({ state: "attached" });
       await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
       await capture("native-long-press-css");
       await copySelection(true);
