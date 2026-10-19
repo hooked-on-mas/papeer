@@ -11,6 +11,7 @@ import { prepareWebNavigation, registerNavigationGuard, textDrafts, type TextDra
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { PHONE_LAYOUT_QUERY } from "./phoneLayout";
 import { usePdfPinchZoom } from "./usePdfPinchZoom";
+import { PdfTextSelection } from "./PdfTextSelection";
 
 type Tool = "read" | "pen" | "highlighter" | "eraser" | "text";
 
@@ -61,6 +62,7 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
     }} onRenderError={() => { if (activeRender.current === render) setRendered(null); }} />}
   </Document>;
   return <div className="pdf" ref={container}>
+    <PdfTextSelection key={`${url}:${page}:${drawnWidth}`} container={container} enabled={!editing || tool === "read" || !finger} />
     {navigation && <div className="pdf-tools"><PageNavigatorView paperId={url} currentPage={page} count={pages} compact shortcuts={false}
       atStart={page <= 1} atEnd={page >= pages} onJump={setPage} onMove={delta => setPage(value => Math.max(1, Math.min(pages || 1, value + delta)))} /></div>}
     {store && anchor ? <EditablePage key={`${url}:${page}`} store={store} anchor={anchor} ratio={ratio} pageWidth={drawnWidth}
@@ -140,6 +142,7 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
     if (kind !== "eraser") setPreview(gesture.current.stroke);
   };
   const move = (e: PointerEvent<SVGSVGElement>) => {
+    if (e.pointerType === "touch" && e.currentTarget.closest(".pdf[data-touch-selecting]")) return;
     const touch = touches.current.get(e.pointerId);
     if (touch) {
       touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });

@@ -45,6 +45,12 @@
 .asset-heading a { white-space: nowrap; }
 .pdf { width: 100%; margin: 0; }
 .web-pdf-surface { touch-action: pan-x pan-y; }
+.web-pdf-surface .textLayer, .web-pdf-surface .textLayer span { user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
+.web-text-selection-tools { position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: calc(40px + env(safe-area-inset-bottom)); z-index: 30; display: flex; align-items: center; gap: 4px; max-width: calc(100vw - 24px); padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); box-shadow: 0 2px 12px #0002; }
+.web-text-selection-tools button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; min-width: 44px; font-size: .875rem; }
+.web-text-selection-tools svg { width: 18px; height: 18px; }
+.web-text-selection-tools label { position: absolute; bottom: 100%; right: 0; width: min(290px, calc(100vw - 24px)); padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); font-size: .875rem; }
+.web-text-selection-tools textarea { display: block; width: 100%; min-height: 100px; margin-top: 8px; }
 .pdf-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-bottom: 12px; font-size: .75rem; }
 .pdf-tools input { width: 58px; padding: 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--background); }
 .react-pdf__Page { box-shadow: 0 2px 8px #0002; }

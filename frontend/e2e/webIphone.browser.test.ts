@@ -79,7 +79,15 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       else if (id === "library" || id === "second-library") await route.fulfill({ json: manifest, headers });
       else { assert.ok(blobs[id], id); await route.fulfill({ body: blobs[id], headers }); }
     });
-    await page.goto(process.env.PAPEER_WEB_TEST_URL || server.resolvedUrls!.local[0]);
+    const appUrl = process.env.PAPEER_WEB_TEST_URL || server.resolvedUrls!.local[0];
+    if (engine === "chromium") await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(appUrl).origin });
+    else await page.addInitScript(() => {
+      // WebKit on Windows cannot grant/read the OS clipboard. Verify the copy API
+      // payload here; Chromium below exercises a real headless clipboard round trip.
+      let copied = "";
+      Object.defineProperty(navigator, "clipboard", { value: { writeText: async (value: string) => { copied = value; }, readText: async () => copied } });
+    });
+    await page.goto(appUrl);
     await page.getByRole("button", { name: "Googleでログインして開く →" }).tap();
     const original = page.getByRole("region", { name: "原文", exact: true });
     const translated = page.getByRole("region", { name: "日本語訳", exact: true });
@@ -128,6 +136,59 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       }
     };
     await ready();
+    const copySelection = async () => {
+      const selected = await page.evaluate(() => getSelection()?.toString() ?? "");
+      assert.ok(selected.trim());
+      await page.getByRole("button", { name: "選択した文字をコピー", exact: true }).click();
+      await page.getByText("コピーしました", { exact: true }).waitFor();
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), selected);
+      await page.getByRole("button", { name: "文字選択を解除", exact: true }).click();
+      assert.equal(await page.evaluate(() => getSelection()?.toString() ?? ""), "");
+    };
+    const selectText = async (region = translated, quote = "日本語訳を読みやすく表示する") => {
+      const span = region.locator(".textLayer span").filter({ hasText: quote }).first();
+      await span.waitFor();
+      const box = (await span.boundingBox())!;
+      await page.mouse.move(box.x + 1, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 12 });
+      await page.mouse.up();
+      const selected = await page.evaluate(() => getSelection()?.toString() ?? "");
+      assert.ok(selected.length > 0 && quote.includes(selected), "PDF text can be selected by dragging");
+      await capture("text-selection-css");
+      await copySelection();
+    };
+    const longSelect = async (region = translated, quote = "日本語訳を読みやすく表示する", extend = false) => {
+      await region.evaluate(element => element.scrollTo(0, 0));
+      const span = region.locator(".textLayer span").filter({ hasText: quote }).first();
+      const box = (await span.boundingBox())!;
+      const point = { x: box.x + 3, y: box.y + box.height / 2 };
+      const target = await page.evaluateHandle(({ x, y }) => document.elementFromPoint(x, y)!, point);
+      assert.equal(await target.evaluate((element, at) => {
+        const event = new Event("touchstart", { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "touches", { value: [{ identifier: 79, clientX: at.x, clientY: at.y }] });
+        return !element.dispatchEvent(event);
+      }, point), false, "a single finger is not cancelled, preserving native long-press selection");
+      await page.getByRole("toolbar", { name: "選択した文字の操作", exact: true }).waitFor();
+      const selected = await page.evaluate(() => getSelection()?.toString() ?? "");
+      assert.ok(selected.trim() && quote.includes(selected), "long-press selects real PDF text without setting a selection in the test");
+      if (extend) {
+        await target.evaluate((element, at) => {
+          const event = new Event("touchmove", { bubbles: true, cancelable: true });
+          Object.defineProperty(event, "touches", { value: [{ identifier: 79, clientX: at.x, clientY: at.y }] });
+          element.dispatchEvent(event);
+        }, { x: Math.min(box.x + box.width - 3, 370), y: point.y });
+        assert.ok((await page.evaluate(() => getSelection()?.toString() ?? "")).length > selected.length, "dragging after long-press extends the selection");
+      }
+      await target.evaluate(element => {
+        const event = new Event("touchend", { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "touches", { value: [] }); element.dispatchEvent(event);
+      });
+      await capture("long-press-selection-css");
+      await copySelection(); await target.dispose();
+    };
+    await selectText();
+    await longSelect(undefined, undefined, true);
     assert.equal(await page.getByText("保存ライブラリ", { exact: false }).isVisible(), false);
     await openMenu();
     assert.equal(await page.getByLabel("保存ライブラリ").locator("option").count(), 2);
@@ -157,9 +218,12 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     assert.match(await original.locator(".react-pdf__Page").textContent() ?? "", /Adaptive Control/);
     await page.screenshot({ path: path.join(output, "original.png") });
     await capture("original-css");
+    await selectText(original, "Abstract");
+    await longSelect(original, "Abstract");
     await page.getByRole("button", { name: "本文を拡大", exact: true }).tap();
     assert.equal(await page.getByLabel("表示倍率").inputValue(), "1.5");
     await ready(original); await capture("original-150-css");
+    await longSelect(original, "Abstract");
     await page.getByRole("button", { name: "幅に合わせる", exact: true }).tap();
     await page.getByRole("button", { name: "日本語訳を表示", exact: true }).tap();
     await ready();
@@ -194,6 +258,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await capture("pinch-original-css");
     await page.getByRole("button", { name: "日本語訳を表示", exact: true }).tap();
     await ready(); await capture("pinch-japanese-css");
+    await longSelect();
     assert.equal(await page.getByLabel("表示倍率").inputValue(), "2");
     await translated.locator(".web-pdf-surface").evaluate(surface => {
       for (const type of ["touchstart", "touchmove", "touchcancel"]) {
@@ -276,6 +341,8 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await writing(true);
     await page.getByRole("button", { name: "ペン", exact: true }).waitFor();
     assert.equal(await ink.evaluate(element => getComputedStyle(element).touchAction), "pinch-zoom");
+    await longSelect();
+    assert.equal(await page.locator("[data-ink-id]").count(), 0, "finger long-press selects text through the pen overlay without drawing");
     await page.getByLabel("書き込み設定", { exact: true }).tap();
     await capture("ink-settings-css");
     const colorBox = (await page.getByLabel("書き込みの色").boundingBox())!;
@@ -409,6 +476,15 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       assert.equal(await page.locator("[data-ink-id]").count(), beforeWritingPinch, "pinching in finger-writing mode adds no accidental ink");
       assert.equal(await page.evaluate(() => visualViewport!.scale), viewportScale);
       await capture("native-pinch-writing-css");
+      await menu.click(); await page.getByRole("button", { name: "書き込みを終了", exact: true }).click();
+      await page.getByRole("button", { name: "幅に合わせる", exact: true }).click(); await ready();
+      await translated.evaluate(element => element.scrollTo(0, 0));
+      const title = (await translated.locator(".textLayer span").filter({ hasText: "日本語訳を読みやすく表示する" }).first().boundingBox())!;
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ id: 17, x: title.x + 3, y: title.y + title.height / 2 }] });
+      await page.waitForFunction(() => !!getSelection()?.toString().trim());
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await capture("native-long-press-css");
+      await copySelection();
     }
     await menu.click();
     await page.getByRole("button", { name: "Google接続メニュー", exact: true }).click();
