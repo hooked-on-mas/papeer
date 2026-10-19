@@ -136,10 +136,11 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       }
     };
     await ready();
-    const copySelection = async () => {
+    const copySelection = async (mouse = false) => {
       const selected = await page.evaluate(() => getSelection()?.toString() ?? "");
       assert.ok(selected.trim());
-      await page.getByRole("button", { name: "選択した文字をコピー", exact: true }).click();
+      const copy = page.getByRole("button", { name: "選択した文字をコピー", exact: true });
+      if (mouse) await copy.click(); else await copy.tap();
       await page.getByText("コピーしました", { exact: true }).waitFor();
       assert.equal(await page.evaluate(() => navigator.clipboard.readText()), selected);
       await page.getByRole("button", { name: "文字選択を解除", exact: true }).click();
@@ -484,7 +485,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       await page.waitForFunction(() => !!getSelection()?.toString().trim());
       await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
       await capture("native-long-press-css");
-      await copySelection();
+      await copySelection(true);
     }
     await menu.click();
     await page.getByRole("button", { name: "Google接続メニュー", exact: true }).click();

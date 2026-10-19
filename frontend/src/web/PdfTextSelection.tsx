@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { Check, Copy, X } from "lucide-react";
 
 type Caret = { node: Text; offset: number };
@@ -47,6 +47,7 @@ function wordAt({ node, offset }: Caret): Range {
 export function PdfTextSelection({ container, enabled }: { container: RefObject<HTMLDivElement | null>; enabled: boolean }) {
   const [text, setText] = useState("");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const touchCopied = useRef(false);
   useEffect(() => {
     const root = container.current;
     if (!root) return;
@@ -145,12 +146,26 @@ export function PdfTextSelection({ container, enabled }: { container: RefObject<
     };
   }, [container, enabled]);
 
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); setCopyState("copied"); }
+    catch { setCopyState("error"); }
+  };
   if (!text.trim()) return null;
   return <div className="web-text-selection-tools" role="toolbar" aria-label="選択した文字の操作">
-    <button aria-label="選択した文字をコピー" onPointerDown={event => event.preventDefault()} onClick={async () => {
-      try { await navigator.clipboard.writeText(text); setCopyState("copied"); }
-      catch { setCopyState("error"); }
-    }}>{copyState === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copyState === "copied" ? "コピーしました" : "コピー"}</button>
+    <button aria-label="選択した文字をコピー"
+      onPointerDown={event => { touchCopied.current = false; event.preventDefault(); }}
+      onKeyDown={() => { touchCopied.current = false; }}
+      onTouchEnd={event => {
+        const touch = event.changedTouches[0], box = event.currentTarget.getBoundingClientRect();
+        if (event.touches.length || !touch || touch.clientX < box.left || touch.clientX > box.right || touch.clientY < box.top || touch.clientY > box.bottom) return;
+        touchCopied.current = true; void copy();
+      }}
+      onClick={() => {
+        // WebKit can omit the compatibility click after preventDefault(pointerdown).
+        // Copy during touchend's user activation, and ignore its optional later click.
+        if (touchCopied.current) { touchCopied.current = false; return; }
+        void copy();
+      }}>{copyState === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copyState === "copied" ? "コピーしました" : "コピー"}</button>
     <button aria-label="文字選択を解除" onClick={() => { getSelection()?.removeAllRanges(); setText(""); }}><X aria-hidden="true" /></button>
     {copyState === "error" && <label role="alert">コピーできませんでした。下の文字を選択してコピーしてください。
       <textarea readOnly aria-label="コピーする文字" value={text} onFocus={event => event.currentTarget.select()} /></label>}
