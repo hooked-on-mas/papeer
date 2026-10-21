@@ -1,5 +1,6 @@
 import type { InkStroke } from "../features/reader/inkGeometry.ts";
-import type { DriveSession, Manifest } from "./drive.ts";
+import type { Manifest } from "./drive.ts";
+import type { LibraryTransport } from "./offlineLibrary.ts";
 
 export type Anchor = { paper_id: string; side: "original" | "translated"; source_sha256: string; page: number };
 export type Operation = Anchor & { version: 1; id: string; library_id: string } &
@@ -56,12 +57,12 @@ export class AnnotationStore {
   private initializing: Promise<void> | undefined;
   private refreshing: Promise<void> | undefined;
   private state: State = { ready: false, pending: 0, saving: false, error: "", version: 0, stale: 0 };
-  private session: DriveSession;
+  private session: LibraryTransport;
   readonly libraryId: string;
   private manifest: Manifest;
   private storage: Storage;
   private blockedStorage = false;
-  constructor(session: DriveSession, libraryId: string, manifest: Manifest, storage?: Storage) {
+  constructor(session: LibraryTransport, libraryId: string, manifest: Manifest, storage?: Storage) {
     this.session = session; this.libraryId = libraryId; this.manifest = manifest;
     try { this.storage = storage ?? localStorage; }
     catch {

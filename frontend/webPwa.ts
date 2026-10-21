@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import type { Plugin } from "vite";
 
@@ -24,6 +24,14 @@ export function webPwa(): Plugin {
         this.emitFile({ type: "asset", fileName: name, source });
       }
       files.set("papeer.png", readFileSync(path.resolve(import.meta.dirname, "public/papeer.png")));
+      // PDF.js fetches these lazily. Precache them too, so first rendering a saved
+      // PDF offline works for CJK character maps and non-embedded standard fonts.
+      for (const directory of ["cmaps", "standard_fonts"]) {
+        const folder = path.resolve(import.meta.dirname, "public/pdfjs", directory);
+        for (const name of readdirSync(folder).filter(name => /\.(bcmap|pfb|ttf)$/.test(name))) {
+          files.set(`pdfjs/${directory}/${name}`, readFileSync(path.join(folder, name)));
+        }
+      }
       const manifest = JSON.stringify({
         id: "./", name: "Papeer", short_name: "Papeer", lang: "ja",
         description: "PCで翻訳したPDF・ノートをGoogle Driveから閲覧し、書き込めます。",

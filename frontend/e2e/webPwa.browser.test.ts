@@ -29,7 +29,10 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
     response.end(body);
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  t.after(() => {
+    server.closeAllConnections();
+    return new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  });
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   const base = `http://127.0.0.1:${address.port}/papeer/`;
@@ -157,6 +160,6 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
   });
   assert.equal(await reopened.evaluate(() => localStorage.getItem("papeer-ink:fixture-draft")), "unsent-draft-fixture",
     "applying an update preserves the durable annotation queue");
-  assert.equal(await reopened.getByRole("button", { name: "更新を適用", exact: true }).count(), 0);
+  await reopened.getByRole("button", { name: "更新を適用", exact: true }).waitFor({ state: "hidden" });
   assert.deepEqual(errors, []);
 });

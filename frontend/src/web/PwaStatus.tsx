@@ -117,7 +117,7 @@ export function PwaStatus({ online, compact = false }: { online: boolean; compac
   };
 
   const notices = <>
-    {!online && <p role="status">オフラインです。新しい資料の取得・Googleログイン・Driveへの保存には通信が必要です。未送信の書き込みはこの端末に保持し、接続後に再送します。</p>}
+    {!online && <p role="status">オフラインです。ダウンロード済みのPDFは読めます。新しい資料の取得・Googleログイン・Driveへの保存には通信が必要です。未送信の書き込みはこの端末に保持し、接続・ログイン後に再送します。</p>}
     {updateReady && <p role="status">更新があります。 <Button size="sm" disabled={applyingUpdate} onClick={applyUpdate}>{applyingUpdate ? "更新中…" : "更新を適用"}</Button></p>}
     {updateError && <p role="alert">{updateError}</p>}
     {cacheFailed && <p role="status">オフライン起動の準備を完了できませんでした。通信と端末の空き容量を確認し、次回の起動時に再試行してください。</p>}
@@ -136,7 +136,7 @@ export function PwaStatus({ online, compact = false }: { online: boolean; compac
         }}>Papeerをインストール</Button>}
         <p>iPad・iPhone：Safariの共有メニューから「ホーム画面に追加」を選びます。「Webアプリとして開く」がある場合はオンにしてください。</p>
         <p>PC・Android：ブラウザーのメニューから「アプリをインストール」または「ホーム画面に追加」を選びます。</p>
-        <p>PDFやノートはDriveから読み込むため通信が必要です。Googleへのログインは起動後に行います。</p>
+        <p>ダウンロード済みのPDFやノートは、ログインせずにオフラインで読めます。新しい資料の取得とDriveへの保存にはGoogleログインと通信が必要です。</p>
       </div>
     </details>}
   </div>;

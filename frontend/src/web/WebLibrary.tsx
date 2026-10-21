@@ -11,7 +11,8 @@ import { SidePanelChooser } from "../features/reader/SidePanelChooser";
 import type { SidePanel } from "../features/reader/sidePanel";
 import type { ArtifactView, SavedReadingView } from "../runtime/contracts";
 import type { DriveLibraryRuntime } from "./libraryRuntime";
-import type { DriveSession, Manifest } from "./drive";
+import type { Manifest } from "./drive";
+import type { LibraryTransport } from "./offlineLibrary";
 import { AnnotationStore } from "./annotations";
 import { DocumentReader, type PhoneReaderControls } from "./DocumentReader";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -25,7 +26,7 @@ const PANEL_LABELS = { summary: "サマリー", chat: "チャット", notes: "�
 
 /** Web host supplies saved data to the same sidebar rows and reader dock as desktop. */
 export function WebLibrary({ runtime, session, manifest, actions, focusMode, onFocusModeChange, transitioning, libraryPicker }: {
-  runtime: DriveLibraryRuntime; session: DriveSession; manifest: Manifest; actions: ReactNode;
+  runtime: DriveLibraryRuntime; session: LibraryTransport; manifest: Manifest; actions: ReactNode;
   focusMode: boolean; onFocusModeChange: (focus: boolean) => void;
   transitioning: boolean;
   libraryPicker?: ReactNode;
