@@ -91,11 +91,11 @@ test("Web recovers login, reads, scratch text and reading position without showi
   assert.equal(await page.locator(".react-pdf__Page canvas").count(), 0, "missing translation must not fall back to a different PDF page");
   await page.getByLabel("表示する資料").selectOption({ label: "原文・ノート" });
   await original.locator('[data-page-number="2"] canvas').waitFor();
-  const pdfUrl = await original.locator(".asset-heading a").getAttribute("href");
+  const pdfUrl = await original.getByRole("link", { name: "PDF本体を保存 ↓", exact: true }).getAttribute("href");
   await page.getByRole("button", { name: "再ログイン", exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('.banner[role="status"]'));
   await original.locator('[data-page-number="2"] canvas').waitFor();
-  assert.notEqual(await original.locator(".asset-heading a").getAttribute("href"), pdfUrl, "reauthorization fetches protected PDFs with the new token");
+  assert.notEqual(await original.getByRole("link", { name: "PDF本体を保存 ↓", exact: true }).getAttribute("href"), pdfUrl, "reauthorization fetches protected PDFs with the new token");
   assert.equal(await page.getByLabel("ページ番号").inputValue(), "2");
   revision++;
   await page.getByRole("button", { name: "更新", exact: true }).click();

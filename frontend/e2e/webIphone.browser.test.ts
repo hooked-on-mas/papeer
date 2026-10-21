@@ -213,7 +213,29 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     assert.match(await plainText.textContent() ?? "", /日本語訳を読みやすく表示する/);
     assert.equal(await plainText.evaluate(element => getComputedStyle(element).webkitUserSelect), "text");
     assert.equal(await translated.locator("canvas, .textLayer, .web-ink").count(), 0, "plain text is outside all PDF touch layers");
+    const nativeTextPoints = await plainText.evaluate(async element => {
+      await document.fonts.ready;
+      const range = document.createRange(), node = element.firstChild!;
+      range.setStart(node, 0); range.setEnd(node, 1); const first = range.getBoundingClientRect();
+      range.setStart(node, 2); range.setEnd(node, 3); const last = range.getBoundingClientRect();
+      return { x: first.left + .1, end: last.right - .1, y: first.top + first.height / 2 };
+    });
+    await page.mouse.move(nativeTextPoints.x, nativeTextPoints.y); await page.mouse.down();
+    await page.mouse.move(nativeTextPoints.end, nativeTextPoints.y, { steps: 8 }); await page.mouse.up();
+    assert.equal(await page.evaluate(() => getSelection()?.toString()), "日本語", "native partial selection also works inside the full reader layout");
     await capture("plain-text-css");
+    await page.evaluate(() => getSelection()?.removeAllRanges());
+    if (engine === "chromium") {
+      const nativeTextSession = await context.newCDPSession(page), box = (await translated.boundingBox())!;
+      const x = box.x + 80, y = box.y + box.height * .75;
+      await nativeTextSession.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ id: 51, x, y }] });
+      for (let step = 1; step <= 5; step++) {
+        await nativeTextSession.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ id: 51, x, y: y - step * 35 }] });
+        await page.waitForTimeout(16);
+      }
+      await nativeTextSession.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      assert.ok(await translated.evaluate(element => element.scrollTop) > 30, "plain text scrolls vertically with an actual finger gesture");
+    }
     await page.getByRole("button", { name: "次のページ", exact: true }).click();
     await page.waitForFunction(() => document.querySelector('.web-pdf-text-body')?.textContent?.includes("第2ページ"));
     await page.getByRole("button", { name: "前のページ", exact: true }).click();
