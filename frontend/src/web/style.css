@@ -44,6 +44,9 @@
 .asset-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; font-size: .75rem; padding-bottom: 12px; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .asset-heading a { white-space: nowrap; }
 .pdf { position: relative; width: 100%; margin: 0; }
+.web-pdf-text-view { padding: 16px; background: var(--background); color: var(--foreground); }
+.web-pdf-text-help { margin-bottom: 16px; font-size: .8125rem; color: var(--muted-foreground); }
+.web-pdf-text-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 1rem; line-height: 1.85; user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
 .web-pdf-surface { touch-action: pan-x pan-y; }
 /* iOS long-press off a glyph selects the enclosing block (the canvas or the whole text layer).
    Only the text runs are selectable by mouse or trackpad. */

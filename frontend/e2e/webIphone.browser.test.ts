@@ -136,6 +136,13 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       }
     };
     await ready();
+    await openMenu();
+    const openPdf = page.getByRole("link", { name: "PDFを別タブで開く", exact: true });
+    assert.equal(await openPdf.getAttribute("target"), "_blank");
+    assert.equal(await openPdf.getAttribute("download"), null);
+    const nativePdfUrl = await openPdf.getAttribute("href"); assert.ok(nativePdfUrl?.startsWith("blob:"));
+    assert.equal(await page.evaluate(async url => new TextDecoder().decode((await (await fetch(url!)).arrayBuffer()).slice(0, 4)), nativePdfUrl), "%PDF");
+    await closeMenu();
     // Touch selections are drawn by the reader rather than held in the native Selection.
     const selection = async () => await page.getByLabel("選択中の文字", { exact: true }).count()
       ? await page.getByLabel("選択中の文字", { exact: true }).textContent() ?? "" : "";
@@ -200,6 +207,18 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     };
     await selectText();
     await longSelect(undefined, undefined, true);
+    await openMenu(); await page.getByRole("button", { name: "本文をテキストで表示", exact: true }).click();
+    const plainText = translated.getByRole("document", { name: "ページ本文", exact: true });
+    await plainText.waitFor();
+    assert.match(await plainText.textContent() ?? "", /日本語訳を読みやすく表示する/);
+    assert.equal(await plainText.evaluate(element => getComputedStyle(element).webkitUserSelect), "text");
+    assert.equal(await translated.locator("canvas, .textLayer, .web-ink").count(), 0, "plain text is outside all PDF touch layers");
+    await capture("plain-text-css");
+    await page.getByRole("button", { name: "次のページ", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.web-pdf-text-body')?.textContent?.includes("第2ページ"));
+    await page.getByRole("button", { name: "前のページ", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.web-pdf-text-body')?.textContent?.includes("第1ページ"));
+    await openMenu(); await page.getByRole("button", { name: "PDF表示に戻る", exact: true }).click(); await ready();
     assert.equal(await page.getByText("保存ライブラリ", { exact: false }).isVisible(), false);
     await openMenu();
     assert.equal(await page.getByLabel("保存ライブラリ").locator("option").count(), 2);
