@@ -18,17 +18,21 @@ export function PdfTextReader({ url, pageNumber, onPageCount }: {
 
 function TextPage({ document, pageNumber }: { document: PDFDocumentProxy; pageNumber: number }) {
   const [text, setText] = useState<string>();
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
     void document.getPage(pageNumber).then(page => page.getTextContent()).then(content => {
       if (!cancelled) setText(content.items.map(item => "str" in item ? item.str + (item.hasEOL ? "\n" : "") : "").join(""));
-    }).catch(() => { if (!cancelled) setError(true); });
+    }).catch((reason: unknown) => {
+      if (!cancelled) setError(reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason));
+    });
     return () => { cancelled = true; };
   }, [document, pageNumber, attempt]);
-  if (error) return <p role="alert" className="error">本文の文字を読み込めませんでした。
-    <button onClick={() => { setError(false); setText(undefined); setAttempt(value => value + 1); }}>本文を再試行</button></p>;
+  if (error !== undefined) return <div role="alert" className="error">本文の文字を読み込めませんでした。
+    <button onClick={() => { setError(undefined); setText(undefined); setAttempt(value => value + 1); }}>本文を再試行</button>
+    <details><summary>エラーの詳細</summary><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", userSelect: "text", WebkitUserSelect: "text" }}>{error}</pre></details>
+  </div>;
   if (text === undefined) return <p role="status">本文の文字を読み込んでいます…</p>;
   if (!text.trim()) return <p role="status" className="empty">このページには取り出せる文字情報がありません。画像のみのPDFは、PCでOCRを行ってから再アップロードしてください。</p>;
   return <div className="web-pdf-text-view">

@@ -37,6 +37,12 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
   const browser = engine === "webkit" ? await webkit.launch({ headless: true }) : await chromium.launch({ channel: "msedge", headless: true });
   t.after(() => browser.close());
   const context = await browser.newContext({ ...devices["iPhone 13"], serviceWorkers: "block", viewport: { width: 390, height: 664 } });
+  // Safari before 26.4 can render PDF canvases but cannot iterate ReadableStream.
+  // A current WebKit binary alone does not reproduce that missing browser API.
+  await context.addInitScript(() => {
+    Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, { configurable: true, writable: true, value: undefined });
+    Object.defineProperty(ReadableStream.prototype, "values", { configurable: true, writable: true, value: undefined });
+  });
   const page = await context.newPage(); page.setDefaultTimeout(10_000);
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   await page.route("**/page-text.pdf", route => route.fulfill({ contentType: "application/pdf", body: generated.stdout }));
@@ -66,7 +72,23 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
   assert.equal(await body.count(), 0, "an image-only page never retains the previous page's text");
   await page.getByRole("button", { name: "次へ", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "指定ページがありません" }).waitFor();
+  // A separate extraction failure must expose the actual reason and allow retry.
+  await page.evaluate(() => {
+    const iterator = Reflect.get(ReadableStream.prototype, Symbol.asyncIterator);
+    Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, {
+      configurable: true, writable: true,
+      value: async function*() {
+        Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, { configurable: true, writable: true, value: iterator });
+        throw new Error("Text extraction test failure");
+      },
+    });
+  });
   await page.getByRole("button", { name: "原文", exact: true }).click();
+  const extractionError = page.getByRole("alert").filter({ hasText: "本文の文字を読み込めませんでした" });
+  await extractionError.waitFor();
+  await extractionError.getByText("エラーの詳細", { exact: true }).click();
+  assert.match(await extractionError.locator("pre").textContent() ?? "", /Error: Text extraction test failure/);
+  await extractionError.getByRole("button", { name: "本文を再試行", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".web-pdf-text-body")?.textContent?.includes("Abstract"));
   assert.equal((await body.textContent())?.includes("日本語の本文"), false);
   await page.getByRole("button", { name: "取得失敗", exact: true }).click();

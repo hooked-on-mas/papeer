@@ -23,6 +23,11 @@ for (const engine of ["webkit", "chromium"] as const) {
     const context = await browser.newContext({ ...devices["iPhone 13"], serviceWorkers: "block", viewport: { width: 390, height: 664 },
       // Chromium cannot emulate WebKit's device-specific UA behavior, but does exercise real touch.
       userAgent: engine === "webkit" ? devices["iPhone 13"].userAgent : undefined });
+    // Exercise the text-layer and text-view paths when Safari has no stream iterator.
+    await context.addInitScript(() => {
+      Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, { configurable: true, writable: true, value: undefined });
+      Object.defineProperty(ReadableStream.prototype, "values", { configurable: true, writable: true, value: undefined });
+    });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
     const capture = async (name: string) => page.screenshot({ path: path.join(output, name + ".png"), scale: "css" });

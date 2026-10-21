@@ -1,4 +1,5 @@
 /** PDF rendering policy shared by desktop and the static Web reader; no transport or auth imports. */
+import "./pdfStreamCompatibility";
 import { useMemo, type ComponentProps } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
