@@ -4,10 +4,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { test } from "node:test";
-import { chromium } from "playwright-core";
+import { test, type TestContext } from "node:test";
+import { chromium, webkit } from "playwright-core";
 
-test("downloaded PDFs reopen offline; missing versions, storage failures and logout are handled", { timeout: 120_000 }, async t => {
+async function staticApp(t: TestContext) {
   const dist = path.resolve(import.meta.dirname, "../web-dist");
   const types: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
     ".css": "text/css", ".png": "image/png", ".webmanifest": "application/manifest+json", ".woff2": "font/woff2" };
@@ -21,9 +21,13 @@ test("downloaded PDFs reopen offline; missing versions, storage failures and log
     response.setHeader("Cache-Control", "no-store"); response.end(fs.readFileSync(file));
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  t.after(() => { server.closeAllConnections(); return new Promise<void>(resolve => server.close(() => resolve())); });
   const address = server.address(); assert.ok(address && typeof address !== "string");
-  const base = process.env.PAPEER_PWA_TEST_URL || `http://127.0.0.1:${address.port}/papeer/`;
+  return process.env.PAPEER_PWA_TEST_URL || `http://127.0.0.1:${address.port}/papeer/`;
+}
+
+test("downloaded PDFs reopen offline; missing versions, storage failures and logout are handled", { timeout: 120_000 }, async t => {
+  const base = await staticApp(t);
   const browser = await chromium.launch({ channel: "msedge", headless: true }); t.after(() => browser.close());
   const context = await browser.newContext({ viewport: { width: 1366, height: 1024 } });
   await context.addInitScript(() => {
@@ -172,5 +176,49 @@ test("downloaded PDFs reopen offline; missing versions, storage failures and log
   await page.getByRole("heading", { name: "論文を選んで、読み始めよう" }).waitFor();
   assert.equal(await page.getByRole("button", { name: "ダウンロード済みのライブラリを開く", exact: true }).count(), 0);
   await page.getByText("このブラウザーには保存済みの資料がありません。", { exact: false }).waitFor();
+  assert.deepEqual(errors, []);
+});
+
+test("WebKit reopens saved PDF bodies after restarting without Google", { timeout: 60_000 }, async t => {
+  const base = await staticApp(t);
+  const browser = await webkit.launch({ headless: true }); t.after(() => browser.close());
+  const context = await browser.newContext({ viewport: { width: 1366, height: 1024 }, serviceWorkers: "block" });
+  await context.addInitScript(() => {
+    if (sessionStorage.getItem("offline-test:no-google")) Object.defineProperty(navigator, "onLine", { get: () => false });
+  });
+  const page = await context.newPage();
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  const paper = "a".repeat(32);
+  const pdf = fs.readFileSync(path.resolve(import.meta.dirname, "../../tests/fixtures/sample.pdf"));
+  let offline = false, driveReads = 0;
+  await context.route("https://accounts.google.com/**", route => offline ? route.abort() : route.fulfill({ contentType: "text/javascript", body:
+    'window.google={accounts:{oauth2:{initTokenClient:opts=>({requestAccessToken:()=>opts.callback({access_token:"test-token",expires_in:3600})})}}};' }));
+  await context.route("https://www.googleapis.com/**", async route => {
+    if (offline) { driveReads++; await route.abort(); return; }
+    const headers = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*" };
+    if (route.request().method() === "OPTIONS") { await route.fulfill({ status: 204, headers }); return; }
+    const url = new URL(route.request().url()), id = url.pathname.split("/").pop();
+    if (id === "files") await route.fulfill({ json: { files: url.searchParams.get("q")?.includes("ink-v1") ? []
+      : [{ id: "library", name: "papeer-library.json", modifiedTime: "2026-10-21T00:00:00Z" }] }, headers });
+    else if (id === "library") await route.fulfill({ json: { version: 1, revision: "webkit", updated_at: "2026-10-21T00:00:00Z",
+      items: [{ id: paper, title: "WebKitの保存済みPDF" }], attachments: [], files: {
+        [`papers/${paper}/original.pdf`]: { id: "pdf", size: pdf.length, mime: "application/pdf", sha256: createHash("sha256").update(pdf).digest("hex") },
+      } }, headers });
+    else await route.fulfill({ body: pdf, headers });
+  });
+  await page.goto(base);
+  await page.getByRole("button", { name: "Googleでログインして開く →" }).click();
+  const original = page.getByRole("region", { name: "原文", exact: true });
+  await original.locator("canvas").waitFor();
+  await page.getByRole("status").filter({ hasText: "Driveに保存済み" }).waitFor();
+  assert.equal(await page.getByRole("alert").filter({ hasText: "資料を端末に保存できません" }).count(), 0);
+  await page.getByRole("button", { name: "次のページ", exact: true }).click();
+  await original.locator('[data-page-number="2"] canvas').waitFor();
+  offline = true;
+  await page.evaluate(() => sessionStorage.setItem("offline-test:no-google", "1"));
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await original.locator('[data-page-number="2"] canvas').waitFor();
+  assert.equal(await page.getByRole("heading", { name: "論文を選んで、読み始めよう" }).count(), 0);
+  assert.equal(driveReads, 0);
   assert.deepEqual(errors, []);
 });

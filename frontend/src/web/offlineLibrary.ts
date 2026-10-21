@@ -45,14 +45,18 @@ export class OfflineLibraryStore {
     return JSON.stringify([libraryId, file.id, file.sha256, file.size, file.mime]);
   }
   async file(libraryId: string, file: DriveFile): Promise<Blob> {
-    const blob = await this.access<Blob | undefined>("files", "readonly", store => store.get(this.fileKey(libraryId, file)));
+    const stored = await this.access<Blob | ArrayBuffer | undefined>("files", "readonly", store => store.get(this.fileKey(libraryId, file)));
+    // Older versions stored Blobs. Binary buffers also work in WebKit builds
+    // that reject Blob/File values when preparing an IndexedDB transaction.
+    const blob = stored instanceof ArrayBuffer ? new Blob([stored], { type: file.mime }) : stored;
     if (!(blob instanceof Blob) || blob.size !== file.size) {
       throw new Error("この資料は端末に保存されていません。オンラインで一度開いてから、オフラインでお読みください。");
     }
     return blob;
   }
   async saveFile(libraryId: string, file: DriveFile, blob: Blob): Promise<void> {
-    await this.access("files", "readwrite", store => store.put(blob, this.fileKey(libraryId, file)));
+    const bytes = await blob.arrayBuffer();
+    await this.access("files", "readwrite", store => store.put(bytes, this.fileKey(libraryId, file)));
   }
   async annotation<T>(libraryId: string, id: string): Promise<T | undefined> {
     return this.access("annotations", "readonly", store => store.get(JSON.stringify([libraryId, id])));
