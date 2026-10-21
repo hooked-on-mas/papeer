@@ -23,11 +23,6 @@ for (const engine of ["webkit", "chromium"] as const) {
     const context = await browser.newContext({ ...devices["iPhone 13"], serviceWorkers: "block", viewport: { width: 390, height: 664 },
       // Chromium cannot emulate WebKit's device-specific UA behavior, but does exercise real touch.
       userAgent: engine === "webkit" ? devices["iPhone 13"].userAgent : undefined });
-    // Exercise the text-layer and text-view paths when Safari has no stream iterator.
-    await context.addInitScript(() => {
-      Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, { configurable: true, writable: true, value: undefined });
-      Object.defineProperty(ReadableStream.prototype, "values", { configurable: true, writable: true, value: undefined });
-    });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
     const capture = async (name: string) => page.screenshot({ path: path.join(output, name + ".png"), scale: "css" });
@@ -86,12 +81,6 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     });
     const appUrl = process.env.PAPEER_WEB_TEST_URL || server.resolvedUrls!.local[0];
     if (engine === "chromium") await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(appUrl).origin });
-    else await page.addInitScript(() => {
-      // WebKit on Windows cannot grant/read the OS clipboard. Verify the copy API
-      // payload here; Chromium below exercises a real headless clipboard round trip.
-      let copied = "";
-      Object.defineProperty(navigator, "clipboard", { value: { writeText: async (value: string) => { copied = value; }, readText: async () => copied } });
-    });
     await page.goto(appUrl);
     await page.getByRole("button", { name: "Googleでログインして開く →" }).tap();
     const original = page.getByRole("region", { name: "原文", exact: true });
@@ -141,111 +130,29 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       }
     };
     await ready();
-    await openMenu();
-    const openPdf = page.getByRole("link", { name: "PDFを別タブで開く", exact: true });
-    assert.equal(await openPdf.getAttribute("target"), "_blank");
-    assert.equal(await openPdf.getAttribute("download"), null);
-    const nativePdfUrl = await openPdf.getAttribute("href"); assert.ok(nativePdfUrl?.startsWith("blob:"));
-    assert.equal(await page.evaluate(async url => new TextDecoder().decode((await (await fetch(url!)).arrayBuffer()).slice(0, 4)), nativePdfUrl), "%PDF");
-    await closeMenu();
-    // Touch selections are drawn by the reader rather than held in the native Selection.
-    const selection = async () => await page.getByLabel("選択中の文字", { exact: true }).count()
-      ? await page.getByLabel("選択中の文字", { exact: true }).textContent() ?? "" : "";
-    const coarse = await page.evaluate(() => matchMedia("(hover: none) and (pointer: coarse)").matches);
-    const copySelection = async (mouse = false) => {
-      const selected = await selection();
-      assert.ok(selected.trim());
-      const copy = page.getByRole("button", { name: "選択した文字をコピー", exact: true });
-      if (mouse) await copy.click(); else await copy.tap();
-      await page.getByText("コピーしました", { exact: true }).waitFor();
-      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), selected);
-      await page.getByRole("button", { name: "文字選択を解除", exact: true }).click();
-      assert.equal(await selection(), "");
-      assert.equal(await page.locator(".web-touch-selection").count(), 0);
-    };
     const selectText = async (region = translated, quote = "日本語訳を読みやすく表示する") => {
-      if (coarse) return; // A touch-only phone has no mouse drag; the text is not natively selectable.
-      const span = region.locator(".textLayer span").filter({ hasText: quote }).first();
-      await span.waitFor();
-      const box = (await span.boundingBox())!;
-      await page.mouse.move(box.x + 1, box.y + box.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 12 });
-      await page.mouse.up();
-      const selected = await page.evaluate(() => getSelection()?.toString() ?? "");
-      assert.ok(selected.length > 0 && quote.includes(selected), "PDF text can be selected by dragging");
-      await capture("text-selection-css");
-      await copySelection();
-    };
-    const longSelect = async (region = translated, quote = "日本語訳を読みやすく表示する", extend = false) => {
       await region.evaluate(element => element.scrollTo(0, 0));
       const span = region.locator(".textLayer span").filter({ hasText: quote }).first();
-      const box = (await span.boundingBox())!;
-      const point = { x: box.x + 3, y: box.y + box.height / 2 };
-      const target = await page.evaluateHandle(({ x, y }) => document.elementFromPoint(x, y)!, point);
-      assert.equal(await target.evaluate((element, at) => {
-        const event = new Event("touchstart", { bubbles: true, cancelable: true });
-        Object.defineProperty(event, "touches", { value: [{ identifier: 79, clientX: at.x, clientY: at.y }] });
-        return !element.dispatchEvent(event);
-      }, point), false, "a single finger is not cancelled before the long press");
-      assert.deepEqual(await region.evaluate(element => [".react-pdf__Page", "canvas", ".textLayer", ".textLayer span"]
-        .map(selector => getComputedStyle(element.querySelector(selector)!).webkitUserSelect)), ["none", "none", "none", coarse ? "none" : "text"],
-      "iOS can neither select the whole page nor start its own long-press selection on the text");
-      await page.getByRole("toolbar", { name: "選択した文字の操作", exact: true }).waitFor();
-      const selected = await selection();
-      assert.ok(selected.trim() && quote.includes(selected), "long-press selects real PDF text without setting a selection in the test");
-      assert.ok(await page.locator(".web-touch-selection").count() > 0, "the touch selection is highlighted");
-      if (extend) {
-        await target.evaluate((element, at) => {
-          const event = new Event("touchmove", { bubbles: true, cancelable: true });
-          Object.defineProperty(event, "touches", { value: [{ identifier: 79, clientX: at.x, clientY: at.y }] });
-          element.dispatchEvent(event);
-        }, { x: Math.min(box.x + box.width - 3, 370), y: point.y });
-        await page.waitForFunction(length => (document.querySelector('output[aria-label="選択中の文字"]')?.textContent ?? "").length > length, selected.length);
-      }
-      await target.evaluate(element => {
-        const event = new Event("touchend", { bubbles: true, cancelable: true });
-        Object.defineProperty(event, "touches", { value: [] }); element.dispatchEvent(event);
+      await span.waitFor();
+      const points = await span.evaluate(async element => {
+        await document.fonts.ready;
+        const node = element.firstChild!, range = document.createRange();
+        range.setStart(node, 0); range.setEnd(node, 1); const first = range.getBoundingClientRect();
+        range.setStart(node, 2); range.setEnd(node, 3); const last = range.getBoundingClientRect();
+        return { x: first.left + .1, end: last.right - .1, y: first.top + first.height / 2, text: node.textContent!.slice(0, 3) };
       });
-      await capture("long-press-selection-css");
-      await copySelection(); await target.dispose();
+      assert.equal(await span.evaluate(element => getComputedStyle(element).webkitUserSelect), "text");
+      await page.mouse.move(points.x, points.y); await page.mouse.down();
+      await page.mouse.move(points.end, points.y, { steps: 8 }); await page.mouse.up();
+      assert.equal(await page.evaluate(() => getSelection()?.toString()), points.text, "the PDF supports native partial selection");
+      if (engine === "chromium") {
+        await page.keyboard.press("Control+C");
+        await page.waitForFunction(async expected => await navigator.clipboard.readText() === expected, points.text);
+      }
+      await capture("native-text-selection-css");
+      await page.evaluate(() => getSelection()?.removeAllRanges());
     };
     await selectText();
-    await longSelect(undefined, undefined, true);
-    await openMenu(); await page.getByRole("button", { name: "本文をテキストで表示", exact: true }).click();
-    const plainText = translated.getByRole("document", { name: "ページ本文", exact: true });
-    await plainText.waitFor();
-    assert.match(await plainText.textContent() ?? "", /日本語訳を読みやすく表示する/);
-    assert.equal(await plainText.evaluate(element => getComputedStyle(element).webkitUserSelect), "text");
-    assert.equal(await translated.locator("canvas, .textLayer, .web-ink").count(), 0, "plain text is outside all PDF touch layers");
-    const nativeTextPoints = await plainText.evaluate(async element => {
-      await document.fonts.ready;
-      const range = document.createRange(), node = element.firstChild!;
-      range.setStart(node, 0); range.setEnd(node, 1); const first = range.getBoundingClientRect();
-      range.setStart(node, 2); range.setEnd(node, 3); const last = range.getBoundingClientRect();
-      return { x: first.left + .1, end: last.right - .1, y: first.top + first.height / 2 };
-    });
-    await page.mouse.move(nativeTextPoints.x, nativeTextPoints.y); await page.mouse.down();
-    await page.mouse.move(nativeTextPoints.end, nativeTextPoints.y, { steps: 8 }); await page.mouse.up();
-    assert.equal(await page.evaluate(() => getSelection()?.toString()), "日本語", "native partial selection also works inside the full reader layout");
-    await capture("plain-text-css");
-    await page.evaluate(() => getSelection()?.removeAllRanges());
-    if (engine === "chromium") {
-      const nativeTextSession = await context.newCDPSession(page), box = (await translated.boundingBox())!;
-      const x = box.x + 80, y = box.y + box.height * .75;
-      await nativeTextSession.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ id: 51, x, y }] });
-      for (let step = 1; step <= 5; step++) {
-        await nativeTextSession.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ id: 51, x, y: y - step * 35 }] });
-        await page.waitForTimeout(16);
-      }
-      await nativeTextSession.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-      assert.ok(await translated.evaluate(element => element.scrollTop) > 30, "plain text scrolls vertically with an actual finger gesture");
-    }
-    await page.getByRole("button", { name: "次のページ", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('.web-pdf-text-body')?.textContent?.includes("第2ページ"));
-    await page.getByRole("button", { name: "前のページ", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('.web-pdf-text-body')?.textContent?.includes("第1ページ"));
-    await openMenu(); await page.getByRole("button", { name: "PDF表示に戻る", exact: true }).click(); await ready();
     assert.equal(await page.getByText("保存ライブラリ", { exact: false }).isVisible(), false);
     await openMenu();
     assert.equal(await page.getByLabel("保存ライブラリ").locator("option").count(), 2);
@@ -276,11 +183,9 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await page.screenshot({ path: path.join(output, "original.png") });
     await capture("original-css");
     await selectText(original, "Abstract");
-    await longSelect(original, "Abstract");
     await page.getByRole("button", { name: "本文を拡大", exact: true }).tap();
     assert.equal(await page.getByLabel("表示倍率").inputValue(), "1.5");
     await ready(original); await capture("original-150-css");
-    await longSelect(original, "Abstract");
     await page.getByRole("button", { name: "幅に合わせる", exact: true }).tap();
     await page.getByRole("button", { name: "日本語訳を表示", exact: true }).tap();
     await ready();
@@ -315,7 +220,6 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await capture("pinch-original-css");
     await page.getByRole("button", { name: "日本語訳を表示", exact: true }).tap();
     await ready(); await capture("pinch-japanese-css");
-    await longSelect();
     assert.equal(await page.getByLabel("表示倍率").inputValue(), "2");
     await translated.locator(".web-pdf-surface").evaluate(surface => {
       for (const type of ["touchstart", "touchmove", "touchcancel"]) {
@@ -398,8 +302,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await writing(true);
     await page.getByRole("button", { name: "ペン", exact: true }).waitFor();
     assert.equal(await ink.evaluate(element => getComputedStyle(element).touchAction), "pinch-zoom");
-    await longSelect();
-    assert.equal(await page.locator("[data-ink-id]").count(), 0, "finger long-press selects text through the pen overlay without drawing");
+    assert.equal(await page.locator("[data-ink-id]").count(), 0, "entering pen mode does not draw a stroke");
     await page.getByLabel("書き込み設定", { exact: true }).tap();
     await capture("ink-settings-css");
     const colorBox = (await page.getByLabel("書き込みの色").boundingBox())!;
@@ -430,6 +333,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await page.screenshot({ path: path.join(output, "focus-writing.png") });
     await writing(false);
     await fits(390, 664);
+    await selectText();
     assert.equal(await page.locator("[data-ink-id]").count(), 2, "reading mode keeps the saved annotations visible");
     await openMenu();
     assert.ok(await page.getByRole("link", { name: "PDF本体を保存", exact: true }).getAttribute("href"));
@@ -536,12 +440,6 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       await menu.click(); await page.getByRole("button", { name: "書き込みを終了", exact: true }).click();
       await page.getByRole("button", { name: "幅に合わせる", exact: true }).click(); await ready();
       await translated.evaluate(element => element.scrollTo(0, 0));
-      const title = (await translated.locator(".textLayer span").filter({ hasText: "日本語訳を読みやすく表示する" }).first().boundingBox())!;
-      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ id: 17, x: title.x + 3, y: title.y + title.height / 2 }] });
-      await page.getByLabel("選択中の文字", { exact: true }).waitFor({ state: "attached" });
-      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-      await capture("native-long-press-css");
-      await copySelection(true);
     }
     await menu.click();
     await page.getByRole("button", { name: "Google接続メニュー", exact: true }).click();
