@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button";
+import { prepareWebNavigation } from "./textDrafts";
 
 interface InstallPrompt extends Event {
   prompt(): Promise<void>;
@@ -20,7 +21,11 @@ export function PwaStatus({ online, compact = false }: { online: boolean; compac
   const [install, setInstall] = useState<InstallPrompt>();
   const [standalone, setStandalone] = useState(() => matchMedia("(display-mode: standalone)").matches
     || !!(navigator as Navigator & { standalone?: boolean }).standalone);
-  const [updateReady, setUpdateReady] = useState(false);
+  const [waiting, setWaiting] = useState<ServiceWorker>();
+  const updateReady = !!waiting;
+  const [applyingUpdate, setApplyingUpdate] = useState(false);
+  const [updateError, setUpdateError] = useState("");
+  const applyRequested = useRef(false);
   const [cacheFailed, setCacheFailed] = useState(false);
   useEffect(() => {
     const media = matchMedia("(display-mode: standalone)");
@@ -40,7 +45,11 @@ export function PwaStatus({ online, compact = false }: { online: boolean; compac
     let disposed = false;
     let registration: ServiceWorkerRegistration | undefined;
     let registering = false;
-    const inspect = () => { if (!disposed && registration?.waiting) setUpdateReady(true); };
+    const inspect = () => { if (!disposed) setWaiting(registration?.waiting ?? undefined); };
+    const controllerChanged = () => {
+      if (applyRequested.current) window.location.reload();
+      else inspect();
+    };
     const updateFound = () => {
       const worker = registration?.installing;
       worker?.addEventListener("statechange", () => {
@@ -73,17 +82,44 @@ export function PwaStatus({ online, compact = false }: { online: boolean; compac
     const check = () => { if (navigator.onLine) { if (registration) void registration.update().catch(() => {}); else register(); } };
     const focus = () => { if (document.visibilityState === "visible") check(); };
     register();
+    navigator.serviceWorker.addEventListener("controllerchange", controllerChanged);
     window.addEventListener("online", check);
     document.addEventListener("visibilitychange", focus);
     return () => {
       disposed = true; registration?.removeEventListener("updatefound", updateFound);
+      navigator.serviceWorker.removeEventListener("controllerchange", controllerChanged);
       window.removeEventListener("online", check); document.removeEventListener("visibilitychange", focus);
     };
   }, []);
 
+  const applyUpdate = () => {
+    if (!waiting || applyingUpdate) return;
+    if (!prepareWebNavigation()) {
+      setUpdateError("保存できていない書き込みがあります。保存エラーを解消してから更新してください。"); return;
+    }
+    setUpdateError(""); setApplyingUpdate(true); applyRequested.current = true;
+    const channel = new MessageChannel();
+    const fail = (message: string) => {
+      applyRequested.current = false; setApplyingUpdate(false); setUpdateError(message);
+    };
+    const timeout = setTimeout(() => {
+      channel.port1.close();
+      fail("更新を適用できませんでした。Papeerのタブとアプリをすべて閉じて、開き直してください。");
+    }, 8000);
+    channel.port1.onmessage = event => {
+      channel.port1.close();
+      if (event.data !== "updating") {
+        clearTimeout(timeout);
+        fail("ほかのPapeerのタブやアプリを閉じてから、もう一度更新してください。");
+      }
+    };
+    waiting.postMessage({ type: "PAPEER_APPLY_UPDATE" }, [channel.port2]);
+  };
+
   const notices = <>
     {!online && <p role="status">オフラインです。新しい資料の取得・Googleログイン・Driveへの保存には通信が必要です。未送信の書き込みはこの端末に保持し、接続後に再送します。</p>}
-    {updateReady && <p role="status">更新があります。書き込みを終え、Papeerのタブとアプリをすべて閉じて開き直すと反映されます。</p>}
+    {updateReady && <p role="status">更新があります。 <Button size="sm" disabled={applyingUpdate} onClick={applyUpdate}>{applyingUpdate ? "更新中…" : "更新を適用"}</Button></p>}
+    {updateError && <p role="alert">{updateError}</p>}
     {cacheFailed && <p role="status">オフライン起動の準備を完了できませんでした。通信と端末の空き容量を確認し、次回の起動時に再試行してください。</p>}
   </>;
   return <div className="pwa-status">

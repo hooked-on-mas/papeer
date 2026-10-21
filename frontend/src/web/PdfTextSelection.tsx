@@ -1,42 +1,53 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Check, Copy, X } from "lucide-react";
 
-type Caret = { node: Text; offset: number };
+type Caret = { node: Text; offset: number; glyphOffset: number };
 type WordSegmenter = new (locale: undefined, options: { granularity: "word" }) => {
   segment(text: string): Iterable<{ index: number; segment: string; isWordLike?: boolean }>;
 };
 
 /** Hit the real PDF text even when the pen's transparent SVG is above it. */
 function caretAt(root: HTMLElement, x: number, y: number): Caret | undefined {
-  const spans = root.querySelectorAll<HTMLElement>(".textLayer span");
+  // A finger is less precise than a mouse, especially on a page fitted to a phone.
+  const tolerance = 12;
+  let closest: { caret: Caret; distance: number; centerDistance: number } | undefined;
+  const spans = root.querySelectorAll<HTMLElement>('.textLayer span:not([role="img"])');
   for (const span of spans) {
     const node = span.firstChild;
     if (!(node instanceof Text) || !node.length) continue;
     const box = span.getBoundingClientRect();
-    if (x < box.left - 3 || x > box.right + 3 || y < box.top - 3 || y > box.bottom + 3) continue;
+    if (x < box.left - tolerance || x > box.right + tolerance || y < box.top - tolerance || y > box.bottom + tolerance) continue;
     const range = document.createRange();
-    let closest = { offset: 0, distance: Infinity };
     // PDF spans are individual text runs. Measure glyphs rather than estimating
     // by character count: Japanese/Latin text and proportional fonts can mix.
     for (let offset = 0; offset < node.length;) {
       const end = offset + (node.data.codePointAt(offset)! > 0xffff ? 2 : 1);
       range.setStart(node, offset); range.setEnd(node, end);
       const glyph = range.getBoundingClientRect();
-      const distance = Math.hypot(x - (glyph.left + glyph.right) / 2, y - (glyph.top + glyph.bottom) / 2);
-      if (distance < closest.distance) closest = { offset: x > (glyph.left + glyph.right) / 2 ? end : offset, distance };
+      if (glyph.width && glyph.height) {
+        const distance = Math.hypot(Math.max(glyph.left - x, 0, x - glyph.right), Math.max(glyph.top - y, 0, y - glyph.bottom));
+        const centerDistance = Math.hypot(x - (glyph.left + glyph.right) / 2, y - (glyph.top + glyph.bottom) / 2);
+        if (distance <= tolerance && (!closest || distance < closest.distance || (distance === closest.distance && centerDistance < closest.centerDistance))) {
+          closest = { caret: { node, offset: x > (glyph.left + glyph.right) / 2 ? end : offset, glyphOffset: offset }, distance, centerDistance };
+        }
+      }
       offset = end;
     }
-    return { node, offset: closest.offset };
   }
+  return closest?.caret;
 }
 
-function wordAt({ node, offset }: Caret): Range {
+function wordAt({ node, glyphOffset }: Caret): Range {
   const text = node.data;
   const Segmenter = (Intl as typeof Intl & { Segmenter?: WordSegmenter }).Segmenter;
   const segments = Segmenter ? new Segmenter(undefined, { granularity: "word" }).segment(text)
     : [...text.matchAll(/[\p{L}\p{N}_]+|[^\p{L}\p{N}_]/gu)].map(match => ({ index: match.index!, segment: match[0] }));
-  const at = Math.min(offset, text.length - 1);
-  const word = [...segments].find(segment => segment.index <= at && segment.index + segment.segment.length > at);
+  // The insertion caret after a word's last glyph points at the following space.
+  // Start from the glyph under the finger so the long press still selects that word.
+  const at = glyphOffset;
+  const words = [...segments].filter(segment => segment.segment.trim());
+  const distance = (segment: typeof words[number]) => Math.max(segment.index - at, 0, at - (segment.index + segment.segment.length - 1));
+  const word = words.reduce<typeof words[number] | undefined>((best, segment) => !best || distance(segment) < distance(best) ? segment : best, undefined);
   const range = document.createRange();
   range.setStart(node, word?.index ?? at);
   range.setEnd(node, word ? word.index + word.segment.length : at + 1);

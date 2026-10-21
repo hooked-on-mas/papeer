@@ -177,6 +177,33 @@ for (const engine of ["webkit", "chromium"] as const) test(`isolated PDF interac
     assert.deepEqual(await page.evaluate(() => (window as any).__copy.writes), [extended]);
   });
 
+  await parent.test("long pressing the right half of a word's last glyph selects that word", async t => {
+    const page = await open(t), span = page.locator('.textLayer span').first();
+    const at = await span.evaluate(element => {
+      const range = document.createRange();
+      range.setStart(element.firstChild!, 4); range.setEnd(element.firstChild!, 5);
+      const box = range.getBoundingClientRect();
+      return { x: box.left + box.width * .8, y: box.top + box.height / 2 };
+    });
+    await touch(span, "touchstart", at.x, at.y); await settle();
+    assert.equal(await page.getByLabel("選択中の文字", { exact: true }).textContent(), "Alpha");
+    await touch(span, "touchend", at.x, at.y, 0);
+  });
+
+  await parent.test("a slightly off-glyph long press selects nearby text but a distant press does not", async t => {
+    const page = await open(t), span = page.locator('.textLayer span').first();
+    const box = (await span.boundingBox())!;
+    const x = box.x + 3, y = box.y + box.height + 7;
+    await touch(span, "touchstart", x, y); await settle();
+    assert.equal(await page.getByLabel("選択中の文字", { exact: true }).textContent(), "Alpha");
+    await touch(span, "touchend", x, y, 0);
+    await page.getByRole("button", { name: "文字選択を解除", exact: true }).click();
+    const surface = page.locator('.web-pdf-surface');
+    await touch(surface, "touchstart", 350, 500); await settle();
+    assert.equal(await page.getByRole("toolbar").count(), 0);
+    await touch(surface, "touchend", 350, 500, 0);
+  });
+
   await parent.test("an active pen/palm or finger-writing mode cannot trigger selection", async t => {
     const page = await open(t), root = page.locator('.pdf');
     await root.dispatchEvent("pointerdown", { pointerType: "pen", pointerId: 987 });

@@ -7,9 +7,9 @@ import path from "node:path";
 import { test } from "node:test";
 import { chromium } from "playwright-core";
 
-test("PWA installs at /papeer/, boots offline, excludes private data, and updates after closing", { timeout: 120_000 }, async t => {
+test("PWA installs at /papeer/, boots offline, excludes private data, and applies updates safely", { timeout: 120_000 }, async t => {
   const dist = path.resolve(import.meta.dirname, "../web-dist");
-  let nextVersion = false;
+  let nextVersion = 0;
   const contentTypes: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
     ".css": "text/css", ".png": "image/png", ".webmanifest": "application/manifest+json", ".woff2": "font/woff2" };
   const server = http.createServer((request, response) => {
@@ -25,7 +25,7 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and update
     }
     response.setHeader("Content-Type", contentTypes[path.extname(file)] || "application/octet-stream");
     let body = fs.readFileSync(file);
-    if (name === "sw.js" && nextVersion) body = Buffer.from(body.toString().replace(/const VERSION = "([^"]+)"/, 'const VERSION = "$1-test-update"'));
+    if (name === "sw.js" && nextVersion) body = Buffer.from(body.toString().replace(/const VERSION = "([^"]+)"/, `const VERSION = "$1-test-update-${nextVersion}"`));
     response.end(body);
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -108,7 +108,7 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and update
   await page.screenshot({ path: path.join(output, "offline-ipad.png") });
   await context.setOffline(false);
   await cdp.send("Network.overrideNetworkState", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
-  nextVersion = true;
+  nextVersion = 1;
   const updatedWorkerPromise = context.waitForEvent("serviceworker");
   await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration())!.update(); });
   const updatedWorker = await updatedWorkerPromise;
@@ -136,8 +136,27 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and update
     const registration = await navigator.serviceWorker.getRegistration();
     const keys = (await caches.keys()).filter(key => key.startsWith("papeer-shell:"));
     return registration?.active?.state === "activated" && !registration.installing && !registration.waiting
-      && keys.length === 1 && keys[0].endsWith("-test-update");
+      && keys.length === 1 && keys[0].endsWith("-test-update-1");
   });
   assert.equal(await reopened.evaluate(() => localStorage.getItem("papeer-ink:fixture-draft")), "unsent-draft-fixture");
+  nextVersion = 2;
+  await reopened.evaluate(async () => { await (await navigator.serviceWorker.getRegistration())!.update(); });
+  const applyUpdate = reopened.getByRole("button", { name: "更新を適用", exact: true });
+  await applyUpdate.waitFor();
+  const otherReader = await context.newPage(); await otherReader.goto(base, { waitUntil: "domcontentloaded" });
+  await otherReader.getByRole("heading", { name: "論文を選んで、読み始めよう" }).waitFor();
+  await applyUpdate.click();
+  await reopened.getByRole("alert").filter({ hasText: "ほかのPapeer" }).waitFor();
+  assert.equal(await reopened.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting), true,
+    "an explicit update must not interrupt another reader");
+  await otherReader.close();
+  await Promise.all([reopened.waitForEvent("load"), applyUpdate.click()]);
+  await reopened.waitForFunction(async () => {
+    const keys = (await caches.keys()).filter(key => key.startsWith("papeer-shell:"));
+    return keys.length === 1 && keys[0].endsWith("-test-update-2");
+  });
+  assert.equal(await reopened.evaluate(() => localStorage.getItem("papeer-ink:fixture-draft")), "unsent-draft-fixture",
+    "applying an update preserves the durable annotation queue");
+  assert.equal(await reopened.getByRole("button", { name: "更新を適用", exact: true }).count(), 0);
   assert.deepEqual(errors, []);
 });

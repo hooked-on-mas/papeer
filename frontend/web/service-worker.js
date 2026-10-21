@@ -13,7 +13,7 @@ self.addEventListener("install", event => {
     const cache = await caches.open(CACHE);
     await cache.addAll([...URLS].map(url => new Request(url, { cache: "reload", credentials: "omit" })));
   })());
-  // No skipWaiting: an update must not interrupt reading, a pen stroke or a text draft.
+  // Wait by default: switching versions requires an explicit request from the only reader.
 });
 
 self.addEventListener("activate", event => {
@@ -22,6 +22,21 @@ self.addEventListener("activate", event => {
       if (key.startsWith(PREFIX) && key !== CACHE) await caches.delete(key);
     }
     await self.clients.claim();
+  })());
+});
+
+// An explicit update may reload only its requesting window. Keep other readers
+// on their current version, where they may still have a stroke or unsaved text.
+self.addEventListener("message", event => {
+  if (event.data?.type !== "PAPEER_APPLY_UPDATE" || !event.ports[0]) return;
+  event.waitUntil((async () => {
+    const windows = (await self.clients.matchAll({ type: "window", includeUncontrolled: true }))
+      .filter(client => new URL(client.url).pathname.startsWith(BASE.pathname));
+    if (windows.length !== 1 || windows[0].id !== event.source?.id) {
+      event.ports[0].postMessage("other-windows"); return;
+    }
+    event.ports[0].postMessage("updating");
+    await self.skipWaiting();
   })());
 });
 
