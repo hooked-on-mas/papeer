@@ -26,9 +26,11 @@ export function DocumentReader({ artifact, runtime, store, controls, readerActio
   const [fraction, setFraction] = useState(.5);
   const compact = useMediaQuery(COMPACT_LAYOUT_QUERY);
   const [editing, setEditing] = useState(typeof initialPlace?.editing === "boolean" ? initialPlace.editing : !compact);
-  useLayoutEffect(() => { saveDocumentPlace(placeKey, { page, zoom, mode, editing }); }, [placeKey, page, zoom, mode, editing]);
+  const [fitPage, setFitPage] = useState(initialPlace?.fitPage === true);
+  const changeZoom = useCallback((value: number) => { setFitPage(false); setZoom(value); }, []);
+  useLayoutEffect(() => { saveDocumentPlace(placeKey, { page, zoom, mode, editing, fitPage }); }, [placeKey, page, zoom, mode, editing, fitPage]);
   const layout = useReaderLayout();
-  const denseTools = compact || (layout.width > 0 && layout.width < 720);
+  const denseTools = compact || (layout.width > 0 && layout.width < 800);
   const [urls, setUrls] = useState<Record<string, string>>({});
   const fileUrl = useCallback((id: string, url: string) => setUrls(previous => previous[id] === url ? previous : { ...previous, [id]: url }), []);
   useEffect(() => {
@@ -61,7 +63,10 @@ export function DocumentReader({ artifact, runtime, store, controls, readerActio
   const download = singleTranslation ? translatedFile : artifact;
   const missingTranslation = <div className="empty" role="status">この原文ページの日本語訳はまだ保存されていません。</div>;
   const displaySettings = <>
-      <label>倍率 <select aria-label="表示倍率" value={zoom} onChange={e => setZoom(Number(e.target.value))}>
+      <label>倍率 <select aria-label="表示倍率" value={fitPage ? "page" : zoom} onChange={e => {
+        if (e.target.value === "page") setFitPage(true); else changeZoom(Number(e.target.value));
+      }}>
+        <option value="page">ページ全体</option>
         {[...new Set([.5, .75, 1, 1.25, 1.5, 2, 3, 4, zoom])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value === 1 ? "幅に合わせる" : `${Math.round(value * 100)}%`}</option>)}
       </select></label>
       {canSplit && <label>表示 <select aria-label="本文の表示方法" value={mode} onChange={e => { if (prepareWebNavigation()) setMode(e.target.value as typeof mode); }}>
@@ -81,8 +86,8 @@ export function DocumentReader({ artifact, runtime, store, controls, readerActio
       <PageNavigatorView paperId={artifact.id} currentPage={page} count={maxPage} atStart={page <= 1} atEnd={page >= maxPage}
         compact shortcuts={false} inputId="web-page-input" onJump={jump} onMove={delta => jump(page + delta)} />
       </div>
-      {compact && <button className="web-quick-zoom" aria-label={zoom === 1 ? "本文を拡大" : "幅に合わせる"} title={zoom === 1 ? "150%に拡大" : "幅に合わせる"}
-        aria-pressed={zoom !== 1} onClick={() => setZoom(zoom === 1 ? 1.5 : 1)}>{zoom === 1 ? <ZoomIn aria-hidden="true" /> : <ZoomOut aria-hidden="true" />}</button>}
+      {compact && <button className="web-quick-zoom" aria-label={!fitPage && zoom === 1 ? "本文を拡大" : "幅に合わせる"} title={!fitPage && zoom === 1 ? "150%に拡大" : "幅に合わせる"}
+        aria-pressed={fitPage || zoom !== 1} onClick={() => changeZoom(!fitPage && zoom === 1 ? 1.5 : 1)}>{!fitPage && zoom === 1 ? <ZoomIn aria-hidden="true" /> : <ZoomOut aria-hidden="true" />}</button>}
       {!split && readerActions?.language}
       {!compact && writingToggle}
       {denseTools ? <details className="web-display-options">
@@ -102,11 +107,11 @@ export function DocumentReader({ artifact, runtime, store, controls, readerActio
     {mappingError && <p role="alert" className="error">対訳のページ情報を読み込めませんでした。資料を1つずつ表示します。{mappingError}</p>}
     <ReaderSplit fraction={fraction} onResize={setFraction} original={
       singleTranslation ? translatedFile && translated ?
-        <PdfArtifact key={translatedFile.id} artifact={translatedFile} runtime={runtime} store={store} page={translated.page} zoom={zoom} onZoom={setZoom} onPageCount={loadedCount} editing={editing} onFileUrl={fileUrl} /> : missingTranslation
+        <PdfArtifact key={translatedFile.id} artifact={translatedFile} runtime={runtime} store={store} page={translated.page} zoom={zoom} fitPage={fitPage} onZoom={changeZoom} onPageCount={loadedCount} editing={editing} onFileUrl={fileUrl} /> : missingTranslation
       : <PdfArtifact key={(split ? original! : artifact).id} artifact={split ? original! : artifact} runtime={runtime} store={store}
-        page={page} zoom={zoom} onZoom={setZoom} onPageCount={loadedCount} editing={editing} onFileUrl={fileUrl} />
+        page={page} zoom={zoom} fitPage={fitPage} onZoom={changeZoom} onPageCount={loadedCount} editing={editing} onFileUrl={fileUrl} />
     } translated={split ? translatedFile && translated ?
-      <PdfArtifact key={translatedFile.id} artifact={translatedFile} runtime={runtime} store={store} page={translated.page} zoom={zoom} onZoom={setZoom} editing={editing} onFileUrl={fileUrl} />
+      <PdfArtifact key={translatedFile.id} artifact={translatedFile} runtime={runtime} store={store} page={translated.page} zoom={zoom} fitPage={fitPage} onZoom={changeZoom} editing={editing} onFileUrl={fileUrl} />
       : missingTranslation : undefined} />
   </div>;
 }
@@ -117,8 +122,8 @@ function PhoneSaveStatus({ store }: { store: AnnotationStore }) {
     : <p role="status">{state.error ? "保存状態を確認してください。" : !state.ready ? "書き込みを確認中…" : `未送信の書き込み ${state.pending}件（端末に保存済み）`}</p>;
 }
 
-function PdfArtifact({ artifact, runtime, store, page, zoom, onZoom, onPageCount, editing = true, onFileUrl }: {
-  artifact: ArtifactView; runtime: DriveLibraryRuntime; store?: AnnotationStore; page: number; zoom: number;
+function PdfArtifact({ artifact, runtime, store, page, zoom, fitPage, onZoom, onPageCount, editing = true, onFileUrl }: {
+  artifact: ArtifactView; runtime: DriveLibraryRuntime; store?: AnnotationStore; page: number; zoom: number; fitPage?: boolean;
   onPageCount?: (id: string, count: number) => void; onZoom: (zoom: number) => void;
   editing?: boolean; onFileUrl?: (id: string, url: string) => void;
 }) {
@@ -138,6 +143,6 @@ function PdfArtifact({ artifact, runtime, store, page, zoom, onZoom, onPageCount
   return <section className="web-pdf-pane" aria-label={artifact.role === "translated" ? "日本語訳" : artifact.role === "original" ? "原文" : artifact.label}>
     <div className="asset-heading"><span>{artifact.label}</span>{url && <a href={url} download={artifact.filename}>PDF本体を保存 ↓</a>}</div>
     {error ? <div role="alert" className="error">{error} <button onClick={() => setAttempt(value => value + 1)}>PDFを再試行</button></div> : !url ? <p role="status">PDFを読み込んでいます…</p>
-      : <PdfReader url={url} target={artifact.annotationTarget} store={store} pageNumber={page} zoom={zoom} onZoom={onZoom} navigation={false} onPageCount={pageCount} editing={editing} />}
+      : <PdfReader url={url} target={artifact.annotationTarget} store={store} pageNumber={page} zoom={zoom} fitPage={fitPage} onZoom={onZoom} navigation={false} onPageCount={pageCount} editing={editing} />}
   </section>;
 }

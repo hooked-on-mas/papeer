@@ -18,9 +18,9 @@ const SavedInk = memo(function SavedInk({ ink, ratio }: { ink: PageInk; ratio: n
     {ink.strokes.map(stroke => <g key={stroke.id} data-ink-id={stroke.id}><InkDrawing stroke={stroke} ratio={ratio} /></g>)}</>;
 });
 
-export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 1, onZoom, navigation = true, editing = true }: {
+export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 1, fitPage = false, onZoom, navigation = true, editing = true }: {
   url: string; target?: AnnotationTarget; store?: AnnotationStore; pageNumber?: number;
-  onPageCount?: (count: number) => void; zoom?: number; onZoom?: (zoom: number) => void; navigation?: boolean; editing?: boolean;
+  onPageCount?: (count: number) => void; zoom?: number; fitPage?: boolean; onZoom?: (zoom: number) => void; navigation?: boolean; editing?: boolean;
 }) {
   const [pages, setPages] = useState(0), [localPage, setPage] = useState(1);
   const page = pageNumber ?? localPage;
@@ -29,7 +29,21 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
   const [tool, setTool] = useState<Tool>("pen"), [color, setColor] = useState("#d93c36"), [inkWidth, setInkWidth] = useState(.003);
   const [finger, setFinger] = useState(false);
   const container = useRef<HTMLDivElement>(null);
-  usePdfPinchZoom(container, zoom, onZoom, `${url}:${page}`);
+  const [availableHeight, setAvailableHeight] = useState(0);
+  useLayoutEffect(() => {
+    const root = container.current, pane = root?.closest<HTMLElement>(".web-pdf-pane");
+    if (!fitPage || !root || !pane) return;
+    // Measure the viewport and controls, never the rendered page: the latter would
+    // feed its own size back into fitting. Works for portrait and landscape pages.
+    const controls = [pane.querySelector(".asset-heading"), root.querySelector(".ink-tools"), root.querySelector(".pdf-tools")].filter((element): element is HTMLElement => element instanceof HTMLElement);
+    const measure = () => setAvailableHeight(Math.max(1, pane.clientHeight - controls.reduce((height, element) => height + element.getBoundingClientRect().height, 0) - 4));
+    const observer = new ResizeObserver(measure);
+    observer.observe(pane); controls.forEach(element => observer.observe(element)); measure();
+    pane.scrollTo(0, 0);
+    return () => observer.disconnect();
+  }, [fitPage, editing, navigation, url, page]);
+  const effectiveZoom = fitPage && availableHeight > 0 ? Math.min(1, availableHeight / (width * ratio)) : zoom;
+  usePdfPinchZoom(container, effectiveZoom, onZoom, `${url}:${page}`);
   useEffect(() => {
     if (!container.current) return;
     const observer = new ResizeObserver(([entry]) => setWidth(Math.max(1, entry.contentRect.width)));
@@ -38,7 +52,7 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
   }, []);
   const anchor: Anchor | undefined = target ? { paper_id: target.paperId, side: target.side, source_sha256: target.sourceSha256, page } : undefined;
   // Match react-pdf's integer CSS canvas width, rather than tracking subpixel layout noise.
-  const drawnWidth = Math.max(1, Math.floor(width * zoom));
+  const drawnWidth = Math.max(1, Math.floor(width * effectiveZoom));
   const pixelRatio = cappedPixelRatio(window.devicePixelRatio, drawnWidth, drawnWidth * ratio);
   const render = useMemo(() => ({ key: `${url}:${page}:${drawnWidth}:${pixelRatio}` }), [url, page, drawnWidth, pixelRatio]);
   const activeRender = useRef<typeof render | null>(render);
@@ -58,7 +72,7 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
       if (activeRender.current === render) setRendered(render);
     }} onRenderError={() => { if (activeRender.current === render) setRendered(null); }} />}
   </Document>;
-  return <div className="pdf" ref={container}>
+  return <div className={`pdf${fitPage ? " pdf-fit-page" : ""}`} ref={container}>
     {navigation && <div className="pdf-tools"><PageNavigatorView paperId={url} currentPage={page} count={pages} compact shortcuts={false}
       atStart={page <= 1} atEnd={page >= pages} onJump={setPage} onMove={delta => setPage(value => Math.max(1, Math.min(pages || 1, value + delta)))} /></div>}
     {store && anchor ? <EditablePage key={`${url}:${page}`} store={store} anchor={anchor} ratio={ratio} pageWidth={drawnWidth}

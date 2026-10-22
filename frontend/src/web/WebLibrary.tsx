@@ -143,6 +143,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
         <small>{item?.kind === "notebook" ? "ノート" : "PDF"} · {item?.collectionName || "未分類"}</small></div>{actions}
     </WorkspaceHeader>
     <Tabs value={tab} onValueChange={value => setTab(String(value))} className="flex-1 flex flex-col min-h-0 gap-0">
+      <div className="web-document-navigation">
       <WorkspaceTabList>
         <TabsTrigger value="reader">{item?.kind === "notebook" ? "ノート" : "本文"}</TabsTrigger>
         {summary && <TabsTrigger value="summary">サマリー</TabsTrigger>}
@@ -154,6 +155,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
         onChange={e => { if (prepareWebNavigation()) { setArtifactId(e.target.value); setTab("reader"); } }}>
         {artifacts.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}
       </select></label></div>}
+      </div>
       <div className="relative flex flex-1 min-h-0 flex-col">
         <TabsContent value="reader" keepMounted hidden={false} inert={tab !== "reader"}
           className={`web-reader-tab ${tab === "reader" ? "" : "invisible absolute inset-0"}`}>

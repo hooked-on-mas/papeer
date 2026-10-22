@@ -27,7 +27,8 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
       await browser.close();
     });
     const paper = "a".repeat(32);
-    const pdf = fs.readFileSync(path.resolve(frontend, "../tests/fixtures/sample.pdf"));
+    // A chart/report followed by a landscape table exercises fitting across page shapes.
+    const pdf = fs.readFileSync(path.resolve(frontend, "../tests/fixtures/reader-mixed-orientation.pdf"));
     const reading = Buffer.from(JSON.stringify({ version: 1, items: { [paper]: { pageCount: 2, translatedPages: {
       "1": { artifactPath: `papers/${paper}/translated.pdf`, page: 1 }, "2": { artifactPath: `papers/${paper}/translated.pdf`, page: 2 },
     } } } }));
@@ -134,6 +135,40 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     await ready();
     assert.equal(await page.getByRole("toolbar", { name: "PDFの書き込みツール" }).isVisible(), true);
     assert.equal(await translated.locator("[data-ink-id]").count(), 1);
+    await mode.selectOption("single"); await layout("single");
+    const zoom = page.getByLabel("表示倍率", { exact: true });
+    await zoom.selectOption("page");
+    const fits = async (portrait: boolean) => {
+      await page.waitForFunction(expectPortrait => {
+        const pane = document.querySelector('.web-pdf-pane'), canvas = pane?.querySelector('canvas');
+        if (!pane || !canvas) return false;
+        const overlay = pane.querySelector('[data-testid="web-ink"]');
+        if (!overlay) return false;
+        const p = pane.getBoundingClientRect(), c = canvas.getBoundingClientRect(), o = overlay.getBoundingClientRect();
+        return (c.height > c.width) === expectPortrait && c.width > 100 && c.height > 100
+          && c.left >= p.left - 1 && c.right <= p.right + 1 && c.bottom <= p.bottom - 1
+          && Math.abs(c.width - o.width) < 2 && Math.abs(c.height - o.height) < 2;
+      }, portrait);
+      const canvas = (await translated.locator("canvas").boundingBox())!, overlay = (await translated.getByTestId("web-ink").boundingBox())!;
+      assert.ok(Math.abs(canvas.width - overlay.width) < 2 && Math.abs(canvas.height - overlay.height) < 2, "fitting keeps ink aligned with the PDF");
+    };
+    await fits(false);
+    await page.setViewportSize({ width: 1194, height: 740 }); await fits(false);
+    await page.getByRole("button", { name: "前のページ", exact: true }).click(); await fits(true);
+    await page.getByRole("button", { name: "書き込みを終了", exact: true }).click(); await fits(true);
+    await page.reload(); await zoom.waitFor(); assert.equal(await zoom.inputValue(), "page"); await fits(true);
+    await zoom.selectOption("1.25");
+    await page.waitForFunction(() => {
+      const pane = document.querySelector('.web-pdf-pane'), canvas = pane?.querySelector('canvas');
+      return !!pane && !!canvas && canvas.getBoundingClientRect().width > pane.getBoundingClientRect().width * 1.2;
+    });
+    assert.equal(await translated.locator(".pdf-fit-page").count(), 0, "custom zoom leaves page fitting");
+    await page.setViewportSize({ width: 768, height: 900 });
+    await menu.waitFor();
+    assert.ok((await page.locator(".web-reader-tools").boundingBox())!.height <= 50, "controls use their menu before wrapping into another row");
+    for (const control of await page.locator('.web-page-navigation > button, .web-page-navigation > input').all()) {
+      assert.ok((await control.boundingBox())!.height >= 44, "page navigation retains its touch target height");
+    }
     assert.deepEqual(errors, []);
   });
 }
