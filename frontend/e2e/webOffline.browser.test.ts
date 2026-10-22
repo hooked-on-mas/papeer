@@ -82,6 +82,8 @@ test("downloaded PDFs reopen offline; missing versions, storage failures and log
       downloadThroughput: value ? 0 : -1, uploadThroughput: value ? 0 : -1 });
   };
   const original = page.getByRole("region", { name: "原文", exact: true });
+  const loginNotice = page.getByRole("status").filter({ hasText: "端末に保存した資料を表示しています" });
+  const inlineLogin = loginNotice.getByRole("button", { name: "Googleでログイン", exact: true });
   await page.goto(base);
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
   await page.getByRole("button", { name: "Googleでログインして開く →" }).click();
@@ -135,9 +137,21 @@ test("downloaded PDFs reopen offline; missing versions, storage failures and log
   await original.locator('[data-page-number="2"] canvas').waitFor();
   await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 1);
   assert.equal(uploads, 0); assert.equal(offlineRequests, 0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await inlineLogin.isVisible(), true, "the login action is visible inside the notice on a phone");
+  assert.equal(await inlineLogin.isDisabled(), true, "offline login explains that a connection is needed");
   await setOffline(false);
-  await page.getByRole("button", { name: "Googleでログイン", exact: true }).click();
+  await page.waitForFunction(() => {
+    const button = document.querySelector<HTMLButtonElement>('.local-library-notice button');
+    return button && !button.disabled && button.getAttribute("aria-disabled") !== "true";
+  });
+  const loginBox = (await inlineLogin.boundingBox())!;
+  assert.ok(loginBox.height >= 44 && loginBox.x >= 0 && loginBox.x + loginBox.width <= 390);
+  const screenshots = path.resolve(import.meta.dirname, "../../output/pwa"); fs.mkdirSync(screenshots, { recursive: true });
+  await page.screenshot({ path: path.join(screenshots, "local-library-login-phone.png") });
+  await inlineLogin.click();
   await original.locator('[data-page-number="2"] canvas').waitFor();
+  await page.setViewportSize({ width: 1366, height: 1024 });
   await page.getByRole("status").filter({ hasText: "Driveに保存済み" }).waitFor();
   assert.equal(uploads, 1);
   await setOffline(true);
@@ -145,7 +159,7 @@ test("downloaded PDFs reopen offline; missing versions, storage failures and log
   await original.locator('[data-page-number="2"] canvas').waitFor();
   await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 1);
   await setOffline(false);
-  await page.getByRole("button", { name: "Googleでログイン", exact: true }).click();
+  await inlineLogin.click();
   await original.locator('[data-page-number="2"] canvas').waitFor();
   // A full device must still display online PDFs and report failed offline storage.
   await page.evaluate(() => {
@@ -164,7 +178,7 @@ test("downloaded PDFs reopen offline; missing versions, storage failures and log
   // The same Drive file ID with a changed hash cannot reuse a previous PDF version.
   await setOffline(false);
   revision = 2;
-  await page.getByRole("button", { name: "Googleでログイン", exact: true }).click();
+  await inlineLogin.click();
   await tree.getByRole("treeitem", { name: "保存した論文", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "ファイルの内容が保存時と一致しません" }).waitFor();
   await setOffline(true);

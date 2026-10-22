@@ -153,7 +153,14 @@ function App() {
       <img src={`${import.meta.env.BASE_URL}papeer.png`} alt="" />Papeer</a>{actions}</WorkspaceHeader>}
     {error && <p role="alert" className="error banner">{error}</p>}
     {storageError && <p role="alert" className="error banner">資料を端末に保存できません。オフラインでは開けない場合があります。空き容量とブラウザーの保存設定を確認してください。</p>}
-    {localOnly && <p role="status" className="banner">端末に保存した資料を表示しています。最新の資料の取得・書き込みの送信にはGoogleでログインしてください。</p>}
+    {localOnly && <div role="status" className="banner local-library-notice">
+      <span>端末に保存した資料を表示しています。最新の資料の取得・書き込みの送信にはGoogleでログインしてください。</span>
+      <Button variant="outline" size="sm" disabled={busy || !online || sdkStatus === "loading"}
+        onClick={() => { if (sdkStatus === "error") setSdkAttempt(value => value + 1); else void login(); }}>
+        {sdkStatus === "error" && online ? "ログインの準備を再試行" : "Googleでログイン"}
+      </Button>
+      {!online && <small>オンラインに接続するとログインできます。</small>}
+    </div>}
     {online && sdkStatus === "error" && <div role="alert" className="error banner">Googleログイン機能を読み込めませんでした。
       <Button variant="outline" size="sm" onClick={() => setSdkAttempt(value => value + 1)}>ログインの準備を再試行</Button></div>}
     {busy && <div role="status" className="banner">{authenticating ? "Googleへの接続を待っています…" : "Google Driveから読み込んでいます…"}
