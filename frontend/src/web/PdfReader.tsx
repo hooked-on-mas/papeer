@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent, type ReactNode } from "react";
 import { PdfDocument as Document, PdfPage as Page } from "../features/reader/PdfDocument";
 import { PageNavigatorView } from "../features/reader/PageNavigatorView";
 import { cappedPixelRatio } from "../features/reader/canvasBudget";
@@ -10,6 +10,7 @@ import { AlertCircle, Check, Eraser, Hand, Highlighter, Loader2, Pen, Redo2, Ref
 import { prepareWebNavigation, registerNavigationGuard, textDrafts, type TextDraft } from "./textDrafts";
 import { usePdfPinchZoom } from "./usePdfPinchZoom";
 import { createPlaceKeeper, scrollForPlace, type PaneView, type ReadingPlace } from "../features/reader/readingPlace";
+import { ReaderMenu } from "./ReaderMenu";
 
 type Tool = "read" | "pen" | "highlighter" | "eraser" | "text";
 
@@ -102,7 +103,9 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
       const surface = root.querySelector<HTMLElement>(".web-pdf-surface");
       if (surface && !surface.style.transform) lastView.current = { key: current.key, pageWidth: current.drawnWidth, view: paneView(pane, surface) };
     };
-    observer.observe(root);
+    // The PDF's scrollable width grows with zoom; the viewport remains the source
+    // of its base width so that sticky tools can stay visible during horizontal panning.
+    observer.observe(pane ?? root.parentElement ?? root);
     pane?.addEventListener("scroll", rememberScroll, { passive: true });
     return () => { observer.disconnect(); pane?.removeEventListener("scroll", rememberScroll); };
   }, [placeKeeper]);
@@ -126,7 +129,8 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
       if (activeRender.current === render) setRendered(render);
     }} onRenderError={() => { if (activeRender.current === render) setRendered(null); }} />}
   </Document>;
-  return <div className={`pdf${fitPage ? " pdf-fit-page" : ""}`} ref={container}>
+  return <div className={`pdf${fitPage ? " pdf-fit-page" : ""}`} ref={container}
+    style={{ width: Math.max(width, drawnWidth), "--pdf-pane-width": `${width}px` } as CSSProperties}>
     {navigation && <div className="pdf-tools"><PageNavigatorView paperId={url} currentPage={page} count={pages} compact shortcuts={false}
       atStart={page <= 1} atEnd={page >= pages} onJump={setPage} onMove={delta => setPage(value => Math.max(1, Math.min(pages || 1, value + delta)))} /></div>}
     {store && anchor ? <EditablePage key={`${url}:${page}`} store={store} anchor={anchor} ratio={ratio} pageWidth={drawnWidth}
@@ -273,13 +277,13 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
         <button key={value} disabled={!writable} title={label} aria-pressed={tool === value}
           onClick={() => { if (!prepareWebNavigation()) return; gesture.current = undefined; touches.current.clear(); setPreview(undefined); setTool(value); }}><Icon aria-hidden="true" /><span className="sr-only">{label}</span></button>)}
       <span className="ink-history-inline">{historyTools}</span>
-      <details className="ink-options"><summary title="書き込み設定" aria-label="書き込み設定"><Settings2 aria-hidden="true" /></summary>
-        <div><label className="ink-color-control">色 <span className="ink-color-swatch" style={{ backgroundColor: color }}><input type="color" aria-label="書き込みの色" value={color} onChange={e => setColor(e.target.value)} /></span></label>
+      <ReaderMenu className="ink-options" label="書き込み設定" icon={<Settings2 aria-hidden="true" />} floating>
+        <label className="ink-color-control">色 <span className="ink-color-swatch" style={{ backgroundColor: color }}><input type="color" aria-label="書き込みの色" value={color} onChange={e => setColor(e.target.value)} /></span></label>
           <label>太さ <select aria-label="ペンの太さ" value={width} onChange={e => setWidth(Number(e.target.value))}>
             <option value={.002}>細い</option><option value={.003}>標準</option><option value={.006}>太い</option></select></label>
           <label><input type="checkbox" checked={finger} onChange={e => setFinger(e.target.checked)} /> 指でも書く</label>
-          <div className="ink-history-menu ink-mobile-actions">{historyTools}{syncTool}</div></div>
-      </details>
+          <div className="ink-history-menu ink-mobile-actions">{historyTools}{syncTool}</div>
+      </ReaderMenu>
       <span className="ink-save" role="status" title={saveStatus}>
         {failedStroke || draftError || state.error ? <AlertCircle aria-hidden="true" /> : !state.ready || state.saving ? <Loader2 className="animate-spin" aria-hidden="true" /> : state.pending ? <span>{state.pending}</span> : <Check aria-hidden="true" />}
         <span className="sr-only">{saveStatus}</span>

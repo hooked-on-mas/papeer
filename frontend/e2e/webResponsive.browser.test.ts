@@ -65,7 +65,13 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     const layout = async (value: string) => page.waitForFunction(expected => document.querySelector(".web-document-reader")?.getAttribute("data-layout") === expected, value);
     const ready = async () => {
       await translated.locator('[data-page-number="2"] canvas').waitFor();
-      await page.waitForFunction(() => [...document.querySelectorAll<HTMLButtonElement>('.ink-tools button')].some(button => button.title === "ペン" && !button.disabled));
+      await page.waitForFunction(() => [...document.querySelectorAll<HTMLElement>('.web-pdf-pane')].every(pane => {
+        const canvas = pane.querySelector('canvas'), pen = [...pane.querySelectorAll<HTMLButtonElement>('.ink-tools button')].find(button => button.title === "ペン");
+        const style = getComputedStyle(pane), width = pane.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+        const zoom = Number(document.querySelector<HTMLSelectElement>('[aria-label="表示倍率"]')?.value ?? 1);
+        return !!canvas && !!pen && !pen.disabled && !!pane.querySelector('[data-testid="web-ink"]')
+          && Math.abs(canvas.getBoundingClientRect().width - Math.floor(width * zoom)) < 1;
+      }));
     };
     await mode.waitFor();
     assert.equal(await mode.inputValue(), "auto");
@@ -237,6 +243,49 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     await page.getByRole("button", { name: "右パネルを閉じる", exact: true }).click(); await settled();
     const afterNotes = await readingPoint();
     assert.ok(Math.abs(beforeNotes.y - afterNotes.y) < .005 && Math.abs(beforeNotes.x - afterNotes.x) < .005, "closing notes restores the passage too");
+    // A saved-library banner and a short viewport leave less space below menus.
+    // Test real settings and dismissals, including the tap that must not add ink.
+    await page.setViewportSize({ width: 393, height: 360 });
+    const menuBounds = async (selector: string) => page.waitForFunction(selector => {
+      const panel = document.querySelector<HTMLElement>(selector)!;
+      const reader = document.querySelector(".web-document-reader")!.getBoundingClientRect();
+      const rect = panel.getBoundingClientRect();
+      return !!panel.style.maxHeight && rect.height > 0 && rect.bottom <= Math.min(reader.bottom, innerHeight) - 7;
+    }, selector);
+    await menu.click(); await menuBounds(".web-display-options[open] > div");
+    const account = page.getByRole("button", { name: "Google接続メニュー", exact: true });
+    await account.scrollIntoViewIfNeeded(); await account.click();
+    await page.getByRole("menuitem", { name: "再ログイン", exact: true }).waitFor();
+    assert.equal(await page.locator(".web-display-options").getAttribute("open"), "", "portalled account actions remain reachable inside the reader menu");
+    await page.keyboard.press("Escape");
+    await page.getByRole("menuitem", { name: "再ログイン", exact: true }).waitFor({ state: "hidden" });
+    if (!await page.locator(".web-display-options[open]").count()) await menu.click();
+    await zoom.scrollIntoViewIfNeeded(); await zoom.focus(); await zoom.selectOption("1.25");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator(".web-display-options[open]").count(), 0);
+    assert.equal(await menu.evaluate(element => document.activeElement === element), true);
+    const inkMenu = translated.getByLabel("書き込み設定", { exact: true });
+    await inkMenu.click(); await menuBounds(".ink-options[open] > div");
+    const finger = translated.getByRole("checkbox", { name: "指でも書く" });
+    await finger.scrollIntoViewIfNeeded(); await finger.check(); assert.equal(await finger.isChecked(), true);
+    await page.setViewportSize({ width: 393, height: 300 });
+    await menuBounds(".ink-options[open] > div");
+    const lastAction = translated.locator(".ink-history-menu").getByRole("button", { name: "書き込みを同期・再試行", exact: true });
+    await lastAction.scrollIntoViewIfNeeded();
+    const actionBox = (await lastAction.boundingBox())!, popup = (await translated.locator('.ink-options > div').boundingBox())!;
+    assert.ok(actionBox.y >= popup.y && actionBox.y + actionBox.height <= popup.y + popup.height,
+      "the last menu action fits fully inside the scrollable popup, including in a short pane");
+    const tools = (await translated.locator('.ink-tools').boundingBox())!;
+    const paneBox = (await translated.boundingBox())!;
+    assert.ok(tools.x >= paneBox.x && tools.x + tools.width <= paneBox.x + paneBox.width + 1, "panning the enlarged PDF keeps its toolbar in view");
+    const beforeDismiss = await translated.locator("[data-ink-id]").count();
+    await page.mouse.click(15, 285);
+    assert.equal(await translated.locator(".ink-options[open]").count(), 0);
+    assert.equal(await translated.locator("[data-ink-id]").count(), beforeDismiss, "dismissing over the PDF does not draw a dot");
+    await inkMenu.click(); await menuBounds(".ink-options[open] > div");
+    await page.keyboard.press("Escape");
+    assert.equal(await translated.locator(".ink-options[open]").count(), 0);
+    await page.screenshot({ path: path.join(output, "short-reader-after-menu-operations.png") });
     assert.deepEqual(errors, []);
   });
 }

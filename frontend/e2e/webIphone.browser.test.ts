@@ -94,9 +94,11 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       await region.locator("canvas").waitFor();
       await page.waitForFunction(() => {
         const pdf = document.querySelector(".pdf"), canvas = pdf?.querySelector("canvas");
+        const pane = pdf?.closest<HTMLElement>(".web-pdf-pane"), style = pane && getComputedStyle(pane);
+        const width = pane ? pane.clientWidth - parseFloat(style!.paddingLeft) - parseFloat(style!.paddingRight) : 0;
         const zoom = Number(document.querySelector<HTMLSelectElement>('[aria-label="表示倍率"]')?.value ?? 1);
         return canvas && getComputedStyle(canvas).display !== "none"
-          && Math.abs(canvas.getBoundingClientRect().width - Math.floor(pdf!.getBoundingClientRect().width * zoom)) < 1
+          && Math.abs(canvas.getBoundingClientRect().width - Math.floor(width * zoom)) < 1
           && !!document.querySelector('[data-testid="web-ink"]');
       });
     };

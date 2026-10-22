@@ -11,6 +11,7 @@ import { documentPlaceKey, getDocumentPlace, saveDocumentPlace } from "./reading
 import { Ellipsis, Hand, Pen, ZoomIn, ZoomOut } from "lucide-react";
 import { COMPACT_LAYOUT_QUERY } from "./readerLayout";
 import { useReaderLayout } from "./useReaderLayout";
+import { ReaderMenu } from "./ReaderMenu";
 
 export type ReaderControls = { title: string; leading: ReactNode; language: ReactNode; menu: ReactNode };
 
@@ -90,18 +91,12 @@ export function DocumentReader({ artifact, runtime, store, controls, readerActio
         aria-pressed={fitPage || zoom !== 1} onClick={() => changeZoom(!fitPage && zoom === 1 ? 1.5 : 1)}>{!fitPage && zoom === 1 ? <ZoomIn aria-hidden="true" /> : <ZoomOut aria-hidden="true" />}</button>}
       {!split && readerActions?.language}
       {!compact && writingToggle}
-      {denseTools ? <details className="web-display-options">
-        <summary aria-label="読書メニュー" title="読書メニュー"><Ellipsis aria-hidden="true" /></summary>
-        <div onClick={e => {
-          const button = (e.target as Element).closest("button");
-          if (button && !button.hasAttribute("aria-haspopup")) e.currentTarget.closest("details")!.open = false;
-        }}>
+      {denseTools ? <ReaderMenu className="web-display-options" label="読書メニュー" icon={<Ellipsis aria-hidden="true" />} closeOnAction>
           {displaySettings}
           {download && urls[download.id] && <a href={urls[download.id]} download={download.filename}>PDF本体を保存</a>}
           {store && <PhoneSaveStatus store={store} />}
           {compact && readerActions?.menu}
-        </div>
-      </details> : displaySettings}
+      </ReaderMenu> : displaySettings}
       {!compact && controls}
     </div>
     {mappingError && <p role="alert" className="error">対訳のページ情報を読み込めませんでした。資料を1つずつ表示します。{mappingError}</p>}
