@@ -1,6 +1,6 @@
 import type { ArtifactView } from "../runtime/contracts.ts";
 
-type DocumentPlace = { page: number; zoom: number; mode: "auto" | "single" | "split" };
+type DocumentPlace = { page: number; zoom: number; mode: "auto" | "single" | "split"; editing?: boolean };
 type LibraryPlace = { itemId: string; artifact: string };
 // Remember navigation across offline restarts, scoped by globally unique Drive library IDs.
 const documents = new Map<string, DocumentPlace>();

@@ -14,12 +14,12 @@ import type { DriveLibraryRuntime } from "./libraryRuntime";
 import type { Manifest } from "./drive";
 import type { LibraryTransport } from "./offlineLibrary";
 import { AnnotationStore } from "./annotations";
-import { DocumentReader, type PhoneReaderControls } from "./DocumentReader";
+import { DocumentReader, type ReaderControls } from "./DocumentReader";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { WebLibrarySidebar } from "./WebLibrarySidebar";
 import { prepareWebNavigation } from "./textDrafts";
 import { artifactPlaceKey, getLibraryPlace, saveLibraryPlace } from "./readingPlace";
-import { PHONE_LAYOUT_QUERY } from "./phoneLayout";
+import { COMPACT_LAYOUT_QUERY, SIDEBAR_OVERLAY_QUERY } from "./readerLayout";
 import { preferredReadingArtifact } from "./readingArtifact";
 
 const PANEL_LABELS = { summary: "サマリー", chat: "チャット", notes: "メモ" } as const;
@@ -49,15 +49,20 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
     return () => { clearInterval(timer); window.removeEventListener("online", retry); window.removeEventListener("focus", retry); store.dispose(); };
   }, [runtime, session, manifest]);
   const items = runtime.query.listItems();
+  const compact = useMediaQuery(COMPACT_LAYOUT_QUERY);
   const [initialPlace] = useState(() => getLibraryPlace(runtime.scope.libraryId));
   const [selected, setSelected] = useState(initialPlace && (!initialPlace.itemId || items.some(item => item.id === initialPlace.itemId)) ? initialPlace.itemId : items[0]?.id ?? "");
-  const [artifactId, setArtifactId] = useState(() => initialPlace ? runtime.query.listArtifacts(selected || null).find(row => artifactPlaceKey(row) === initialPlace.artifact)?.id ?? "" : "");
+  const defaultArtifact = (id: string) => {
+    const files = runtime.query.listArtifacts(id || null);
+    return (compact ? preferredReadingArtifact(files) : files[0])?.id ?? "";
+  };
+  const [artifactId, setArtifactId] = useState(() => (initialPlace
+    ? runtime.query.listArtifacts(selected || null).find(row => artifactPlaceKey(row) === initialPlace.artifact)?.id : undefined) ?? defaultArtifact(selected));
   const [tab, setTab] = useState("reader");
-  const phone = useMediaQuery(PHONE_LAYOUT_QUERY);
-  const narrowViewport = useMediaQuery("(max-width: 800px)");
+  const narrowViewport = useMediaQuery(SIDEBAR_OVERLAY_QUERY);
   const stackedViewport = useMediaQuery("(max-width: 760px)");
-  const narrow = narrowViewport || phone;
-  const stacked = stackedViewport || phone;
+  const narrow = narrowViewport || compact;
+  const stacked = stackedViewport || compact;
   const [collapsed, setCollapsed] = useState(narrow);
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [sidePanelWidth, setSidePanelWidth] = useState(380);
@@ -65,7 +70,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   useEffect(() => { if (narrow) setCollapsed(true); }, [narrow]);
   const item = items.find(row => row.id === selected);
   const artifacts = runtime.query.listArtifacts(item?.id ?? null);
-  const artifact = artifacts.find(row => row.id === artifactId) ?? (phone ? preferredReadingArtifact(artifacts) : artifacts[0]);
+  const artifact = artifacts.find(row => row.id === artifactId) ?? (compact ? preferredReadingArtifact(artifacts) : artifacts[0]);
   const originalPdf = artifacts.find(row => row.role === "original" && row.annotationTarget)
     ?? artifacts.find(row => row.role === "original" && row.filename.endsWith(".pdf"));
   const translatedPdf = artifacts.find(row => row.role === "translated" && row.annotationTarget)
@@ -81,14 +86,14 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   const chosen = sidePanel && available.includes(sidePanel) ? sidePanel : null;
   const choose = (id: string, file?: string) => {
     if (!prepareWebNavigation()) return;
-    setSelected(id); setArtifactId(file ?? ""); setTab("reader");
+    setSelected(id); setArtifactId(file ?? defaultArtifact(id)); setTab("reader");
     if (narrow) setCollapsed(true);
   };
   const chooseChild = (id: string, file: string) => {
     if (!prepareWebNavigation()) return;
     const child = runtime.query.listArtifacts(id).find(row => row.id === file);
     if (child?.role === "attachment" && /\.md$/i.test(child.filename)) {
-      setSelected(id); if (id !== selected) setArtifactId("");
+      setSelected(id); if (id !== selected) setArtifactId(defaultArtifact(id));
       setMemoId(file); setTab("notes");
       if (narrow) setCollapsed(true);
     } else choose(id, file);
@@ -104,7 +109,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
       {focusMode ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
     </Button>
   </>;
-  const phoneControls: PhoneReaderControls = {
+  const readerActions: ReaderControls = {
     title: item?.title ?? artifact?.label ?? "ライブラリ",
     leading: <Button variant="ghost" size="icon" aria-label="ライブラリ" onClick={() => setCollapsed(value => !value)}><PanelLeft /></Button>,
     language: originalPdf && translatedPdf && (artifact?.role === "original" || artifact?.role === "translated")
@@ -149,18 +154,18 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
         {memos.length > 0 && <TabsTrigger value="notes">メモ</TabsTrigger>}
         {item && runtime.capabilities["notes.read"] && <TabsTrigger value="sticky-notes">付箋</TabsTrigger>}
       </WorkspaceTabList>
-      {!phone && <div className="document-controls"><label>資料 <select aria-label="表示する資料" value={artifact?.id ?? ""}
+      {!compact && <div className="document-controls"><label>資料 <select aria-label="表示する資料" value={artifact?.id ?? ""}
         onChange={e => { if (prepareWebNavigation()) { setArtifactId(e.target.value); setTab("reader"); } }}>
         {artifacts.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}
       </select></label></div>}
       <div className="relative flex flex-1 min-h-0 flex-col">
         <TabsContent value="reader" keepMounted hidden={false} inert={tab !== "reader"}
           className={`web-reader-tab ${tab === "reader" ? "" : "invisible absolute inset-0"}`}>
-          <ReaderDock open={!!chosen && !focusMode && !phone} panelId={chosen ?? undefined} label={chosen ? `${PANEL_LABELS[chosen]}（右パネル）` : undefined}
+          <ReaderDock open={!!chosen && !focusMode && !compact} panelId={chosen ?? undefined} label={chosen ? `${PANEL_LABELS[chosen]}（右パネル）` : undefined}
             width={sidePanelWidth} onWidthChange={focusMode ? undefined : setSidePanelWidth} stacked={stacked} preserveWidth
             panel={chosen && tab === "reader" ? pane(chosen, true) : undefined}>
             {artifact ? <AssetView key={/\.pdf$/i.test(artifact.filename) && artifact.annotationTarget ? `${artifact.itemId ?? artifact.id}:pdf` : artifact.id}
-              artifact={artifact} runtime={runtime} annotations={annotations} controls={readerControls} phoneControls={phoneControls} />
+              artifact={artifact} runtime={runtime} annotations={annotations} controls={readerControls} readerActions={readerActions} />
               : <p className="empty">まだファイルがありません。Windows版でアップロードしてください。</p>}
           </ReaderDock>
         </TabsContent>
@@ -172,7 +177,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
       </div>
     </Tabs>
   </main>;
-  return <div className={`workspace ${phone && tab === "reader" && /\.pdf$/i.test(artifact?.filename ?? "") ? "phone-reading" : ""}`} inert={transitioning} aria-busy={transitioning}>
+  return <div className={`workspace ${compact && tab === "reader" && /\.pdf$/i.test(artifact?.filename ?? "") ? "compact-reading" : ""}`} inert={transitioning} aria-busy={transitioning}>
     {narrow && !collapsed && !focusMode && <><button className="sidebar-backdrop" aria-label="ライブラリを閉じる" onClick={() => setCollapsed(true)} />
       <aside className="web-sidebar web-sidebar-overlay" aria-label="ライブラリ一覧">{sidebar}</aside></>}
     {!narrow && collapsed && !focusMode && <WorkspaceRail onExpand={() => setCollapsed(false)}>
@@ -243,8 +248,8 @@ function useAsset(runtime: DriveLibraryRuntime, artifact: ArtifactView) {
   return { data, error };
 }
 
-function AssetView({ artifact, runtime, annotations, controls, phoneControls }: { artifact: ArtifactView; runtime: DriveLibraryRuntime; annotations?: AnnotationStore; controls?: ReactNode; phoneControls?: PhoneReaderControls }) {
-  if (/\.pdf$/i.test(artifact.filename)) return <DocumentReader artifact={artifact} runtime={runtime} store={annotations} controls={controls} phoneControls={phoneControls} />;
+function AssetView({ artifact, runtime, annotations, controls, readerActions }: { artifact: ArtifactView; runtime: DriveLibraryRuntime; annotations?: AnnotationStore; controls?: ReactNode; readerActions?: ReaderControls }) {
+  if (/\.pdf$/i.test(artifact.filename)) return <DocumentReader artifact={artifact} runtime={runtime} store={annotations} controls={controls} readerActions={readerActions} />;
   return <div className="web-asset-reader"><div className="web-reader-tools">{controls}</div><div className="web-saved-pane-body"><AssetContent artifact={artifact} runtime={runtime} /></div></div>;
 }
 

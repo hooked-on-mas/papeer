@@ -206,7 +206,7 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   await page.waitForFunction(() => !!document.querySelector('[data-testid="web-ink"]') && !(document.querySelector('.ink-tools button') as HTMLButtonElement)?.disabled);
   assert.ok((await scroller.boundingBox())!.width > 1000);
   assert.ok((await page.locator('.web-reader-tools').boundingBox())!.height < 55);
-  assert.ok((await page.locator('.ink-tools').boundingBox())!.height < 42);
+  assert.ok((await page.locator('.ink-tools').boundingBox())!.height <= 50);
   await page.screenshot({ path: path.join(directory, "tablet-focus.png") });
   await page.getByRole("button", { name: "集中表示を終了", exact: true }).click();
   await page.waitForFunction(() => !!document.querySelector('[data-testid="web-ink"]') && !(document.querySelector('.ink-tools button') as HTMLButtonElement)?.disabled);

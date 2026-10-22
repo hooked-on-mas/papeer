@@ -12,7 +12,7 @@ import { loadGoogleSdk } from "./googleSdk";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { UserRound, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
-import { PHONE_LAYOUT_QUERY } from "./phoneLayout";
+import { COMPACT_LAYOUT_QUERY } from "./readerLayout";
 import { OfflineLibraryStore, offlineLibraryTransport, type LibraryTransport, type OfflineLibrary } from "./offlineLibrary";
 import "./style.css";
 
@@ -20,7 +20,7 @@ const session = new DriveSession();
 const offlineStore = new OfflineLibraryStore();
 function App() {
   const online = useConnectivity();
-  const phone = useMediaQuery(PHONE_LAYOUT_QUERY);
+  const compact = useMediaQuery(COMPACT_LAYOUT_QUERY);
   const [sdkStatus, setSdkStatus] = useState<"loading" | "ready" | "error">("loading");
   const [sdkAttempt, setSdkAttempt] = useState(0);
   useEffect(() => {
@@ -131,7 +131,7 @@ function App() {
           catch { throw new Error("端末のダウンロード済み資料を削除できませんでした。ブラウザーのサイトデータを削除してください。"); }
         });
   const actions = <div className="header-actions">
-    {phone && (signedIn || localOnly) ? <DropdownMenu>
+    {compact && (signedIn || localOnly) ? <DropdownMenu>
       <DropdownMenuTrigger className="web-account-trigger" aria-label="Google接続メニュー"><UserRound aria-hidden="true" /><span className="web-account-label">Google接続</span></DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48 web-account-menu">
         <DropdownMenuItem disabled={busy || !online || !signedIn} onClick={refresh}>更新</DropdownMenuItem>
@@ -167,9 +167,9 @@ function App() {
       <Button variant="outline" size="sm" onClick={() => setSdkAttempt(value => value + 1)}>ログインの準備を再試行</Button></div>}
     {busy && <div role="status" className="banner">{authenticating ? "Googleへの接続を待っています…" : "Google Driveから読み込んでいます…"}
       {authenticating && <Button variant="outline" size="sm" onClick={() => session.cancelSignIn()}>接続をキャンセル</Button>}</div>}
-    {(!phone || !manifest) && libraryPicker}
+    {(!compact || !manifest) && libraryPicker}
     {manifest && runtime ? <WebLibrary key={runtime.scope.sessionKey} runtime={runtime} session={transport} manifest={manifest} actions={actions}
-      focusMode={focusMode} onFocusModeChange={setFocusMode} transitioning={busy} libraryPicker={phone ? libraryPicker : null} /> : <main className="welcome">
+      focusMode={focusMode} onFocusModeChange={setFocusMode} transitioning={busy} libraryPicker={compact ? libraryPicker : null} /> : <main className="welcome">
       <h1>論文を選んで、読み始めよう</h1>
       <p>Windows版Papeerで保存した翻訳PDF、手書きノート、<br />メモやチャットを、Google Driveから開けます。</p>
       {savedLibraries.length > 0 && <Button onClick={() => openSaved(savedLibraries[0])}>ダウンロード済みのライブラリを開く</Button>}
@@ -178,7 +178,7 @@ function App() {
       {!online && !savedLibraries.length && <p>このブラウザーには保存済みの資料がありません。オンラインでPDFを一度開くと、次回からログインせずに読めます。</p>}
       <div className="welcome-note">開いたPDFはこの端末にも保存され、オフラインで読めます。ログアウトすると端末の資料を削除します。</div>
     </main>}
-    <PwaStatus online={online} compact={phone && !!manifest} />
+    <PwaStatus online={online} compact={compact && !!manifest} />
     <footer className="site-footer"><span>{manifest ? `Drive保存 ${new Date(manifest.updated_at).toLocaleString()}` : "Papeer · Web"}</span>
       <span><a href="https://github.com/hooked-on-mas/papeer" target="_blank" rel="noreferrer">ソースコード</a> · <a href="./licenses.md" target="_blank" rel="noreferrer">ライセンス</a> · <a href="./geist-OFL.txt" target="_blank" rel="noreferrer">フォント</a></span></footer>
   </WorkspaceRoot>;

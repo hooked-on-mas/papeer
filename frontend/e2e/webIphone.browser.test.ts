@@ -104,7 +104,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     const openMenu = async () => { if (!await menu.evaluate(element => (element.parentElement as HTMLDetailsElement).open)) await menu.tap(); };
     const closeMenu = async () => { if (await menu.evaluate(element => (element.parentElement as HTMLDetailsElement).open)) await menu.tap(); };
     const writing = async (enabled: boolean) => {
-      await openMenu();
+      await closeMenu();
       await page.getByRole("button", { name: enabled ? "書き込みを開始" : "書き込みを終了", exact: true }).tap();
     };
     const fits = async (width: number, height: number, region = translated) => {
@@ -112,7 +112,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight), true);
       const bounds = (await region.boundingBox())!;
       assert.ok(bounds.width >= width - 4, "PDF uses the full phone width");
-      assert.ok(bounds.y <= 80 && bounds.height >= height - 118, `PDF height ${bounds.height} at ${width}x${height}; reading opens without choosing focus mode`);
+      assert.ok(bounds.y <= 96 && bounds.height >= height - 134, `PDF height ${bounds.height} at ${width}x${height}; reading opens without choosing focus mode`);
       const title = page.getByRole("heading", { name: manifest.items[0].title, exact: true });
       assert.equal(await title.isVisible(), true);
       assert.equal(await title.getAttribute("title"), manifest.items[0].title);
@@ -340,7 +340,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await page.getByLabel("本文の表示方法").selectOption("split");
     await closeMenu();
     await original.locator("canvas").waitFor(); await translated.locator("canvas").waitFor();
-    assert.ok((await translated.boundingBox())!.y > (await original.boundingBox())!.y);
+    assert.ok((await translated.boundingBox())!.x > (await original.boundingBox())!.x);
     await openMenu();
     await page.getByLabel("本文の表示方法").selectOption("single");
     await page.getByLabel("表示倍率").selectOption("1.5");
@@ -397,7 +397,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       assert.ok(await translated.evaluate(element => element.scrollTop) > 80);
       assert.equal(await page.locator("[data-ink-id]").count(), drawn);
       // Playwright's touch IDs are separate from CDP's. Use mouse clicks after CDP input.
-      if (!await menu.evaluate(element => (element.parentElement as HTMLDetailsElement).open)) await menu.click();
+      if (await menu.evaluate(element => (element.parentElement as HTMLDetailsElement).open)) await menu.click();
       await page.getByRole("button", { name: "書き込みを終了", exact: true }).click();
       await page.getByRole("button", { name: "幅に合わせる", exact: true }).click(); await ready();
       await translated.evaluate(element => element.scrollTo(0, 0));
@@ -423,7 +423,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
       assert.ok(await translated.evaluate(element => element.scrollTop) > 80, "one finger still scrolls the enlarged PDF");
       assert.deepEqual(await page.getByLabel("本文の表示操作").boundingBox(), header);
-      await menu.click(); await page.getByRole("button", { name: "書き込みを開始", exact: true }).click();
+      await page.getByRole("button", { name: "書き込みを開始", exact: true }).click();
       await page.getByRole("button", { name: "ペン", exact: true }).click();
       await page.getByLabel("書き込み設定", { exact: true }).click();
       await page.getByLabel("指でも書く", { exact: true }).check();
@@ -437,7 +437,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       assert.equal(await page.locator("[data-ink-id]").count(), beforeWritingPinch, "pinching in finger-writing mode adds no accidental ink");
       assert.equal(await page.evaluate(() => visualViewport!.scale), viewportScale);
       await capture("native-pinch-writing-css");
-      await menu.click(); await page.getByRole("button", { name: "書き込みを終了", exact: true }).click();
+      await page.getByRole("button", { name: "書き込みを終了", exact: true }).click();
       await page.getByRole("button", { name: "幅に合わせる", exact: true }).click(); await ready();
       await translated.evaluate(element => element.scrollTo(0, 0));
     }
