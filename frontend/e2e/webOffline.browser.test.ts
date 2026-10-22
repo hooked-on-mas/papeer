@@ -138,9 +138,21 @@ test("downloaded PDFs reopen offline; missing versions, storage failures and log
   await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 1);
   assert.equal(uploads, 0); assert.equal(offlineRequests, 0);
   await page.setViewportSize({ width: 390, height: 844 });
-  assert.equal(await inlineLogin.isVisible(), true, "the login action is visible inside the notice on a phone");
-  assert.equal(await inlineLogin.isDisabled(), true, "offline login explains that a connection is needed");
+  assert.equal(await loginNotice.count(), 0, "the saved-library notice is hidden offline");
   await setOffline(false);
+  await inlineLogin.waitFor();
+  const dismissNotice = loginNotice.getByRole("button", { name: "保存済み資料の案内を閉じる", exact: true });
+  const closeBox = (await dismissNotice.boundingBox())!;
+  assert.ok(closeBox.width >= 44 && closeBox.height >= 44 && closeBox.x + closeBox.width <= 390);
+  await dismissNotice.click();
+  assert.equal(await loginNotice.count(), 0, "the close action dismisses the notice");
+  await original.locator('[data-page-number="2"] canvas').waitFor();
+  await setOffline(true);
+  await setOffline(false);
+  assert.equal(await loginNotice.count(), 0, "reconnecting does not reopen a dismissed notice");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await original.locator('[data-page-number="2"] canvas').waitFor();
+  await inlineLogin.waitFor();
   await page.waitForFunction(() => {
     const button = document.querySelector<HTMLButtonElement>('.local-library-notice button');
     return button && !button.disabled && button.getAttribute("aria-disabled") !== "true";

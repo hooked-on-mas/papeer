@@ -68,9 +68,10 @@
 .empty { color: var(--muted-foreground); padding: 20px 8px; line-height: 1.8; }
 .error { color: var(--destructive); background: color-mix(in oklch, var(--destructive) 8%, var(--background)); padding: 12px; border-radius: 6px; font-size: .8125rem; }
 .banner { margin: 8px 12px; flex-shrink: 0; }
-.local-library-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; font-size: .8125rem; }
+.local-library-notice { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding-right: 44px; font-size: .8125rem; }
 .local-library-notice > span { flex: 1 1 18rem; }
 .local-library-notice [data-slot="button"] { min-height: 44px; }
+.local-library-notice .local-library-notice-close { position: absolute; top: 0; right: 0; width: 44px; }
 .library-picker { display: block; padding: 8px 12px; font-size: .75rem; border-bottom: 1px solid var(--border); }
 .site-footer { display: flex; flex-wrap: wrap; justify-content: space-between; flex-shrink: 0; gap: 6px; padding: 5px 12px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: .75rem; }
 .sidebar-backdrop { display: none; }

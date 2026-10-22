@@ -10,7 +10,7 @@ import { prepareWebNavigation } from "./textDrafts";
 import { clearReadingPlaces } from "./readingPlace";
 import { loadGoogleSdk } from "./googleSdk";
 import { useMediaQuery } from "../lib/useMediaQuery";
-import { UserRound } from "lucide-react";
+import { UserRound, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { PHONE_LAYOUT_QUERY } from "./phoneLayout";
 import { OfflineLibraryStore, offlineLibraryTransport, type LibraryTransport, type OfflineLibrary } from "./offlineLibrary";
@@ -40,6 +40,7 @@ function App() {
   const [transport, setTransport] = useState<LibraryTransport>(session);
   const [savedLibraries, setSavedLibraries] = useState<OfflineLibrary[]>([]);
   const [localOnly, setLocalOnly] = useState(false);
+  const [localNoticeDismissed, setLocalNoticeDismissed] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const storageFailed = () => setStorageError(true);
   const [focusMode, setFocusMode] = useState(false);
@@ -153,13 +154,14 @@ function App() {
       <img src={`${import.meta.env.BASE_URL}papeer.png`} alt="" />Papeer</a>{actions}</WorkspaceHeader>}
     {error && <p role="alert" className="error banner">{error}</p>}
     {storageError && <p role="alert" className="error banner">資料を端末に保存できません。オフラインでは開けない場合があります。空き容量とブラウザーの保存設定を確認してください。</p>}
-    {localOnly && <div role="status" className="banner local-library-notice">
+    {localOnly && online && !localNoticeDismissed && <div role="status" className="banner local-library-notice">
       <span>端末に保存した資料を表示しています。最新の資料の取得・書き込みの送信にはGoogleでログインしてください。</span>
-      <Button variant="outline" size="sm" disabled={busy || !online || sdkStatus === "loading"}
+      <Button variant="outline" size="sm" disabled={busy || sdkStatus === "loading"}
         onClick={() => { if (sdkStatus === "error") setSdkAttempt(value => value + 1); else void login(); }}>
-        {sdkStatus === "error" && online ? "ログインの準備を再試行" : "Googleでログイン"}
+        {sdkStatus === "error" ? "ログインの準備を再試行" : "Googleでログイン"}
       </Button>
-      {!online && <small>オンラインに接続するとログインできます。</small>}
+      <Button variant="ghost" size="icon" className="local-library-notice-close" aria-label="保存済み資料の案内を閉じる"
+        onClick={() => setLocalNoticeDismissed(true)}><X aria-hidden="true" /></Button>
     </div>}
     {online && sdkStatus === "error" && <div role="alert" className="error banner">Googleログイン機能を読み込めませんでした。
       <Button variant="outline" size="sm" onClick={() => setSdkAttempt(value => value + 1)}>ログインの準備を再試行</Button></div>}
