@@ -21,7 +21,7 @@ export function usePdfPinchZoom(container: RefObject<HTMLDivElement | null>, zoo
     const pane = root?.closest<HTMLElement>(".web-pdf-pane");
     if (!root || !pane || !onZoom) return;
     type Pinch = { source: "touch" | "safari"; safariScale: number; surface: HTMLElement; ids: number[]; distance: number; x: number; y: number; anchorX: number; anchorY: number;
-      left: number; top: number; zoom: number; nextZoom: number; dx: number; dy: number };
+      left: number; top: number; insetX: number; zoom: number; nextZoom: number; dx: number; dy: number };
     let pinch: Pinch | undefined;
     let suppressTouch = false;
     let firstTouch: { x: number; y: number } | undefined;
@@ -51,7 +51,10 @@ export function usePdfPinchZoom(container: RefObject<HTMLDivElement | null>, zoo
       clearPreview();
       const bounds = surface.getBoundingClientRect();
       pinch = { source, safariScale: safariActive ? safariScale : 1, surface, ...at, anchorX: at.x - bounds.left, anchorY: at.y - bounds.top,
-        left: pane.scrollLeft, top: pane.scrollTop, zoom: currentZoom.current, nextZoom: currentZoom.current, dx: 0, dy: 0 };
+        left: pane.scrollLeft, top: pane.scrollTop,
+        // Custom zoom leaves page fitting and removes its centering margin.
+        insetX: root.classList.contains("pdf-fit-page") ? bounds.left - root.getBoundingClientRect().left : 0,
+        zoom: currentZoom.current, nextZoom: currentZoom.current, dx: 0, dy: 0 };
       suppressTouch = true;
       surface.style.transformOrigin = `${pinch.anchorX}px ${pinch.anchorY}px`;
       surface.style.willChange = "transform";
@@ -86,7 +89,7 @@ export function usePdfPinchZoom(container: RefObject<HTMLDivElement | null>, zoo
     const finish = () => {
       if (pinch) {
         const scale = pinch.nextZoom / pinch.zoom;
-        const next = { pane, left: pinch.left + pinch.anchorX * (scale - 1) - pinch.dx,
+        const next = { pane, left: pinch.left + pinch.anchorX * (scale - 1) - pinch.dx - pinch.insetX,
           top: pinch.top + pinch.anchorY * (scale - 1) - pinch.dy };
         clearPreview();
         const nextZoom = pinch.nextZoom;
