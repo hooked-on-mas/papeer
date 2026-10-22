@@ -10,6 +10,7 @@ import { chromium } from "playwright-core";
 test("PWA installs at /papeer/, boots offline, excludes private data, and applies updates safely", { timeout: 120_000 }, async t => {
   const dist = path.resolve(import.meta.dirname, "../web-dist");
   let nextVersion = 0;
+  const workerResponses: { version: number; at: number }[] = [];
   const contentTypes: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
     ".css": "text/css", ".png": "image/png", ".webmanifest": "application/manifest+json", ".woff2": "font/woff2" };
   const server = http.createServer((request, response) => {
@@ -25,6 +26,7 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
     }
     response.setHeader("Content-Type", contentTypes[path.extname(file)] || "application/octet-stream");
     let body = fs.readFileSync(file);
+    if (name === "sw.js") workerResponses.push({ version: nextVersion, at: Date.now() });
     if (name === "sw.js" && nextVersion) body = Buffer.from(body.toString().replace(/const VERSION = "([^"]+)"/, `const VERSION = "$1-test-update-${nextVersion}"`));
     response.end(body);
   });
@@ -134,7 +136,10 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
     };
     check();
   }));
-  const reopened = await context.newPage(); await reopened.goto(base, { waitUntil: "domcontentloaded" });
+  const reopened = await context.newPage(); await reopened.goto(base, { waitUntil: "load" });
+  // Finish the initial navigation/update check before advancing the fixture's
+  // server version. An in-flight check for version 1 must not race version 2.
+  await reopened.evaluate(async () => { await (await navigator.serviceWorker.getRegistration())!.update(); });
   await reopened.waitForFunction(async () => {
     const registration = await navigator.serviceWorker.getRegistration();
     const keys = (await caches.keys()).filter(key => key.startsWith("papeer-shell:"));
@@ -143,7 +148,9 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
   });
   assert.equal(await reopened.evaluate(() => localStorage.getItem("papeer-ink:fixture-draft")), "unsent-draft-fixture");
   nextVersion = 2;
+  const pendingWorkerPromise = context.waitForEvent("serviceworker");
   await reopened.evaluate(async () => { await (await navigator.serviceWorker.getRegistration())!.update(); });
+  const pendingWorker = await pendingWorkerPromise;
   const applyUpdate = reopened.getByRole("button", { name: "更新を適用", exact: true });
   await applyUpdate.waitFor();
   const otherReader = await context.newPage(); await otherReader.goto(base, { waitUntil: "domcontentloaded" });
@@ -153,6 +160,18 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
   assert.equal(await reopened.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting), true,
     "an explicit update must not interrupt another reader");
   await otherReader.close();
+  // Closing the browser tab can resolve before it disappears from the worker's
+  // client list. Wait for the same single-reader condition as the update guard.
+  await pendingWorker.evaluate(`new Promise((resolve, reject) => {
+    const deadline = Date.now() + 5000;
+    const check = async () => {
+      const windows = (await self.clients.matchAll({type:'window',includeUncontrolled:true}))
+        .filter(client => new URL(client.url).pathname.startsWith(new URL('./',self.location.href).pathname));
+      if (windows.length === 1) resolve();
+      else if (Date.now() > deadline) reject(new Error('Closed reader still registered: '+JSON.stringify(windows.map(client=>client.url))));
+      else setTimeout(check,25);
+    }; check();
+  })`);
   await Promise.all([reopened.waitForEvent("load"), applyUpdate.click()]);
   await reopened.waitForFunction(async () => {
     const keys = (await caches.keys()).filter(key => key.startsWith("papeer-shell:"));
@@ -160,6 +179,15 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
   });
   assert.equal(await reopened.evaluate(() => localStorage.getItem("papeer-ink:fixture-draft")), "unsent-draft-fixture",
     "applying an update preserves the durable annotation queue");
-  await reopened.getByRole("button", { name: "更新を適用", exact: true }).waitFor({ state: "hidden" });
+  await reopened.getByRole("button", { name: "更新を適用", exact: true }).waitFor({ state: "hidden" }).catch(async error => {
+    console.error("Update state after activation:", await reopened.evaluate(async () => {
+      const registration = await navigator.serviceWorker.getRegistration();
+      return { waiting: registration?.waiting?.state, installing: registration?.installing?.state, active: registration?.active?.state,
+        controller: navigator.serviceWorker.controller?.state, caches: await caches.keys(), text: document.querySelector(".pwa-status")?.textContent };
+    }));
+    console.error("Worker responses:", workerResponses);
+    for (const worker of context.serviceWorkers()) console.error("Worker runtime:", await worker.evaluate("({version:VERSION,active:registration.active?.state,waiting:registration.waiting?.state})").catch(() => "terminated"));
+    throw error;
+  });
   assert.deepEqual(errors, []);
 });

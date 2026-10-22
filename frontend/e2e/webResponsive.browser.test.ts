@@ -33,11 +33,14 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
       "1": { artifactPath: `papers/${paper}/translated.pdf`, page: 1 }, "2": { artifactPath: `papers/${paper}/translated.pdf`, page: 2 },
     } } } }));
     const blobs: Record<string, Buffer> = { original: pdf, translated: pdf, reading };
+    blobs.memo = Buffer.from("# 比較しながら読むメモ\n\n読んでいる位置を保ったまま資料とメモを見比べる。\n");
     const file = (id: string) => ({ id, size: blobs[id].length, mime: id === "reading" ? "application/json" : "application/pdf",
       sha256: createHash("sha256").update(blobs[id]).digest("hex") });
     const manifest = { version: 1, revision: "responsive", updated_at: "2026-10-22T00:00:00Z", folder_id: "folder",
-      items: [{ id: paper, title: "画面の広さに合わせて読む資料" }], attachments: [], files: {
+      items: [{ id: paper, title: "画面の広さに合わせて読む資料" }],
+      attachments: [{ id: "memo", owner_id: paper, title: "読書メモ", format: "md" }], files: {
         [`papers/${paper}/original.pdf`]: file("original"), [`papers/${paper}/translated.pdf`]: file("translated"), "web-reading.json": file("reading"),
+        [`papers/${paper}/attachments/memo.md`]: { ...file("memo"), mime: "text/markdown" },
       } };
     await context.route("https://accounts.google.com/gsi/client", route => route.fulfill({ contentType: "text/javascript", body:
       'window.google={accounts:{oauth2:{initTokenClient:opts=>({requestAccessToken:()=>opts.callback({access_token:"responsive-test",expires_in:3600})})}}};' }));
@@ -190,6 +193,50 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     for (const control of await page.locator('.web-page-navigation > button, .web-page-navigation > input').all()) {
       assert.ok((await control.boundingBox())!.height >= 44, "page navigation retains its touch target height");
     }
+    // A low window uses the same compact controls regardless of its width/UA.
+    await page.setViewportSize({ width: 1366, height: 400 });
+    await page.getByRole("button", { name: "書き込みを開始", exact: true }).click();
+    await menu.click(); await mode.selectOption("auto"); await menu.click();
+    await layout("split");
+    await original.getByTestId("web-ink").waitFor(); await translated.getByTestId("web-ink").waitFor();
+    assert.equal(await page.locator(".web-document-header").isVisible(), false);
+    assert.ok((await original.locator("canvas").boundingBox())!.y - (await page.locator(".workspace").boundingBox())!.y < 160,
+      "short windows leave room for the PDF while retaining pane captions");
+    assert.equal(await original.locator(".asset-heading").isVisible(), true);
+    assert.match(await original.locator(".asset-heading").innerText(), /原文/);
+    assert.equal(await translated.locator(".asset-heading").isVisible(), true);
+    await page.getByRole("button", { name: "ライブラリ", exact: true }).click();
+    const sidebar = page.locator(".web-sidebar-overlay"); await sidebar.waitFor();
+    assert.ok((await sidebar.boundingBox())!.width < 400, "the library overlays a short wide reader instead of squeezing it");
+    assert.equal(await page.getByRole("button", { name: "ライブラリを閉じる", exact: true }).isVisible(), true);
+    await page.getByRole("button", { name: "ライブラリを閉じる", exact: true }).click();
+    await menu.click(); await mode.selectOption("single"); await menu.click(); await layout("single");
+    // Opening/closing notes keeps the top passage and the horizontal reading point.
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await zoom.selectOption("2");
+    const settled = async () => page.waitForFunction(() => {
+      const pane = document.querySelector('.web-pdf-pane'), canvas = pane?.querySelector('canvas'), ink = pane?.querySelector('[data-testid="web-ink"]');
+      return !!pane && !!canvas && !!ink && Math.abs(canvas.getBoundingClientRect().width - (pane.clientWidth - 4) * 2) < 3;
+    });
+    await settled();
+    await translated.evaluate(pane => {
+      const surface = pane.querySelector<HTMLElement>(".web-pdf-surface")!;
+      pane.scrollTop = surface.offsetTop + surface.offsetHeight * .25;
+      pane.scrollLeft = surface.offsetLeft + surface.offsetWidth * .65 - pane.clientWidth / 2;
+    });
+    const readingPoint = () => translated.evaluate(pane => {
+      const frame = pane.getBoundingClientRect(), surface = pane.querySelector(".web-pdf-surface")!.getBoundingClientRect();
+      return { y: (frame.top - surface.top) / surface.height, x: (frame.left + pane.clientWidth / 2 - surface.left) / surface.width };
+    });
+    const beforeNotes = await readingPoint();
+    await page.getByRole("button", { name: "右パネルを選択", exact: true }).click();
+    await page.getByRole("menuitemcheckbox", { name: "メモを右に表示", exact: true }).click();
+    await page.getByRole("complementary", { name: "メモ（右パネル）" }).waitFor(); await settled();
+    const besideNotes = await readingPoint();
+    assert.ok(Math.abs(beforeNotes.y - besideNotes.y) < .005 && Math.abs(beforeNotes.x - besideNotes.x) < .005, "opening notes preserves the reading passage");
+    await page.getByRole("button", { name: "右パネルを閉じる", exact: true }).click(); await settled();
+    const afterNotes = await readingPoint();
+    assert.ok(Math.abs(beforeNotes.y - afterNotes.y) < .005 && Math.abs(beforeNotes.x - afterNotes.x) < .005, "closing notes restores the passage too");
     assert.deepEqual(errors, []);
   });
 }

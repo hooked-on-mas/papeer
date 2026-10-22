@@ -44,8 +44,18 @@ export function PwaStatus({ online, compact = false }: { online: boolean; compac
     if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return;
     let disposed = false;
     let registration: ServiceWorkerRegistration | undefined;
+    let observedWaiting: ServiceWorker | undefined;
     let registering = false;
-    const inspect = () => { if (!disposed) setWaiting(registration?.waiting ?? undefined); };
+    const inspect = () => {
+      if (disposed) return;
+      const worker = registration?.waiting ?? undefined;
+      if (worker !== observedWaiting) {
+        observedWaiting?.removeEventListener("statechange", inspect);
+        observedWaiting = worker;
+        worker?.addEventListener("statechange", inspect);
+      }
+      setWaiting(worker?.state === "installed" ? worker : undefined);
+    };
     const controllerChanged = () => {
       if (applyRequested.current) window.location.reload();
       else inspect();
@@ -55,7 +65,7 @@ export function PwaStatus({ online, compact = false }: { online: boolean; compac
       worker?.addEventListener("statechange", () => {
         inspect();
         if (!disposed && worker.state === "activated") setCacheFailed(false);
-        if (!disposed && worker.state === "redundant") setCacheFailed(true);
+        if (!disposed && worker.state === "redundant" && !registration?.active) setCacheFailed(true);
       });
     };
     const attach = (value: ServiceWorkerRegistration) => {
@@ -87,6 +97,7 @@ export function PwaStatus({ online, compact = false }: { online: boolean; compac
     document.addEventListener("visibilitychange", focus);
     return () => {
       disposed = true; registration?.removeEventListener("updatefound", updateFound);
+      observedWaiting?.removeEventListener("statechange", inspect);
       navigator.serviceWorker.removeEventListener("controllerchange", controllerChanged);
       window.removeEventListener("online", check); document.removeEventListener("visibilitychange", focus);
     };
