@@ -1,3 +1,4 @@
+import { clickAccountAction } from "./webAccount.ts";
 /** Real Python PC snapshot → browser drawing → Drive transport → real Python import → browser. */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -220,7 +221,7 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   assert.equal(fixture("import").strokes, 7);
   readSnapshot("import");
   assert.deepEqual(blobs.get(manifest!.files[`papers/${paper}/translated.pdf`].id), originalPdf);
-  await page.getByRole("button", { name: "更新", exact: true }).click();
+  await clickAccountAction(page, "更新");
   await page.getByLabel("表示する資料").selectOption({ label: "日本語訳" });
   await page.getByLabel("本文の表示方法").selectOption("single");
   await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 7);

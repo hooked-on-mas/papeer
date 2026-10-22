@@ -131,7 +131,7 @@ function App() {
           catch { throw new Error("端末のダウンロード済み資料を削除できませんでした。ブラウザーのサイトデータを削除してください。"); }
         });
   const actions = <div className="header-actions">
-    {compact && (signedIn || localOnly) ? <DropdownMenu>
+    {signedIn || (compact && localOnly) ? <DropdownMenu>
       <DropdownMenuTrigger className="web-account-trigger" aria-label="Google接続メニュー"><UserRound aria-hidden="true" /><span className="web-account-label">Google接続</span></DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48 web-account-menu">
         <DropdownMenuItem disabled={busy || !online || !signedIn} onClick={refresh}>更新</DropdownMenuItem>
@@ -154,7 +154,7 @@ function App() {
       <img src={`${import.meta.env.BASE_URL}papeer.png`} alt="" />Papeer</a>{actions}</WorkspaceHeader>}
     {error && <p role="alert" className="error banner">{error}</p>}
     {storageError && <p role="alert" className="error banner">資料を端末に保存できません。オフラインでは開けない場合があります。空き容量とブラウザーの保存設定を確認してください。</p>}
-    {localOnly && online && !localNoticeDismissed && <div role="status" className="banner local-library-notice">
+    {localOnly && online && !signedIn && !localNoticeDismissed && <div role="status" className="banner local-library-notice">
       <span>端末に保存した資料を表示しています。最新の資料の取得・書き込みの送信にはGoogleでログインしてください。</span>
       <Button variant="outline" size="sm" disabled={busy || sdkStatus === "loading"}
         onClick={() => { if (sdkStatus === "error") setSdkAttempt(value => value + 1); else void login(); }}>
@@ -163,7 +163,7 @@ function App() {
       <Button variant="ghost" size="icon" className="local-library-notice-close" aria-label="保存済み資料の案内を閉じる"
         onClick={() => setLocalNoticeDismissed(true)}><X aria-hidden="true" /></Button>
     </div>}
-    {online && sdkStatus === "error" && <div role="alert" className="error banner">Googleログイン機能を読み込めませんでした。
+    {online && !signedIn && sdkStatus === "error" && <div role="alert" className="error banner">Googleログイン機能を読み込めませんでした。
       <Button variant="outline" size="sm" onClick={() => setSdkAttempt(value => value + 1)}>ログインの準備を再試行</Button></div>}
     {busy && <div role="status" className="banner">{authenticating ? "Googleへの接続を待っています…" : "Google Driveから読み込んでいます…"}
       {authenticating && <Button variant="outline" size="sm" onClick={() => session.cancelSignIn()}>接続をキャンセル</Button>}</div>}

@@ -67,6 +67,8 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     assert.equal(await mode.inputValue(), "auto");
     await layout("single");
     assert.equal(await page.locator(".web-document-header").isVisible(), true);
+    assert.equal((await page.locator(".web-document-header .header-actions").innerText()).trim(), "", "authenticated account controls do not show Google login text above the reader");
+    assert.equal(await page.locator(".local-library-notice").count(), 0);
     assert.equal(await page.getByRole("toolbar", { name: "PDFの書き込みツール" }).isVisible(), true);
     await page.setViewportSize({ width: 560, height: 900 });
     await original.locator("canvas").waitFor();

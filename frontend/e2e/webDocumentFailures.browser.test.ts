@@ -1,3 +1,4 @@
+import { clickAccountAction } from "./webAccount.ts";
 /** Integrity-valid but unparsable PDF -> usable download -> repaired PC snapshot. */
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
@@ -49,7 +50,7 @@ for (const engine of ["webkit", "chromium"] as const) test(`damaged PDF download
   const download = await downloading;
   assert.equal(download.suggestedFilename(), "original.pdf");
   assert.deepEqual(fs.readFileSync((await download.path())!), broken);
-  repaired = true; await page.getByRole("button", { name: "更新", exact: true }).click();
+  repaired = true; await clickAccountAction(page, "更新");
   await pane.locator("canvas").waitFor();
   await page.waitForFunction(() => document.querySelector('.textLayer')?.textContent?.includes("Adaptive Control"));
   assert.equal(await page.getByText("PDFを表示できません。ダウンロードしてご確認ください。", { exact: true }).count(), 0);

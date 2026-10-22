@@ -7,6 +7,7 @@ export function useReaderLayout() {
   const ref = useRef<HTMLDivElement>(null);
   const [split, setSplit] = useState(false);
   const [width, setWidth] = useState(0);
+  const measured = useRef({ split: false, width: 0 });
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -15,9 +16,13 @@ export function useReaderLayout() {
       // Keyboard resizing must not replace an editor while its text is focused.
       if (document.activeElement?.matches('input, textarea, select, [contenteditable="true"]')) return;
       const { width, height } = element.getBoundingClientRect();
+      const next = { width: Math.round(width), split: automaticReaderSplit(width, height, measured.current.split) };
+      // Pointer/focus events only retry an actual deferred layout change. Unrelated
+      // clicks must not flush or alter an editor's unsaved-stroke recovery state.
+      if (next.width === measured.current.width && next.split === measured.current.split) return;
       if (!prepareWebNavigation()) return;
-      setWidth(Math.round(width));
-      setSplit(previous => automaticReaderSplit(width, height, previous));
+      measured.current = next;
+      setWidth(next.width); setSplit(next.split);
     };
     const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); };
     const observer = new ResizeObserver(schedule);

@@ -113,7 +113,7 @@
 .web-display-options > summary { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; cursor: pointer; list-style: none; }
 .web-display-options > summary::-webkit-details-marker { display: none; }
 .web-display-options > div { position: absolute; top: 100%; right: 0; z-index: 10; display: flex; flex-direction: column; gap: 8px; padding: 12px; width: min(290px, calc(100vw - 16px)); max-height: 60dvh; overflow: auto; background: var(--background); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px #0002; }
-.web-account-trigger { display: flex; align-items: center; justify-content: center; }
+.web-account-trigger { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
 .web-account-label { display: none; }
 .web-account-menu [role="menuitem"] { min-height: 44px; }
 .web-pdf-pane { container: pdf-pane / inline-size; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y; padding: 0 2px; }

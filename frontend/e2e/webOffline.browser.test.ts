@@ -1,3 +1,4 @@
+import { clickAccountAction } from "./webAccount.ts";
 /** Built PWA + real IndexedDB, with synthetic Google auth and private PDF responses. */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -92,7 +93,7 @@ test("downloaded PDFs reopen offline; missing versions, storage failures and log
   await original.locator('[data-page-number="2"] canvas').waitFor();
   // A connection attempt must never disable the escape route to local documents.
   holdLibraryList = true;
-  await page.getByRole("button", { name: "再ログイン", exact: true }).click();
+  await clickAccountAction(page, "再ログイン");
   await listBlocked;
   const localEntry = page.getByRole("button", { name: "ダウンロード済みのライブラリを開く", exact: true });
   assert.equal(await localEntry.isEnabled(), true);
@@ -100,7 +101,7 @@ test("downloaded PDFs reopen offline; missing versions, storage failures and log
   await original.locator('[data-page-number="2"] canvas').waitFor();
   const cancelledList = page.waitForResponse(response => response.url().includes("googleapis.com/drive/v3/files?") && response.url().includes("orderBy"));
   holdLibraryList = false; releaseList(); await cancelledList;
-  await page.getByRole("status").filter({ hasText: "端末に保存した資料を表示しています" }).waitFor();
+  assert.equal(await loginNotice.count(), 0, "an authenticated session does not show a Google login notice when opening a saved library");
   // A Wi-Fi connection can report online with no Internet. Even a stalled Google
   // SDK must not leave downloaded documents behind the login screen.
   holdSdk = true;

@@ -1,3 +1,4 @@
+import { clickAccountAction } from "./webAccount.ts";
 /** Recovery paths use synthetic data and an intercepted OAuth popup/Drive API. */
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
@@ -76,7 +77,7 @@ test("Web recovers login, reads, scratch text and reading position without showi
   const original = page.getByRole("region", { name: "原文", exact: true });
   const refreshLibrary = async () => {
     const previousUrl = await original.getByRole("link", { name: "PDF本体を保存 ↓", exact: true }).getAttribute("href");
-    await page.getByRole("button", { name: "更新", exact: true }).click();
+    await clickAccountAction(page, "更新");
     await page.waitForFunction(previous => {
       const url = document.querySelector('.asset-heading a[download$=".pdf"]')?.getAttribute("href");
       return document.querySelector('.workspace')?.getAttribute("aria-busy") === "false" && url && url !== previous;
@@ -100,7 +101,7 @@ test("Web recovers login, reads, scratch text and reading position without showi
   await page.getByLabel("表示する資料").selectOption({ label: "原文・ノート" });
   await original.locator('[data-page-number="2"] canvas').waitFor();
   const pdfUrl = await original.getByRole("link", { name: "PDF本体を保存 ↓", exact: true }).getAttribute("href");
-  await page.getByRole("button", { name: "再ログイン", exact: true }).click();
+  await clickAccountAction(page, "再ログイン");
   await page.waitForFunction(() => !document.querySelector('.banner[role="status"]'));
   await original.locator('[data-page-number="2"] canvas').waitFor();
   assert.notEqual(await original.getByRole("link", { name: "PDF本体を保存 ↓", exact: true }).getAttribute("href"), pdfUrl, "reauthorization fetches protected PDFs with the new token");
@@ -166,7 +167,7 @@ test("Web recovers login, reads, scratch text and reading position without showi
   await page.getByRole("alert").filter({ hasText: "指定ページがありません" }).waitFor();
   assert.equal(await page.locator(".react-pdf__Page canvas").count(), 0);
   anotherAccount = true; failPdf = false;
-  await page.getByRole("button", { name: "再ログイン", exact: true }).click();
+  await clickAccountAction(page, "再ログイン");
   await page.getByRole("heading", { name: "新しいアカウントの論文", exact: true }).waitFor();
   assert.equal(await page.getByLabel("ページ番号").inputValue(), "1");
   assert.deepEqual(errors, []);
