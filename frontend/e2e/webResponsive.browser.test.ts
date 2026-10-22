@@ -158,9 +158,12 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     await page.getByRole("button", { name: "書き込みを終了", exact: true }).click(); await fits(true);
     await page.reload(); await zoom.waitFor(); assert.equal(await zoom.inputValue(), "page"); await fits(true);
     const fitted = (await translated.locator("canvas").boundingBox())!;
-    const at = { x: fitted.x + fitted.width * .5, y: fitted.y + fitted.height * .35 };
+    // Production can show an offline-preparation notice, leaving a smaller fitted
+    // page. Choose the gesture scale from its actual size, not a fixed multiplier.
+    const at = { x: fitted.x + fitted.width * .5, y: fitted.y + fitted.height * .35,
+      scale: (await translated.boundingBox())!.width * 1.75 / fitted.width };
     await translated.locator("canvas").evaluate((canvas, point) => {
-      for (const [type, scale] of [["gesturestart", 1], ["gesturechange", 4], ["gestureend", 4]] as const) {
+      for (const [type, scale] of [["gesturestart", 1], ["gesturechange", point.scale], ["gestureend", point.scale]] as const) {
         const event = new Event(type, { bubbles: true, cancelable: true });
         Object.assign(event, { scale, clientX: point.x, clientY: point.y }); canvas.dispatchEvent(event);
       }
@@ -170,8 +173,11 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
       return !!canvas && !!ink && !document.querySelector('.pdf-fit-page') && canvas.getBoundingClientRect().width > pane!.clientWidth;
     });
     const enlarged = (await translated.locator("canvas").boundingBox())!;
-    assert.ok(Math.abs(enlarged.x + enlarged.width * .5 - at.x) < 3, "pinching a centered fitted page keeps the horizontal anchor");
-    assert.ok(Math.abs(enlarged.y + enlarged.height * .35 - at.y) < 3, "pinching keeps the vertical anchor too");
+    // PDF canvas dimensions are integer pixels. Allow one source pixel of
+    // rounding at this magnification, while catching a lost centering margin.
+    const tolerance = Math.max(3, at.scale);
+    assert.ok(Math.abs(enlarged.x + enlarged.width * .5 - at.x) < tolerance, `pinching a centered fitted page keeps the horizontal anchor: ${JSON.stringify({ fitted, enlarged, at })}`);
+    assert.ok(Math.abs(enlarged.y + enlarged.height * .35 - at.y) < tolerance, `pinching keeps the vertical anchor too: ${JSON.stringify({ fitted, enlarged, at })}`);
     await zoom.selectOption("1.25");
     await page.waitForFunction(() => {
       const pane = document.querySelector('.web-pdf-pane'), canvas = pane?.querySelector('canvas');
