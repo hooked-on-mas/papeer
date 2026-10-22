@@ -68,6 +68,10 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     await layout("single");
     assert.equal(await page.locator(".web-document-header").isVisible(), true);
     assert.equal(await page.getByRole("toolbar", { name: "PDFの書き込みツール" }).isVisible(), true);
+    await page.setViewportSize({ width: 560, height: 900 });
+    await original.locator("canvas").waitFor();
+    assert.equal(await translated.count(), 0, "resizing preserves the initially displayed language too");
+    await page.setViewportSize({ width: 834, height: 1194 });
     await page.getByRole("button", { name: "日本語訳を表示", exact: true }).click();
     await page.getByRole("button", { name: "次のページ", exact: true }).click();
     await ready();

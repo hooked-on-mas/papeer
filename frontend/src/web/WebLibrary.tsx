@@ -50,14 +50,10 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   }, [runtime, session, manifest]);
   const items = runtime.query.listItems();
   const compact = useMediaQuery(COMPACT_LAYOUT_QUERY);
+  const [defaultToTranslation] = useState(compact);
   const [initialPlace] = useState(() => getLibraryPlace(runtime.scope.libraryId));
   const [selected, setSelected] = useState(initialPlace && (!initialPlace.itemId || items.some(item => item.id === initialPlace.itemId)) ? initialPlace.itemId : items[0]?.id ?? "");
-  const defaultArtifact = (id: string) => {
-    const files = runtime.query.listArtifacts(id || null);
-    return (compact ? preferredReadingArtifact(files) : files[0])?.id ?? "";
-  };
-  const [artifactId, setArtifactId] = useState(() => (initialPlace
-    ? runtime.query.listArtifacts(selected || null).find(row => artifactPlaceKey(row) === initialPlace.artifact)?.id : undefined) ?? defaultArtifact(selected));
+  const [artifactId, setArtifactId] = useState(() => initialPlace ? runtime.query.listArtifacts(selected || null).find(row => artifactPlaceKey(row) === initialPlace.artifact)?.id ?? "" : "");
   const [tab, setTab] = useState("reader");
   const narrowViewport = useMediaQuery(SIDEBAR_OVERLAY_QUERY);
   const stackedViewport = useMediaQuery("(max-width: 760px)");
@@ -70,7 +66,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   useEffect(() => { if (narrow) setCollapsed(true); }, [narrow]);
   const item = items.find(row => row.id === selected);
   const artifacts = runtime.query.listArtifacts(item?.id ?? null);
-  const artifact = artifacts.find(row => row.id === artifactId) ?? (compact ? preferredReadingArtifact(artifacts) : artifacts[0]);
+  const artifact = artifacts.find(row => row.id === artifactId) ?? (defaultToTranslation ? preferredReadingArtifact(artifacts) : artifacts[0]);
   const originalPdf = artifacts.find(row => row.role === "original" && row.annotationTarget)
     ?? artifacts.find(row => row.role === "original" && row.filename.endsWith(".pdf"));
   const translatedPdf = artifacts.find(row => row.role === "translated" && row.annotationTarget)
@@ -86,14 +82,14 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   const chosen = sidePanel && available.includes(sidePanel) ? sidePanel : null;
   const choose = (id: string, file?: string) => {
     if (!prepareWebNavigation()) return;
-    setSelected(id); setArtifactId(file ?? defaultArtifact(id)); setTab("reader");
+    setSelected(id); setArtifactId(file ?? ""); setTab("reader");
     if (narrow) setCollapsed(true);
   };
   const chooseChild = (id: string, file: string) => {
     if (!prepareWebNavigation()) return;
     const child = runtime.query.listArtifacts(id).find(row => row.id === file);
     if (child?.role === "attachment" && /\.md$/i.test(child.filename)) {
-      setSelected(id); if (id !== selected) setArtifactId(defaultArtifact(id));
+      setSelected(id); if (id !== selected) setArtifactId("");
       setMemoId(file); setTab("notes");
       if (narrow) setCollapsed(true);
     } else choose(id, file);
