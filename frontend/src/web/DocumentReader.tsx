@@ -7,7 +7,7 @@ import type { AnnotationStore } from "./annotations";
 import { PdfReader } from "./PdfReader";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { prepareWebNavigation } from "./textDrafts";
-import { documentPlaceKey, getDocumentPlace, saveDocumentPlace } from "./readingPlace";
+import { documentPlaceKey, getDocumentPlace, saveDocumentPlace, pdfPlaceKey } from "./readingPlace";
 import { Ellipsis, Hand, Pen, ZoomIn, ZoomOut } from "lucide-react";
 import { COMPACT_LAYOUT_QUERY } from "./readerLayout";
 import { useReaderLayout } from "./useReaderLayout";
@@ -138,6 +138,6 @@ function PdfArtifact({ artifact, runtime, store, page, zoom, fitPage, onZoom, on
   return <section className="web-pdf-pane" aria-label={artifact.role === "translated" ? "日本語訳" : artifact.role === "original" ? "原文" : artifact.label}>
     <div className="asset-heading"><span>{artifact.label}</span>{url && <a href={url} download={artifact.filename}>PDF本体を保存 ↓</a>}</div>
     {error ? <div role="alert" className="error">{error} <button onClick={() => setAttempt(value => value + 1)}>PDFを再試行</button></div> : !url ? <p role="status">PDFを読み込んでいます…</p>
-      : <PdfReader url={url} target={artifact.annotationTarget} store={store} pageNumber={page} zoom={zoom} fitPage={fitPage} onZoom={onZoom} navigation={false} onPageCount={pageCount} editing={editing} />}
+      : <PdfReader readingKey={pdfPlaceKey(runtime.scope.libraryId, artifact, runtime.scope.revision)} url={url} target={artifact.annotationTarget} store={store} pageNumber={page} zoom={zoom} fitPage={fitPage} onZoom={onZoom} navigation={false} onPageCount={pageCount} editing={editing} />}
   </section>;
 }

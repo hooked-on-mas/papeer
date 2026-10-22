@@ -9,17 +9,10 @@ import type { AnnotationTarget } from "../runtime/contracts";
 import { AlertCircle, Check, Eraser, Hand, Highlighter, Loader2, Pen, Redo2, RefreshCw, Settings2, Type, Undo2 } from "lucide-react";
 import { prepareWebNavigation, registerNavigationGuard, textDrafts, type TextDraft } from "./textDrafts";
 import { usePdfPinchZoom } from "./usePdfPinchZoom";
-import { createPlaceKeeper, scrollForPlace, type PaneView, type ReadingPlace } from "../features/reader/readingPlace";
+import { usePdfReadingPlace } from "./usePdfReadingPlace";
 import { ReaderMenu } from "./ReaderMenu";
 
 type Tool = "read" | "pen" | "highlighter" | "eraser" | "text";
-
-function paneView(pane: HTMLElement, surface: HTMLElement): PaneView {
-  const frame = pane.getBoundingClientRect(), box = surface.getBoundingClientRect();
-  return { scrollTop: pane.scrollTop, scrollLeft: pane.scrollLeft, clientWidth: pane.clientWidth, clientHeight: pane.clientHeight,
-    page: { top: box.top - frame.top - pane.clientTop + pane.scrollTop, left: box.left - frame.left - pane.clientLeft + pane.scrollLeft,
-      width: box.width, height: box.height } };
-}
 
 const SavedInk = memo(function SavedInk({ ink, ratio }: { ink: PageInk; ratio: number }) {
   return <>{ink.highlights.flatMap((h, i) => h.rects.map(([x, y, w, height], j) => <rect key={`${i}:${j}`} x={x * 1000} y={y * 1000 * ratio}
@@ -27,9 +20,9 @@ const SavedInk = memo(function SavedInk({ ink, ratio }: { ink: PageInk; ratio: n
     {ink.strokes.map(stroke => <g key={stroke.id} data-ink-id={stroke.id}><InkDrawing stroke={stroke} ratio={ratio} /></g>)}</>;
 });
 
-export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 1, fitPage = false, onZoom, navigation = true, editing = true }: {
+export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 1, fitPage = false, onZoom, navigation = true, editing = true, readingKey }: {
   url: string; target?: AnnotationTarget; store?: AnnotationStore; pageNumber?: number;
-  onPageCount?: (count: number) => void; zoom?: number; fitPage?: boolean; onZoom?: (zoom: number) => void; navigation?: boolean; editing?: boolean;
+  readingKey?: string; onPageCount?: (count: number) => void; zoom?: number; fitPage?: boolean; onZoom?: (zoom: number) => void; navigation?: boolean; editing?: boolean;
 }) {
   const [pages, setPages] = useState(0), [localPage, setPage] = useState(1);
   const page = pageNumber ?? localPage;
@@ -54,61 +47,6 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
   const effectiveZoom = fitPage && availableHeight > 0 ? Math.min(1, availableHeight / (width * ratio)) : zoom;
   // Match react-pdf's integer CSS canvas width, rather than tracking subpixel layout noise.
   const drawnWidth = Math.max(1, Math.floor(width * effectiveZoom));
-  const placeKeeper = useMemo(createPlaceKeeper, []);
-  const pendingPlace = useRef<{ key: string; place: ReadingPlace } | null>(null);
-  const lastView = useRef<{ key: string; pageWidth: number; view: PaneView } | null>(null);
-  const readingLayout = useRef({ key: `${url}:${page}`, fitPage, width, drawnWidth });
-  usePdfPinchZoom(container, effectiveZoom, onZoom, `${url}:${page}`);
-  useLayoutEffect(() => {
-    const key = `${url}:${page}`, previous = readingLayout.current;
-    readingLayout.current = { key, fitPage, width, drawnWidth };
-    if (key !== previous.key || fitPage) { pendingPlace.current = null; lastView.current = null; placeKeeper.reset(); }
-    const pending = pendingPlace.current, root = container.current;
-    const pane = root?.closest<HTMLElement>(".web-pdf-pane"), surface = root?.querySelector<HTMLElement>(".web-pdf-surface");
-    if (!pane || !surface) return;
-    if (pending && pending.key === key && !fitPage) {
-      pendingPlace.current = null;
-      const scroll = scrollForPlace(pending.place, paneView(pane, surface));
-      pane.scrollTo(scroll.left, scroll.top);
-      placeKeeper.restored(key, pending.place, paneView(pane, surface), drawnWidth);
-    }
-    lastView.current = { key, pageWidth: drawnWidth, view: paneView(pane, surface) };
-  }, [url, page, fitPage, width, drawnWidth, ratio, placeKeeper]);
-  useEffect(() => {
-    const root = container.current, pane = root?.closest<HTMLElement>(".web-pdf-pane");
-    if (!root) return;
-    let previousPaneWidth = pane?.clientWidth ?? 0;
-    let measured = false;
-    const observer = new ResizeObserver(([entry]) => {
-      const nextWidth = Math.max(1, entry.contentRect.width), current = readingLayout.current;
-      const surface = root.querySelector<HTMLElement>(".web-pdf-surface");
-      // Capture before React resizes the page. Explicit zoom/pinch keeps its own
-      // anchor; only a change in the surrounding pane restores this reading place.
-      if (measured && nextWidth !== current.width && !current.fitPage && pane && surface?.querySelector("canvas")) {
-        const saved = lastView.current;
-        // A widening pane can clamp scrollLeft before ResizeObserver runs. Use
-        // the last view from before that layout change, including its scroll.
-        const before = saved?.key === current.key && saved.pageWidth === current.drawnWidth ? saved.view
-          : { ...paneView(pane, surface), clientWidth: previousPaneWidth };
-        const place = placeKeeper.measure(current.key, before, current.drawnWidth);
-        if (place) pendingPlace.current = { key: current.key, place };
-      }
-      previousPaneWidth = pane?.clientWidth ?? 0;
-      measured = true;
-      setWidth(nextWidth);
-    });
-    const rememberScroll = () => {
-      const current = readingLayout.current, saved = lastView.current;
-      if (!pane || pendingPlace.current || (saved && saved.view.clientWidth !== pane.clientWidth)) return;
-      const surface = root.querySelector<HTMLElement>(".web-pdf-surface");
-      if (surface && !surface.style.transform) lastView.current = { key: current.key, pageWidth: current.drawnWidth, view: paneView(pane, surface) };
-    };
-    // The PDF's scrollable width grows with zoom; the viewport remains the source
-    // of its base width so that sticky tools can stay visible during horizontal panning.
-    observer.observe(pane ?? root.parentElement ?? root);
-    pane?.addEventListener("scroll", rememberScroll, { passive: true });
-    return () => { observer.disconnect(); pane?.removeEventListener("scroll", rememberScroll); };
-  }, [placeKeeper]);
   const anchor: Anchor | undefined = target ? { paper_id: target.paperId, side: target.side, source_sha256: target.sourceSha256, page } : undefined;
   const pixelRatio = cappedPixelRatio(window.devicePixelRatio, drawnWidth, drawnWidth * ratio);
   const render = useMemo(() => ({ key: `${url}:${page}:${drawnWidth}:${pixelRatio}` }), [url, page, drawnWidth, pixelRatio]);
@@ -118,6 +56,8 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
     activeRender.current = render;
     return () => { activeRender.current = null; };
   }, [render]);
+  usePdfPinchZoom(container, effectiveZoom, onZoom, `${url}:${page}`);
+  usePdfReadingPlace(container, { key: `${url}:${page}`, storageKey: readingKey, page, fitPage, width, pageWidth: drawnWidth, ready: rendered === render }, setWidth);
   const document = <Document file={url} loading="PDFを読み込んでいます…" error="PDFを表示できません。ダウンロードしてご確認ください。"
     onLoadSuccess={({ numPages }) => setPages(numPages)}>
     {pages > 0 && (page < 1 || page > pages) ? <p role="alert" className="error">保存されたPDFに指定ページがありません。PCから再アップロードしてください。</p>
