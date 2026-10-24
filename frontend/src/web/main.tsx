@@ -79,13 +79,35 @@ function App() {
     let active = true;
     const epoch = actionEpoch.current;
     const savedEpoch = offlineEpoch.current;
-    void offlineStore.libraries().then(found => {
+    void offlineStore.libraries().catch(() => {
+      if (active) storageFailed();
+      return [] as OfflineLibrary[];
+    }).then(async found => {
       if (!active || savedEpoch !== offlineEpoch.current) return;
       setSavedLibraries(found);
+      const current = () => active && epoch === actionEpoch.current;
+      if (!current()) return;
       // Reachability and Google authentication are irrelevant to local documents.
       // navigator.onLine can stay true on Wi-Fi with no Internet connection.
-      if (epoch === actionEpoch.current && found.length) openSaved(found[0]);
-    }).catch(() => { if (active) storageFailed(); });
+      if (!online || !session.hasValidToken()) {
+        if (found.length) openSaved(found[0]);
+        return;
+      }
+      // Restore an unexpired tab session without opening a Google popup or waiting for its SDK.
+      // Check Drive access before loading any protected artifacts from this login.
+      setBusy(true);
+      try {
+        const available = await session.libraries();
+        if (!current()) return;
+        setLibraries(available); setSignedIn(true);
+        if (available.length) await load(available.some(library => library.id === found[0]?.id) ? found[0].id : available[0].id, current);
+      } catch (error) {
+        if (!current()) return;
+        setSignedIn(false);
+        if (found.length) openSaved(found[0]);
+        setError(error instanceof Error ? error.message : String(error));
+      } finally { if (current()) setBusy(false); }
+    });
     return () => { active = false; };
     // Restore only at startup; reconnecting must not replace an open reader.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -98,9 +120,9 @@ function App() {
     try { await action(active); } catch (e) { if (active()) setError(e instanceof Error ? e.message : String(e)); }
     finally { if (active()) { setBusy(false); setAuthenticating(false); } }
   };
-  const login = () => run(async active => {
+  const login = (selectAccount = false) => run(async active => {
     setAuthenticating(true);
-    await session.signIn(); if (!active()) return;
+    await session.signIn({ selectAccount }); if (!active()) return;
     setAuthenticating(false); setSignedIn(true); setLocalOnly(false);
     // Re-read protected artifacts with the new token; only numeric reading state and
     // durable drafts survive reauthorization, never another login's loaded PDF bodies.
@@ -133,9 +155,10 @@ function App() {
   const actions = <div className="header-actions">
     {signedIn || (compact && localOnly) ? <DropdownMenu>
       <DropdownMenuTrigger className="web-account-trigger" aria-label="Google接続メニュー"><UserRound aria-hidden="true" /><span className="web-account-label">Google接続</span></DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48 web-account-menu">
+      <DropdownMenuContent align="end" className="w-56 web-account-menu">
         <DropdownMenuItem disabled={busy || !online || !signedIn} onClick={refresh}>更新</DropdownMenuItem>
         <DropdownMenuItem disabled={busy || !online || sdkStatus !== "ready"} onClick={() => void login()}>再ログイン</DropdownMenuItem>
+        <DropdownMenuItem disabled={busy || !online || sdkStatus !== "ready"} onClick={() => void login(true)}>アカウントを切り替える</DropdownMenuItem>
         <DropdownMenuItem disabled={busy} onClick={logout}>{signedIn ? "ログアウト" : "端末の保存を削除"}</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu> : <>

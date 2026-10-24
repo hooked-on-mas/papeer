@@ -18,7 +18,11 @@ Web 用クライアントの「承認済みの JavaScript 生成元」に、次�
 https://hooked-on-mas.github.io
 ```
 
-ローカル開発には `http://localhost:5173` も追加します。Web 版は Google Identity Services のトークン方式を使い、クライアントシークレットは使いません。アクセストークンはメモリー内だけに保持し、有効期限が切れたら「再ログイン」を押します。
+ローカル開発には `http://localhost:5173` も追加します。Web 版は Google Identity Services のトークン方式を使い、クライアントシークレットは使いません。アクセストークンはメモリーとタブ単位の `sessionStorage` に保持し、Googleが発行した有効期限内なら、再読み込み後もGoogleの画面を開かずにDrive接続を復元します。保存領域を使えないブラウザーではメモリー内だけで動作します。期限切れ・Googleによる認証の拒否・ログアウト時に保存したトークンを削除し、`localStorage`・IndexedDB・PWAのキャッシュには保存しません。
+
+有効期限が切れたら「Google接続 → 再ログイン」を押します。通常の再接続ではアカウント選択を強制せず、別のアカウントを使う場合は「アカウントを切り替える」を選びます。Googleへのログイン状態・許可状況によっては、再接続でも確認が必要です。保存済みの資料は期限切れ後もログインなしで読めます。
+
+これは短期間の再読み込みによるログイン操作を減らす対応です。Googleのトークン方式では、期限切れ後の再取得には利用者の操作が必要です。日をまたいだ自動接続には、更新トークンをサーバーで管理する認証コード方式への変更と、GitHub Pagesとは別のバックエンドが必要です。Googleの仕様は [トークン方式](https://developers.google.com/identity/oauth2/web/guides/use-token-model) と [認証コード方式](https://developers.google.com/identity/oauth2/web/guides/use-code-model) を参照してください。
 
 このリポジトリーには指定された Web 用クライアント ID を公開設定として入れています。別のプロジェクトに変える場合は、GitHub の Repository variable `GOOGLE_WEB_CLIENT_ID`、またはビルド時の環境変数 `VITE_GOOGLE_CLIENT_ID` で上書きできます。Web クライアント ID は秘密情報ではありません。
 
@@ -58,7 +62,7 @@ GitHub Actionsの公式Windows Releaseでは、Repository secret `GOOGLE_DESKTOP
 
 既存接続のトークン更新には、保存済みのデスクトップ用IDと対応する `client_secret` を使います。配布者によるローカルビルドでは `PAPEER_GOOGLE_OAUTH_CONFIG_FILE` にGoogleからダウンロードしたデスクトップ用JSONのローカルパスを指定する方法、または `PAPEER_GOOGLE_DESKTOP_CLIENT_SECRET` の明示指定も残します。IDを別クライアントへ上書きした場合、元のJSON・同梱設定のシークレットは引き継ぎません。シークレットの環境変数を空に明示設定した場合も省略します。これらは一般利用者の設定画面には表示しません。資格情報JSON・シークレット・ユーザーのトークンをGitへ登録したり、ログへ出したりしないでください。配布物に同梱する値は、ビルド時に隠しても配布後に秘密として保持できません。
 
-Web版はGoogle Identity Servicesのトークン方式を維持し、Webサーバー用のシークレットをPagesへ配置しません。ユーザーのアクセストークンはWebではメモリー内だけ、Windowsの更新トークンは端末内のDPAPI保護領域だけに保存します。OAuth設定はアプリ単位、認証トークンは利用者単位で分離します。
+Web版はGoogle Identity Servicesのトークン方式を維持し、Webサーバー用のシークレットをPagesへ配置しません。ユーザーのアクセストークンはWebではメモリーとタブ単位の `sessionStorage`、Windowsの更新トークンは端末内のDPAPI保護領域だけに保存します。OAuth設定はアプリ単位、認証トークンは利用者単位で分離します。
 
 ## GitHub Pages
 

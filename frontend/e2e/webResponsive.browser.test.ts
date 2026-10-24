@@ -6,6 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { createServer } from "vite";
 import { chromium, webkit } from "playwright-core";
+import type { Operation } from "../src/web/annotations.ts";
 
 for (const variant of ["mouse", "touch", "webkit"] as const) {
   test(`reader adapts to available space and preserves editing (${variant})`, { timeout: 120_000 }, async t => {
@@ -60,16 +61,25 @@ $$
       } };
     await context.route("https://accounts.google.com/gsi/client", route => route.fulfill({ contentType: "text/javascript", body:
       'window.google={accounts:{oauth2:{initTokenClient:opts=>({requestAccessToken:()=>opts.callback({access_token:"responsive-test",expires_in:3600})})}}};' }));
+    const operations = new Map<string, Operation>();
     await context.route("https://www.googleapis.com/**", async route => {
       const req = route.request(), url = new URL(req.url());
       const headers = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*" };
       if (req.method() === "OPTIONS") { await route.fulfill({ status: 204, headers }); return; }
       assert.equal(req.headers().authorization, "Bearer responsive-test");
-      if (req.method() === "POST") { await route.fulfill({ json: { id: "saved-operation" }, headers }); return; }
+      if (req.method() === "POST") {
+        const boundary = req.headers()["content-type"].split("boundary=")[1];
+        const parts = req.postData()!.split("--" + boundary);
+        const operation: Operation = JSON.parse(parts[2].split("\r\n\r\n")[1].trim());
+        operations.set(operation.id, operation);
+        await route.fulfill({ json: { id: "event-" + operation.id }, headers }); return;
+      }
       const id = url.pathname.split("/").pop()!;
-      if (id === "files") await route.fulfill({ json: { files: url.searchParams.get("q")?.includes("ink-v1") ? []
+      if (id === "files") await route.fulfill({ json: { files: url.searchParams.get("q")?.includes("ink-v1")
+        ? [...operations.values()].map(op => ({ id: "event-" + op.id, name: `ink-${op.id}.json`, size: String(Buffer.byteLength(JSON.stringify(op))) }))
         : [{ id: "library", name: "papeer-library.json", modifiedTime: manifest.updated_at }] }, headers });
       else if (id === "library") await route.fulfill({ json: manifest, headers });
+      else if (id.startsWith("event-")) await route.fulfill({ json: operations.get(id.slice(6)), headers });
       else { assert.ok(blobs[id], id); await route.fulfill({ body: blobs[id], headers }); }
     });
     await page.goto(process.env.PAPEER_WEB_TEST_URL || server.resolvedUrls!.local[0]);

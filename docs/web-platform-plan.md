@@ -26,7 +26,7 @@ PCへ追記を取り込み ← Driveの追記ファイル ← Webで手書き・
 | 翻訳・再翻訳・AIへの質問 | 利用可能 | 操作・API呼び出しなし |
 | Codex・AIキー・モデル・端末設定 | 表示 | 画面・設定読込を起動しない |
 | 削除・フォルダー整理・復元 | 利用可能 | 提供しない |
-| Drive認証 | デスクトップOAuth、DPAPI | Web OAuth、トークンはメモリーのみ |
+| Drive認証 | デスクトップOAuth、DPAPI | Web OAuth、トークンはメモリーとタブ単位のsessionStorage（Googleの有効期限内のみ） |
 
 `frontend/src/app/AppShell.tsx` と `frontend/src/web/main.tsx` をそれぞれのhost入口にする。同じPC上のChromeもWebとして動く。画面枠、階層ライブラリの行、幅変更可能な左パネル、ヘッダー、タブ、ページ操作、PDF描画設定、対訳分割、本文横のサマリー/チャット/メモdock、手書き描画・座標を共用する。WebはDrive用閲覧adapterを使い、PCの終了・job監視や設定画面は起動しない。具体的な責務と契約は[Astraによる設計](runtime-architecture.md)を参照。
 

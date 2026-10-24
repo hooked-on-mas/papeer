@@ -155,6 +155,18 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
   await applyUpdate.waitFor();
   const otherReader = await context.newPage(); await otherReader.goto(base, { waitUntil: "domcontentloaded" });
   await otherReader.getByRole("heading", { name: "論文を選んで、読み始めよう" }).waitFor();
+  // Navigation can finish before the second window appears in the worker's client list.
+  // Exercise the multi-reader guard only after both clients are registered.
+  await pendingWorker.evaluate(`new Promise((resolve, reject) => {
+    const deadline = Date.now() + 5000;
+    const check = async () => {
+      const windows = (await self.clients.matchAll({type:'window',includeUncontrolled:true}))
+        .filter(client => new URL(client.url).pathname.startsWith(new URL('./',self.location.href).pathname));
+      if (windows.length === 2) resolve();
+      else if (Date.now() > deadline) reject(new Error('Second reader not registered: '+JSON.stringify(windows.map(client=>client.url))));
+      else setTimeout(check,25);
+    }; check();
+  })`);
   await applyUpdate.click();
   await reopened.getByRole("alert").filter({ hasText: "ほかのPapeer" }).waitFor();
   assert.equal(await reopened.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting), true,

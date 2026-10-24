@@ -81,7 +81,10 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   const page = await context.newPage();
   const open = async (p: Page) => {
     await p.goto(webUrl);
-    await p.getByRole("button", { name: /^Googleでログイン(?:して開く →)?$/ }).first().click();
+    // A reload reuses an unexpired tab grant; a new tab still needs its first login.
+    if (!await p.evaluate(() => sessionStorage.getItem("papeer-google-session:v1"))) {
+      await p.getByRole("button", { name: /^Googleでログイン(?:して開く →)?$/ }).first().click();
+    }
     await p.getByLabel("表示する資料").waitFor();
     assert.equal(await p.getByLabel("表示する資料").getByRole("option", { name: "日本語訳", exact: true }).count(), 1);
     assert.equal(await p.getByLabel("表示する資料").getByRole("option", { name: /review-backups/ }).count(), 0);

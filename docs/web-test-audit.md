@@ -25,7 +25,7 @@
 | 保存中の失敗 | キャンセル・通信失敗では直前の公開世代を保持、再試行、一覧のページング、308の再開可能アップロード | 同上 |
 | PCのOAuth | PKCE・state・loopback、不完全なコールバックの期限、再オープン・取消・古い応答の無効化、エラー中の機密情報の非表示 | `tests/test_cloud_drive_auth.py` |
 | PCの資格情報設定 | 配布設定、Desktop/Webクライアントの区別、設定の混在防止、利用者へ資格情報入力を求めないAPI、DPAPI保存 | `tests/test_cloud_drive_config.py`, `tests/test_cloud_drive.py` |
-| Web認証 | SDK失敗から再取得、認証の取消・期限・遅延応答、拒否・ポップアップ失敗・期限切れ、再ログイン | `frontend/tests/webDrive.test.ts`, `webRecovery.browser.test.ts` |
+| Web認証 | SDK失敗から再取得、認証の取消・期限・遅延応答、拒否・ポップアップ失敗・期限切れ、再ログイン、期限内のタブ接続復元 | `frontend/tests/webDrive.test.ts`, `webRecovery.browser.test.ts`, `webSession.browser.test.ts` |
 | Drive通信 | Bearerヘッダー、ページング、サイズ・SHA-256照合、ログアウトをまたぐ読込の遮断、タイムアウト、HTTPエラー後の再試行、追記のmultipart送信先・親検証 | `frontend/tests/webDrive.test.ts` |
 | データの境界 | アカウント・ライブラリ・世代の切替で旧データを破棄、相対画像の範囲制限、PC/Webの機能差 | `frontend/tests/libraryRuntime.test.ts`, `runtimeCapabilities.test.ts`, Web復旧試験 |
 | ライブラリ | ツリー・フォルダー・ノート・検索・キーボード移動、本文・メモ・保存済みチャットの表示 | `webSidebar.browser.test.ts`, `webLibrary.browser.test.ts`, `frontend/tests/webLibraryTree.test.ts` |
@@ -96,7 +96,7 @@ pnpm --dir frontend test:web
 | Clipboard | Chromiumでは実Clipboardへの書込・読戻しも確認する。WebKitの自動試験はAPI呼出内容と拒否時の表示の確認で、iOSの権限UI・OS貼付は未確認 |
 | Apple Pencil | Pointer Eventsの合成入力による処理確認はあるが、実Pencilの筆圧・パームリジェクション・指との同時操作は未確認 |
 | 実Google/Drive | 今回は模擬通信。実際の同意画面、アカウント切替、権限取消、容量/利用制限、実ネットワークでの複数端末の同時追記は未確認。過去のアップロード成功は今回の実機試験を代替しない |
-| ログイン保持 | 現コードはWebトークンをメモリーだけに保持する。PWAの完全終了・再起動後に自動ログインを維持する実装はなく、以前の保持要望に対する差分が残る。下書き保持とは別の話 |
+| ログイン保持 | メモリーとタブ単位のsessionStorageを使い、Googleの有効期限内の再読み込みで接続を復元する。PWAの完全終了後の保持はブラウザーのセッション復元に依存し、iOS実機では未確認。期限切れ後の日をまたいだ自動接続は未実装で、認証用バックエンドが必要。下書き保持とは別の話 |
 | 端末ライフサイクル | iOSでのバックグラウンド復帰・プロセス強制終了・ストレージ消去/容量不足、画面上部の領域・ソフトキーボードとの干渉は実機未確認 |
 | 大きいPDF | 多数ページ・大きい画像・低メモリー端末の連続利用、長時間のメモリー使用量は負荷試験未実施 |
 | PDFの境界 | 画像のみのページに文字がない場合は文字選択できない。OCRをWebで追加する機能はない。暗号化PDF・特殊フォント等の全形式互換を保証する試験ではない |

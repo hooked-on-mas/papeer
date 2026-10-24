@@ -5,6 +5,92 @@ import { DriveSession, fileLabel, itemFiles, parseManifest, type Manifest } from
 const id = "a".repeat(32);
 const hash = "b".repeat(64);
 
+test("tab grants survive reload without another prompt, keep Google's expiry, and clear on rejection or logout", async t => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window"), originalFetch = globalThis.fetch;
+  const stored = new Map<string, string>(), prompts: string[] = [];
+  let status = 200, requests = 0;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    sessionStorage: { getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => stored.set(key, value), removeItem: (key: string) => stored.delete(key) },
+    get localStorage() { throw new Error("Bearer tokens must not enter localStorage"); },
+    google: { accounts: { oauth2: {
+      initTokenClient: (options: { callback: (response: object) => void }) => ({ requestAccessToken: ({ prompt }: { prompt: string }) => {
+        prompts.push(prompt); options.callback({ access_token: "fixture-token", expires_in: 100 });
+      } }),
+    } } },
+  } });
+  globalThis.fetch = async () => { requests++; return status === 200 ? Response.json({ files: [] }) : new Response("", { status }); };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window");
+  });
+  t.mock.timers.enable({ apis: ["Date"], now: 1000 });
+  const session = new DriveSession(); await session.signIn();
+  assert.equal(stored.size, 1);
+  const [key, value] = [...stored][0];
+  t.mock.timers.tick(50_000);
+  const restored = new DriveSession();
+  assert.equal(restored.hasValidToken(), true);
+  assert.deepEqual(await restored.libraries(), []);
+  assert.deepEqual(prompts, [""]);
+  assert.equal(stored.get(key), value, "restoring a token never extends its deadline");
+  t.mock.timers.tick(50_000);
+  const expired = new DriveSession();
+  await assert.rejects(expired.libraries(), /有効期限/);
+  assert.equal(stored.size, 0); assert.equal(requests, 1);
+  await expired.signIn({ selectAccount: true });
+  assert.deepEqual(prompts, ["", "select_account"]);
+  status = 401;
+  await assert.rejects(expired.libraries(), /ログイン/);
+  assert.equal(stored.size, 0); assert.equal(new DriveSession().hasValidToken(), false);
+  await expired.signIn(); expired.signOut();
+  assert.equal(stored.size, 0); assert.equal(new DriveSession().hasValidToken(), false);
+});
+
+test("unusable tab storage and invalid saved grants do not prevent manual login or cause Drive requests", async t => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window"), originalFetch = globalThis.fetch;
+  const stored = new Map<string, string>();
+  let blocked = false, writeBlocked = false, requests = 0;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    get sessionStorage() {
+      if (blocked) throw new DOMException("disabled", "SecurityError");
+      return { getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          if (writeBlocked) throw new DOMException("full", "QuotaExceededError");
+          stored.set(key, value);
+        }, removeItem: (key: string) => stored.delete(key) };
+    },
+    google: { accounts: { oauth2: {
+      initTokenClient: (options: { callback: (response: object) => void }) => ({ requestAccessToken: () => options.callback({ access_token: "fixture", expires_in: 100 }) }),
+    } } },
+  } });
+  globalThis.fetch = async () => { requests++; return Response.json({ files: [] }); };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window");
+  });
+  await new DriveSession().signIn();
+  const [key, value] = [...stored][0], saved = JSON.parse(value);
+  for (const invalid of ["{broken", "null", JSON.stringify({ ...saved, clientId: "another-app" }),
+    JSON.stringify({ ...saved, scope: "another-scope" }), JSON.stringify({ ...saved, expires: "forever" })]) {
+    stored.set(key, invalid);
+    await assert.rejects(new DriveSession().libraries(), /ログイン/);
+    assert.equal(stored.size, 0);
+  }
+  assert.equal(requests, 0);
+  await new DriveSession().signIn();
+  writeBlocked = true;
+  const switched = new DriveSession(); await switched.signIn({ selectAccount: true });
+  assert.equal(switched.hasValidToken(), true);
+  assert.equal(stored.size, 0, "failed persistence must not restore the previous account");
+  assert.equal(new DriveSession().hasValidToken(), false);
+  blocked = true;
+  const memoryOnly = new DriveSession(); await memoryOnly.signIn();
+  assert.deepEqual(await memoryOnly.libraries(), []);
+  assert.equal(new DriveSession().hasValidToken(), false);
+  memoryOnly.signOut(); assert.equal(memoryOnly.hasValidToken(), false);
+});
+
 test("popup/consent/SDK failures can retry, and an expired grant makes no Drive request", async t => {
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window"), originalFetch = globalThis.fetch;
   let mode = "denied", calls = 0;
@@ -44,9 +130,12 @@ test("Drive HTTP errors are actionable without leaking response bodies, and the 
     if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window");
   });
   const session = new DriveSession(); await session.signIn();
-  for (status of [401, 403, 429, 503]) await assert.rejects(session.libraries(), error => error instanceof Error
-    && (status === 401 ? error.message.includes("ログイン") : error.message.includes(String(status)))
-    && !error.message.includes("private-server-body"));
+  for (status of [401, 403, 429, 503]) {
+    await session.signIn();
+    await assert.rejects(session.libraries(), error => error instanceof Error
+      && (status === 401 ? error.message.includes("ログイン") : error.message.includes(String(status)))
+      && !error.message.includes("private-server-body"));
+  }
   status = 200; assert.deepEqual(await session.libraries(), []);
 });
 
@@ -152,7 +241,7 @@ test("handwritten PDFs appear first and attachments keep their human title", () 
   assert.deepEqual(itemFiles(m, "unrelated"), []);
 });
 
-test("Drive session uses bearer headers, pagination, integrity checks and memory-only logout", async () => {
+test("Drive session uses bearer headers, pagination, integrity checks and logout", async () => {
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const originalFetch = globalThis.fetch;
   const calls: { url: string; auth: string | null }[] = [];

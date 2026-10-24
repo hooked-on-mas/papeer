@@ -1,8 +1,9 @@
-/** The static website talks only to Google, never to a desktop sidecar. Tokens stay in memory. */
+/** The static website talks only to Google, never to a desktop sidecar. */
 export const CLIENT_ID = import.meta.env?.VITE_GOOGLE_CLIENT_ID
   || "208743866503-mtrhc6kjigbp8kc6kqo6fllg23gc70sj.apps.googleusercontent.com";
 const API = "https://www.googleapis.com/drive/v3/files";
 const SCOPE = "https://www.googleapis.com/auth/drive.file";
+const SESSION_KEY = "papeer-google-session:v1";
 type TokenResponse = { access_token?: string; expires_in?: number; error?: string };
 declare global {
   interface Window {
@@ -28,7 +29,29 @@ export class DriveSession {
   private cancelLogin?: () => void;
   private requests = new Set<AbortController>();
 
-  signIn(): Promise<void> {
+  constructor() {
+    try {
+      const saved = window.sessionStorage?.getItem(SESSION_KEY);
+      if (!saved) return;
+      const value = JSON.parse(saved);
+      if (value?.clientId === CLIENT_ID && value.scope === SCOPE && typeof value.token === "string" && value.token
+        && typeof value.expires === "number" && Number.isFinite(value.expires) && value.expires > Date.now()) {
+        this.token = value.token; this.expires = value.expires;
+      } else this.clearToken();
+    } catch { this.clearToken(); }
+  }
+
+  hasValidToken(): boolean {
+    if (this.token && Date.now() < this.expires) return true;
+    this.clearToken(); return false;
+  }
+
+  private clearToken() {
+    this.token = ""; this.expires = 0;
+    try { window.sessionStorage?.removeItem(SESSION_KEY); } catch { /* Storage may be disabled. */ }
+  }
+
+  signIn({ selectAccount = false }: { selectAccount?: boolean } = {}): Promise<void> {
     this.cancelSignIn();
     const oauth = window.google?.accounts.oauth2;
     if (!oauth) return Promise.reject(new Error("Googleのログイン画面を読み込み中です。通信を確認してもう一度お試しください。"));
@@ -47,28 +70,40 @@ export class DriveSession {
       const client = oauth.initTokenClient({ client_id: CLIENT_ID, scope: SCOPE,
         callback: result => {
           if (settled) return;
-          if (!result.access_token || result.error) { finish(new Error("Googleへのログインを完了できませんでした。")); return; }
+          const lifetime = result.expires_in ?? 3600;
+          if (!result.access_token || result.error || !Number.isFinite(lifetime) || lifetime <= 0) {
+            finish(new Error("Googleへのログインを完了できませんでした。")); return;
+          }
           for (const request of this.requests) request.abort();
           this.generation++;
           this.token = result.access_token;
-          this.expires = Date.now() + (result.expires_in ?? 3600) * 1000;
+          this.expires = Date.now() + lifetime * 1000;
+          // A tab can reload without another popup, but Google's expiry is never extended.
+          // Do not put bearer tokens in localStorage, IndexedDB, or service-worker caches.
+          try {
+            const storage = window.sessionStorage;
+            // A failed write after switching accounts must not leave the previous grant restorable.
+            storage?.removeItem(SESSION_KEY);
+            storage?.setItem(SESSION_KEY, JSON.stringify({ clientId: CLIENT_ID, scope: SCOPE,
+              token: this.token, expires: this.expires }));
+          } catch { /* Continue in memory when storage is unavailable. */ }
           finish();
         },
         error_callback: () => finish(new Error("ログイン画面が閉じられたか、ポップアップがブロックされています。")),
       });
-      client.requestAccessToken({ prompt: "select_account" });
+      client.requestAccessToken({ prompt: selectAccount ? "select_account" : "" });
       } catch { finish(new Error("Googleへの接続を開始できませんでした。もう一度ログインしてください。")); }
     });
   }
 
   cancelSignIn() { this.cancelLogin?.(); }
   signOut() {
-    this.cancelSignIn(); this.generation++; this.token = ""; this.expires = 0;
+    this.cancelSignIn(); this.generation++; this.clearToken();
     for (const request of this.requests) request.abort();
   }
 
   private async request<T>(path: string, read: (response: Response) => Promise<T>, signal?: AbortSignal, init: RequestInit = {}, upload = false): Promise<T> {
-    if (!this.token || Date.now() >= this.expires) throw new Error("ログインの有効期限が切れました。再度Googleでログインしてください。");
+    if (!this.hasValidToken()) throw new Error("ログインの有効期限が切れました。再度Googleでログインしてください。");
     const generation = this.generation;
     const controller = new AbortController(); this.requests.add(controller);
     let timedOut = false;
@@ -80,8 +115,10 @@ export class DriveSession {
     const response = await fetch((upload ? "https://www.googleapis.com/upload/drive/v3/files" : API) + path,
       { ...init, headers: { ...init.headers, Authorization: `Bearer ${this.token}` }, signal: controller.signal, cache: "no-store" });
     if (generation !== this.generation) throw new Error("ログイン状態が変わりました。再読み込みしてください。");
-    if (!response.ok) throw new Error(response.status === 401 ? "再度Googleでログインしてください。"
-      : `Driveとの通信に失敗しました (${response.status})。接続・空き容量・Googleアカウントを確認して再試行してください。`);
+    if (!response.ok) {
+      if (response.status === 401) { this.clearToken(); throw new Error("再度Googleでログインしてください。"); }
+      throw new Error(`Driveとの通信に失敗しました (${response.status})。接続・空き容量・Googleアカウントを確認して再試行してください。`);
+    }
     const value = await read(response);
     if (generation !== this.generation) throw new Error("ログイン状態が変わりました。再読み込みしてください。");
     return value;

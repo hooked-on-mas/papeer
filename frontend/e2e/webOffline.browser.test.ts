@@ -102,11 +102,14 @@ test("downloaded PDFs reopen offline; missing versions, storage failures and log
   const cancelledList = page.waitForResponse(response => response.url().includes("googleapis.com/drive/v3/files?") && response.url().includes("orderBy"));
   holdLibraryList = false; releaseList(); await cancelledList;
   assert.equal(await loginNotice.count(), 0, "an authenticated session does not show a Google login notice when opening a saved library");
-  // A Wi-Fi connection can report online with no Internet. Even a stalled Google
-  // SDK must not leave downloaded documents behind the login screen.
+  // A later visit without a reusable grant can report Wi-Fi online with no Internet.
+  // Even a stalled Google SDK must not leave downloaded documents behind the login screen.
   holdSdk = true;
   await page.getByRole("status").filter({ hasText: "Driveに保存済み" }).waitFor();
-  await page.evaluate(() => sessionStorage.setItem("offline-test:report-online", "1"));
+  await page.evaluate(() => {
+    sessionStorage.removeItem("papeer-google-session:v1");
+    sessionStorage.setItem("offline-test:report-online", "1");
+  });
   await setOffline(true);
   await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
   await page.reload({ waitUntil: "domcontentloaded" });
