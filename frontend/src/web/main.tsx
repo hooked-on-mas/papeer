@@ -169,7 +169,7 @@ function App() {
       {authenticating && <Button variant="outline" size="sm" onClick={() => session.cancelSignIn()}>接続をキャンセル</Button>}</div>}
     {(!compact || !manifest) && libraryPicker}
     {manifest && runtime ? <WebLibrary key={runtime.scope.sessionKey} runtime={runtime} session={transport} manifest={manifest} actions={actions}
-      focusMode={focusMode} onFocusModeChange={setFocusMode} transitioning={busy} libraryPicker={compact ? libraryPicker : null} /> : <main className="welcome">
+      focusMode={focusMode} onFocusModeChange={setFocusMode} transitioning={busy} libraryPicker={libraryPicker} /> : <main className="welcome">
       <h1>論文を選んで、読み始めよう</h1>
       <p>Windows版Papeerで保存した翻訳PDF、手書きノート、<br />メモやチャットを、Google Driveから開けます。</p>
       {savedLibraries.length > 0 && <Button onClick={() => openSaved(savedLibraries[0])}>ダウンロード済みのライブラリを開く</Button>}

@@ -15,22 +15,27 @@ import { ReaderMenu } from "./ReaderMenu";
 
 export type ReaderControls = { title: string; leading: ReactNode; language: ReactNode; menu: ReactNode };
 
-export function DocumentReader({ artifact, runtime, store, controls, readerActions }: {
-  artifact: ArtifactView; runtime: DriveLibraryRuntime; store?: AnnotationStore; controls?: ReactNode; readerActions?: ReaderControls;
+export function DocumentReader({ artifact, runtime, store, controls, readerActions, focusMode = false }: {
+  artifact: ArtifactView; runtime: DriveLibraryRuntime; store?: AnnotationStore; controls?: ReactNode; readerActions?: ReaderControls; focusMode?: boolean;
 }) {
   const [mapping, setMapping] = useState<DocumentPagesView | null>(null);
   const [mappingError, setMappingError] = useState("");
   const placeKey = documentPlaceKey(runtime.scope.libraryId, artifact.itemId, artifact);
   const [initialPlace] = useState(() => getDocumentPlace(placeKey));
   const [page, setPage] = useState(initialPlace?.page ?? 1), [counts, setCounts] = useState<Record<string, number>>({}), [zoom, setZoom] = useState(initialPlace?.zoom ?? 1);
-  const [mode, setMode] = useState<"auto" | "single" | "split">(initialPlace?.mode ?? "auto");
+  const [mode, setMode] = useState<"single" | "split" | null>(initialPlace?.mode && initialPlace.mode !== "auto" ? initialPlace.mode : null);
   const [fraction, setFraction] = useState(.5);
-  const compact = useMediaQuery(COMPACT_LAYOUT_QUERY);
+  const compactViewport = useMediaQuery(COMPACT_LAYOUT_QUERY);
+  const compact = compactViewport || focusMode;
   const [editing, setEditing] = useState(typeof initialPlace?.editing === "boolean" ? initialPlace.editing : !compact);
   const [fitPage, setFitPage] = useState(initialPlace?.fitPage === true);
   const changeZoom = useCallback((value: number) => { setFitPage(false); setZoom(value); }, []);
-  useLayoutEffect(() => { saveDocumentPlace(placeKey, { page, zoom, mode, editing, fitPage }); }, [placeKey, page, zoom, mode, editing, fitPage]);
   const layout = useReaderLayout();
+  // Choose once after the reader has its actual size; later resizes keep the user's selection.
+  useLayoutEffect(() => {
+    if (mode === null && layout.width > 0) setMode(layout.split ? "split" : "single");
+  }, [mode, layout.width, layout.split]);
+  useLayoutEffect(() => { if (mode) saveDocumentPlace(placeKey, { page, zoom, mode, editing, fitPage }); }, [placeKey, page, zoom, mode, editing, fitPage]);
   const denseTools = compact || (layout.width > 0 && layout.width < 800);
   const [urls, setUrls] = useState<Record<string, string>>({});
   const fileUrl = useCallback((id: string, url: string) => setUrls(previous => previous[id] === url ? previous : { ...previous, [id]: url }), []);
@@ -46,7 +51,7 @@ export function DocumentReader({ artifact, runtime, store, controls, readerActio
   const original = files.find(file => file.role === "original" && file.annotationTarget?.side === "original");
   const canSplit = !!mapping && !!original && !!artifact.annotationTarget && (artifact.role === "original" || artifact.role === "translated")
     && Object.values(mapping.translatedPages).some(Boolean);
-  const desiredSplit = canSplit && (mode === "split" || (mode === "auto" && layout.split));
+  const desiredSplit = canSplit && mode === "split";
   const [activeSplit, setActiveSplit] = useState(false);
   useLayoutEffect(() => {
     if (activeSplit !== desiredSplit && prepareWebNavigation()) setActiveSplit(desiredSplit);
@@ -70,8 +75,8 @@ export function DocumentReader({ artifact, runtime, store, controls, readerActio
         <option value="page">ページ全体</option>
         {[...new Set([.5, .75, 1, 1.25, 1.5, 2, 3, 4, zoom])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value === 1 ? "幅に合わせる" : `${Math.round(value * 100)}%`}</option>)}
       </select></label>
-      {canSplit && <label>表示 <select aria-label="本文の表示方法" value={mode} onChange={e => { if (prepareWebNavigation()) setMode(e.target.value as typeof mode); }}>
-        <option value="auto">自動</option><option value="single">1つずつ表示</option><option value="split">左右に表示</option>
+      {canSplit && <label>表示 <select aria-label="本文の表示方法" value={mode ?? "single"} onChange={e => { if (prepareWebNavigation()) setMode(e.target.value as "single" | "split"); }}>
+        <option value="single">1つずつ表示</option><option value="split">左右に表示</option>
       </select></label>}
   </>;
   const writingToggle = store && artifact.annotationTarget && <button className="web-writing-toggle" aria-pressed={editing}
@@ -80,7 +85,7 @@ export function DocumentReader({ artifact, runtime, store, controls, readerActio
     {editing ? <Hand aria-hidden="true" /> : <Pen aria-hidden="true" />}<span>{editing ? "読む" : "書き込む"}</span>
   </button>;
   return <div ref={layout.ref} className="web-document-reader" data-layout={split ? "split" : "single"}>
-    {compact && readerActions && <div className="web-reader-title-row"><h1 className="web-reader-title" title={readerActions.title}>{readerActions.title}</h1>{writingToggle}</div>}
+    {compact && readerActions && <div className="web-reader-title-row"><h1 className="web-reader-title" title={readerActions.title}>{readerActions.title}</h1>{writingToggle}{focusMode && controls}</div>}
     <div className="web-reader-tools" aria-label="本文の表示操作">
       {compact && readerActions?.leading}
       <div className="web-page-navigation">

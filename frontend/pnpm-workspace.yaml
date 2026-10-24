@@ -3,3 +3,7 @@ overrides:
   # chevrotain (via mermaid) pins lodash-es 4.17.23, which has GHSA-r5fr-rjxr-66jc and GHSA-f23m-r3pf-42rh.
   # Remove this once chevrotain requires lodash-es 4.18.1 or later (README「依存ライブラリ」).
   lodash-es: "^4.18.1"
+  # Keep math rendering on the same patched version as its stylesheet and direct dependency.
+  katex: "^0.18.7"
+  # Patched sanitizer used by the existing Mermaid dependency.
+  dompurify: "^3.4.17"

@@ -89,9 +89,9 @@ for (const variant of ["mouse", "webkit"] as const) {
     await mode.waitFor();await page.getByRole('button',{name:'日本語訳を表示',exact:true}).click();
     await zoom.selectOption('2');await settle();const first=await move();
     await page.screenshot({path:path.join(output,'before-rotation.png')});
-    await page.setViewportSize({width:1180,height:760});await layout('split');await near(first,'rotation into paired view preserves the translated passage');
+    await page.setViewportSize({width:1180,height:760});await mode.selectOption('split');await layout('split');await near(first,'switching to paired view after rotation preserves the translated passage');
     const source=await move(original,.22,.6);
-    await page.setViewportSize({width:820,height:1080});await layout('single');await near(first,'rotating back preserves the passage');
+    await page.setViewportSize({width:820,height:1080});await mode.selectOption('single');await layout('single');await near(first,'returning to single view after rotation preserves the passage');
     await page.screenshot({path:path.join(output,'after-rotation.png')});
     await page.getByRole('button',{name:'原文を表示',exact:true}).click();await near(source,'each side remembers its own passage',original);
     await page.getByRole('button',{name:'日本語訳を表示',exact:true}).click();await near(first,'returning to translation restores its passage');

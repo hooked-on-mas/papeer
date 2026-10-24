@@ -33,7 +33,21 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
       "1": { artifactPath: `papers/${paper}/translated.pdf`, page: 1 }, "2": { artifactPath: `papers/${paper}/translated.pdf`, page: 2 },
     } } } }));
     const blobs: Record<string, Buffer> = { original: pdf, translated: pdf, reading };
+    blobs.db = Buffer.from(JSON.stringify({ bookmarks: [{ paper_id: paper, page: 1, note: "iPadの付箋" }],
+      messages: [{ paper_id: paper, role: "assistant", content: "保存された回答 $x^2$" }] }));
     blobs.memo = Buffer.from("# 比較しながら読むメモ\n\n読んでいる位置を保ったまま資料とメモを見比べる。\n");
+    blobs.summary = Buffer.from(String.raw`# 数式を含むサマリー
+
+インライン $x^2$ と \(y_i\) を表示する。
+
+\[
+\frac{a}{b} + \sum_{i=1}^{n} x_i
+\]
+
+$$
+E = mc^2
+$$
+`);
     const file = (id: string) => ({ id, size: blobs[id].length, mime: id === "reading" ? "application/json" : "application/pdf",
       sha256: createHash("sha256").update(blobs[id]).digest("hex") });
     const manifest = { version: 1, revision: "responsive", updated_at: "2026-10-22T00:00:00Z", folder_id: "folder",
@@ -41,6 +55,8 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
       attachments: [{ id: "memo", owner_id: paper, title: "読書メモ", format: "md" }], files: {
         [`papers/${paper}/original.pdf`]: file("original"), [`papers/${paper}/translated.pdf`]: file("translated"), "web-reading.json": file("reading"),
         [`papers/${paper}/attachments/memo.md`]: { ...file("memo"), mime: "text/markdown" },
+        [`papers/${paper}/article.md`]: { ...file("summary"), mime: "text/markdown" },
+        "library-data.json": { ...file("db"), mime: "application/json" },
       } };
     await context.route("https://accounts.google.com/gsi/client", route => route.fulfill({ contentType: "text/javascript", body:
       'window.google={accounts:{oauth2:{initTokenClient:opts=>({requestAccessToken:()=>opts.callback({access_token:"responsive-test",expires_in:3600})})}}};' }));
@@ -74,14 +90,59 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
       }));
     };
     await mode.waitFor();
-    assert.equal(await mode.inputValue(), "auto");
+    assert.equal(await mode.inputValue(), "single");
+    assert.deepEqual(await mode.locator("option").evaluateAll(options => options.map(option => (option as HTMLOptionElement).value)), ["single", "split"]);
     await layout("single");
     assert.equal(await page.locator(".web-document-header").isVisible(), true);
     assert.equal((await page.locator(".web-document-header .header-actions").innerText()).trim(), "", "authenticated account controls do not show Google login text above the reader");
     assert.equal(await page.locator(".local-library-notice").count(), 0);
     assert.equal(await page.getByRole("toolbar", { name: "PDFの書き込みツール" }).isVisible(), true);
+    assert.equal(await page.getByRole("button", { name: "右パネルを選択", exact: true }).count(), 0);
+    assert.equal(await page.getByLabel("書き込み設定", { exact: true }).count(), 0);
+    await page.getByLabel("ペンの太さ").selectOption("0.006");
+    await page.getByLabel("書き込みの色").fill("#0066ff");
+    assert.equal(await page.getByLabel("ペンの太さ").inputValue(), "0.006");
+    for (const name of ["本文", "サマリー", "チャット", "メモ", "付箋"]) {
+      assert.equal(await page.getByRole("tab", { name, exact: true }).isVisible(), true);
+    }
+    await page.getByRole("tab", { name: "サマリー", exact: true }).click();
+    await page.locator(".prose .katex").nth(3).waitFor();
+    assert.equal(await page.locator(".prose .katex-display").count(), 2);
+    assert.equal(await page.locator(".katex-error").count(), 0);
+    assert.equal(await page.getByRole("button", { name: "サマリーを右に表示", exact: true }).count(), 0);
+    await page.screenshot({ path: path.join(output, "tablet-summary-math.png") });
+    await page.getByRole("tab", { name: "メモ", exact: true }).click();
+    await page.getByRole("heading", { name: "比較しながら読むメモ", exact: true }).waitFor();
+    await page.getByRole("tab", { name: "チャット", exact: true }).click();
+    await page.locator(".reading-data .katex").waitFor();
+    await page.getByRole("tab", { name: "付箋", exact: true }).click();
+    await page.getByText("iPadの付箋", { exact: true }).waitFor();
+    await page.getByRole("tab", { name: "本文", exact: true }).click();
+    const beforeFocus = (await original.boundingBox())!;
+    await page.getByRole("button", { name: "集中表示", exact: true }).click();
+    assert.equal(await page.locator(".web-reader-title-row h1").innerText(), "画面の広さに合わせて読む資料");
+    assert.equal(await page.locator(".web-document-navigation").isVisible(), false);
+    assert.equal(await page.locator(".web-document-header").isVisible(), false);
+    assert.ok((await original.boundingBox())!.height > beforeFocus.height);
+    await page.screenshot({ path: path.join(output, "tablet-focus.png") });
+    await page.getByRole("button", { name: "集中表示を終了", exact: true }).click();
+    assert.equal(await page.getByRole("tab", { name: "本文", exact: true }).isVisible(), true);
+    await page.getByRole("button", { name: "集中表示", exact: true }).click();
+    await page.getByLabel("読書メニュー", { exact: true }).click();
+    await page.getByRole("button", { name: "サマリーを開く", exact: true }).click();
+    await page.locator(".prose .katex").nth(3).waitFor();
+    assert.equal(await page.getByRole("tab", { name: "サマリー", exact: true }).isVisible(), true);
+    await page.getByRole("tab", { name: "本文", exact: true }).click();
+    await page.getByRole("button", { name: "集中表示", exact: true }).click();
+    await page.getByRole("button", { name: "ライブラリ", exact: true }).click();
+    await page.locator(".web-sidebar-overlay").waitFor();
+    await page.getByRole("button", { name: "ライブラリを閉じる", exact: true }).click();
     await page.setViewportSize({ width: 560, height: 900 });
     await original.locator("canvas").waitFor();
+    assert.equal(await page.getByLabel("書き込み設定", { exact: true }).isVisible(), true,
+      "compact viewports keep settings reachable even when the PDF pane exceeds 440px");
+    assert.ok((await page.getByRole("toolbar", { name: "PDFの書き込みツール" }).boundingBox())!.height <= 50,
+      "inline tablet settings do not expand compact phone toolbars into multiple rows");
     assert.equal(await translated.count(), 0, "resizing preserves the initially displayed language too");
     await page.setViewportSize({ width: 834, height: 1194 });
     await page.getByRole("button", { name: "日本語訳を表示", exact: true }).click();
@@ -93,19 +154,21 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     await page.mouse.move(box.x + 160, box.y + 120, { steps: 4 }); await page.mouse.up();
     await translated.locator("[data-ink-id]").waitFor();
     await page.setViewportSize({ width: 1194, height: 834 });
+    await layout("single");
+    await mode.selectOption("split");
     await layout("split"); await ready();
     await original.locator('[data-page-number="2"] canvas').waitFor();
     assert.equal(await page.getByLabel("ページ番号").inputValue(), "2");
     assert.equal(await translated.locator("[data-ink-id]").count(), 1);
     assert.ok((await translated.boundingBox())!.x > (await original.boundingBox())!.x);
     await page.screenshot({ path: path.join(output, "wide-paired.png") });
-    // Changing the space occupied by the library also changes the reader's layout.
+    // A selected layout survives changes to the space occupied by the library.
     await page.setViewportSize({ width: 1201, height: 834 }); await layout("split");
-    await page.getByRole("button", { name: "ライブラリ", exact: true }).click(); await layout("single");
+    await page.getByRole("button", { name: "ライブラリ", exact: true }).click(); await layout("split");
     await page.getByRole("button", { name: "ライブラリ", exact: true }).click(); await layout("split");
     // The toolbar follows its own available width even when the browser stays wide.
     await page.locator(".web-reader-main").evaluate(element => { element.style.maxWidth = "660px"; });
-    await layout("single");
+    await layout("split");
     const menu = page.getByLabel("読書メニュー", { exact: true }); await menu.waitFor();
     assert.equal(await page.getByRole("button", { name: "書き込みを終了", exact: true }).isVisible(), true);
     await menu.click(); await mode.waitFor(); await menu.click();
@@ -115,7 +178,6 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     await page.setViewportSize({ width: 834, height: 1194 }); await layout("single");
     await page.setViewportSize({ width: 1194, height: 834 });
     assert.equal(await mode.inputValue(), "single"); await layout("single");
-    await mode.selectOption("auto"); await layout("split");
     await page.setViewportSize({ width: 1024, height: 1366 }); await layout("single"); await ready();
     await page.screenshot({ path: path.join(output, "tall-single.png") });
     assert.equal(await translated.locator("[data-ink-id]").count(), 1);
@@ -127,16 +189,17 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await reader.getAttribute("data-layout"), "single");
     assert.equal(await memo.inputValue(), "回転しても残る下書き");
-    await memo.blur(); await layout("split");
+    await memo.blur(); await mode.selectOption("split"); await layout("split");
     assert.equal(await memo.inputValue(), "回転しても残る下書き");
     await page.getByRole("button", { name: "キャンセル", exact: true }).click();
+    await mode.selectOption("single"); await layout("single");
     await page.setViewportSize({ width: 560, height: 900 }); await layout("single"); await ready();
     assert.equal(await page.getByRole("button", { name: "書き込みを終了", exact: true }).isVisible(), true);
     assert.equal(await page.getByRole("toolbar", { name: "PDFの書き込みツール" }).isVisible(), true);
     assert.equal(await translated.locator("[data-ink-id]").count(), 1);
     await page.screenshot({ path: path.join(output, "narrow-writing.png") });
     await page.getByRole("button", { name: "書き込みを終了", exact: true }).click();
-    await page.setViewportSize({ width: 1194, height: 834 }); await layout("split");
+    await page.setViewportSize({ width: 1194, height: 834 }); await layout("single");
     assert.equal(await page.getByRole("toolbar", { name: "PDFの書き込みツール" }).count(), 0, "reading mode survives widening the window");
     await page.getByRole("button", { name: "書き込みを開始", exact: true }).click();
     await page.setViewportSize({ width: 834, height: 1194 }); await layout("single"); await ready();
@@ -202,7 +265,7 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     // A low window uses the same compact controls regardless of its width/UA.
     await page.setViewportSize({ width: 1366, height: 400 });
     await page.getByRole("button", { name: "書き込みを開始", exact: true }).click();
-    await menu.click(); await mode.selectOption("auto"); await menu.click();
+    await menu.click(); await mode.selectOption("split"); await menu.click();
     await layout("split");
     await original.getByTestId("web-ink").waitFor(); await translated.getByTestId("web-ink").waitFor();
     assert.equal(await page.locator(".web-document-header").isVisible(), false);
@@ -243,6 +306,18 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     await page.getByRole("button", { name: "右パネルを閉じる", exact: true }).click(); await settled();
     const afterNotes = await readingPoint();
     assert.ok(Math.abs(beforeNotes.y - afterNotes.y) < .005 && Math.abs(beforeNotes.x - afterNotes.x) < .005, "closing notes restores the passage too");
+    await page.getByRole("button", { name: "右パネルを選択", exact: true }).click();
+    await page.getByRole("menuitemcheckbox", { name: "メモを右に表示", exact: true }).click();
+    const notesPanel = page.getByRole("complementary", { name: "メモ（右パネル）" }); await notesPanel.waitFor();
+    await page.setViewportSize({ width: 834, height: 1194 });
+    await notesPanel.waitFor({ state: "hidden" });
+    assert.equal(await page.getByRole("button", { name: "右パネルを選択", exact: true }).count(), 0);
+    await page.getByRole("tab", { name: "メモ", exact: true }).click();
+    await page.getByRole("heading", { name: "比較しながら読むメモ", exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "メモを右に表示", exact: true }).count(), 0);
+    await page.getByRole("tab", { name: "本文", exact: true }).click();
+    await page.setViewportSize({ width: 1366, height: 768 }); await notesPanel.waitFor();
+    await page.getByRole("button", { name: "右パネルを閉じる", exact: true }).click();
     // A saved-library banner and a short viewport leave less space below menus.
     // Test real settings and dismissals, including the tap that must not add ink.
     await page.setViewportSize({ width: 393, height: 360 });
@@ -286,6 +361,21 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     await page.keyboard.press("Escape");
     assert.equal(await translated.locator(".ink-options[open]").count(), 0);
     await page.screenshot({ path: path.join(output, "short-reader-after-menu-operations.png") });
+    // First visit chooses a concrete default; old saved auto preferences migrate too.
+    await page.setViewportSize({ width: 1194, height: 834 });
+    await page.evaluate(() => {
+      for (const key of Object.keys(localStorage)) if (key.startsWith("papeer-reading:document:")) localStorage.removeItem(key);
+    });
+    await page.reload(); await mode.waitFor(); await layout("split");
+    assert.equal(await mode.inputValue(), "split");
+    await page.setViewportSize({ width: 834, height: 1194 }); await layout("split");
+    await page.evaluate(() => {
+      for (const key of Object.keys(localStorage)) if (key.startsWith("papeer-reading:document:")) {
+        const place = JSON.parse(localStorage.getItem(key)!); place.mode = "auto"; localStorage.setItem(key, JSON.stringify(place));
+      }
+    });
+    await page.reload(); await mode.waitFor(); await layout("single");
+    assert.equal(await mode.inputValue(), "single");
     assert.deepEqual(errors, []);
   });
 }

@@ -194,9 +194,8 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   await page.getByRole("button", { name: "元に戻す", exact: true }).click(); await saved(page); assert.equal(await count(page), 7);
   await page.getByLabel("表示倍率").selectOption("1");
   await page.waitForFunction(() => !!document.querySelector('[data-testid="web-ink"]') && !(document.querySelector('.ink-tools button') as HTMLButtonElement)?.disabled);
-  await page.locator('.ink-options summary').click();
+  assert.equal(await page.locator('.ink-settings-inline').isVisible(), true);
   await page.getByRole("checkbox", { name: "指でも書く" }).check();
-  await page.locator('.ink-options summary').click();
   // Use current bounds after scrolling; a tap is a stroke only when explicitly enabled.
   const currentTouchBox = (await page.getByTestId("web-ink").boundingBox())!;
   touchAt.y = currentTouchBox.y + 300;
@@ -222,7 +221,7 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   readSnapshot("import");
   assert.deepEqual(blobs.get(manifest!.files[`papers/${paper}/translated.pdf`].id), originalPdf);
   await clickAccountAction(page, "更新");
-  await page.getByLabel("表示する資料").selectOption({ label: "日本語訳" });
+  await page.getByRole("region", { name: "日本語訳", exact: true }).waitFor();
   await page.getByLabel("本文の表示方法").selectOption("single");
   await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 7);
   await saved(page); // Imported operations aren't drawn twice on top of PC ink.

@@ -59,6 +59,7 @@
 .prose table { border-collapse: collapse; display: block; overflow-x: auto; }
 .prose td, .prose th { border: 1px solid var(--border); padding: 7px 12px; }
 .prose pre { overflow-x: auto; }
+.web-app .prose .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding-block: 4px; }
 .web-app .prose ul { list-style: disc; padding-inline-start: 1.5em; }
 .web-app .prose ol { list-style: decimal; padding-inline-start: 1.5em; }
 .prose blockquote { border-left: 3px solid var(--primary); padding-left: 16px; margin-left: 0; color: var(--muted-foreground); }
@@ -84,6 +85,10 @@
 .web-app .ink-tools > button, .ink-history-inline > button, .ink-options > summary { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; padding: 4px; border: 0; border-radius: 4px; cursor: pointer; }
 .ink-history-inline { display: contents; }
 .ink-history-menu { display: none; }
+.ink-settings-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-inline: 6px; }
+.ink-settings-inline select { min-height: 44px; }
+.ink-settings-inline input[type="checkbox"] { width: 20px; height: 20px; }
+.ink-settings-inline label { min-height: 44px; white-space: nowrap; }
 .ink-tools svg { width: 16px; height: 16px; }
 .ink-options > summary { list-style: none; }
 .ink-options > summary::-webkit-details-marker { display: none; }
@@ -130,6 +135,7 @@
 .web-pdf-pane { container: pdf-pane / inline-size; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y; padding: 0 2px; }
 .web-reader-title-row { display: flex; align-items: center; flex-shrink: 0; min-width: 0; }
 .web-reader-title-row .web-reader-title { flex: 1; min-width: 0; }
+.web-reader-title { height: 28px; flex-shrink: 0; margin: 0; padding: 4px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .875rem; line-height: 20px; font-weight: 600; }
 .web-app .web-writing-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 44px; flex-shrink: 0; font-size: .75rem; }
 .web-writing-toggle svg { width: 18px; height: 18px; }
 .web-writing-toggle[aria-pressed="true"] { background: var(--muted); }
@@ -146,6 +152,14 @@
 .reader-focus > .library-picker,
 .reader-focus .pwa-install { display: none; }
 .reader-focus .web-reader-tools { padding: 2px 4px; gap: 6px; }
+.reader-focus .web-reader-title-row { background: var(--background); }
+.reader-focus .web-reader-title-row > button { min-width: 44px; min-height: 44px; }
+.reader-focus .web-reader-tools { flex-wrap: nowrap; }
+.reader-focus .web-page-navigation { margin-right: auto; }
+.reader-focus .web-reading-title { font-size: .8125rem; overflow-wrap: anywhere; padding-block: 8px; }
+.reader-focus .web-display-options > div > button, .reader-focus .web-display-options > div > a { min-height: 44px; display: flex; align-items: center; padding: 6px 8px; }
+.reader-focus .web-display-options .web-account-trigger { width: 100%; justify-content: flex-start; gap: 8px; }
+.reader-focus .web-display-options .web-account-label { display: inline; }
 .reader-focus .web-pdf-pane { padding: 0; }
 @media (max-width: 600px), (max-height: 500px) {
   /* Reserve narrow/short viewports for the document and keep navigation compact. */
@@ -203,7 +217,6 @@
   .web-app:has(.compact-reading) > .site-footer,
   .web-app:has(.compact-reading) .pwa-install { display: none; }
   .compact-reading [data-layout="split"] .web-pdf-pane > .asset-heading { display: flex; }
-  .web-reader-title { height: 28px; flex-shrink: 0; margin: 0; padding: 4px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .875rem; line-height: 20px; font-weight: 600; }
   .compact-reading .web-reader-tools { gap: 2px; padding: 2px; }
   .compact-reading .web-page-navigation > input { width: 32px; }
   .compact-reading .web-page-navigation { flex: 1; min-width: 0; }
@@ -239,10 +252,8 @@
   .web-display-options > div { max-height: calc(100dvh - 56px); }
 }
 
-/* Tool density follows each PDF pane, including manually resized paired views. */
-@container pdf-pane (max-width: 440px) {
-  .ink-history-inline { display: none; }
-  .ink-history-menu { display: flex; flex-wrap: wrap; gap: 4px; }
-  .ink-history-menu button { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
-  .ink-history-menu button span { position: static; width: auto; height: auto; clip: auto; white-space: normal; margin-left: 4px; }
-}
+/* Use the same density for the settings and history in narrow panes and compact viewports. */
+.ink-tools-compact .ink-history-inline { display: none; }
+.ink-tools-compact .ink-history-menu { display: flex; flex-wrap: wrap; gap: 4px; }
+.ink-tools-compact .ink-history-menu button { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
+.ink-tools-compact .ink-history-menu button span { position: static; width: auto; height: auto; clip: auto; white-space: normal; margin-left: 4px; }
