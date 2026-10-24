@@ -6,7 +6,7 @@ import { InkDrawing } from "../features/reader/InkDrawing";
 import { fitInk, hitInk, textPoints, type InkStroke, type Point } from "../features/reader/inkGeometry";
 import { AnnotationStore, type Anchor, type PageInk } from "./annotations";
 import type { AnnotationTarget } from "../runtime/contracts";
-import { AlertCircle, Check, Eraser, Hand, Highlighter, Loader2, Pen, Redo2, RefreshCw, Settings2, Type, Undo2 } from "lucide-react";
+import { AlertCircle, Check, Eraser, Hand, Highlighter, Loader2, Pen, Redo2, RefreshCw, Settings2, Type, Undo2, type LucideIcon } from "lucide-react";
 import { prepareWebNavigation, registerNavigationGuard, textDrafts, type TextDraft } from "./textDrafts";
 import { usePdfPinchZoom } from "./usePdfPinchZoom";
 import { usePdfReadingPlace } from "./usePdfReadingPlace";
@@ -72,7 +72,7 @@ export function PdfReader({ url, target, store, pageNumber, onPageCount, zoom = 
       if (activeRender.current === render) setRendered(render);
     }} onRenderError={() => { if (activeRender.current === render) setRendered(null); }} />}
   </Document>;
-  return <div className={`pdf${fitPage ? " pdf-fit-page" : ""}`} ref={container}
+  return <div className={`pdf${fitPage ? " pdf-fit-page" : ""}`} ref={container} data-rendered={rendered === render}
     style={{ width: Math.max(width, drawnWidth), "--pdf-pane-width": `${width}px` } as CSSProperties}>
     {navigation && <div className="pdf-tools"><PageNavigatorView paperId={url} currentPage={page} count={pages} compact shortcuts={false}
       atStart={page <= 1} atEnd={page >= pages} onJump={setPage} onMove={delta => setPage(value => Math.max(1, Math.min(pages || 1, value + delta)))} /></div>}
@@ -214,22 +214,27 @@ function EditablePage({ store, anchor, ratio, enabled, pageWidth, children, tool
       <button title="やり直す" disabled={!writable || !redo.length} onClick={redoLast}><Redo2 aria-hidden="true" /><span className="sr-only">やり直す</span></button>
   </>;
   const syncTool = <button title="書き込みを同期・再試行" disabled={state.saving} onClick={() => void store.retry()}><RefreshCw aria-hidden="true" /><span className="sr-only">書き込みを同期・再試行</span></button>;
-  const writingSettings = <>
+  const penSettings = <>
     <label className="ink-color-control">色 <span className="ink-color-swatch" style={{ backgroundColor: color }}><input type="color" aria-label="書き込みの色" value={color} onChange={e => setColor(e.target.value)} /></span></label>
     <label>太さ <select aria-label="ペンの太さ" value={width} onChange={e => setWidth(Number(e.target.value))}>
       <option value={.002}>細い</option><option value={.003}>標準</option><option value={.006}>太い</option></select></label>
-    <label><input type="checkbox" checked={finger} onChange={e => setFinger(e.target.checked)} /> 指でも書く</label>
   </>;
+  const fingerControl = <label className="ink-finger-control"><input type="checkbox" checked={finger} onChange={e => setFinger(e.target.checked)} /> 指でも書く</label>;
+  const toolButton = (value: Tool, label: string, Icon: LucideIcon) => <button key={value} disabled={!writable} title={label} aria-pressed={tool === value}
+    onClick={() => { if (!prepareWebNavigation()) return; gesture.current = undefined; touches.current.clear(); setPreview(undefined); setTool(value); }}><Icon aria-hidden="true" /><span className="sr-only">{label}</span></button>;
   return <>
     {editing && <div className={`ink-tools${compactTools ? " ink-tools-compact" : ""}`} role="toolbar" aria-label="PDFの書き込みツール">
-      {([["read", "閲覧", Hand], ["pen", "ペン", Pen], ["highlighter", "蛍光ペン", Highlighter], ["text", "文字メモ", Type], ["eraser", "消しゴム", Eraser]] as const).map(([value, label, Icon]) =>
-        <button key={value} disabled={!writable} title={label} aria-pressed={tool === value}
-          onClick={() => { if (!prepareWebNavigation()) return; gesture.current = undefined; touches.current.clear(); setPreview(undefined); setTool(value); }}><Icon aria-hidden="true" /><span className="sr-only">{label}</span></button>)}
+      {toolButton("read", "閲覧", Hand)}
+      <span className="ink-tool-divider" aria-hidden="true" />
+      <span className="ink-tool-set">{toolButton("pen", "ペン", Pen)}{toolButton("highlighter", "蛍光ペン", Highlighter)}</span>
+      {!compactTools && <div className="ink-settings-inline">{penSettings}</div>}
+      <span className="ink-tool-set">{toolButton("eraser", "消しゴム", Eraser)}{toolButton("text", "文字メモ", Type)}</span>
+      <span className="ink-tool-divider" aria-hidden="true" />
       <span className="ink-history-inline">{historyTools}</span>
       {compactTools ? <ReaderMenu className="ink-options" label="書き込み設定" icon={<Settings2 aria-hidden="true" />} floating>
-        {writingSettings}
+        {penSettings}{fingerControl}
           <div className="ink-history-menu ink-mobile-actions">{historyTools}{syncTool}</div>
-      </ReaderMenu> : <div className="ink-settings-inline">{writingSettings}</div>}
+      </ReaderMenu> : fingerControl}
       <span className="ink-save" role="status" title={saveStatus}>
         {failedStroke || draftError || state.error ? <AlertCircle aria-hidden="true" /> : !state.ready || state.saving ? <Loader2 className="animate-spin" aria-hidden="true" /> : state.pending ? <span>{state.pending}</span> : <Check aria-hidden="true" />}
         <span className="sr-only">{saveStatus}</span>

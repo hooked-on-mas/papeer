@@ -8,7 +8,10 @@ type ReadingRows = { bookmarks: Record<string, unknown>[]; messages: Record<stri
 
 export interface DriveLibraryRuntime {
   readonly scope: RuntimeScope;
-  readonly query: ReadonlyLibraryQuery;
+  readonly query: ReadonlyLibraryQuery & {
+    /** User-facing documents; internal resources remain available to the PDF and Markdown renderers. */
+    listReadingMaterials(itemId: string | null): readonly ArtifactView[];
+  };
   readonly artifacts: ArtifactStore;
   readonly capabilities: LibraryCapabilities;
   /** Call on logout, account change, library switch, or snapshot replacement. */
@@ -66,6 +69,12 @@ export function createDriveLibraryRuntime(session: FileReader, scope: RuntimeSco
   }
   const allArtifacts = Object.freeze(paths.map(path => byPath.get(path)!));
   const artifactsByItem = new Map(items.map(item => [item.id, Object.freeze(itemFiles(manifest, item.id).map(path => byPath.get(path)!))]));
+  const attachmentPaths = new Set(manifest.attachments.filter(row => /^(pdf|md|txt|html?|csv|png|jpe?g|gif|webp)$/i.test(row.format))
+    .map(row => `papers/${row.owner_id}/attachments/${row.id}.${row.format}`));
+  const materialIds = new Set(paths.filter(path => /^(?:papers|web)\/[a-f0-9]{32}\/(?:(?:original|translated)(?:-annotated)?\.pdf|article\.md)$/.test(path)
+    || attachmentPaths.has(path)).map(path => byPath.get(path)!.id));
+  const allMaterials = Object.freeze(allArtifacts.filter(artifact => materialIds.has(artifact.id)));
+  const materialsByItem = new Map(items.map(item => [item.id, Object.freeze(artifactsByItem.get(item.id)!.filter(artifact => materialIds.has(artifact.id)))]));
   const readingFile = manifest.files["library-data.json"] ? { ...manifest.files["library-data.json"] } : undefined;
   const pagesFile = manifest.files["web-reading.json"] ? { ...manifest.files["web-reading.json"] } : undefined;
   let savedReading: ReadingRows | undefined;
@@ -96,9 +105,10 @@ export function createDriveLibraryRuntime(session: FileReader, scope: RuntimeSco
     }
   }
 
-  const query: ReadonlyLibraryQuery = {
+  const query: DriveLibraryRuntime["query"] = {
     listItems() { assertActive(); return items; },
     listArtifacts(itemId) { assertActive(); return itemId === null ? allArtifacts : artifactsByItem.get(itemId) ?? []; },
+    listReadingMaterials(itemId) { assertActive(); return itemId === null ? allMaterials : materialsByItem.get(itemId) ?? []; },
     readSavedReading(itemId, signal) {
       return read(async activeSignal => {
         if (!itemIds.has(itemId)) throw new Error("ライブラリの項目が見つかりません。");

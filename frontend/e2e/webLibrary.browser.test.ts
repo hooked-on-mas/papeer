@@ -27,6 +27,7 @@ test("Web Library reads PDF, memo, HTML and chat privately on desktop and mobile
   const pdf = fs.readFileSync(path.resolve(frontend, "../tests/fixtures/sample.pdf"));
   const blobs: Record<string, Buffer> = {
     pdf,
+    internal: Buffer.from("内部データは資料として表示しません。"),
     memo: Buffer.from("# 読書メモ\n\n翻訳を読んだときの考察。\n\n- 実験条件を再確認\n- 数式の仮定を整理"),
     html: Buffer.from('<h1>関連資料</h1><script>parent.document.title="INJECTED"</script><img src="https://blocked.invalid/image">'),
     db: Buffer.from(JSON.stringify({ bookmarks: [{ paper_id: identity, page: 1, side: "original", note: "重要な付箋" }],
@@ -42,6 +43,9 @@ test("Web Library reads PDF, memo, HTML and chat privately on desktop and mobile
     files: { [`web/${identity}/original-annotated.pdf`]: file("pdf", "application/pdf"),
       [`papers/${identity}/attachments/memo.md`]: file("memo", "text/markdown"),
       [`papers/${identity}/attachments/html.html`]: file("html", "text/html"),
+      [`papers/${identity}/translation-cache.json`]: file("internal", "application/json"),
+      [`papers/${identity}/translation.md`]: file("internal", "text/markdown"),
+      [`papers/${identity}/media/figure.png`]: file("internal", "image/png"),
       "library-data.json": file("db", "application/json") } };
   await page.route("https://accounts.google.com/gsi/client", route => route.fulfill({ contentType: "text/javascript", body:
     'window.google={accounts:{oauth2:{initTokenClient:opts=>({requestAccessToken:()=>opts.callback({access_token:"test-token",expires_in:3600})})}}};' }));
@@ -64,6 +68,12 @@ test("Web Library reads PDF, memo, HTML and chat privately on desktop and mobile
   await page.screenshot({ path: path.join(screenshots, "welcome.png"), fullPage: true });
   await page.getByRole("button", { name: "Googleでログインして開く →" }).click();
   await page.locator(".react-pdf__Page canvas").waitFor();
+  const materials = page.getByLabel("表示する資料");
+  assert.deepEqual(await materials.locator("option").allTextContents(), ["原文・ノート（手書き入り）", "読書メモ", "関連資料"]);
+  await page.getByRole("button", { name: "ライブラリ全体のファイル", exact: true }).click();
+  const allMaterials = await materials.locator("option").allTextContents();
+  for (const hidden of ["translation-cache.json", "翻訳テキスト", "media/figure.png"]) assert.equal(allMaterials.includes(hidden), false);
+  await page.getByRole("treeitem").filter({ hasText: "Adaptive Control" }).click();
   assert.equal(await page.locator("[data-workspace-header]").evaluate(element => getComputedStyle(element).display), "flex");
   assert.equal(await page.locator("[data-workspace-sidebar] img").evaluate(element => element.getBoundingClientRect().width), 32);
   assert.equal(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight), true);

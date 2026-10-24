@@ -12,6 +12,7 @@ import { Ellipsis, Hand, Pen, ZoomIn, ZoomOut } from "lucide-react";
 import { COMPACT_LAYOUT_QUERY } from "./readerLayout";
 import { useReaderLayout } from "./useReaderLayout";
 import { ReaderMenu } from "./ReaderMenu";
+import { usePairedPdfScroll } from "./usePairedPdfScroll";
 
 export type ReaderControls = { title: string; leading: ReactNode; language: ReactNode; menu: ReactNode };
 
@@ -57,6 +58,7 @@ export function DocumentReader({ artifact, runtime, store, controls, readerActio
     if (activeSplit !== desiredSplit && prepareWebNavigation()) setActiveSplit(desiredSplit);
   }, [activeSplit, desiredSplit]);
   const split = canSplit && activeSplit;
+  usePairedPdfScroll(layout.ref, split, JSON.stringify([placeKey, page, zoom, fitPage]));
   // Canonical original/translation views navigate source pages in either layout.
   // A translated page may live at a different index (or be absent entirely).
   const maxPage = canSplit ? Math.min(mapping!.pageCount, counts[original!.id] ?? Infinity) : counts[artifact.id] ?? 0;

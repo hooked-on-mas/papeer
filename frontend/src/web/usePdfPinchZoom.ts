@@ -4,6 +4,8 @@ export const MIN_PDF_ZOOM = .5;
 export const MAX_PDF_ZOOM = 4;
 let activePinchPane: HTMLElement | undefined;
 
+export function getPdfPinchOwner() { return activePinchPane ?? null; }
+
 /** Pinch only the PDF surface: browser zoom would also enlarge and hide its controls. */
 export function usePdfPinchZoom(container: RefObject<HTMLDivElement | null>, zoom: number, onZoom?: (zoom: number) => void, pageKey?: string) {
   const currentZoom = useRef(zoom);

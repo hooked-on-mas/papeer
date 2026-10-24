@@ -62,6 +62,23 @@ test("legacy snapshots retain their flattened handwritten PDF ordering", () => {
   runtime.dispose();
 });
 
+test("reading materials exclude generated files while embedded images and partial translations remain resolvable", async () => {
+  const manifest = fixture();
+  const hidden = ["translation-cache.json", "translation.md", "document.json", "glossary.md", "media/figure.png",
+    "review-backups/old/translated.pdf", "attachments/debug.json", "attachments/generated.md"];
+  for (const name of [...hidden, "article.md"]) manifest.files[`papers/${id}/${name}`] = { ...manifest.files[memoPath], id: name.replace(/[^a-z0-9]/g, "-") };
+  manifest.attachments.push({ id: "debug", owner_id: id, format: "json", title: "内部データ" });
+  const runtime = createDriveLibraryRuntime({ file: async () => new Blob() }, scope, manifest);
+  assert.deepEqual(runtime.query.listReadingMaterials(id).map(file => file.filename), ["original.pdf", "translated.pdf", "article.md", "memo.md"]);
+  assert.equal(runtime.query.listReadingMaterials(null).some(file => ["translation.md", "translation-cache.json", "page-2.pdf", "figure.png", "debug.json", "generated.md"].includes(file.filename)), false);
+  const memo = runtime.query.listReadingMaterials(id).find(file => file.filename === "memo.md")!;
+  assert.equal(runtime.artifacts.resolveRelative(memo.id, "../media/figure.png")?.filename, "figure.png");
+  assert.equal(runtime.query.listArtifacts(id).some(file => file.filename === "page-2.pdf"), true);
+  assert.deepEqual(runtime.query.listReadingMaterials("missing"), []);
+  runtime.dispose();
+  assert.throws(() => runtime.query.listReadingMaterials(id), { name: "AbortError" });
+});
+
 test("review backups cannot replace current PDFs, and nested PDFs keep distinct labels and roles", async () => {
   const manifest = fixture();
   const backup = `papers/${id}/review-backups/20260919T120527Z-b38b0572/translated.pdf`;

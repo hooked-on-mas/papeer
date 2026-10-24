@@ -82,13 +82,17 @@
 .site-footer { display: flex; flex-wrap: wrap; justify-content: space-between; flex-shrink: 0; gap: 6px; padding: 5px 12px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: .75rem; }
 .sidebar-backdrop { display: none; }
 .ink-tools { position: sticky; top: 0; left: 0; width: var(--pdf-pane-width, 100%); z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 2px; background: var(--background); border-bottom: 1px solid var(--border); }
-.web-app .ink-tools > button, .ink-history-inline > button, .ink-options > summary { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; padding: 4px; border: 0; border-radius: 4px; cursor: pointer; }
+.web-app .ink-tools > button, .ink-tool-set > button, .ink-history-inline > button, .ink-options > summary { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; padding: 4px; border: 0; border-radius: 4px; cursor: pointer; }
+.ink-tool-set { display: inline-flex; align-items: center; flex-shrink: 0; gap: 2px; }
+.ink-tool-divider { width: 1px; height: 24px; margin-inline: 4px; background: var(--border); flex-shrink: 0; }
+.ink-tools-compact .ink-tool-divider { display: none; }
+.ink-tools-compact .ink-tool-set { gap: 0; }
 .ink-history-inline { display: contents; }
 .ink-history-menu { display: none; }
-.ink-settings-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-inline: 6px; }
+.ink-settings-inline { display: flex; flex-shrink: 0; align-items: center; gap: 12px; padding-inline: 6px; }
 .ink-settings-inline select { min-height: 44px; }
-.ink-settings-inline input[type="checkbox"] { width: 20px; height: 20px; }
-.ink-settings-inline label { min-height: 44px; white-space: nowrap; }
+.ink-finger-control input[type="checkbox"] { width: 20px; height: 20px; }
+.ink-settings-inline label, .ink-finger-control { min-height: 44px; white-space: nowrap; }
 .ink-tools svg { width: 16px; height: 16px; }
 .ink-options > summary { list-style: none; }
 .ink-options > summary::-webkit-details-marker { display: none; }

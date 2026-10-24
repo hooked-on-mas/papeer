@@ -9,15 +9,15 @@ import { chromium, webkit, type Locator } from "playwright-core";
 
 const fixture = `
 import React,{useRef,useState} from 'react'; import {createRoot} from 'react-dom/client';
-import {usePdfPinchZoom} from './usePdfPinchZoom'; import './style.css';
+import {usePdfPinchZoom} from './usePdfPinchZoom'; import {usePairedPdfScroll} from './usePairedPdfScroll'; import './style.css';
 function Reader({side}){const root=useRef(null);const[zoom,setZoom]=useState(1);
  usePdfPinchZoom(root,zoom,setZoom);
  return <div style={{display:'flex',flexDirection:'column',flex:1,minWidth:0}} data-reader={side}>
  <header style={{height:56,flexShrink:0}}><output aria-label="倍率">{zoom}</output></header>
- <section className="web-pdf-pane" aria-label={side}><div className="pdf" ref={root}>
+ <section className="web-pdf-pane" aria-label={side}><div className="pdf" ref={root} data-rendered="true">
  <div className="web-pdf-surface" style={{width:390*zoom,minHeight:900*zoom}}>PDF本文</div></div></section></div>}
-function App(){const[split,setSplit]=useState(false);return <div className="web-app" style={{height:'100dvh',display:'flex',flexDirection:'column'}}>
- <button onClick={()=>setSplit(s=>!s)}>分割切替</button><main style={{display:'flex',flex:1,minHeight:0}}><Reader side="left"/>{split&&<Reader side="right"/>}</main></div>}
+function App(){const root=useRef(null);const[split,setSplit]=useState(false);usePairedPdfScroll(root,split,String(split));return <div className="web-app" style={{height:'100dvh',display:'flex',flexDirection:'column'}}>
+ <button onClick={()=>setSplit(s=>!s)}>分割切替</button><main ref={root} style={{display:'flex',flex:1,minHeight:0}}><Reader side="left"/>{split&&<Reader side="right"/>}</main></div>}
 createRoot(document.getElementById('root')).render(<App/>);`;
 
 async function gesture(target: Locator, type: string, scale: number, x: number, y: number) {
@@ -47,9 +47,37 @@ for (const engine of ["webkit", "chromium"] as const) test(`PDF pinch interactio
       await page.screenshot({ path: path.join(output, t.name.replace(/[^a-z0-9-]/gi, "-").slice(0, 80) + ".png"), scale: "css" }).catch(() => {});
       await context.close(); assert.deepEqual(errors, []);
     });
-    await page.goto(server.resolvedUrls!.local[0]); await page.locator(".web-pdf-surface").first().waitFor();
+    await page.goto(server.resolvedUrls!.local[0], { timeout: 30_000 }); await page.locator(".web-pdf-surface").first().waitFor();
     return page;
   };
+
+  await parent.test("paired scrolling works in either direction without overriding a pinch or a restored position", async t => {
+    const page = await open(t); await page.setViewportSize({ width: 900, height: 700 });
+    await page.getByRole("button", { name: "分割切替" }).click();
+    const left = page.getByRole("region", { name: "left" }), right = page.getByRole("region", { name: "right" });
+    // Loading/restoring another pane is not a request to move the page being read.
+    await right.evaluate(pane => { pane.scrollTop = 90; });
+    assert.equal(await left.evaluate(pane => pane.scrollTop), 0);
+    await left.hover({ position: { x: 100, y: 150 } }); await page.mouse.wheel(0, 150);
+    await page.waitForFunction(() => {
+      const panes = [...document.querySelectorAll(".web-pdf-pane")];
+      return panes[0].scrollTop > 100 && Math.abs(panes[0].scrollTop - panes[1].scrollTop) < 2;
+    });
+    await right.hover({ position: { x: 100, y: 150 } }); await page.mouse.wheel(0, -70);
+    await page.waitForFunction(() => {
+      const panes = [...document.querySelectorAll(".web-pdf-pane")];
+      return panes[1].scrollTop > 0 && panes[1].scrollTop < 100 && Math.abs(panes[0].scrollTop - panes[1].scrollTop) < 2;
+    });
+    const beforePinch = await left.evaluate(pane => pane.scrollTop), box = (await left.boundingBox())!;
+    await gesture(left, "gesturestart", 1, box.x + 100, box.y + 150);
+    await gesture(left, "gesturechange", 1.5, box.x + 100, box.y + 150);
+    await right.evaluate(pane => { pane.scrollTop = 0; });
+    assert.equal(await left.evaluate(pane => pane.scrollTop), beforePinch, "the follower cannot rewind the pane being pinched");
+    await gesture(left, "gestureend", 1.5, box.x + 100, box.y + 150);
+    await page.getByRole("button", { name: "分割切替" }).click();
+    await left.evaluate(pane => { pane.scrollTop = 100; });
+    assert.equal(await right.count(), 0);
+  });
 
   await parent.test("pinch limits, cancellation and header geometry are stable", async t => {
     const page = await open(t), pane = page.getByRole("region", { name: "left" }), box = (await pane.boundingBox())!;

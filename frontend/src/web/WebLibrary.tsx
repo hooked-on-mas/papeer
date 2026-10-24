@@ -59,7 +59,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   const [defaultToTranslation] = useState(compact);
   const [initialPlace] = useState(() => getLibraryPlace(runtime.scope.libraryId));
   const [selected, setSelected] = useState(initialPlace && (!initialPlace.itemId || items.some(item => item.id === initialPlace.itemId)) ? initialPlace.itemId : items[0]?.id ?? "");
-  const [artifactId, setArtifactId] = useState(() => initialPlace ? runtime.query.listArtifacts(selected || null).find(row => artifactPlaceKey(row) === initialPlace.artifact)?.id ?? "" : "");
+  const [artifactId, setArtifactId] = useState(() => initialPlace ? runtime.query.listReadingMaterials(selected || null).find(row => artifactPlaceKey(row) === initialPlace.artifact)?.id ?? "" : "");
   const [tab, setTab] = useState("reader");
   const narrowViewport = useMediaQuery(SIDEBAR_OVERLAY_QUERY);
   const stackedViewport = useMediaQuery("(max-width: 760px)");
@@ -71,7 +71,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   const [sidePanel, setSidePanel] = useState<SidePanel | null>(null);
   useEffect(() => { if (narrow) setCollapsed(true); }, [narrow]);
   const item = items.find(row => row.id === selected);
-  const artifacts = runtime.query.listArtifacts(item?.id ?? null);
+  const artifacts = runtime.query.listReadingMaterials(item?.id ?? null);
   const artifact = artifacts.find(row => row.id === artifactId) ?? (defaultToTranslation ? preferredReadingArtifact(artifacts) : artifacts[0]);
   const originalPdf = artifacts.find(row => row.role === "original" && row.annotationTarget)
     ?? artifacts.find(row => row.role === "original" && row.filename.endsWith(".pdf"));
@@ -93,7 +93,7 @@ export function WebLibrary({ runtime, session, manifest, actions, focusMode, onF
   };
   const chooseChild = (id: string, file: string) => {
     if (!prepareWebNavigation()) return;
-    const child = runtime.query.listArtifacts(id).find(row => row.id === file);
+    const child = runtime.query.listReadingMaterials(id).find(row => row.id === file);
     if (child?.role === "attachment" && /\.md$/i.test(child.filename)) {
       setSelected(id); if (id !== selected) setArtifactId("");
       setMemoId(file); setTab("notes");

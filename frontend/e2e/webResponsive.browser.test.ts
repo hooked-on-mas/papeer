@@ -139,6 +139,7 @@ $$
     await page.getByRole("button", { name: "ライブラリを閉じる", exact: true }).click();
     await page.setViewportSize({ width: 560, height: 900 });
     await original.locator("canvas").waitFor();
+    await page.getByLabel("書き込み設定", { exact: true }).waitFor();
     assert.equal(await page.getByLabel("書き込み設定", { exact: true }).isVisible(), true,
       "compact viewports keep settings reachable even when the PDF pane exceeds 440px");
     assert.ok((await page.getByRole("toolbar", { name: "PDFの書き込みツール" }).boundingBox())!.height <= 50,
@@ -161,6 +162,30 @@ $$
     assert.equal(await page.getByLabel("ページ番号").inputValue(), "2");
     assert.equal(await translated.locator("[data-ink-id]").count(), 1);
     assert.ok((await translated.boundingBox())!.x > (await original.boundingBox())!.x);
+    const pairedZoom = page.getByLabel("表示倍率", { exact: true });
+    await pairedZoom.selectOption("2"); await ready();
+    const aligned = async (previousY?: number) => page.waitForFunction(previous => {
+      const panes = [...document.querySelectorAll<HTMLElement>(".web-document-reader .web-pdf-pane")];
+      if (panes.length !== 2) return false;
+      const [a, b] = panes.map(pane => ({ y: pane.scrollTop / Math.max(1, pane.scrollHeight - pane.clientHeight),
+        x: pane.scrollLeft / Math.max(1, pane.scrollWidth - pane.clientWidth) }));
+      return a.y > .01 && a.x > .01 && Math.abs(a.y - b.y) < .005 && Math.abs(a.x - b.x) < .005
+        && (previous === undefined || b.y < previous - .02);
+    }, previousY);
+    await original.hover({ position: { x: 150, y: 220 } }); await page.mouse.wheel(160, 240); await aligned();
+    const beforeReverse = await translated.evaluate(pane => pane.scrollTop / Math.max(1, pane.scrollHeight - pane.clientHeight));
+    await translated.hover({ position: { x: 150, y: 220 } }); await page.mouse.wheel(-60, -120); await aligned(beforeReverse);
+    if (variant === "touch") {
+      const cdp = await context.newCDPSession(page), bounds = (await original.boundingBox())!;
+      const beforeTouch = await original.evaluate(pane => pane.scrollTop);
+      const point = { x: bounds.x + bounds.width / 2, y: bounds.y + 330 };
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ ...point, id: 1 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: point.x, y: point.y - 100, id: 1 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await page.waitForFunction(previous => document.querySelector<HTMLElement>(".web-pdf-pane")!.scrollTop > previous + 20, beforeTouch);
+      await aligned(); await cdp.detach();
+    }
+    await pairedZoom.selectOption("1"); await ready();
     await page.screenshot({ path: path.join(output, "wide-paired.png") });
     // A selected layout survives changes to the space occupied by the library.
     await page.setViewportSize({ width: 1201, height: 834 }); await layout("split");

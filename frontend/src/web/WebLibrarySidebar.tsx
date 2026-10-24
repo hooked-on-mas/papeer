@@ -18,7 +18,7 @@ export function WebLibrarySidebar({ runtime, selectedItemId, selectedArtifactId,
 }) {
   const items = runtime.query.listItems();
   // Query per item so internal review history stays out of the normal library browser.
-  const artifacts = useMemo(() => items.flatMap(item => runtime.query.listArtifacts(item.id)), [items, runtime]);
+  const artifacts = useMemo(() => items.flatMap(item => runtime.query.listReadingMaterials(item.id)), [items, runtime]);
   const [query, setQuery] = useState("");
   const [closedFolders, setClosedFolders] = useState<Set<string>>(() => new Set());
   const [openPapers, setOpenPapers] = useState<Set<string>>(() => new Set());
