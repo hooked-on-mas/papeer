@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 from papeer.core import cloud_drive, cloud_drive_auth
 from sidecar import deps
-from sidecar.job_types import JobKind, JobStarted
+from sidecar.lifecycle.job_types import JobKind, JobStarted
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
 

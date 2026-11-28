@@ -235,7 +235,7 @@ def test_unwritable_device_folder_leaves_library_settings_for_next_time(tmp_path
 def test_restore_api_keeps_current_settings_by_default(library, tmp_path, monkeypatch):
     from sidecar import deps
     from sidecar.app import app
-    from sidecar.jobs import JobManager
+    from sidecar.lifecycle.jobs import JobManager
     monkeypatch.setenv("PAPEER_DATA_DIR", str(library.root))
     monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
     monkeypatch.setattr("sidecar.deps.job_manager", JobManager())

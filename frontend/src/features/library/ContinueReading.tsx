@@ -3,7 +3,7 @@ import { BookOpen } from "lucide-react";
 import { paperDisplayName, usePaperList } from "@/api/hooks";
 import { useStore } from "@/store";
 import { emitAppEvent } from "@/lib/appEvents";
-import { openedAgo, recentlyOpened } from "@/lib/recentPapers";
+import { openedAgo, recentlyOpened } from "@/features/library/query/recentPapers";
 import { normalizeCollection } from "@/lib/collectionPath";
 import { itemCapabilities } from "@/lib/itemKinds";
 import { openPaper } from "./selectionStore";

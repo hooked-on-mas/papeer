@@ -12,11 +12,11 @@ from papeer.core.errors import Invalid
 from papeer.core.paths import PaperFiles
 from papeer.core.service import PaperService
 from papeer.core.translation_plan import translation_plan as plan_translation
-from papeer.core.summary_scope import summary_plan, validate_summary_pages
+from papeer.core.summary.scope import summary_plan, validate_summary_pages
 from papeer.layout.page_selection import parse_page_selection
 from papeer.providers import spec_for
 from sidecar import deps
-from sidecar.job_types import JobKind, JobStarted
+from sidecar.lifecycle.job_types import JobKind, JobStarted
 from sidecar.schemas.ai_jobs import ArticleRequest, AskRequest, ChatMessage, ExportRequest, SummaryPlan, TranslateRequest
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
@@ -36,8 +36,8 @@ def translate_paper(paper_id: str, body: TranslateRequest) -> JobStarted:
 
     def action(cancel: threading.Event, progress: Any, page_ready: Any) -> dict:
         provider = deps.provider_for(settings, cancel)
-        from papeer.core.automatic_terminology import prepare_terminology
-        from papeer.core.glossary_domains import select_domains
+        from papeer.core.glossary.automatic_terminology import prepare_terminology
+        from papeer.core.glossary.glossary_domains import select_domains
         from papeer.core.terminology import global_glossary, glossary_scope_key, paper_glossary
         if plan_translation(lib, paper_id, settings, selected_pages)["needs_ai"]:
             terms = global_glossary(lib.root)

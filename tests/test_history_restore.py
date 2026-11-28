@@ -190,7 +190,7 @@ def test_history_restore_api(lib, monkeypatch):
     from fastapi.testclient import TestClient
     from sidecar import deps
     from sidecar.app import app
-    from sidecar.jobs import JobManager
+    from sidecar.lifecycle.jobs import JobManager
 
     first = record(lib)
     sync.save_state(lib.root, {"connected": True, "base": "1", "hash": "h"})

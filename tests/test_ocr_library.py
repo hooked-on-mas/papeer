@@ -201,12 +201,26 @@ def test_settings_route_saves_and_status_tells_whether_the_ai_can_read_images(cl
     assert client.put("/api/ocr/settings", json={"mode": "off", "engine": "tesseract", "lang": "en"}).json() == {
         "mode": "off", "engine": "tesseract", "lang": "en"}
     assert client.put("/api/ocr/settings", json={"mode": "never", "engine": "auto", "lang": "auto"}).status_code == 422
-    Settings(provider="antigravity").save(deps.get_data_dir())
-    ai = client.get("/api/ocr").json()["ai"]
-    assert not ai["available"] and "agy" in ai["reason"] and ai["provider"] == "antigravity"
     for provider in ("claude", "codex", "api"):
         Settings(provider=provider).save(deps.get_data_dir())
         assert client.get("/api/ocr").json()["ai"]["available"], provider
+
+
+@pytest.mark.parametrize("provider", ["antigravity", "gemini"])
+def test_retired_connection_keeps_local_ocr_status_and_explains_migration(client, engine, monkeypatch, provider):
+    client, _ = client
+    Settings(provider=provider).save(deps.get_data_dir())
+    monkeypatch.setattr(deps, "provider_for", lambda *args, **kwargs: pytest.fail("Retired AI must not be constructed"))
+    response = client.get("/api/ocr")
+    assert response.status_code == 200
+    status = response.json()
+    assert status["settings"] == ocr.DEFAULT_SETTINGS
+    assert status["readable"] == {"en": ["tesseract"], "ja": ["tesseract"]}
+    # Loading old settings already normalizes the Gemini alias to Antigravity.
+    assert not status["ai"]["available"] and status["ai"]["provider"] == "antigravity"
+    assert "提供を終了" in status["ai"]["reason"] and "設定のAI接続" in status["ai"]["reason"]
+    assert deps.get_settings().provider == "antigravity"
+    assert client.put("/api/ocr/settings", json={"mode": "off", "engine": "tesseract", "lang": "en"}).status_code == 200
 
 
 # ---------------------------------------------------------------- readings and extraction
@@ -381,12 +395,16 @@ def test_a_page_is_read_again_by_the_ai_and_its_usage_reported(client, engine, m
     assert "Read by the model" in lib.page_text(paper_id, 1)
 
 
-def test_a_connection_that_cannot_take_images_is_refused_before_anything_is_sent(client, engine):
+@pytest.mark.parametrize("provider", ["antigravity", "gemini"])
+def test_a_retired_connection_is_refused_before_anything_is_sent(client, engine, monkeypatch, provider):
     client, root = client
     job = _wait(client.post("/api/papers/import", json={"paths": [str(scan_pdf(root))]}).json()["job_id"])
-    Settings(provider="antigravity").save(deps.get_data_dir())
+    Settings(provider=provider).save(deps.get_data_dir())
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: pytest.fail("Retired AI must not launch"))
+    calls = engine.calls
     answer = client.post(f"/api/papers/{job.result.paper_ids[0]}/ocr", json={"engine": "ai", "pages": [1]})
-    assert answer.status_code == 400 and "agy" in answer.json()["detail"]
+    assert answer.status_code == 400 and "提供を終了" in answer.json()["detail"]
+    assert engine.calls == calls
 
 
 def test_the_cli_connections_get_the_images_and_keep_their_tools_off(tmp_path):
@@ -431,8 +449,9 @@ def test_the_cli_connections_get_the_images_and_keep_their_tools_off(tmp_path):
         assert command[command.index(images[-1]) + 1].startswith("--")
         assert command[-1] == "-" and b"Read" in seen["stdin"]
 
-    with pytest.raises(RuntimeError, match="agy"):
-        create_provider(Settings(provider="antigravity"), threading.Event()).read_images("Read", [png])
+    for provider in ("antigravity", "gemini"):
+        with pytest.raises(ValueError, match="提供を終了"):
+            create_provider(Settings(provider=provider), threading.Event()).read_images("Read", [png])
 
 
 # ---------------------------------------------------------------- macOS Vision

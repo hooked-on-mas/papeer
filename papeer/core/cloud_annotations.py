@@ -17,28 +17,74 @@ from papeer.core.paths import PaperFiles
 from papeer.providers import check_cancel
 from papeer.core.ink_model import InkStroke
 
+MAX_INK_OPERATION_BYTES = 32 * 1024 * 1024
 
-class Operation(BaseModel):
+class InkChange(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    version: Literal[1]
-    id: str = Field(pattern=r"^[a-f0-9-]{36}$")
-    library_id: str = Field(pattern=r"^[\w-]{1,100}$")
-    paper_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    side: Literal["original", "translated"]
-    source_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    page: int = Field(ge=1, le=100000)
     action: Literal["add", "remove"]
     stroke: InkStroke | None = None
     target: str | None = None
 
     @model_validator(mode="after")
-    def check_action(self):
+    def check_change(self):
         if self.action == "add":
+            if self.stroke is None or self.target is not None or not re.fullmatch(r"web-[a-f0-9-]{36}", self.stroke.id):
+                raise ValueError("追加するWeb書き込みが不正です。")
+        elif self.stroke is not None or not self.target or not re.fullmatch(r"web-[a-f0-9-]{36}", self.target):
+            raise ValueError("削除するWeb書き込みが不正です。")
+        return self
+
+
+class Operation(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    version: Literal[1, 2]
+    id: str = Field(pattern=r"^[a-f0-9-]{36}$", min_length=36, max_length=36)
+    library_id: str = Field(pattern=r"^[\w-]{1,100}$")
+    paper_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    side: Literal["original", "translated"]
+    source_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    page: int = Field(ge=1, le=100000)
+    action: Literal["add", "remove", "edit"]
+    stroke: InkStroke | None = None
+    target: str | None = None
+    changes: list[InkChange] | None = Field(default=None, min_length=1, max_length=3000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_fields(cls, value):
+        if not isinstance(value, dict) or type(value.get('version')) is not int:
+            raise ValueError("Web書き込みの版が不正です。")
+        action = value.get('action')
+        if value['version'] == 1 and (action not in ('add', 'remove') or 'changes' in value or (action == 'add' and 'target' in value) or (action == 'remove' and 'stroke' in value)):
+            raise ValueError("Web書き込みの操作fieldが不正です。")
+        if value['version'] == 2 and (action != 'edit' or 'stroke' in value or 'target' in value):
+            raise ValueError("Web書き込みの一括操作fieldが不正です。")
+        changes = value.get('changes')
+        if changes is not None and not isinstance(changes, list):
+            raise ValueError("Web書き込みの一括操作は配列で指定してください。")
+        for change in changes or []:
+            if not isinstance(change, dict) or (change.get('action') == 'add' and 'target' in change) or (change.get('action') == 'remove' and 'stroke' in change):
+                raise ValueError("Web書き込みの一括操作fieldが不正です。")
+        return value
+
+    @model_validator(mode="after")
+    def check_action(self):
+        if self.version == 2:
+            if not self.changes:
+                raise ValueError("Web書き込みの一括操作が空です。")
+            ids = [change.stroke.id if change.stroke else change.target for change in self.changes]
+            if len(set(ids)) != len(ids):
+                raise ValueError("一括操作の書き込みIDが重複しています。")
+        elif self.action == "add":
             if self.stroke is None or self.target is not None or self.stroke.id != "web-" + self.id:
                 raise ValueError("Web書き込みのIDが不正です。")
         elif self.stroke is not None or not self.target or not re.fullmatch(r"web-[a-f0-9-]{36}", self.target):
             raise ValueError("削除するWeb書き込みのIDが不正です。")
         return self
+
+
+def operation_changes(op):
+    return op['changes'] if op['version'] == 2 else [{key: op[key] for key in ('action', 'stroke', 'target') if key in op}]
 
 
 def import_operations(lib, drive, manifest_id: str, cancel) -> int:
@@ -60,7 +106,7 @@ def import_operations(lib, drive, manifest_id: str, cancel) -> int:
         # These are immutable; an already imported operation never needs a second download.
         if file.get("name", "").removeprefix("ink-").removesuffix(".json") in known:
             continue
-        if int(file.get("size", 0)) > 1024 * 1024:
+        if int(file.get("size", 0)) > MAX_INK_OPERATION_BYTES:
             raise ValueError("Web書き込みが大きすぎます。Driveの書き込みファイルを確認してください。")
         if not re.fullmatch(r"[\w-]+", file["id"]):
             raise ValueError("Web書き込みのファイルIDが不正です。")
@@ -92,8 +138,8 @@ def import_operations(lib, drive, manifest_id: str, cancel) -> int:
         if op["source_sha256"] == digest and op["page"] <= pages:
             valid.append(op)
     all_ops = list(known.values()) + valid
-    removed = {(op["paper_id"], op["side"], op["source_sha256"], op["page"], op["target"])
-               for op in all_ops if op["action"] == "remove"}
+    removed = {(op["paper_id"], op["side"], op["source_sha256"], op["page"], change["target"])
+               for op in all_ops for change in operation_changes(op) if change["action"] == "remove"}
     with lib.connection() as db:
         db.execute("BEGIN IMMEDIATE")
         for op in valid:
@@ -106,8 +152,9 @@ def import_operations(lib, drive, manifest_id: str, cancel) -> int:
             deleted = {target for paper, side, sha, page, target in removed
                        if (paper, side, sha, page) == (*key[:2], op["source_sha256"], key[2])}
             strokes = [stroke for stroke in strokes if stroke["id"] not in deleted]
-            if op["action"] == "add" and op["stroke"]["id"] not in deleted and not any(s["id"] == op["stroke"]["id"] for s in strokes):
-                strokes.append(op["stroke"])
+            for change in operation_changes(op):
+                if change["action"] == "add" and change["stroke"]["id"] not in deleted and not any(s["id"] == change["stroke"]["id"] for s in strokes):
+                    strokes.append(change["stroke"])
             if len(strokes) > 3000 or sum(len(s["points"]) for s in strokes) > 200000:
                 raise ValueError("Web書き込みの取り込みでページの上限を超えました。")
             db.execute("INSERT INTO pdf_ink(paper_id,side,page,strokes) VALUES(?,?,?,?) "

@@ -407,6 +407,16 @@ def reading_space(block: dict, style: TextStyle, blocks: list[dict], bounds: fit
             bottom = min(bottom, other.y0 - padding if (other.x0, other.y0, other.x1, other.y1) in fixed_boxes
                          else (source.y1 + other.y0) / 2 - min(3, gap / 4))
         else:
+            if (other.x0, other.y0, other.x1, other.y1) in fixed_boxes:
+                # A raster diagram's blank edge can overlap its caption box.
+                # Clipping removes that edge later; retain the free space on
+                # the opposite side instead of shrinking both sides at once.
+                if other.y0 < source.y0 and other.y1 < source.y1:
+                    top = max(top, source.y0)
+                    continue
+                if other.y0 > source.y0 and other.y1 > source.y1:
+                    bottom = min(bottom, source.y1)
+                    continue
             # A figure or neighboring box alongside this text is not free space.
             top, bottom = max(top, source.y0), min(bottom, source.y1)
     return fitz.Rect(rect.x0, min(source.y0, top), rect.x1, max(source.y1, bottom)) & bounds

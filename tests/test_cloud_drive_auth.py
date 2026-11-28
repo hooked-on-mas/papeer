@@ -1,8 +1,10 @@
 """Desktop PKCE/loopback flow, token refresh and the credential-free public API."""
 import base64
 import hashlib
+from email.message import Message
 from io import BytesIO
 import json
+import os
 import socket
 import sys
 import threading
@@ -297,7 +299,7 @@ def test_browser_failure_releases_initial_attempt_and_can_reopen_after_failure(m
 ])
 def test_token_error_diagnostics_are_allowlisted_and_do_not_expose_google_body(monkeypatch, body, expected):
     def request(*args, **kwargs):
-        raise HTTPError(auth.TOKEN_URL, 400, "DO-NOT-EXPOSE", {}, BytesIO(json.dumps(body).encode()))
+        raise HTTPError(auth.TOKEN_URL, 400, "DO-NOT-EXPOSE", Message(), BytesIO(json.dumps(body).encode()))
     monkeypatch.setattr(auth, "urlopen", request)
     with pytest.raises(auth._OAuthFailure) as error:
         auth._token({"client_secret": "DO-NOT-EXPOSE"})
@@ -332,3 +334,154 @@ def test_cancel_and_reopen_api_require_local_api_authentication(monkeypatch, tmp
         for name in ("reopen", "cancel"):
             assert client.post(f"/api/cloud-drive/{name}").status_code == 401
             assert client.post(f"/api/cloud-drive/{name}", headers={"Authorization": "Bearer expected"}).status_code == 200
+
+
+def _synthetic_credential_file(monkeypatch):
+    # Existing autouse configuration points at tmp_path, never real credentials.
+    decrypted = []
+    def protect(data, *, decrypt=False):
+        if not decrypt:
+            return b"synthetic-protected:" + data
+        decrypted.append(data)
+        if data == b"synthetic-decrypt-failure":
+            raise ValueError("synthetic decrypt failed")
+        assert data.startswith(b"synthetic-protected:")
+        return data.removeprefix(b"synthetic-protected:")
+    monkeypatch.setattr(auth, "_protect", protect)
+    record = {"client_id": "synthetic-client", "access_token": "synthetic-A", "refresh_token": "synthetic-refresh", "expires_at": 9999999999,
+              "nested": {"values": [1, 2]}}
+    auth._save(record)
+    return auth._path(), record, decrypted
+
+
+def test_credential_file_same_bytes_decrypt_once_but_return_fresh_json(monkeypatch):
+    _path, record, decrypted = _synthetic_credential_file(monkeypatch)
+    first = auth._load()
+    first["nested"]["values"].append(3)
+    first["access_token"] = "caller mutation"
+    assert auth._load() == record
+    assert len(decrypted) == 1
+
+
+def test_credential_file_external_same_size_same_mtime_write_is_observed(monkeypatch):
+    path, record, decrypted = _synthetic_credential_file(monkeypatch)
+    assert auth._load() == record
+    prior = path.stat()
+    changed = {**record, "access_token": "synthetic-B"}
+    encrypted = b"synthetic-protected:" + json.dumps(changed).encode()
+    assert len(encrypted) == path.stat().st_size
+    path.write_bytes(encrypted)
+    os.utime(path, ns=(prior.st_atime_ns, prior.st_mtime_ns))
+    assert path.stat().st_mtime_ns == prior.st_mtime_ns
+    assert auth._load() == changed
+    assert len(decrypted) == 2
+
+
+def test_credential_file_external_delete_invalidates_same_bytes_reappearance(monkeypatch):
+    path, record, decrypted = _synthetic_credential_file(monkeypatch)
+    encrypted = path.read_bytes()
+    assert auth._load() == record
+    path.unlink()
+    with pytest.raises(ValueError):
+        auth._load()
+    path.write_bytes(encrypted)
+    assert auth._load() == record
+    assert len(decrypted) == 2
+
+
+@pytest.mark.parametrize("failure", ["decrypt", "json"])
+def test_credential_file_changed_failure_never_falls_back_to_prior_json(monkeypatch, failure):
+    path, record, decrypted = _synthetic_credential_file(monkeypatch)
+    encrypted = path.read_bytes()
+    assert auth._load() == record
+    path.write_bytes(b"synthetic-decrypt-failure" if failure == "decrypt" else b"synthetic-protected:{")
+    with pytest.raises(ValueError if failure == "decrypt" else json.JSONDecodeError):
+        auth._load()
+    path.write_bytes(encrypted)
+    assert auth._load() == record
+    assert len(decrypted) == 3
+
+
+def test_credential_file_read_failure_preserves_error_and_invalidates_reuse(monkeypatch):
+    path, record, decrypted = _synthetic_credential_file(monkeypatch)
+    assert auth._load() == record
+    failure = FileNotFoundError("synthetic file disappeared")
+    read = type(path).read_bytes
+    def disappeared(current):
+        if current == path:
+            raise failure
+        return read(current)
+    with monkeypatch.context() as patch:
+        patch.setattr(type(path), "read_bytes", disappeared)
+        with pytest.raises(FileNotFoundError) as observed:
+            auth._load()
+        assert observed.value is failure
+    assert auth._load() == record
+    assert len(decrypted) == 2
+
+
+def test_credential_file_same_bytes_in_different_profile_are_decrypted(monkeypatch):
+    path, record, decrypted = _synthetic_credential_file(monkeypatch)
+    assert auth._load() == record
+    other = path.with_name("other-synthetic-profile.dpapi")
+    other.write_bytes(path.read_bytes())
+    monkeypatch.setattr(auth, "_path", lambda: other)
+    assert auth._load() == record
+    assert len(decrypted) == 2
+
+
+def test_credential_file_own_save_and_failed_write_invalidate_decoded_bytes(monkeypatch):
+    path, record, decrypted = _synthetic_credential_file(monkeypatch)
+    assert auth._load() == record
+    auth._save(record)
+    assert auth._load() == record
+    assert len(decrypted) == 2
+    encrypted = path.read_bytes()
+    def refused_write(*_args, **_kwargs):
+        raise OSError("synthetic write refused")
+    monkeypatch.setattr(auth, "atomic_write_bytes", refused_write)
+    with pytest.raises(OSError, match="synthetic write refused"):
+        auth._save({**record, "access_token": "synthetic-B"})
+    assert path.read_bytes() == encrypted
+    assert auth._load() == record
+    assert len(decrypted) == 3
+
+
+def test_credential_file_disconnect_clears_reuse_and_never_revives_old_generation(monkeypatch):
+    path, record, decrypted = _synthetic_credential_file(monkeypatch)
+    encrypted, generation = path.read_bytes(), auth.generation()
+    assert auth.capture_provider_access_token(generation) == record["access_token"]
+    auth.disconnect()
+    assert not path.exists()
+    with pytest.raises(ValueError, match="drive-auth-changed"):
+        auth.capture_provider_access_token(generation)
+    path.write_bytes(encrypted)
+    assert auth._load() == record
+    assert len(decrypted) == 2
+    with pytest.raises(ValueError, match="drive-auth-changed"):
+        auth.capture_provider_access_token(generation)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows desktop OAuth")
+def test_credential_file_warm_reuse_does_not_bypass_attempt_cancel_generation(monkeypatch):
+    path, record, _decrypted = _synthetic_credential_file(monkeypatch)
+    encrypted, generation = path.read_bytes(), auth.generation()
+    assert auth.capture_provider_access_token(generation) == record["access_token"]
+    monkeypatch.setattr(auth.webbrowser, "open", lambda _url: True)
+    attempt = None
+    try:
+        auth.connect()
+        attempt = auth._attempt
+        assert attempt is not None
+        with pytest.raises(ValueError, match="drive-auth-changed"):
+            auth.capture_provider_access_token(generation)
+        assert auth.cancel_attempt(attempt.handle)
+        assert path.read_bytes() == encrypted
+        assert auth._load() == record
+        with pytest.raises(ValueError, match="drive-auth-changed"):
+            auth.capture_provider_access_token(generation)
+    finally:
+        auth.cancel()
+        if attempt is not None and attempt.worker is not None:
+            attempt.worker.join(timeout=3)
+            assert not attempt.worker.is_alive()

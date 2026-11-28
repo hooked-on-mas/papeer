@@ -31,9 +31,15 @@ def test_clean_without_confirmation_only_lists(tmp_path):
 
 def test_clean_with_confirmation_removes_only_the_targets(tmp_path):
     make_tree(tmp_path)
+    assert TARGETS == ("build", "dist", "tmp")
+    for name in ("output", "checkpoints"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "marker.txt").write_text("keep", encoding="utf-8")
     (tmp_path / "tmp" / "nested" / "file.bin").chmod(0o444)  # read-only files must not stop the clean
     clean(tmp_path, confirm=True, out=io.StringIO())
     assert not any((tmp_path / name).exists() for name in TARGETS)
+    for name in ("output", "checkpoints"):
+        assert (tmp_path / name / "marker.txt").read_text(encoding="utf-8") == "keep"
     assert (tmp_path / "papeer" / "keep.py").read_text(encoding="utf-8") == "kept"
     assert (tmp_path / "frontend" / "dist").is_dir()  # only the repository-root folders are targets
     out = io.StringIO()
@@ -72,12 +78,12 @@ def test_clean_neither_counts_nor_deletes_what_a_nested_junction_points_to(tmp_p
     outside.mkdir()
     (outside / "precious.bin").write_bytes(b"y" * 1000)
     repo = tmp_path / "repo"
-    (repo / "output").mkdir(parents=True)
-    (repo / "output" / "own.bin").write_bytes(b"x" * 10)
-    _winapi.CreateJunction(str(outside), str(repo / "output" / "link"))
+    (repo / "tmp").mkdir(parents=True)
+    (repo / "tmp" / "own.bin").write_bytes(b"x" * 10)
+    _winapi.CreateJunction(str(outside), str(repo / "tmp" / "link"))
     out = io.StringIO()
     clean(repo, confirm=False, out=out)
-    assert "output/  1 ファイル, 10 B" in out.getvalue()
+    assert "tmp/  1 ファイル, 10 B" in out.getvalue()
     clean(repo, confirm=True, out=io.StringIO())
-    assert not (repo / "output").exists()
+    assert not (repo / "tmp").exists()
     assert (outside / "precious.bin").read_bytes() == b"y" * 1000

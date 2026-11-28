@@ -1,4 +1,4 @@
-import { kindOf, textUnits, type InkStroke } from "./inkGeometry";
+import { kindOf, textUnits, type InkStroke } from "../ink/inkGeometry";
 
 type InkColor = (color: string) => string;
 const asPicked: InkColor = color => color;

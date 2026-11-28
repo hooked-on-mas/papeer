@@ -13,9 +13,9 @@
 import { useRef } from "react";
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { queryClient as appQueryClient } from "@/lib/queryClient";
-import type { StickyNote } from "@/features/reader/stickyNotes";
-import type { PaperDomains } from "@/features/reader/glossaryDomains";
-import type { Term } from "@/features/reader/translationStart";
+import type { StickyNote } from "@/features/reader/sticky/stickyNotes";
+import type { PaperDomains } from "@/features/reader/glossary/glossaryDomains";
+import type { Term } from "@/features/reader/translation/translationStart";
 import { api, unwrap } from "./client";
 import { invalidationsFor, type DataChange } from "./invalidation";
 import type { components } from "./schema";

@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from papeer.core.automatic_terminology import prepare_terminology
+from papeer.core.glossary.automatic_terminology import prepare_terminology
 from papeer.core.errors import Conflict, Invalid
-from papeer.core.glossary_domains import select_domains
+from papeer.core.glossary.glossary_domains import select_domains
 from papeer.core.paragraph_revisions import adopt_revision, revision_history, translation_paragraphs
 from papeer.core.paths import PaperFiles
 from papeer.core.service import PaperService, cached_page_texts

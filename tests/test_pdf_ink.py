@@ -314,6 +314,14 @@ def test_summary_regeneration_replaces_only_its_figures_and_keeps_note_captures(
     capture = files.folder / file
     assert capture.parent == files.media and capture.name.startswith("ink-capture-")
     set_memo(lib, identity, note=f"![切り抜き]({file})")
+    # A note owns its copy, independently of its parent PDF's generated figures.
+    stored_file = f"media/{identity}-{capture.name}"
+    stored_note = f"![切り抜き]({stored_file})"
+    assert read_memo(lib, identity) == stored_note
+    memo = next(row for row in lib.attachments(identity) if row["format"] == "md")
+    note_capture = lib.folder(memo["id"]) / stored_file
+    captured_bytes = capture.read_bytes()
+    assert note_capture.read_bytes() == captured_bytes
     stale = files.media / "p9i1.png"  # a figure of a previous summary that this PDF no longer yields
     stale.write_bytes(capture.read_bytes())
     assert files.summary_images() == [stale]
@@ -336,7 +344,8 @@ def test_summary_regeneration_replaces_only_its_figures_and_keeps_note_captures(
     assert not stale.exists()
     assert files.summary_images() == [figure]
     assert capture.is_file() and client.get(f"/api/papers/{identity}/{file}").status_code == 200
-    assert read_memo(lib, identity) == f"![切り抜き]({file})"
+    assert read_memo(lib, identity) == stored_note
+    assert note_capture.read_bytes() == captured_bytes
 
 
 def test_locked_old_summary_figure_does_not_fail_the_summary(ink_env, monkeypatch):

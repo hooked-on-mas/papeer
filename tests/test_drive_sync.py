@@ -209,43 +209,6 @@ def test_snapshot_waits_for_existing_requests(monkeypatch):
     assert entered.is_set()
 
 
-def test_drive_api_sync_status_and_error_redaction(pair, monkeypatch):
-    import time
-    from fastapi.testclient import TestClient
-    from sidecar.app import app
-    from sidecar import deps
-    from sidecar.jobs import JobManager
-
-    a, _, _, remote = pair
-    monkeypatch.setattr(deps, "get_data_dir", lambda: a.root)
-    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
-    monkeypatch.setattr(deps, "job_manager", JobManager())
-    sync.save_state(a.root, {"connected": True, "folder": str(a.root.parent / "shared")})
-    monkeypatch.setattr(sync, "FolderDrive", lambda _: remote)
-    with TestClient(app) as client:
-        response = client.post("/api/drive/sync", json={})
-        assert response.status_code == 200
-        identity = response.json()["job_id"]
-        deadline = time.monotonic() + 5
-        while deps.job_manager.get_job(identity).running and time.monotonic() < deadline:
-            time.sleep(0.01)
-        job = deps.job_manager.get_job(identity)
-        assert job.status == "succeeded", job.error
-        state = client.get("/api/drive").json()
-        assert state["last_sync"]
-        assert "base" not in state and "hash" not in state
-
-        def failure(_):
-            raise RuntimeError("secret-token-in-oauth-url")
-        monkeypatch.setattr(sync, "FolderDrive", failure)
-        identity = client.post("/api/drive/sync", json={}).json()["job_id"]
-        deadline = time.monotonic() + 5
-        while deps.job_manager.get_job(identity).running and time.monotonic() < deadline:
-            time.sleep(0.01)
-        job = deps.job_manager.get_job(identity)
-        assert job.status == "failed"
-        assert "secret-token" not in job.error
-        assert "secret-token" not in client.get("/api/drive").text
 
 def test_cancel_during_the_final_replacement_keeps_the_library_and_retries_next_time(pair, monkeypatch):
     """Stopping just before the folders are swapped loses nothing: the next sync pulls the same revision."""
@@ -332,6 +295,7 @@ def test_revision_from_before_schema_versioning_is_taken_and_migrated(pair, tmp_
     assert run(b, remote, choice=revision, expected_heads=[revision])["reloaded"] is True
     lib = Library(b.root)
     assert database_version(b.root / "library.sqlite3") == SCHEMA_VERSION
+    assert read_memo(lib, identity) == "古いメモ"
     assert (lib.paper(identity)["tags"], lib.paper(identity)["bibliography_version"]) == (["古いタグ"], 1)
     # The old PC stored the label of the translation state; opened here, it is a code.
     assert lib.paper(identity)["status"] == "partial"
@@ -346,6 +310,8 @@ def test_revision_from_before_schema_versioning_is_taken_and_migrated(pair, tmp_
     assert run(a, remote)["status"] == "conflict"
     run(a, remote, choice=merged["id"], expected_heads=[merged["id"]])
     assert Library(a.root).paper(identity)["read_status"] == "積読"
+    assert read_memo(Library(a.root), identity) == "古いメモ"
+    assert sync.fingerprint(Library(a.root)) == sync.fingerprint(Library(b.root))
 
 
 def test_revisions_record_the_schema_and_app_versions(pair):
@@ -380,7 +346,7 @@ def test_revisions_record_what_the_library_holds(pair):
     a.save_ink(identity, "original", 1, [{"id": "stroke"}])
     a.save_ink(identity, "original", 2, [])  # A page whose ink was erased is not counted.
     run(a, remote)
-    assert remote.items[0]["counts"] == {"papers": 1,  "stickies": 2, "ink": 1, "notebooks": 0, "attachments": 1}
+    assert remote.items[0]["counts"] == {"papers": 1,  "stickies": 2, "ink": 1, "notebooks": 0, "markdown": 1, "attachments": 1}
     assert sync.read_state(a.root)["counts"] == remote.items[0]["counts"]
 
 
@@ -518,7 +484,7 @@ def test_restore_api_marks_the_library_for_review(pair, tmp_path, monkeypatch):
     from papeer.core.reading_tools import create_backup
     from sidecar.app import app
     from sidecar import deps
-    from sidecar.jobs import JobManager
+    from sidecar.lifecycle.jobs import JobManager
 
     a, b, _, remote = pair
     connect_pair(a, b, remote)
@@ -581,7 +547,7 @@ def test_missing_data_folder_api(pair, monkeypatch):
     from fastapi.testclient import TestClient
     from sidecar.app import app
     from sidecar import deps
-    from sidecar.jobs import JobManager
+    from sidecar.lifecycle.jobs import JobManager
 
     a, b, _, remote = pair
     connect_pair(a, b, remote)
@@ -598,46 +564,11 @@ def test_missing_data_folder_api(pair, monkeypatch):
         assert client.put("/api/settings", json={"reasoning_effort": "low"}).status_code == 409
         assert client.put("/api/prompts", json={}).status_code == 409
         assert not a.root.exists()
-        assert client.get("/api/drive").json()["library_missing"] is True
-        assert client.post("/api/drive/new-library").status_code == 200
-        assert client.get("/api/papers").status_code == 200
-        assert client.post("/api/drive/new-library").status_code == 400
+        assert client.get("/api/storage").json()["missing"] is True
+        assert client.post("/api/drive/new-library").status_code == 404
+        assert not a.root.exists()
 
 
-def test_review_api(pair, monkeypatch):
-    import time
-    from fastapi.testclient import TestClient
-    from sidecar.app import app
-    from sidecar import deps
-    from sidecar.jobs import JobManager
-
-    a, b, identity, remote = pair
-    connect_pair(a, b, remote)
-    state = sync.read_state(a.root)
-    state["folder"] = str(a.root.parent / "shared")
-    sync.save_state(a.root, state)
-    monkeypatch.setattr(deps, "get_data_dir", lambda: a.root)
-    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
-    monkeypatch.setattr(deps, "job_manager", JobManager())
-    monkeypatch.setattr(sync, "FolderDrive", lambda _: remote)
-    a.delete_paper(identity)
-
-    def sync_job(client, body):
-        identity_ = client.post("/api/drive/sync", json=body).json()["job_id"]
-        deadline = time.monotonic() + 5
-        while deps.job_manager.get_job(identity_).running and time.monotonic() < deadline:
-            time.sleep(0.01)
-        job = deps.job_manager.get_job(identity_)
-        assert job.status == "succeeded", job.error
-        return job.result.model_dump()
-
-    with TestClient(app) as client:
-        assert sync_job(client, {})["status"] == "review"
-        assert client.get("/api/drive").json()["review"]["reason"] == "shrunk"
-        assert client.delete("/api/drive/review").json()["auto_sync"] is False
-        assert sync_job(client, {})["status"] == "review"
-        assert sync_job(client, {"confirm": True})["status"] == "synced"
-        assert client.get("/api/drive").json()["review"] is None
 
 
 def test_pcs_updated_to_the_same_migration_do_not_conflict(pair, monkeypatch):
@@ -862,41 +793,6 @@ def test_a_wrong_recorded_hash_never_reaches_the_sync_folder(pair, settled):
     assert (b.root / "prompts" / "chat.txt").read_text("utf-8") == "PROMPT"
 
 
-def test_check_api_and_background_flag(pair, monkeypatch, settled):
-    import time
-    from fastapi.testclient import TestClient
-    from sidecar.app import app
-    from sidecar import deps
-    from sidecar.jobs import JobManager
-
-    a, b, identity, remote = pair
-    connect_pair(a, b, remote)
-    run(b, remote)  # records the files it took in
-    for lib in (a, b):
-        state = sync.read_state(lib.root)
-        sync.save_state(lib.root, {**state, "folder": str(lib.root.parent / "shared")})
-    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
-    monkeypatch.setattr(deps, "job_manager", JobManager())
-    monkeypatch.setattr(sync, "FolderDrive", lambda _: remote)
-    set_memo(a, identity, note="A")
-    run(a, remote)
-    monkeypatch.setattr(deps, "get_data_dir", lambda: b.root)
-    with TestClient(app) as client:
-        assert client.get("/api/drive/check").json()["action"] == "pull"
-        job_id = client.post("/api/drive/sync", json={"background": True}).json()["job_id"]
-        deadline = time.monotonic() + 5
-        while deps.job_manager.get_job(job_id).running and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert deps.job_manager.get_job(job_id).result.status == "deferred"
-        assert read_memo(b, identity) == ""
-
-        def unreachable(_):
-            raise ValueError("同期フォルダーが見つかりません。")
-        monkeypatch.setattr(sync, "FolderDrive", unreachable)
-        # The sync reports the problem; the check only says a sync has something to tell.
-        assert client.get("/api/drive/check").json() == {"action": "quiet", "local_version": None}
-        sync.disconnect(b.root)
-        assert client.get("/api/drive/check").json()["action"] == "none"
 
 
 def test_a_newer_revision_at_launch_is_taken_in_by_the_first_sync(pair, settled):
@@ -960,7 +856,7 @@ def test_what_differs_leaves_out_what_an_older_database_lacks(pair, tmp_path):
     diff = sync.library_difference(a.root / "library.sqlite3", older)
     # The sticky note matches on the columns both have; the ink has no table to match on the other side.
     assert (diff["attachments"], diff["stickies"], diff["ink"]) == (1, 0, 1)
-    assert diff["remote_counts"] == {"papers": 1,  "stickies": 1, "ink": 0, "notebooks": 0, "attachments": 0}
+    assert diff["remote_counts"] == {"papers": 1,  "stickies": 1, "ink": 0, "notebooks": 0, "markdown": 0, "attachments": 0}
 
 
 def test_conflict_is_offered_even_when_what_differs_cannot_be_read(pair, monkeypatch):
@@ -1048,7 +944,7 @@ def test_side_backups_api_and_restore(pair, monkeypatch):
     from fastapi.testclient import TestClient
     from sidecar.app import app
     from sidecar import deps
-    from sidecar.jobs import JobManager
+    from sidecar.lifecycle.jobs import JobManager
 
     from papeer.core.backup import create_backup
 

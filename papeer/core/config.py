@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field, replace
 import json
 import os
@@ -9,6 +10,7 @@ import sys
 import threading
 from urllib.parse import urlparse
 
+from papeer.core.device_authority import (DeviceWriterBusy, DeviceWriterUnavailable, assert_writer, device_writer, writer)
 from papeer.core.fileio import atomic_write_json
 from papeer.core.paths import app_env, data_directory, device_directory  # noqa: F401  (data_directory re-exported)
 
@@ -181,6 +183,7 @@ class Settings:
                     options.pop(key)
         return cls.from_values(values), unknown_keys(stored)
 
+    @device_writer
     def save(self, root: Path) -> None:
         """Write the library's settings.json; this PC's connection options go to the device folder."""
         root.mkdir(parents=True, exist_ok=True)
@@ -259,6 +262,7 @@ def _stored_device_options(device: dict) -> dict[str, dict[str, str]]:
 
 def _write_device_options(options: dict[str, dict[str, str]]) -> None:
     """Replace this PC's connection options; the caller holds _device_lock."""
+    assert_writer()
     path = device_settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     # "migrated": the library's settings.json has been read once; its device options are ignored from now on.
@@ -283,7 +287,43 @@ def _warn(message: str) -> None:
     print(f"警告: {message}", file=sys.stderr)
 
 
+def _read_device_options_file(path: Path) -> dict | None:
+    """Pure read shared by fast load and guarded migration; never creates files."""
+    try:
+        value = json.loads(path.read_text('utf8')) if path.exists() else {}
+    except (OSError, ValueError) as error:
+        _warn(f"PCごとの設定（{path}）を読み込めないため、CLI のパスとAPI URLは既定値を使います: {error!r}")
+        return None
+    if not isinstance(value, dict):
+        _warn(f"PCごとの設定（{path}）の形式が不正なため、CLI のパスとAPI URLは既定値を使います。")
+        return None
+    return value
+
+
 def _load_device_options(root: Path) -> dict[str, dict[str, str]]:
+    # Pure reads do not acquire a writer. Missing/unmigrated state may migrate,
+    # but load is best effort: a busy/unavailable writer never becomes an
+    # unlocked write and does not prevent returning the legacy read-only value.
+    with _device_lock:
+        value = _read_device_options_file(device_settings_path())
+        if value is None:
+            return {}
+        if value.get('migrated'):
+            _warned.clear()
+            return _stored_device_options(value)
+    with ExitStack() as stack:
+        # Implicit load-time migration must not wait for another process's
+        # maintenance. Explicit Settings.save keeps the normal bounded wait.
+        try:
+            stack.enter_context(writer(timeout=0))
+        except (DeviceWriterBusy, DeviceWriterUnavailable, OSError):
+            return _load_device_options_locked(root, migrate=False)
+        # Only ENTRY failure allows read-only fallback. A later guarded write
+        # error may follow a committed device file and must remain visible.
+        return _load_device_options_locked(root)
+
+
+def _load_device_options_locked(root: Path, *, migrate: bool = True) -> dict[str, dict[str, str]]:
     """This PC's connection options, moving the ones in the library's settings.json here on first use.
 
     Runs once per PC: the device file then records that the move happened, so later calls only read it.
@@ -293,13 +333,8 @@ def _load_device_options(root: Path) -> dict[str, dict[str, str]]:
     """
     path = device_settings_path()
     with _device_lock:
-        try:
-            device = json.loads(path.read_text("utf-8")) if path.exists() else {}
-        except (OSError, ValueError) as exc:
-            _warn(f"PCごとの設定（{path}）を読み込めないため、CLIのパスとAPI URLは既定値を使います: {exc!r}")
-            return {}
-        if not isinstance(device, dict):
-            _warn(f"PCごとの設定（{path}）の形式が不正なため、CLIのパスとAPI URLは既定値を使います。")
+        device = _read_device_options_file(path)
+        if device is None:
             return {}
         if device.get("migrated"):
             _warned.clear()  # Readable again: a later problem is worth a warning.
@@ -309,6 +344,9 @@ def _load_device_options(root: Path) -> dict[str, dict[str, str]]:
         values = _normalized(stored)
         library, from_library = _split_device_options(values["provider_options"])
         options = _merge_options(from_library, _stored_device_options(device))
+        if not migrate:
+            _warn(f"PCごとの設定（{path}）を保存できませんでした。今回は保存せず読み込み、次回もう一度移行します。")
+            return options
         try:
             _write_device_options(options)
         except OSError as exc:

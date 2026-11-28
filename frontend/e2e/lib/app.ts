@@ -54,6 +54,10 @@ export interface LaunchOptions {
   tags?: string[];
   /** Runs after the data is in place and before the app starts (e.g. to edit settings.json). */
   beforeApp?: (dirs: IsolatedDirs) => void | Promise<void>;
+  /** Skip all API seeding, including the test AI settings, for an ordinary empty startup. */
+  seed?: boolean;
+  /** Let the real Tauri exit IPC run; intended only for explicit window-close scenarios. */
+  guardExit?: boolean;
   viewport?: { width: number; height: number };
 }
 
@@ -145,27 +149,37 @@ export interface App {
   requestWindowClose(): void;
   /** Whether papeer.exe is still running. */
   appRunning(): boolean;
+  /** Whether this launch's sidecar process is still running. */
+  sidecarRunning(): boolean;
+  /** Stop this owned app and sidecar, then relaunch with the same isolated data and WebView profile. */
+  restart(): Promise<App>;
 }
 
 interface Launch extends App {
   saveFailure(error: unknown): Promise<void>;
-  close(): Promise<void>;
+  close(preserveRoot?: boolean): Promise<void>;
 }
+
+type LaunchTracker = { current?: Launch };
 
 /** A file name for the scenario (its Japanese name, without the characters Windows does not allow). */
 function slug(name: string): string {
   return name.replace(/[\s<>:"/\\|?*「」（）、。・…×]+/g, "-").replace(/^-|-$/g, "").slice(0, 32) || "scenario";
 }
 
-async function launch(name: string, options: LaunchOptions): Promise<Launch> {
+async function launch(name: string, options: LaunchOptions, existingRoot?: string, tracker: LaunchTracker = {}): Promise<Launch> {
   const run = runInfo();
   // Nothing of an earlier scenario may still run beside this one (close() waits for that; this also
   // covers a scenario whose cleanup failed).
-  await waitFor(() => processesMentioning(run.runDir).length === 0,
-    () => `前のシナリオのプロセスが残っています:\n${processesMentioning(run.runDir).map((p) => `PID ${p.pid} ${p.name}`).join("\n")}`,
+  // The runner's shared AI stub also names runDir; it is not a scenario process.
+  const sharedStub = path.join(REPO, 'tools', 'e2e_stub_ai.py').toLowerCase();
+  const previous = () => processesMentioning(run.runDir).filter(p => !p.commandLine.toLowerCase().includes(sharedStub));
+  await waitFor(() => previous().length === 0,
+    () => `前のシナリオのプロセスが残っています:\n${previous().map((p) => `PID ${p.pid} ${p.name}`).join("\n")}`,
     LEFTOVER_LIMIT_MS, 1_000);
   // An ASCII folder name: the data, WebView2 profile and logs of this launch.
-  const root = fs.mkdtempSync(path.join(run.runDir, "scenario-"));
+  const root = existingRoot ?? fs.mkdtempSync(path.join(run.runDir, "scenario-"));
+  if (!isInside(root, run.runDir)) throw new Error('scenario root is outside the isolated run');
   const dirs = isolatedDirs(root);
   const logs = path.join(root, "logs");
   const env = isolatedEnv(process.env, dirs, {
@@ -185,12 +199,18 @@ async function launch(name: string, options: LaunchOptions): Promise<Launch> {
   let app: Started | undefined;
   let browser: Browser | undefined;
   let webviewPids: number[] = [];
+  const launchEvents: string[] = [];
+  const recordLaunchEvent = (message: string) => {
+    if (launchEvents.length < 100) launchEvents.push(`${new Date().toISOString()} ${message.slice(0, 1000)}`);
+  };
+  const pageInventory = () => browser?.contexts().map((context, index) =>
+    `context ${index}: ${JSON.stringify(context.pages().map(page => page.url()))}`).join('\n') ?? '(CDP not connected)';
   const realFiles = realAppFiles();
   const realFilesBefore = mtimes(realFiles);
 
   const startSidecar = async () => {
     if (await isListening(SIDECAR_PORT)) throw new Error(`ポート ${SIDECAR_PORT} が使われています（開発用の sidecar が起動していれば止めてください）。`);
-    sidecar = start(PYTHON, ["-m", "sidecar"], { cwd: REPO, env, log: path.join(logs, "sidecar.log") });
+    sidecar = start(PYTHON, ["-m", "sidecar", "--papeer-e2e-run", run.runDir], { cwd: REPO, env, log: path.join(logs, "sidecar.log") });
     const current = sidecar;
     await waitFor(async () => {
       assertRunning(current, "sidecar");
@@ -209,7 +229,7 @@ async function launch(name: string, options: LaunchOptions): Promise<Launch> {
     sidecar = undefined;
   };
 
-  const close = async () => {
+  const close = async (preserveRoot = false) => {
     // WebView2 and the app before the sidecar, so the app never sees the sidecar go and never exits by
     // itself. WebView2's browser process (and everything under it) is stopped by name: left to end with
     // the app, it lingers for seconds.
@@ -246,7 +266,7 @@ async function launch(name: string, options: LaunchOptions): Promise<Launch> {
     }
     mark("残りのプロセス");
     // Antivirus scanning may hold a file for a while: run.ts deletes the whole run folder again at the end.
-    if (!await removeTree(root)) console.warn(`一時フォルダーをまだ消せません（実行の最後にもう一度消します）: ${root}`);
+    if (!preserveRoot && !await removeTree(root)) console.warn(`一時フォルダーをまだ消せません（実行の最後にもう一度消します）: ${root}`);
     mark("一時フォルダーの削除");
     const changed = realFiles.filter((file, i) => mtimes([file])[0] !== realFilesBefore[i]);
     if (changed.length) {
@@ -258,13 +278,13 @@ async function launch(name: string, options: LaunchOptions): Promise<Launch> {
   try {
     await startSidecar();
     mark("sidecar");
-    const paperIds = await seed(api, run, dirs, options);
+    const paperIds = options.seed === false ? {} : await seed(api, run, dirs, options);
     mark("論文の取り込み");
     await options.beforeApp?.(dirs);
 
     if (!await isListening(VITE_PORT)) throw new Error(`Vite（ポート ${VITE_PORT}）が起動していません。`);
     const cdpPort = await freePort();
-    app = start(APP_EXE, [], {
+    app = start(APP_EXE, ["--papeer-e2e-run", run.runDir], {
       cwd: path.dirname(APP_EXE),
       env: {
         ...env,
@@ -290,14 +310,39 @@ async function launch(name: string, options: LaunchOptions): Promise<Launch> {
       return chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, { timeout: 5_000 });
     }, "WebView2 への CDP 接続", 60_000, 250);
     const connected = browser;
+    const watchedContexts = new Set<BrowserContext>(), watchedPages = new Set<Page>();
+    const observePage = (page: Page) => {
+      if (watchedPages.has(page)) return;
+      watchedPages.add(page);
+      page.on('console', message => { if (message.type() === 'error') recordLaunchEvent(`[console] page=${page.url()} ${message.text()}`); });
+      page.on('pageerror', error => recordLaunchEvent(`[pageerror] page=${page.url()} ${error.message}`));
+      page.on('requestfailed', request => recordLaunchEvent(`[requestfailed] page=${page.url()} ${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}`));
+    };
+    const observeContexts = () => {
+      for (const current of connected.contexts()) {
+        if (!watchedContexts.has(current)) { watchedContexts.add(current); current.on('page', observePage); }
+        current.pages().forEach(observePage);
+      }
+    };
+    observeContexts();
     const context = connected.contexts()[0];
-    const page = await waitFor(() => context.pages().find((p) => p.url().startsWith(`http://localhost:${VITE_PORT}`)),
-      "アプリの画面", 30_000);
+    const page = await waitFor(() => {
+      observeContexts();
+      return context?.pages().find((p) => p.url().startsWith(`http://localhost:${VITE_PORT}`));
+    }, async () => {
+      let probe: string;
+      try {
+        const response = await fetch(`http://localhost:${VITE_PORT}/`, { signal: AbortSignal.timeout(3000), redirect: 'manual' });
+        probe = `status=${response.status} content-type=${response.headers.get('content-type')} location=${response.headers.get('location')}`;
+        await response.body?.cancel();
+      } catch (error) { probe = String(error); }
+      return `アプリの画面\nCDP pages:\n${pageInventory()}\nVite index probe: ${probe}\nEarly events:\n${launchEvents.join('\n') || '(none observed)'}`;
+    }, 30_000);
     page.setDefaultTimeout(20_000);
     const consoleErrors: string[] = [];
     page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text().slice(0, 500)); });
     page.on("pageerror", (e) => consoleErrors.push(`[pageerror] ${e.message.slice(0, 500)}`));
-    await guardExit(page);
+    if (options.guardExit !== false) await guardExit(page);
     const cdp = await context.newCDPSession(page);
     const setViewport = async (width: number, height: number) => {
       await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
@@ -320,6 +365,11 @@ async function launch(name: string, options: LaunchOptions): Promise<Launch> {
       setStubDelay,
       requestWindowClose: () => postWindowClose(appStarted),
       appRunning: () => appStarted.child.exitCode === null,
+      sidecarRunning: () => !!sidecar && sidecar.child.exitCode === null && sidecar.child.signalCode === null,
+      restart: async () => {
+        await close(true);
+        return launch(name, { ...options, seed: false, beforeApp: undefined }, root, tracker);
+      },
       saveFailure: async (error) => {
         fs.mkdirSync(run.resultsDir, { recursive: true });
         const base = path.join(run.resultsDir, slug(name));
@@ -334,6 +384,7 @@ async function launch(name: string, options: LaunchOptions): Promise<Launch> {
       },
       close,
     };
+    tracker.current = launched;
     return launched;
   } catch (error) {
     // Save what there is to look at, then stop everything this launch started.
@@ -341,6 +392,8 @@ async function launch(name: string, options: LaunchOptions): Promise<Launch> {
       fs.mkdirSync(run.resultsDir, { recursive: true });
       fs.writeFileSync(path.join(run.resultsDir, `${slug(name)}-launch-failure.txt`), [
         String(error instanceof Error ? error.stack : error),
+        "", "--- CDP contexts / page URLs ---", pageInventory(),
+        "", "--- Early page events ---", ...launchEvents,
         "", "--- sidecar のログ（末尾） ---", logTail(path.join(logs, "sidecar.log"), 60),
         "", "--- アプリのログ（末尾） ---", logTail(path.join(logs, "app.log"), 30),
       ].join("\n"), "utf8");
@@ -429,7 +482,8 @@ if ($p.MainWindowHandle -eq 0) { throw 'no window' }
  */
 export function scenario(name: string, options: LaunchOptions & { timeout?: number; todo?: string }, body: (app: App, t: TestContext) => Promise<void>): void {
   test(name, { timeout: options.timeout ?? 240_000, todo: options.todo }, async (t) => {
-    const app = await launch(name, options);
+    const tracker: LaunchTracker = {};
+    const app = await launch(name, options, undefined, tracker);
     t.diagnostic(`WebView2 のプロファイル: ${app.webviewProfile}`);
     t.diagnostic(`起動: ${app.timings.join("、")}`);
     let failed = false;
@@ -437,13 +491,14 @@ export function scenario(name: string, options: LaunchOptions & { timeout?: numb
       await body(app, t);
     } catch (error) {
       failed = true;
-      await app.saveFailure(error);
+      await (tracker.current ?? app).saveFailure(error);
       throw error;
     } finally {
       try {
-        const launched = app.timings.length;
-        await app.close();
-        t.diagnostic(app.timings.slice(launched).join("、"));
+        const current = tracker.current ?? app;
+        const launched = current.timings.length;
+        await current.close();
+        t.diagnostic(current.timings.slice(launched).join("、"));
       } catch (error) {
         // Also after a failed scenario: told, since the next one would start beside what is left.
         if (!failed) throw error;

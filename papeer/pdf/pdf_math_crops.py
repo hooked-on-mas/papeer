@@ -9,6 +9,9 @@ import pymupdf as fitz
 from fontTools import t1Lib
 from fontTools.cffLib import CFFFontSet
 from fontTools.pens.boundsPen import BoundsPen
+from fontTools.ttLib import TTFont
+
+from papeer.layout.math_layout import _MATH_FONT
 
 
 @lru_cache(maxsize=32)
@@ -52,6 +55,20 @@ def _cff_outline_bounds(data: bytes):
     return bounds
 
 
+@lru_cache(maxsize=32)
+def _truetype_outline_bounds(data: bytes):
+    with TTFont(BytesIO(data)) as font:
+        glyphs = font.getGlyphSet()
+        # fontTools populates this OpenType table's fields when reading it.
+        scale = 1000 / font['head'].unitsPerEm  # pyright: ignore[reportAttributeAccessIssue]
+        bounds = []
+        for name in font.getGlyphOrder():
+            pen = BoundsPen(glyphs)
+            glyphs[name].draw(pen)
+            bounds.append(tuple(value * scale for value in pen.bounds) if pen.bounds else None)
+        return bounds
+
+
 def _type3_bounds(document, xref):
     """Type 3 glyph programs declare their own ink box with d1.
 
@@ -92,12 +109,15 @@ def _type3_bounds(document, xref):
 def page_glyph_bounds(page):
     fonts = {}
     type3 = {}
+    truetype = set()
     for xref, extension, kind, name, *_ in page.get_fonts():
         if kind == "Type3":
             type3[name] = _type3_bounds(page.parent, xref)
-        if extension in {"pfa", "cff"}:
+        math_truetype = extension == 'ttf' and bool(_MATH_FONT.search(name))
+        if extension in {"pfa", "cff"} or math_truetype:
             try:
-                read_bounds = _outline_bounds if extension == "pfa" else _cff_outline_bounds
+                read_bounds = (_truetype_outline_bounds if math_truetype else
+                               _outline_bounds if extension == "pfa" else _cff_outline_bounds)
                 bounds = read_bounds(page.parent.extract_font(xref)[3])
                 # MuPDF truncates trace font names to 31 characters. Match the
                 # same truncated name; otherwise long STIX operator faces lose
@@ -106,9 +126,24 @@ def page_glyph_bounds(page):
                 fonts[base_name] = bounds
                 fonts[base_name[:31]] = bounds
                 fonts[name[:31].split("+")[-1]] = bounds
+                if math_truetype:
+                    truetype.add(base_name)
+                    truetype.add(base_name[:31])
             except Exception:  # noqa: BLE001
                 # Unsupported font programs retain the original crop bounds.
                 continue
+    # For horizontally stretched TrueType operators, rawdict reports the
+    # geometric-mean size, whereas texttrace reports the horizontal scale.
+    # Derive the vertical scale too: a long fraction bar is still thin.
+    raw_sizes = {}
+    if truetype:
+        for item in page.get_text('rawdict', flags=fitz.TEXTFLAGS_RAWDICT & ~fitz.TEXT_PRESERVE_IMAGES)['blocks']:
+            for line in item.get('lines', []):
+                for span in line['spans']:
+                    if span['font'].split('+')[-1] in truetype:
+                        for char in span['chars']:
+                            x, y = char['origin']
+                            raw_sizes[(span['font'].split('+')[-1], round(x, 2), round(y, 2))] = span['size']
     result = {}
     combining = []
     for span in page.get_texttrace():
@@ -131,9 +166,14 @@ def page_glyph_bounds(page):
                 continue
             x0, y0, x1, y1 = bounds[glyph]
             scale = span["size"] / 1000
+            vertical = scale
+            if span['font'].split('+')[-1] in truetype:
+                size = raw_sizes.get((span['font'].split('+')[-1], round(origin[0], 2), round(origin[1], 2)))
+                if size is not None and span['size'] > 0:
+                    vertical = size * size / span['size'] / 1000
             box = fitz.Rect(
-                origin[0] + x0 * scale, origin[1] - y1 * scale,
-                origin[0] + x1 * scale, origin[1] - y0 * scale)
+                origin[0] + x0 * scale, origin[1] - y1 * vertical,
+                origin[0] + x1 * scale, origin[1] - y0 * vertical)
             key = (round(origin[0], 2), round(origin[1], 2))
             # A negation slash and '=' can have the same trace origin.
             result[key] = result[key] | box if key in result else box

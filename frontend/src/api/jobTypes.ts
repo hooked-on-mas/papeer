@@ -1,5 +1,5 @@
 /**
- * The sidecar's job contract (sidecar/job_types.py): what each kind of job returns, how GET /api/jobs
+ * The sidecar's job contract (sidecar/lifecycle/job_types.py): what each kind of job returns, how GET /api/jobs
  * and /api/jobs/{job_id} tell a job, and the events of /ws/events.
  *
  * The types are the generated ones (schema.d.ts, components["schemas"][<same name>]); only what the
@@ -53,7 +53,7 @@ export type OrganizeProposal = Schemas["OrganizeProposal"];
 /** check: the connection's answer as one line of text. */
 export type CheckResult = string;
 
-/** What a job of each kind returns once it has succeeded (RESULT_TYPES in sidecar/job_types.py). */
+/** What a job of each kind returns once it has succeeded (RESULT_TYPES in sidecar/lifecycle/job_types.py). */
 export type JobResults = {
   "term-replace": TermReplacementResult;
   "term-research": TermResearchResult;

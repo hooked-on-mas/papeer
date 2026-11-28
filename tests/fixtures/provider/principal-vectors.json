@@ -1,0 +1,39 @@
+{
+  "domain": [
+    "papeer.provider.principal.v1",
+    "google-drive",
+    "drive.permissionId"
+  ],
+  "valid": [
+    {
+      "permissionId": "12345678901234567890",
+      "sha256": "22bc1bd242ba7fbb10ec9c71c1f85dba811804a946846ae74a6ef1c65255f4f5"
+    },
+    {
+      "permissionId": "permission-A",
+      "sha256": "7b9773d7f71c777767bddbbb8459133f2408ffa41b3e12c581214397e5deb935"
+    },
+    {
+      "permissionId": "user-42",
+      "sha256": "5cf974182933e7dbd04fc3985e37cae13775a0c4961db241c780f1081743f871"
+    },
+    {
+      "permissionId": "\u00e9",
+      "sha256": "827c6c7a743e150e78da70f896e592dd81b60fa56e7c3aaf8ad1f1f3976d64d8"
+    },
+    {
+      "permissionId": "e\u0301",
+      "sha256": "61f2abd063ca235ac308daa2895679965a296f0ccfc32b46af54b853daa95f34"
+    },
+    {
+      "permissionId": "\u30e6\u30fc\u30b6\u30fc-42",
+      "sha256": "f99da0446dafa5510a3a6d720040714f387ba05d65a3221ebb0bb551ddab12b7"
+    }
+  ],
+  "invalid": [
+    "",
+    "contains space",
+    "line\nbreak",
+    "\ud800"
+  ]
+}

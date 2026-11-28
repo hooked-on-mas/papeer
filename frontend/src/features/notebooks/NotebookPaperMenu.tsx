@@ -3,8 +3,8 @@ import { ClipboardPaste, StickyNote } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import type { PageMenuProps } from "@/features/reader/PdfPane";
-import { openStickyNote } from "@/features/reader/stickyNotesStore";
+import type { PageMenuProps } from "@/features/reader/LegacyPdfPaneConnection";
+import { openStickyNote } from "@/features/reader/sticky/stickyNotesStore";
 import { shortcutLabel } from "@/lib/platform";
 import { NotebookPageMenuItems, useMouseOnlyMenu } from "./NotebookPageMenu";
 

@@ -3,7 +3,7 @@ itself. The in-process parts are in tests/test_cli.py.
 
 `python -m sidecar` runs through the virtual environment's python.exe, a launcher on Windows that starts the
 interpreter as a child: Popen.pid is not the sidecar's pid, the discovery file's is (as in
-tests/test_sidecar_instance.py), and that is the pid cleaned up here.
+tests/lifecycle/test_sidecar_instance.py), and that is the pid cleaned up here.
 """
 from __future__ import annotations
 

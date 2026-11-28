@@ -146,22 +146,19 @@ function parseProcesses(out: string): ProcessInfo[] {
 
 /**
  * Stops what a run may have left when a test process was ended before its cleanup (Ctrl+C): processes
- * started after `since` that are this checkout's debug app, a sidecar or stand-in AI started with this
- * checkout's .venv python (`-m sidecar`, tools\e2e_stub_ai.py), or that name `runDir` (WebView2 with its
- * profile there), and every process these started in turn: the venv's python.exe is a launcher that runs
- * the real interpreter as its child, whose command line no longer names the .venv. Only processes started
- * after the run began: the ports were free then, so none of them is the developer's own.
+ * started after `since` that name `runDir`, and their descendants. Sidecars, the app and the stand-in AI
+ * carry this folder as an argument; WebView2 names its profile there. Matching just this checkout's Python
+ * or app path would also stop sidecars belonging to pytest or a developer who started working meanwhile.
  */
 export function sweepLeftovers(since: Date, runDir: string): number {
   const quote = (text: string) => `'${text.replace(/'/g, "''")}'`;
   const out = powershell(`$since = [datetime]::Parse('${since.toISOString()}').ToLocalTime()
-$app = ${quote(APP_EXE)}; $py = ${quote(PYTHON)}; $dir = ${quote(runDir)}; $stub = ${quote(path.join(REPO, "tools", "e2e_stub_ai.py"))}
+$dir = ${quote(runDir)}
 function Has($text, $part) { $text -and $text.IndexOf($part, [StringComparison]::OrdinalIgnoreCase) -ge 0 }
 $all = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CreationDate -gt $since })
 $found = @{}
 foreach ($p in $all) {
-  if (($p.ExecutablePath -and $p.ExecutablePath -ieq $app) -or (Has $p.CommandLine $dir) -or
-      ((Has $p.CommandLine $py) -and ($p.CommandLine -match '-m sidecar' -or (Has $p.CommandLine $stub)))) { $found[$p.ProcessId] = $p }
+  if (Has $p.CommandLine $dir) { $found[$p.ProcessId] = $p }
 }
 # Their descendants, started after them (so not an unrelated process that took over a parent's old PID).
 do {

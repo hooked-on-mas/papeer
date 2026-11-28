@@ -156,7 +156,7 @@ check-sidecar:
 build-app: check-sidecar
     pnpm tauri build
 
-# Remove build, dist, output and tmp (repository root only)
+# Remove build, dist and tmp (repository root only); preserve output and checkpoints
 # `just clean` は対象と容量の一覧を表示するだけ。`just clean yes` で削除する
 clean confirm="":
     uv run python tools/clean.py {{ if confirm == "yes" { "--yes" } else { "" } }}

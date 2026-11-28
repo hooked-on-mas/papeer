@@ -14,7 +14,7 @@ async function exerciseResize(t: TestContext, delayedRenderer = false) {
     // Model a completed old canvas whose success notification is already queued when resized.
     // The real renderer is covered by the first case; this makes callback reordering deterministic.
     plugins: delayedRenderer ? [{ name: "delayed-pdf-renderer", enforce: "pre", transform(_code, id) {
-      if (!id.replace(/\\/g, "/").endsWith("/features/reader/PdfDocument.tsx")) return;
+      if (!id.replace(/\\/g, "/").endsWith("/features/reader/pdf/PdfDocument.tsx")) return;
       return `import { createElement, useEffect } from "react";
         export function PdfDocument({ children, onLoadSuccess }) {
           useEffect(() => { onLoadSuccess?.({ numPages: 2 }); }, []);

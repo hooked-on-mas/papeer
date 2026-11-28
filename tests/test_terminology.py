@@ -264,7 +264,7 @@ def test_a_domain_does_not_change_what_a_translation_is_cached_by(tmp_path):
 
 
 def test_validate_terms_takes_a_domain_and_repeats_by_domain():
-    from papeer.core.glossary_draft import validate_terms
+    from papeer.core.glossary.glossary_draft import validate_terms
     assert validate_terms([{"source": "cell", "target": "セル", "domain": " 電池 "}, {"source": "Cell", "target": "細胞"},
                            {"source": "cell2", "target": "細胞", "domain": "共通"}]) == [
         {"source": "cell", "target": "セル", "domain": "電池"}, {"source": "Cell", "target": "細胞"},

@@ -492,7 +492,7 @@ def test_history_api(lib, monkeypatch):
     from fastapi.testclient import TestClient
     from sidecar import deps
     from sidecar.app import app
-    from sidecar.jobs import JobManager
+    from sidecar.lifecycle.jobs import JobManager
 
     entry_id = record(lib)
     backups, moved = legacy_setup(lib.root)

@@ -13,9 +13,9 @@ from starlette.websockets import WebSocketDisconnect
 from papeer.core import instance as instance_module
 from sidecar import app as app_module
 from sidecar import deps
-from sidecar import instance as sidecar_instance
+from sidecar.lifecycle import instance as sidecar_instance
 from sidecar.app import app
-from sidecar.jobs import JobManager
+from sidecar.lifecycle.jobs import JobManager
 from sidecar.routes import system
 
 TOKEN = "correct-token"
@@ -23,23 +23,27 @@ TOKEN = "correct-token"
 PUBLIC_PATHS = {"/health", "/html-view/1"}
 
 
-def _flatten(routes):
+def _flatten_with_prefix(routes, prefix=""):
     # FastAPI 0.141 keeps an included router as one wrapper route that points at the original router.
     for route in routes:
         inner = getattr(route, "original_router", None)
         if inner is not None:
-            yield from _flatten(inner.routes)
+            yield from _flatten_with_prefix(inner.routes, prefix + route.include_context.prefix)
         else:
-            yield route
+            yield route, prefix
+
+
+def _flatten(routes):
+    return (route for route, _ in _flatten_with_prefix(routes))
 
 
 def http_routes() -> list[tuple[str, str]]:
     """(method, path) of every HTTP route, path parameters filled with a placeholder."""
     found = []
-    for route in _flatten(app.routes):
+    for route, prefix in _flatten_with_prefix(app.routes):
         if not isinstance(route, APIRoute):
             continue
-        path = re.sub(r"\{[^}]+\}", "1", route.path)
+        path = re.sub(r"\{[^}]+\}", "1", prefix + route.path)
         found += [(method, path) for method in sorted(route.methods) if method != "HEAD"]
     return found
 

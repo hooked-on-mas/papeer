@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
 import process from "node:process";
+import { distributionLicenses } from "./buildLicenses.ts";
 const host = process.env.TAURI_DEV_HOST;
 
 /**
@@ -20,7 +21,8 @@ export const pdfjsLegacy = [
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), distributionLicenses()],
+  build: { license: { fileName: "licenses.md" } },
   resolve: {
     alias: [
       ...pdfjsLegacy,

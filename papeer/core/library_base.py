@@ -20,6 +20,10 @@ class LibraryBase:
 
     root: Path
 
+    def delete_paper(self, paper_id: str, keep_notebooks: bool = False) -> None:
+        """Implemented by PaperRecords; item relations uses the same removal transaction."""
+        raise NotImplementedError
+
     @contextmanager
     def connection(self):
         db = sqlite3.connect(self.root / "library.sqlite3", timeout=30)

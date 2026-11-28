@@ -42,5 +42,13 @@ test("Delete and Undo during a shape drag stay applied after pointer release", {
     await page.keyboard.press("Control+z");
     await page.waitForFunction(() => JSON.parse(document.querySelector("output")!.textContent!).length === 0);
   }
+  await page.locator('svg').evaluate(svg => svg.addEventListener('pointerdown', event => {
+    (svg as SVGElement).dataset.activePointer = String((event as PointerEvent).pointerId);
+  }));
+  await at(.2, .3); await page.mouse.down(); await at(.7, .5);
+  const pointerId = Number(await page.locator('svg').getAttribute('data-active-pointer'));
+  await page.locator('svg').dispatchEvent('pointercancel', { pointerId, pointerType: 'mouse' });
+  await page.mouse.up();
+  assert.deepEqual(await ink(), [], 'a cancelled shape must not create an edit or an Undo entry');
   assert.deepEqual(errors, []);
 });

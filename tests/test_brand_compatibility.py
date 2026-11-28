@@ -4,7 +4,7 @@ import sys
 import zipfile
 
 from papeer.core.paths import app_env, data_directory
-from papeer.core.glossary_io import import_glossary
+from papeer.core.glossary.glossary_io import import_glossary
 from papeer.core.reading_tools import create_backup, restore_backup
 from papeer.core.storage import Library
 

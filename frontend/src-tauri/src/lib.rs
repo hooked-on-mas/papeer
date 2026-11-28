@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use tauri::ipc::CapabilityBuilder;
+use tauri::ipc::{CapabilityBuilder, InvokeBody, Request};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::utils::config::{Csp, CspDirectiveSources};
 use tauri::Emitter;
 use tauri::Manager;
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 #[cfg(any(test, not(debug_assertions)))]
@@ -55,8 +56,139 @@ fn get_backend_config(state: tauri::State<BackendConfig>) -> (u16, String) {
     (state.port, state.token.clone())
 }
 
+const MAX_OUTPUT_BYTES: usize = 512 * 1024 * 1024;
+
+fn output_name(encoded: &str, format: &str) -> Result<String, &'static str> {
+    if encoded.len() > 2048 || !matches!(format, "pdf" | "png") {
+        return Err("output-invalid-request");
+    }
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return Err("output-invalid-name");
+            }
+            let hex = |b: u8| (b as char).to_digit(16).map(|n| n as u8);
+            decoded.push(
+                hex(bytes[i + 1])
+                    .zip(hex(bytes[i + 2]))
+                    .map(|(a, b)| a * 16 + b)
+                    .ok_or("output-invalid-name")?,
+            );
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    let name = String::from_utf8(decoded).map_err(|_| "output-invalid-name")?;
+    if name.is_empty()
+        || name.len() > 240
+        || name == "."
+        || name == ".."
+        || name
+            .chars()
+            .any(|c| c.is_control() || "/\\:*?\"<>|".contains(c))
+    {
+        return Err("output-invalid-name");
+    }
+    let suffix = format!(".{format}");
+    Ok(if name.to_ascii_lowercase().ends_with(&suffix) {
+        name
+    } else {
+        format!("{name}{suffix}")
+    })
+}
+
+fn validate_output(bytes: &[u8], format: &str) -> Result<(), &'static str> {
+    if bytes.is_empty() || bytes.len() > MAX_OUTPUT_BYTES {
+        return Err("output-invalid-size");
+    }
+    match format {
+        "pdf" if bytes.starts_with(b"%PDF-") => Ok(()),
+        "png" if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => Ok(()),
+        _ => Err("output-invalid-format"),
+    }
+}
+
+/// Write to a unique sibling and rename only after all bytes have reached the OS.
+fn write_output(path: &std::path::Path, bytes: &[u8]) -> Result<(), &'static str> {
+    use std::io::Write;
+    let parent = path.parent().ok_or("output-write-failed")?;
+    let mut random = [0u8; 16];
+    getrandom::fill(&mut random).map_err(|_| "output-write-failed")?;
+    let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    let temporary = parent.join(format!(".papeer-output-{suffix}.tmp"));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|_| "output-write-failed")?;
+    let result = file.write_all(bytes).and_then(|_| file.sync_all());
+    drop(file);
+    if result.is_err() || std::fs::rename(&temporary, path).is_err() {
+        let _ = std::fs::remove_file(&temporary);
+        return Err("output-write-failed");
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct OutputResult {
+    status: &'static str,
+}
+
+#[tauri::command]
+async fn save_output_file(
+    app: tauri::AppHandle,
+    request: Request<'_>,
+) -> Result<OutputResult, &'static str> {
+    let format = request
+        .headers()
+        .get("X-Papeer-Output-Format")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("output-invalid-request")?
+        .to_owned();
+    let encoded = request
+        .headers()
+        .get("X-Papeer-Output-Name")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("output-invalid-request")?;
+    let name = output_name(encoded, &format)?;
+    let bytes = match request.body() {
+        InvokeBody::Raw(bytes) => bytes,
+        _ => return Err("output-invalid-request"),
+    };
+    validate_output(bytes, &format)?;
+    let bytes = bytes.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let window = app
+            .get_webview_window("main")
+            .ok_or("output-window-unavailable")?;
+        let selected = app
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_file_name(name)
+            .add_filter(format.to_uppercase(), &[&format])
+            .blocking_save_file();
+        let Some(selected) = selected else {
+            return Ok(OutputResult {
+                status: "cancelled",
+            });
+        };
+        let path = selected.into_path().map_err(|_| "output-write-failed")?;
+        write_output(&path, &bytes)?;
+        Ok(OutputResult { status: "saved" })
+    })
+    .await
+    .map_err(|_| "output-write-failed")?
+}
+
 /// The folders the sidecar's library may be in, by the rules of `papeer.core.paths.data_directory`:
-/// PAPEER_DATA_DIR when set, else the platform's place (Windows `%LOCALAPPDATA%\Papeer`, macOS
+/// PAPEER_DATA_DIR when set, else storage-location.json, else the platform's place (Windows `%LOCALAPPDATA%\Papeer`, macOS
 /// `~/Library/Application Support/Papeer`, Linux `$XDG_DATA_HOME/papeer`). The old `%LOCALAPPDATA%\PaperDesk`
 /// is no longer read.
 /// `os` is `std::env::consts::OS`; `var` reads the environment; `home` is the home folder.
@@ -76,6 +208,30 @@ fn library_directories(
             Err(_) => dir,
         };
         return std::path::absolute(dir).ok().into_iter().collect();
+    }
+    let device = match os {
+        "windows" => set("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .or_else(|| home.as_ref().map(|home| home.join("AppData").join("Local")))
+            .map(|base| base.join("PapeerSync")),
+        "macos" => home.as_ref().map(|home| {
+            home.join("Library")
+                .join("Application Support")
+                .join("PapeerSync")
+        }),
+        _ => set("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .or_else(|| home.as_ref().map(|home| home.join(".local").join("state")))
+            .map(|base| base.join("papeer")),
+    };
+    if let Some(settings) =
+        device.and_then(|dir| std::fs::read_to_string(dir.join("storage-location.json")).ok())
+    {
+        let selected = storage_directories(&settings);
+        if !selected.is_empty() {
+            return selected;
+        }
     }
     match os {
         "windows" => {
@@ -103,6 +259,28 @@ fn library_directories(
             .into_iter()
             .collect(),
     }
+}
+
+/// Include the pending location: the sidecar may finish the copy during this launch.
+fn storage_directories(settings: &str) -> Vec<PathBuf> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(settings) else {
+        return vec![];
+    };
+    let mut directories = Vec::new();
+    for path in [
+        value.get("path"),
+        value.get("pending").and_then(|v| v.get("destination")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|v| v.as_str())
+    .map(PathBuf::from)
+    {
+        if path.is_absolute() && !directories.contains(&path) {
+            directories.push(path);
+        }
+    }
+    directories
 }
 
 /// Whether a tray icon can be made. Linux: whether one of the libraries it uses loads (tray-icon loads
@@ -334,7 +512,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![get_backend_config])
+        .invoke_handler(tauri::generate_handler![
+            get_backend_config,
+            save_output_file
+        ])
         .setup(move |app| {
             #[cfg(debug_assertions)]
             if let Some(dir) = &e2e_dir {
@@ -599,6 +780,23 @@ mod tests {
     }
 
     #[test]
+    fn storage_scopes_include_current_and_pending_locations() {
+        let current = root("current-library");
+        let pending = root("pending-library");
+        let settings = serde_json::json!({"path": current, "pending": {"destination": pending}});
+        assert_eq!(
+            storage_directories(&settings.to_string()),
+            vec![current.clone(), pending]
+        );
+        assert_eq!(
+            storage_directories(&serde_json::json!({"path": current}).to_string()),
+            vec![current]
+        );
+        assert!(storage_directories("invalid json").is_empty());
+        assert!(storage_directories(r#"{"path":"relative"}"#).is_empty());
+    }
+
+    #[test]
     fn papeer_data_dir_names_the_only_library_directory() {
         let home = root("home");
         let data = root("elsewhere");
@@ -650,8 +848,46 @@ mod tests {
         assert!(directives["connect-src"].contains("http://127.0.0.1:51234"));
         assert!(directives["connect-src"].contains("ws://127.0.0.1:51234"));
         assert!(directives["connect-src"].contains("ipc:"));
+        assert!(directives["connect-src"]
+            .split_whitespace()
+            .any(|source| source == "blob:"));
         assert!(directives["img-src"].contains("http://127.0.0.1:51234"));
         assert_eq!(directives["frame-src"], "http://127.0.0.1:51234");
         assert_eq!(directives["script-src"], "'self'");
+    }
+}
+#[cfg(test)]
+mod output_file_tests {
+    use super::*;
+    #[test]
+    fn filename_and_body_are_validated() {
+        assert_eq!(
+            output_name("%E6%97%A5%E6%9C%AC", "pdf"),
+            Ok("日本.pdf".into())
+        );
+        assert_eq!(output_name("a.PNG", "png"), Ok("a.PNG".into()));
+        assert!(output_name("..%2Fsecret", "pdf").is_err());
+        assert!(output_name("%FF", "pdf").is_err());
+        assert!(output_name("a", "exe").is_err());
+        assert!(validate_output(b"%PDF-1.7", "pdf").is_ok());
+        assert!(validate_output(b"\x89PNG\r\n\x1a\nrest", "png").is_ok());
+        assert!(validate_output(b"bad", "pdf").is_err());
+    }
+    #[test]
+    fn replacement_preserves_old_file_when_rename_fails() {
+        let dir = std::env::temp_dir().join(format!("papeer-output-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("test.pdf");
+        std::fs::write(&file, b"old").unwrap();
+        write_output(&file, b"new").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        let target_dir = dir.join("directory");
+        std::fs::create_dir(&target_dir).unwrap();
+        assert!(write_output(&target_dir, b"new").is_err());
+        assert!(target_dir.is_dir());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+        std::fs::remove_file(file).unwrap();
+        std::fs::remove_dir(target_dir).unwrap();
+        std::fs::remove_dir(dir).unwrap();
     }
 }

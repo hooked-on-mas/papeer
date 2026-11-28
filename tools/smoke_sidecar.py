@@ -440,7 +440,7 @@ class Smoke:
             time.sleep(0.25)
 
     def wait_for_job(self, job_id: str) -> dict[str, Any]:
-        # The sidecar keeps the last finished jobs (FINISHED_JOBS_KEPT in sidecar/jobs.py).
+        # The sidecar keeps the last finished jobs (FINISHED_JOBS_KEPT in sidecar/lifecycle/jobs.py).
         deadline = time.monotonic() + JOB_TIMEOUT
         while True:
             self.alive()

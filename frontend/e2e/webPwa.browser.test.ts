@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { chromium } from "playwright-core";
+import { waitForSnapshot } from './support/waitForSnapshot.ts';
 
 test("PWA installs at /papeer/, boots offline, excludes private data, and applies updates safely", { timeout: 120_000 }, async t => {
   const dist = path.resolve(import.meta.dirname, "../web-dist");
@@ -31,10 +32,11 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
     response.end(body);
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => {
+  t.after(() => new Promise<void>((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve());
+    // A failed assertion must not leave a worker's in-flight request holding teardown open.
     server.closeAllConnections();
-    return new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-  });
+  }));
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   const base = `http://127.0.0.1:${address.port}/papeer/`;
@@ -131,7 +133,9 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
   await updatedWorker.evaluate(() => new Promise<void>(resolve => {
     const registration = (globalThis as unknown as { registration: ServiceWorkerRegistration }).registration;
     const check = () => {
-      if (registration.active?.state === "activated") resolve();
+      // The previous worker is already activated while the new one is waiting.
+      // Reopening a client then can keep that previous controller alive again.
+      if (registration.active?.state === "activated" && !registration.waiting && !registration.installing) resolve();
       else setTimeout(check, 25);
     };
     check();
@@ -140,12 +144,15 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
   // Finish the initial navigation/update check before advancing the fixture's
   // server version. An in-flight check for version 1 must not race version 2.
   await reopened.evaluate(async () => { await (await navigator.serviceWorker.getRegistration())!.update(); });
-  await reopened.waitForFunction(async () => {
+  const readWorkerSnapshot = () => reopened.evaluate(async () => {
     const registration = await navigator.serviceWorker.getRegistration();
     const keys = (await caches.keys()).filter(key => key.startsWith("papeer-shell:"));
-    return registration?.active?.state === "activated" && !registration.installing && !registration.waiting
-      && keys.length === 1 && keys[0].endsWith("-test-update-1");
+    return { active: registration?.active?.state ?? null, installing: !!registration?.installing, waiting: !!registration?.waiting, keys };
   });
+  const firstUpdate = await waitForSnapshot(readWorkerSnapshot, value => value.active === 'activated' && !value.installing && !value.waiting
+    && value.keys.length === 1 && value.keys[0].endsWith('-test-update-1'));
+  assert.equal(firstUpdate.active, 'activated'); assert.equal(firstUpdate.installing, false); assert.equal(firstUpdate.waiting, false);
+  assert.equal(firstUpdate.keys.length, 1); assert.match(firstUpdate.keys[0], /-test-update-1$/);
   assert.equal(await reopened.evaluate(() => localStorage.getItem("papeer-ink:fixture-draft")), "unsent-draft-fixture");
   nextVersion = 2;
   const pendingWorkerPromise = context.waitForEvent("serviceworker");
@@ -155,18 +162,6 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
   await applyUpdate.waitFor();
   const otherReader = await context.newPage(); await otherReader.goto(base, { waitUntil: "domcontentloaded" });
   await otherReader.getByRole("heading", { name: "論文を選んで、読み始めよう" }).waitFor();
-  // Navigation can finish before the second window appears in the worker's client list.
-  // Exercise the multi-reader guard only after both clients are registered.
-  await pendingWorker.evaluate(`new Promise((resolve, reject) => {
-    const deadline = Date.now() + 5000;
-    const check = async () => {
-      const windows = (await self.clients.matchAll({type:'window',includeUncontrolled:true}))
-        .filter(client => new URL(client.url).pathname.startsWith(new URL('./',self.location.href).pathname));
-      if (windows.length === 2) resolve();
-      else if (Date.now() > deadline) reject(new Error('Second reader not registered: '+JSON.stringify(windows.map(client=>client.url))));
-      else setTimeout(check,25);
-    }; check();
-  })`);
   await applyUpdate.click();
   await reopened.getByRole("alert").filter({ hasText: "ほかのPapeer" }).waitFor();
   assert.equal(await reopened.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting), true,
@@ -185,10 +180,10 @@ test("PWA installs at /papeer/, boots offline, excludes private data, and applie
     }; check();
   })`);
   await Promise.all([reopened.waitForEvent("load"), applyUpdate.click()]);
-  await reopened.waitForFunction(async () => {
-    const keys = (await caches.keys()).filter(key => key.startsWith("papeer-shell:"));
-    return keys.length === 1 && keys[0].endsWith("-test-update-2");
-  });
+  const secondUpdate = await waitForSnapshot(readWorkerSnapshot, value => value.active === 'activated' && !value.installing && !value.waiting
+    && value.keys.length === 1 && value.keys[0].endsWith('-test-update-2'));
+  assert.equal(secondUpdate.active, 'activated'); assert.equal(secondUpdate.installing, false); assert.equal(secondUpdate.waiting, false);
+  assert.equal(secondUpdate.keys.length, 1); assert.match(secondUpdate.keys[0], /-test-update-2$/);
   assert.equal(await reopened.evaluate(() => localStorage.getItem("papeer-ink:fixture-draft")), "unsent-draft-fixture",
     "applying an update preserves the durable annotation queue");
   await reopened.getByRole("button", { name: "更新を適用", exact: true }).waitFor({ state: "hidden" }).catch(async error => {

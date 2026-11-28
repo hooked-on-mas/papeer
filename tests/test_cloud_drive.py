@@ -92,8 +92,8 @@ def test_all_library_data_and_visible_ink_are_uploaded(library, tmp_path):
     result = publish(lib)
     manifest = remote.manifest()
     assert result["files"] == len(manifest["files"])
-    assert {item["id"] for item in manifest["items"]} == {identity, book_id}
-    assert manifest["attachments"]
+    assert {item["id"] for item in manifest["items"]} == {identity, book_id, *[n["id"] for n in lib.attachments(identity) if n["format"] == "md"]}
+    assert "web-notes.json" in manifest["files"]
     for name in (f"papers/{identity}/original.pdf", f"papers/{identity}/translated.pdf",
                  f"papers/{book_id}/notebook.json", f"web/{book_id}/original-annotated.pdf", "library.sqlite3"):
         assert name in manifest["files"]
@@ -269,7 +269,22 @@ def test_resumable_upload_accepts_308_and_sends_all_bytes(tmp_path, monkeypatch,
     class Response(io.BytesIO):
         headers = {"Location": "https://www.googleapis.com/upload/drive/v3/files?upload_id=test"}
     monkeypatch.setattr(drive, "request", lambda *_a, **_kw: Response())
-    monkeypatch.setattr(auth, "access_token", lambda: "test")
+    def capture(expected):
+        assert expected == drive.generation
+        from papeer.core import device_authority
+        with pytest.raises(device_authority.DeviceWriterUnavailable):
+            device_authority.assert_writer()
+        # The capture seam must run before the credential guard too: a second
+        # thread can take the actual same-generation guard while capture runs.
+        entered = threading.Event()
+        def check_guard():
+            with auth.transfer_guard(expected):
+                entered.set()
+        worker = threading.Thread(target=check_guard)
+        worker.start(); worker.join(2)
+        assert not worker.is_alive() and entered.is_set()
+        return 'test'
+    monkeypatch.setattr(auth, 'capture_provider_access_token', capture)
     chunks = []
     def upload(request, timeout):
         chunks.append(request.data)
@@ -284,7 +299,7 @@ def test_resumable_upload_accepts_308_and_sends_all_bytes(tmp_path, monkeypatch,
 def test_api_requires_auth_and_upload_is_exclusive(monkeypatch, library):
     from sidecar import deps
     from sidecar.app import app, allowed_during_snapshot
-    from sidecar.job_types import JobKind, SNAPSHOT_KINDS
+    from sidecar.lifecycle.job_types import JobKind, SNAPSHOT_KINDS
     lib, *_ = library
     monkeypatch.setenv("PAPEER_DATA_DIR", str(lib.root))
     monkeypatch.delenv("PAPEER_DEV_NO_AUTH", raising=False)

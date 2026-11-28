@@ -8,12 +8,12 @@ import { api, unwrap } from "@/api/client";
 import { showError } from "@/components/errorDialog";
 import { citationLink } from "@/lib/markdownUrl";
 import { cleanPdfSelection, quoteForNote, restoreFormulas } from "@/lib/pdfSelection";
-import { useStore, type PassageAttachment } from "@/store";
+import { useStore, type PassageAttachment } from "@/store/index";
 import { QK } from "@/lib/queryKeys";
 import { highlightColor, highlightRects, sameHighlightRects, type Box, type HighlightColor, type PageRect } from "./highlights";
-import { isHighlight, type StickyNote } from "./stickyNotes";
-import { addHighlight, deleteStickyNote, openStickyNote, recolorHighlight } from "./stickyNotesStore";
-import { textLayerOffsets } from "./textLayerRange";
+import { isHighlight, type StickyNote } from "./sticky/stickyNotes";
+import { addHighlight, deleteStickyNote, openStickyNote, recolorHighlight } from "./sticky/stickyNotesStore";
+import { textLayerOffsets } from "./pdf/textLayerRange";
 
 export interface Passage {
   paperId: string;

@@ -28,7 +28,7 @@ test("an already waiting PWA update tracks activation and replacement", { timeou
   await server.listen(); t.after(() => server.close());
   const browser = await chromium.launch({ channel: "msedge", headless: true }); t.after(() => browser.close());
   const page = await browser.newPage(); page.setDefaultTimeout(5000);
-  await page.goto(server.resolvedUrls!.local[0]);
+  await page.goto(server.resolvedUrls!.local[0], { waitUntil: 'domcontentloaded', timeout: 15_000 });
   const apply = page.getByRole("button", { name: "更新を適用", exact: true }); await apply.waitFor();
   await page.evaluate(() => (window as unknown as { activateWaiting(): void }).activateWaiting());
   await apply.waitFor({ state: "hidden" });

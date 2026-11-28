@@ -11,10 +11,10 @@ from papeer.core.collection_paths import normalize_collection_name
 from papeer.core.paths import PaperFiles
 from papeer.core.reference_pdf import download_pdf, validate_pdf, validate_reference_identity
 from papeer.core.service import PaperService
-from papeer.core.summary_scope import SUMMARY_SELECTION_THRESHOLD
-from papeer.providers import Cancelled, check_cancel, spec_for
+from papeer.core.summary.scope import SUMMARY_SELECTION_THRESHOLD
+from papeer.providers import Cancelled, check_cancel, specs
 from sidecar import deps
-from sidecar.job_types import JobKind, JobStarted
+from sidecar.lifecycle.job_types import JobKind, JobStarted
 from sidecar.routes.ocr import ocr_turn
 from sidecar.routes.papers import import_turns
 from sidecar.schemas.research import ResearchRecord, ResearchRequest, ResearchImportRequest
@@ -25,11 +25,14 @@ router = APIRouter(dependencies=[Depends(deps.verify_token)])
 @router.get("/api/research-capabilities")
 def capabilities() -> dict[str, bool]:
     settings = deps.get_settings()
-    return {"web_search": spec_for(settings.provider).web_search,
+    connections = {spec.id: spec for spec in specs()}
+    primary = connections.get(settings.provider)
+    metadata = connections.get(settings.for_paper_metadata().provider)
+    return {"web_search": bool(primary and primary.web_search),
             "paper_discovery_enabled": settings.paper_discovery_enabled,
-            "reference_research_enabled": settings.paper_metadata_ai_enabled,
+            "reference_research_enabled": settings.paper_metadata_ai_enabled and metadata is not None,
             "reference_lookup": True,
-            "reference_web_search": spec_for(settings.for_paper_metadata().provider).web_search}
+            "reference_web_search": bool(metadata and metadata.web_search)}
 
 
 @router.get("/api/papers/{paper_id}/reference-research", response_model=list[ResearchRecord])

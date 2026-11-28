@@ -46,8 +46,17 @@ def test_plain_semver_within_msi_limits_is_accepted():
 def repo(tmp_path):
     for relative in [spot.path for spot in SPOTS] + [CHANGELOG]:
         (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / relative, tmp_path / relative)
+        # The repository keeps LF (.gitattributes `eol=lf`); a working tree where an editor left CRLF in a manifest
+        # must not change what the LF cases below check, so the copies are LF. The CRLF cases convert them back.
+        data = (ROOT / relative).read_bytes()
+        (tmp_path / relative).write_bytes(data.replace(b"\r\n", b"\n"))
     return tmp_path
+
+
+def _to_crlf(repo, paths) -> None:
+    for relative in paths:
+        path = repo / relative
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
 
 
 def changed_lines(before: str, after: str) -> list[tuple[str, str]]:
@@ -78,6 +87,30 @@ def test_bump_rewrites_only_the_project_version(repo):
     assert f"[{target}]: https://github.com/fukao-m/paperdesk/releases/tag/v{target}" in log
     notes = release_notes(log, target)
     assert notes == expected_notes and "[Unreleased]" not in notes and "## [" not in notes
+
+
+@pytest.mark.parametrize("crlf", [["pyproject.toml"], [spot.path for spot in SPOTS]],
+                         ids=["only-pyproject", "every-manifest"])
+def test_bump_keeps_the_line_endings_of_a_manifest_saved_with_crlf(repo, crlf):
+    current = papeer.__version__
+    major, minor, _ = parse_version(current)
+    target = f"{major}.{minor + 1}.0"
+    _to_crlf(repo, crlf)
+    before = {spot.path: (repo / spot.path).read_bytes().decode("utf-8") for spot in SPOTS}
+    assert set(read_versions(repo).values()) == {current}
+    assert check(repo, out=io.StringIO())
+
+    bump(target, root=repo, today=date(2026, 10, 1), out=io.StringIO())
+
+    assert set(read_versions(repo).values()) == {target}
+    for spot in SPOTS:
+        after = (repo / spot.path).read_bytes().decode("utf-8")
+        # Exactly the lines that were CRLF are still CRLF (a bare LF is still LF), and one line changed.
+        assert after.count("\r\n") == before[spot.path].count("\r\n"), spot.path
+        assert after.count("\n") == before[spot.path].count("\n"), spot.path
+        [(old, new)] = changed_lines(before[spot.path].replace("\r\n", "\n"), after.replace("\r\n", "\n"))
+        assert old.replace(current, target) == new, spot.path
+        assert ("\r\n" in after) == (spot.path in crlf), spot.path
 
 
 def test_bump_refuses_a_lower_or_the_same_version_and_writes_nothing(repo):
@@ -146,8 +179,10 @@ def test_release_workflow_builds_on_version_tags():
     yaml = pytest.importorskip("yaml")
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     # PyYAML reads the bare key `on` as True.
-    # By hand: the installers of a branch as the run's artifacts, without a release.
-    assert workflow[True] == {"push": {"tags": ["v*"]}, "workflow_dispatch": None}
+    # Every default run verifies only. Public installer artifacts require an explicit request on a tag.
+    assert workflow[True]["push"] == {"tags": ["v*"]}
+    publish = workflow[True]["workflow_dispatch"]["inputs"]["publish_installers"]
+    assert publish["type"] == "boolean" and publish["default"] is False
     assert workflow["permissions"] == {"contents": "read"}
     build, release = workflow["jobs"]["build"], workflow["jobs"]["release"]
     assert build["runs-on"] == "${{ matrix.os }}" and build["permissions"] == {"contents": "read"}
@@ -159,7 +194,8 @@ def test_release_workflow_builds_on_version_tags():
     # Only the job that creates the release may write, it runs on a tag only, and it runs no project code or
     # setup action.
     assert release["needs"] == "build" and release["permissions"] == {"contents": "write"}
-    assert release["if"] == "startsWith(github.ref, 'refs/tags/v')"
+    assert release["if"] == ("github.event_name == 'workflow_dispatch' && inputs.publish_installers "
+                             "&& startsWith(github.ref, 'refs/tags/v')")
     assert [step["uses"].split("@")[0] for step in release["steps"] if "uses" in step] == ["actions/download-artifact"]
     # The Mac app's ad-hoc signatures and the .deb are checked before they are collected.
     scripts = {step.get("name"): step.get("run", "") for step in build["steps"]}
@@ -175,6 +211,46 @@ def test_release_workflow_builds_on_version_tags():
     build_scripts = "\n".join(step.get("run", "") for step in build["steps"])
     assert "tools/bump_version.py --check" in build_scripts and "just build" in build_scripts
     assert "gh release" in "\n".join(step.get("run", "") for step in release["steps"])
+
+
+def test_installer_distribution_is_opt_in_and_existing_releases_are_never_replaced():
+    yaml = pytest.importorskip("yaml")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    build = jobs["build"]
+    assert set(build["needs"]) == {"distribution", "audit"}
+    for step in build["steps"]:
+        if step.get("uses", "").startswith("actions/upload-artifact@") or step.get("name") == "Collect installers":
+            assert step["if"] == "github.event_name == 'workflow_dispatch' && inputs.publish_installers"
+    preflight = jobs["distribution"]["steps"][0]
+    assert preflight["if"] == "github.event_name == 'workflow_dispatch' && inputs.publish_installers"
+    assert '"$GITHUB_REF" != refs/tags/v*' in preflight["run"]
+    # Fail closed when the API is unavailable; a successful list is required before treating a tag as absent.
+    for script in (preflight["run"], jobs["release"]["steps"][-1]["run"]):
+        assert "set -euo pipefail" in script
+        assert "gh api --paginate" in script
+        assert 'grep -Fxq -- "$TAG"' in script
+        assert "--clobber" not in script and "gh release upload" not in script
+    names = [step.get("name", "") for step in build["steps"]]
+    checks = names.index("Verify bundled notices and generate this platform's inventory")
+    assert checks < names.index("Collect installers")
+    commands = build["steps"][checks]["run"]
+    assert "distribution_notices.py --check dist/sidecar" in commands
+    assert "distribution_notices.py --check frontend/src-tauri/sidecar" in commands
+    assert "tools/license_inventory.py" in commands
+    assert "tools/check_release_inventory.py --output release" in commands
+    assert names.index("Verify notices inside Windows installers") < names.index("Collect installers")
+    scripts = {step.get("name"): step.get("run", "") for step in build["steps"]}
+    assert "hdiutil attach" in scripts["Check the ad-hoc signatures"]
+    assert "distribution_notices.py --check" in scripts["Check the ad-hoc signatures"]
+    assert "dpkg-deb --extract" in scripts["Check the .deb"]
+    assert "distribution_notices.py --check" in scripts["Check the .deb"]
+    assert 'git archive --format=tar.gz' in scripts["Collect installers"]
+    assert '-source.tar.gz" HEAD' in scripts["Collect installers"]
+    attach = jobs["release"]["steps"][-1]["run"]
+    assert 'sources=(release/*-source.tar.gz)' in attach
+    assert '"${#sources[@]}" -ne 1' in attach
+    assert '"${sources[@]}" --draft --verify-tag' in attach
 
 
 def test_health_reports_the_release_and_the_code_version_separately(monkeypatch, tmp_path):

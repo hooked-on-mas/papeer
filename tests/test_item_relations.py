@@ -115,11 +115,11 @@ def test_the_list_rows_carry_kind_and_what_each_item_holds(lib, tmp_path):
     assert "translated_count" not in rows[standalone] and "translation_required_count" not in rows[standalone]
     assert "translated_count" in rows[paper]
     # What is counted is what is there.
-    assert len(lib.attachments(paper)) == 2 and lib.owned_notebooks(paper) == [held]
+    assert len(lib.attachments(paper)) == 2 and held in lib.owned_notebooks(paper) and len(lib.owned_notebooks(paper)) == 2
     assert lib.linked_ids(paper) == [standalone] and lib.linked_ids(standalone) == [paper]
     # The held notebook is opened through its owner, but its own ID still answers and is kept when listing.
     library_rows(lib)
-    assert lib.all_ids() == {paper, standalone, held}
+    assert lib.all_ids() == {paper, standalone, held, *[n["id"] for owner in (paper, standalone) for n in lib.attachments(owner) if n["format"] == "md"]}
 
 
 # --- Holding and linking ---
@@ -131,7 +131,7 @@ def test_attachments_are_files_of_their_owner_in_the_order_added(lib):
     assert (first["title"], first["source"], first["position"], second["position"]) == ("読書 メモ", "imported", 0, 1)
     assert [item["id"] for item in lib.attachments(paper)] == [first["id"], second["id"]]
     files = PaperFiles(lib.folder(paper))
-    assert files.attachment(first["id"], "md").read_text("utf-8") == "# 読書"
+    assert (lib.folder(first["id"]) / "note.md").read_text("utf-8") == "# 読書"
     assert lib.attachment_text(second["id"]) == "<p>図</p>"
     lib.remove_attachment(first["id"])
     assert not files.attachment(first["id"], "md").exists()
@@ -262,8 +262,8 @@ def test_backup_validation_asks_each_kind_for_its_own_files(lib, tmp_path):
         validate_library(lib.root)
     shutil.copyfile(SAMPLE_PDF, PaperFiles(lib.folder(notebook)).original_pdf)
 
-    PaperFiles(lib.folder(paper)).attachment(memo["id"], "md").unlink()
-    with pytest.raises(ValueError, match="メモ・資料"):
+    (lib.folder(memo["id"]) / "note.md").unlink()
+    with pytest.raises(ValueError, match="Markdown"):
         validate_library(lib.root)
 
 
@@ -401,7 +401,7 @@ def test_deleting_an_item_waits_for_jobs_on_what_it_holds(client):
 
 
 def test_idle_covers_several_papers_at_once():
-    from sidecar.jobs import ConcurrencyConflict, JobManager
+    from sidecar.lifecycle.jobs import ConcurrencyConflict, JobManager
 
     manager = JobManager()
     started, release = threading.Event(), threading.Event()

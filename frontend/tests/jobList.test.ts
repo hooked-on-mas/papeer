@@ -15,7 +15,7 @@ test("job kinds are named in Japanese, unknown ones as 処理", () => {
 test("a failure is titled with the paper when there is one", () => {
   assert.equal(failureTitle("translate", "Smith (2020) Paper"), "『Smith (2020) Paper』の翻訳を完了できませんでした");
   assert.equal(failureTitle("drive-sync"), "同期を完了できませんでした");
-  assert.equal(failureTitle("article", null), "解説の作成を完了できませんでした");
+  assert.equal(failureTitle("article", null), "サマリーの作成を完了できませんでした");
   assert.equal(backgroundFailureTitle("translate", "Paper"), "『Paper』の翻訳を完了できませんでした");
   assert.equal(backgroundFailureTitle("translate", null), "別の論文の翻訳を完了できませんでした");
 });

@@ -15,9 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from papeer.core import prompts, scholarly_lookup
 from papeer.core.errors import Invalid
 from papeer.providers import ProviderBackend, spec_for, specs
+from papeer.providers.registry import RETIRED_PROVIDER_IDS
 from sidecar import deps
 from sidecar.errors import log
-from sidecar.job_types import JobKind, JobStarted
+from sidecar.lifecycle.job_types import JobKind, JobStarted
 from sidecar.schemas.settings import (
     ProviderActionRequest,
     ProviderOption,
@@ -43,9 +44,14 @@ def update_settings(body: SettingsModel) -> dict[str, str]:
     """Apply the fields the client sent; anything omitted keeps its saved value."""
     current, unknown = deps.get_settings_with_unknown_keys()
     settings = current.updated(body.model_dump(exclude={"api_key", "semantic_scholar_api_key"}, exclude_unset=True))
-    spec_for(settings.provider)
-    if settings.paper_metadata_provider:
-        spec_for(settings.paper_metadata_provider)
+    for field in ("provider", "paper_metadata_provider"):
+        provider, previous = getattr(settings, field), getattr(current, field)
+        if field == "paper_metadata_provider" and not provider:
+            continue
+        # Retain a saved retired connection while users edit other settings or migrate one
+        # connection at a time. New selections and every execution path still reject it.
+        if not (provider == previous and provider in RETIRED_PROVIDER_IDS):
+            spec_for(provider)
     deps.require_library_folder()
     settings.save(deps.get_data_dir())
     if not settings.paper_discovery_enabled:

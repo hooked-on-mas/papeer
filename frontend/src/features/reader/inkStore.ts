@@ -2,18 +2,17 @@ import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { api, ApiError, unwrap } from "@/api/client";
 import { useStore } from "@/store";
 import { registerPendingSaves, registerHeldDrafts } from "@/lib/pendingSaves";
+import { flushDesktopNotebooks, refreshDesktopNotebooks } from "../../adapters/desktop/notebookSessions";
 import { emitAppEvent } from "@/lib/appEvents";
 
-export type InkSide = "original" | "translated";
-import type { InkStroke } from "./inkGeometry";
-export type { InkStroke } from "./inkGeometry";
+import type { InkSide } from './inkEditor';
+export type { InkSide } from './inkEditor';
+import type { InkStroke } from "../ink/inkGeometry";
+export type { InkStroke } from "../ink/inkGeometry";
 type Snapshot = { strokes: InkStroke[]; ready: boolean; dirty: boolean; saving: boolean; error: string; canUndo: boolean; canRedo: boolean };
 
 // Entries outlive PDF panes: turning a page never cancels a pending save.
 const pages = new Map<string, InkPage>();
-const blockedOwners = new Set<string>();
-// The newest notebook revision whose pages the entries were matched against: an older reply is ignored.
-const acceptedRevisions = new Map<string, number>();
 
 export class InkPage {
   snapshot: Snapshot = { strokes: [], ready: false, dirty: false, saving: false, error: "", canUndo: false, canRedo: false };
@@ -25,8 +24,8 @@ export class InkPage {
   private version = 0;
   private draftKey: string;
   private active = true;
-  constructor(readonly paperId: string, readonly side: InkSide, public page: number, readonly pageId?: string) {
-    this.draftKey = pageId ? `papeer-notebook-ink:${paperId}:${pageId}` : `papeer-ink:${paperId}:${side}:${page}`;
+  constructor(readonly paperId: string, readonly side: InkSide, public page: number) {
+    this.draftKey = `papeer-ink:${paperId}:${side}:${page}`;
   }
   // Older sidecars silently discard unknown stroke properties. The v2 route prevents
   // a hot-reloaded editor from losing typed text or highlighter styles on an old server.
@@ -44,9 +43,7 @@ export class InkPage {
     this.loading = (async () => {
       try {
         this.update({ error: "" });
-        const { strokes } = await (this.pageId
-          ? unwrap(api.GET("/api/notebooks/{notebook_id}/pages/{page_id}/ink", { params: { path: { notebook_id: this.paperId, page_id: this.pageId } } }))
-          : unwrap(api.GET("/api/papers/{paper_id}/ink-v2/{side}/{page}", { params: this.params }))) as { strokes: InkStroke[] };
+        const { strokes } = await unwrap(api.GET("/api/papers/{paper_id}/ink-v2/{side}/{page}", { params: this.params })) as { strokes: InkStroke[] };
         if (!this.active) return;
         let draft: InkStroke[] | null = null;
         try {
@@ -64,7 +61,7 @@ export class InkPage {
     return this.loading;
   };
   private commit(strokes: InkStroke[]) {
-    if (!this.active || blockedOwners.has(this.paperId)) return;
+    if (!this.active) return;
     this.version++;
     // A local journal also protects ink if the app exits while the server is unavailable.
     try { localStorage.setItem(this.draftKey, JSON.stringify(strokes)); } catch { /* Keep the in-memory draft. */ }
@@ -73,7 +70,7 @@ export class InkPage {
     void this.save().catch(() => {});
   }
   change = (strokes: InkStroke[]) => {
-    if (!this.active || blockedOwners.has(this.paperId) || !this.snapshot.ready) return;
+    if (!this.active || !this.snapshot.ready) return;
     if (strokes.length === this.snapshot.strokes.length && strokes.every((s, i) => s === this.snapshot.strokes[i])) return;
     this.undoStack.push(this.snapshot.strokes);
     if (this.undoStack.length > 50) this.undoStack.shift();
@@ -81,14 +78,14 @@ export class InkPage {
     this.commit(strokes);
   };
   undo = () => {
-    if (!this.active || blockedOwners.has(this.paperId)) return;
+    if (!this.active) return;
     const strokes = this.undoStack.pop();
     if (!strokes) return;
     this.redoStack.push(this.snapshot.strokes);
     this.commit(strokes);
   };
   redo = () => {
-    if (!this.active || blockedOwners.has(this.paperId)) return;
+    if (!this.active) return;
     const strokes = this.redoStack.pop();
     if (!strokes) return;
     this.undoStack.push(this.snapshot.strokes);
@@ -102,8 +99,7 @@ export class InkPage {
       try {
         while (this.active && this.snapshot.dirty) {
           const version = this.version;
-          if (this.pageId) await unwrap(api.PUT("/api/notebooks/{notebook_id}/pages/{page_id}/ink", { params: { path: { notebook_id: this.paperId, page_id: this.pageId } }, body: { strokes: this.snapshot.strokes } }));
-          else await unwrap(api.PUT("/api/papers/{paper_id}/ink-v2/{side}/{page}", { params: this.params, body: { strokes: this.snapshot.strokes } }));
+          await unwrap(api.PUT("/api/papers/{paper_id}/ink-v2/{side}/{page}", { params: this.params, body: { strokes: this.snapshot.strokes } }));
           if (!this.active) return;
           if (version === this.version) {
             try { localStorage.removeItem(this.draftKey); } catch { /* Optional journal. */ }
@@ -135,31 +131,22 @@ export class InkPage {
 }
 
 /** Cloud upload first imports browser edits under the exclusive snapshot lock. */
-export function reloadCloudInk() { return Promise.all([...pages.values()].map(entry => entry.reload())); }
+export function reloadCloudInk() { return Promise.all([refreshDesktopNotebooks(), ...[...pages.values()].map(entry => entry.reload())]); }
 
 export function cachedInkPages(paperId: string) {
   return [...pages.values()].filter(entry => entry.paperId === paperId && entry.snapshot.ready)
     .map(entry => ({ page: entry.page, side: entry.side, count: entry.snapshot.strokes.length }));
 }
 
-export function notebookDraftInk(paperId: string, pageId: string) {
-  const entry = pages.get(`${paperId}:original:${pageId}`);
-  if (entry?.snapshot.ready) return entry.snapshot.strokes;
-  try {
-    const saved = localStorage.getItem(`papeer-notebook-ink:${paperId}:${pageId}`);
-    return saved ? JSON.parse(saved) as InkStroke[] : undefined;
-  } catch { return undefined; }
-}
-
-export function useInkPage(paperId: string | undefined, side: InkSide, page: number, pageId?: string) {
+export function useInkPage(paperId: string | undefined, side: InkSide, page: number) {
   const entry = useMemo(() => {
     if (!paperId) return null;
-    const key = `${paperId}:${side}:${pageId ?? page}`;
+    const key = `${paperId}:${side}:${page}`;
     let value = pages.get(key);
-    if (!value) { value = new InkPage(paperId, side, page, pageId); pages.set(key, value); }
+    if (!value) { value = new InkPage(paperId, side, page); pages.set(key, value); }
     value.page = page;
     return value;
-  }, [paperId, side, page, pageId]);
+  }, [paperId, side, page]);
   // The same snapshot on the server, so that the reader can be rendered there in tests (renderSmoke).
   const getSnapshot = entry?.getSnapshot ?? emptySnapshot;
   const snapshot = useSyncExternalStore(entry?.subscribe ?? emptySubscribe, getSnapshot, getSnapshot);
@@ -170,35 +157,7 @@ const emptySubscribe = () => () => {};
 const emptySnapshot = () => null;
 
 export async function flushInkSaves(paperId?: string, side?: InkSide) {
-  // A restart may leave journals for pages that have never been mounted this session. Drafts that only live in
-  // memory (the journal could not be written) need their notebook reconciled as much as journaled ones.
-  const owners = new Set<string>();
-  for (const entry of pages.values()) {
-    if (entry.pageId && entry.snapshot.dirty && (!paperId || entry.paperId === paperId) && (!side || entry.side === side)) owners.add(entry.paperId);
-  }
-  try {
-    for (const key of Object.keys(localStorage)) {
-      const match = /^papeer-notebook-ink:([0-9a-f]{32}):/.exec(key);
-      if (match && (!paperId || paperId === match[1]) && (!side || side === "original")) owners.add(match[1]);
-    }
-  } catch { /* In-memory drafts can still be saved. */ }
-  for (const owner of owners) {
-    const document = await unwrap(api.GET("/api/notebooks/{notebook_id}", { params: { path: { notebook_id: owner } } }));
-    // A page deleted by an operation whose reply was lost would be saved (404) forever otherwise.
-    reconcileNotebookInk(owner, document);
-    for (const [index, page] of document.pages.entries()) {
-      const key = `${owner}:original:${page.id}`;
-      let entry = pages.get(key);
-      if (!entry) {
-        let hasDraft = false;
-        try { hasDraft = localStorage.getItem(`papeer-notebook-ink:${owner}:${page.id}`) !== null; } catch { /* Optional journal. */ }
-        if (!hasDraft) continue;
-        entry = new InkPage(owner, "original", index+1, page.id); pages.set(key, entry);
-      }
-      await entry.load();
-      if (!entry.snapshot.ready) throw new Error(entry.snapshot.error || "書き込みを読み込めませんでした。");
-    }
-  }
+  if (!side || side === "original") await flushDesktopNotebooks(paperId);
   await Promise.all([...pages.values()].filter(entry => (!paperId || entry.paperId === paperId) && (!side || entry.side === side))
     .map(entry => entry.save()));
 }
@@ -211,63 +170,13 @@ registerPendingSaves(() => flushInkSaves(),
   "書き込みを保存できませんでした。PDFの保存ボタンで再試行してください。");
 
 
-/** The caller blocks editing before flushing and keeps it blocked until the new document is visible. */
-export function blockNotebookInk(paperId: string, blocked: boolean) {
-  if (blocked) blockedOwners.add(paperId); else blockedOwners.delete(paperId);
-}
-
-export async function flushNotebookInk(paperId: string, document: { pages: { id: string }[] }) {
-  // Instantiate unseen journals too: navigating away or restarting must not strand a draft.
-  for (const [index, page] of document.pages.entries()) {
-    const key = `${paperId}:original:${page.id}`;
-    let entry = pages.get(key);
-    if (!entry) {
-      let draft = false;
-      try { draft = localStorage.getItem(`papeer-notebook-ink:${paperId}:${page.id}`) !== null; } catch { /* Optional journal. */ }
-      if (!draft) continue;
-      entry = new InkPage(paperId, "original", index + 1, page.id); pages.set(key, entry);
-    }
-    await entry.load();
-    if (!entry.snapshot.ready) throw new Error(entry.snapshot.error || "書き込みを読み込めませんでした。");
-    await entry.save();
-  }
-  await flushInkSaves(paperId);
-}
-
-/**
- * Match the entries and journals to a document the server answered. Pages the document lacks were deleted
- * (their drafts are dropped, the others kept); an answer older than one already accepted is ignored, so that
- * a late reply cannot discard a page or draft made since.
- */
-export function reconcileNotebookInk(paperId: string, document: { pages: { id: string }[]; revision?: number }) {
-  const known = acceptedRevisions.get(paperId);
-  if (document.revision !== undefined) {
-    if (known !== undefined && document.revision < known) return false;
-    acceptedRevisions.set(paperId, document.revision);
-  }
-  const numbers = new Map(document.pages.map((page, index) => [page.id, index + 1]));
-  for (const [key, entry] of pages) {
-    if (entry.paperId !== paperId || !entry.pageId) continue;
-    const number = numbers.get(entry.pageId);
-    if (number === undefined) { entry.forget(); pages.delete(key); } else entry.page = number;
-  }
-  try {
-    const prefix = `papeer-notebook-ink:${paperId}:`;
-    for (const key of Object.keys(localStorage)) if (key.startsWith(prefix) && !numbers.has(key.slice(prefix.length))) localStorage.removeItem(key);
-  } catch { /* Optional journal. */ }
-  return true;
-}
-
 registerHeldDrafts({
   describe: () => [], discard: () => {},
   forget: identities => {
     const ids = new Set(identities);
-    for (const id of ids) acceptedRevisions.delete(id);
     for (const [key, entry] of pages) if (ids.has(entry.paperId)) { entry.forget(); pages.delete(key); }
     try {
-      for (const key of Object.keys(localStorage)) {
-        if ([...ids].some(id => key.startsWith(`papeer-ink:${id}:`) || key.startsWith(`papeer-notebook-ink:${id}:`))) localStorage.removeItem(key);
-      }
+      for (const key of Object.keys(localStorage)) if ([...ids].some(id => key.startsWith(`papeer-ink:${id}:`))) localStorage.removeItem(key);
     } catch { /* Optional journal. */ }
   },
 });

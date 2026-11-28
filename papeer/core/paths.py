@@ -69,13 +69,54 @@ def default_data_directory() -> Path:
     return _xdg("XDG_DATA_HOME", ".local/share") / "papeer"
 
 
-def data_directory() -> Path:
+def _data_directory_selection() -> tuple[Path, bool]:
     # The folder earlier versions used while Papeer was called PaperDesk (%LOCALAPPDATA%\PaperDesk) is no longer
     # read: a library there is expected to have been moved here.
     override = app_env("DATA_DIR")
     if override:
-        return Path(override).expanduser().resolve()
-    return default_data_directory()
+        return Path(override).expanduser().absolute(), True
+    location = storage_location_settings()
+    if location.get("path"):
+        return Path(location["path"]), False
+    return default_data_directory(), False
+
+
+def selected_data_directory() -> Path:
+    """Selected spelling before resolving links; canonical admission must inspect it."""
+    return _data_directory_selection()[0]
+
+
+def data_directory() -> Path:
+    selected, override = _data_directory_selection()
+    # Keep the legacy caller contract: environment overrides are resolved.
+    return selected.resolve() if override else selected
+
+
+def _parse_storage_location_settings(content: str) -> dict[str, Any]:
+    value = json.loads(content)
+    if not isinstance(value, dict) or not isinstance(value.get("path"), str) or not Path(value["path"]).is_absolute():
+        raise ValueError("保存先の設定を読み込めません。storage-location.json を確認してください。")
+    pending = value.get("pending")
+    if pending is not None and (not isinstance(pending, dict) or any(
+        not isinstance(pending.get(key), str) or not Path(pending[key]).is_absolute() for key in ("source", "destination")
+    )):
+        raise ValueError("保存先の変更予約を読み込めません。storage-location.json を確認してください。")
+    if "history_key" in value and (not isinstance(value["history_key"], str) or not re.fullmatch(r"[a-f0-9]{64}", value["history_key"])):
+        raise ValueError("保存先の履歴の設定を読み込めません。storage-location.json を確認してください。")
+    return value
+
+
+def storage_location_settings() -> dict[str, Any]:
+    """This PC's library location; an unreadable setting must never silently open an empty library."""
+    path = device_directory() / "storage-location.json"
+    if not path.exists():
+        return {}
+    # This small device setting is never allowed to consume an unbounded body.
+    with path.open("rb") as stream:
+        content = stream.read(65_537)
+    if len(content) > 65_536:
+        raise ValueError("保存先の設定が大きすぎます。storage-location.json を確認してください。")
+    return _parse_storage_location_settings(content.decode("utf-8"))
 
 
 def device_directory() -> Path:
@@ -134,7 +175,9 @@ def sync_blobs_path(root: Path) -> Path:
 
 def history_directory(root: Path) -> Path:
     """This PC's history of the library at `root`: the states folder sync settled on (see local_history)."""
-    return device_directory() / "history" / library_key(root)
+    saved = storage_location_settings()
+    key = saved.get("history_key", "") if saved.get("path") == str(root.resolve()) else ""
+    return device_directory() / "history" / (key if re.fullmatch(r"[a-f0-9]{64}", key) else library_key(root))
 
 
 def review_cache_path(root: Path) -> Path:

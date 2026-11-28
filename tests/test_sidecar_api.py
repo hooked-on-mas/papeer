@@ -594,12 +594,93 @@ def test_semantic_scholar_key_is_session_only_and_partial_updates_keep_it(test_e
 def test_providers_are_listed_for_the_settings_dialog(test_env):
     client, _ = test_env
     providers = client.get("/api/providers").json()
-    assert [p["id"] for p in providers] == ["codex", "claude", "antigravity", "api"]
+    assert [p["id"] for p in providers] == ["codex", "claude", "api"]
     api = providers[-1]
     assert api["needs_api_key"] and not api["needs_login"]
     assert [f["key"] for f in api["fields"]] == ["base_url"] and api["fields"][0]["hint"]
     assert client.get("/api/providers/bogus/models").status_code == 400
     assert client.get("/api/providers/api/efforts").json() == [{"id": "", "name": "既定値"}]
+
+
+@pytest.mark.parametrize("provider", ["antigravity", "gemini"])
+def test_retired_connection_public_actions_never_construct_a_transport(test_env, monkeypatch, provider):
+    from papeer.providers.antigravity import AntigravityProvider
+
+    client, _ = test_env
+
+    def never_construct(*args, **kwargs):
+        pytest.fail("A retired transport must not be constructed by the public API")
+
+    monkeypatch.setattr(AntigravityProvider, "__init__", never_construct)
+    before = {job.job_id for job in job_manager.get_jobs()}
+    for action in ("models", "efforts"):
+        response = client.get(f"/api/providers/{provider}/{action}")
+        assert response.status_code == 400
+        assert "Antigravity連携は提供を終了" in response.json()["detail"]
+    for action in ("login", "check"):
+        response = client.post(f"/api/providers/{action}", json={"provider": provider})
+        assert response.status_code == 400
+        assert "Antigravity連携は提供を終了" in response.json()["detail"]
+    for field in ("provider", "paper_metadata_provider"):
+        response = client.put("/api/settings", json={field: provider})
+        assert response.status_code == 400
+    assert {job.job_id for job in job_manager.get_jobs()} == before
+    assert client.get("/api/settings").json()["provider"] == "codex"
+
+
+@pytest.mark.parametrize("provider", ["antigravity", "gemini"])
+@pytest.mark.parametrize("retired_role", ["primary", "metadata", "both"])
+def test_retired_connections_preserve_non_ai_research_capabilities(test_env, monkeypatch, provider, retired_role):
+    client, tmp_path = test_env
+    (tmp_path / "settings.json").write_text(json.dumps({
+        "provider": provider if retired_role != "metadata" else "codex",
+        "paper_metadata_provider": provider if retired_role != "primary" else "codex",
+        "paper_metadata_ai_enabled": True, "paper_discovery_enabled": True,
+    }), encoding="utf-8")
+    monkeypatch.setattr("sidecar.deps.provider_for", lambda *args, **kwargs: pytest.fail("Capabilities must not start AI"))
+    response = client.get("/api/research-capabilities")
+    assert response.status_code == 200
+    assert response.json() == {
+        "web_search": retired_role == "metadata",
+        "reference_web_search": retired_role == "primary",
+        "reference_research_enabled": retired_role == "primary",
+        "reference_lookup": True, "paper_discovery_enabled": True,
+    }
+
+
+@pytest.mark.parametrize("provider", ["antigravity", "gemini"])
+def test_saved_retired_connections_can_be_preserved_and_migrated_independently(test_env, provider):
+    client, tmp_path = test_env
+    legacy_options = {"cli_path": "C:/legacy/agy.exe", "model": "legacy-model", "reasoning_effort": "high"}
+    (tmp_path / "settings.json").write_text(json.dumps({
+        "provider": provider, "model": "legacy-model", "reasoning_effort": "high",
+        "paper_metadata_provider": provider, "paper_metadata_model": "legacy-lookup-model",
+        "paper_metadata_ai_enabled": True, "provider_options": {"antigravity": legacy_options},
+    }), encoding="utf-8")
+    original = client.get("/api/settings").json()
+    assert original["provider"] == original["paper_metadata_provider"] == "antigravity"
+
+    # Both partial API writes and the full settings form preserve the old selection/options.
+    assert client.put("/api/settings", json={"translation_concurrency": 2}).status_code == 200
+    assert client.put("/api/settings", json={**original, "translation_concurrency": 3}).status_code == 200
+    saved = client.get("/api/settings").json()
+    assert saved["translation_concurrency"] == 3
+    assert saved["provider_options"]["antigravity"] == legacy_options
+    assert saved["model"] == "legacy-model" and saved["reasoning_effort"] == "high"
+    assert saved["paper_metadata_model"] == "legacy-lookup-model"
+    # Keeping a setting never makes the connection executable, including body-less actions.
+    for action in ("login", "check"):
+        assert client.post(f"/api/providers/{action}").status_code == 400
+
+    # Translate through API first, then move information lookup to the shared connection.
+    assert client.put("/api/settings", json={"provider": "api", "model": "local-model"}).status_code == 200
+    assert client.get("/api/settings").json()["paper_metadata_provider"] == "antigravity"
+    assert client.put("/api/settings", json={"paper_metadata_provider": ""}).status_code == 200
+    migrated = client.get("/api/settings").json()
+    assert migrated["provider"] == "api" and migrated["paper_metadata_provider"] == ""
+    assert migrated["provider_options"]["antigravity"] == legacy_options
+    for field in ("provider", "paper_metadata_provider"):
+        assert client.put("/api/settings", json={field: provider}).status_code == 400
 
 
 def test_connection_settings_round_trip_per_provider(test_env):
@@ -615,6 +696,7 @@ def test_connection_settings_round_trip_per_provider(test_env):
     assert saved["provider_options"]["api"]["model"] == "local-model"
     assert saved["provider_options"]["claude"] == {"cli_path": "C:/claude.exe"}
     assert client.put("/api/settings", json={**body, "provider": "bogus"}).status_code == 400
+    assert client.put("/api/settings", json={**body, "provider": ""}).status_code == 400
 
     # A partial update keeps every other saved value.
     assert client.put("/api/settings", json={"translation_concurrency": 2}).status_code == 200

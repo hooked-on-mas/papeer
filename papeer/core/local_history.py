@@ -59,6 +59,7 @@ from papeer.core.backup import DATABASE_FILES, STORED_SUFFIXES, unsafe_path
 from papeer.core.fileio import (atomic_write_bytes, atomic_write_json, ensure_free_space, is_temporary, move_file,
                                  sync_directory)
 from papeer.core.paths import device_directory, history_directory
+from papeer.core.device_authority import device_writer, writer
 from papeer.providers import check_cancel
 
 FORMAT = 2
@@ -140,7 +141,7 @@ def _acquire_file_lock(path: Path):
 @contextmanager
 def _locked(folder: Path):
     """Hold the history at `folder` (created if need be) against other threads and processes."""
-    with _LOCK:
+    with writer(), _LOCK:
         key = str(folder)
         depth, handle = _HELD.get(key, (0, None))
         if depth == 0:
@@ -1113,6 +1114,7 @@ def _validated(recent: int, days: int) -> None:
             raise ValueError(f"{label}は{low}〜{high}で指定してください。")
 
 
+@device_writer
 def save_history_settings(recent: int, days: int) -> dict:
     """Keep `recent` states and one a day for `days` days on this PC; applied by the next sync's prune."""
     _validated(recent, days)
@@ -1263,6 +1265,7 @@ def other_histories(root: Path) -> list[dict]:
     return result
 
 
+@device_writer
 def remove_other_histories(root: Path, keys: Iterable[str]) -> dict:
     """Remove the histories of other_histories with these keys, which the user confirmed; others are ignored.
 

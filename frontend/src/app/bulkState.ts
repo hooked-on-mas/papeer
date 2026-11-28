@@ -2,11 +2,11 @@
  * The action on several papers that is running (app/bulkActions.ts, and undoing papers moved together
  * in actions.ts): one at a time, since a second started meanwhile (a double click, a drop during a
  * move) would interleave its requests and its report with the first's. While it runs it holds the
- * library's reloads (lib/libraryRefresh.ts) and shows its progress, with a button that stops it, below
+ * library's reloads (features/library/state/libraryRefresh.ts) and shows its progress, with a button that stops it, below
  * the library (useBulkProgress).
  */
 import { create } from "zustand";
-import { holdLibraryRefresh } from "@/lib/libraryRefresh";
+import { holdLibraryRefresh } from "@/features/library/state/libraryRefresh";
 
 export type BulkProgress = {
   /** What it is doing, as "「ML」へ移動中". */

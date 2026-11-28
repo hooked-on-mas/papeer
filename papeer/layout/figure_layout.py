@@ -7,6 +7,8 @@ from typing import cast, Sequence
 
 import pymupdf as fitz
 
+_KOREAN_SENTENCE = re.compile(r"[가-힣].*다[.!?]$")
+
 
 def _axis_frames(drawings: list[dict]) -> list[fitz.Rect]:
     """Find plot frames even when every tick is a separate PDF path.
@@ -60,12 +62,12 @@ def _axis_frames(drawings: list[dict]) -> list[fitz.Rect]:
 
 
 def _plot_label(text: str) -> bool:
-    sentence = (text.endswith(('。', '！', '？')) or
+    sentence = (bool(_KOREAN_SENTENCE.search(text)) or text.endswith(('。', '！', '？')) or
                 (bool(re.search(r'[.!?]$', text)) and len(re.findall(r'[A-Za-z]{2,}', text)) >= 3))
     numeric_axis = (len(re.findall(r'\d', text)) >= 3
                     and len(re.findall(r'[A-Za-z]{2,}', text)) <= 4)
     return (bool(text) and not sentence and (not _prose_line(text) or numeric_axis)
-            and not re.match(r"(?:Fig(?:ure)?\.?|Table)\s*(?:\d|[IVX])", text, re.I))
+            and not re.match(r"(?:Fig(?:ure)?\.?|Table|그림|표)\s*(?:\d|[IVX])", text, re.I))
 
 
 def figure_regions(page: fitz.Page) -> list[fitz.Rect]:
@@ -182,7 +184,10 @@ _DIAGRAM_SHAPES = 3
 
 def _prose_line(text: str) -> bool:
     """A sentence rather than a diagram label: long, or several words."""
-    return len(text) > 40 or len(re.findall(r"[A-Za-z]{2,}", text)) >= 6
+    # Korean prose often has neither spaces nor Latin words in PDF extraction.
+    # A short sentence above a plot must not become one of its axis labels.
+    korean_sentence = bool(_KOREAN_SENTENCE.search(text.strip()))
+    return korean_sentence or len(text) > 40 or len(re.findall(r"[A-Za-z]{2,}", text)) >= 6
 
 
 def raster_crosses_prose(page: fitz.Page, rect: fitz.Rect) -> bool:
@@ -361,20 +366,28 @@ def figure_caption(page: fitz.Page, rect: fitz.Rect, limit: int = 200) -> str:
 
 
 def figure_caption_match(page: fitz.Page, rect: fitz.Rect,
-                         pattern: re.Pattern = CAPTION, *, prefer_placement: bool = False) -> tuple[fitz.Rect, str] | None:
+                         pattern: re.Pattern = CAPTION, *, prefer_placement: bool = False,
+                         text_blocks: list[dict] | None = None,
+                         max_gap: float = 40) -> tuple[fitz.Rect, str] | None:
     """Return the caption's location and full text, so panels can share one identity."""
     best = None
-    blocks = cast(dict, page.get_text("dict"))["blocks"]
+    blocks = text_blocks if text_blocks is not None else cast(dict, page.get_text(
+        "dict", flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES))["blocks"]
     for block in blocks:
         lines = block.get("lines", [])
         for index, line in enumerate(lines):
             text = "".join(span["text"] for span in line["spans"]).strip()
             box = fitz.Rect(line["bbox"])
-            if not pattern.match(text):
+            label = pattern.match(text)
+            if not label:
                 continue
+            is_table = text.lower().startswith("table") or bool(
+                "table" in pattern.groupindex and label.group("table"))
             baseline = line["spans"][0]["origin"][1]
-            caption_lines = list(lines[index:])
-            for following in lines[index + 1:]:
+            end = next((following_index for following_index in range(index + 1, len(lines))
+                        if pattern.match("".join(s["text"] for s in lines[following_index]["spans"]).strip())), len(lines))
+            caption_lines = list(lines[index:end])
+            for following in lines[index + 1:end]:
                 start = fitz.Rect(following["bbox"])
                 if abs(following["spans"][0]["origin"][1] - baseline) <= 2:
                     box |= start
@@ -382,21 +395,72 @@ def figure_caption_match(page: fitz.Page, rect: fitz.Rect,
             for other in blocks:
                 following = other.get("lines", [])
                 if (following and other is not block
+                        and not pattern.match("".join(s["text"] for s in following[0]["spans"]).strip())
                         and abs(following[0]["spans"][0]["origin"][1] - baseline) <= 2):
                     start = fitz.Rect(following[0]["bbox"])
+                    middle = page.rect.width / 2
+                    if box.x0 < middle and box.x1 <= middle and start.x0 > middle + 5 and box.width > 80:
+                        continue  # The neighboring column's prose is not caption continuation.
                     if 0 <= start.x0 - box.x1 <= 40:
                         caption_lines.extend(following)
                         box |= start
+            if is_table and box.y1 <= rect.y0 + 2:
+                if any(box.y1 + 2 < other_line["bbox"][1] < rect.y0 - 2
+                       and other_line["bbox"][0] < rect.x1 and other_line["bbox"][2] > rect.x0
+                       and pattern.match("".join(s["text"] for s in other_line["spans"]).strip())
+                       for other in blocks for other_line in other.get("lines", [])):
+                    continue  # A later table caption separates this table from the earlier one.
+                frontier = box.y1
+                for other in sorted(blocks, key=lambda item: item["bbox"][1]):
+                    following = other.get("lines", [])
+                    area = fitz.Rect(other["bbox"])
+                    if (not following or other is block or area.y0 < frontier - 1
+                            or area.y1 > rect.y0 + 2 or area.x1 < rect.x0 or area.x0 > rect.x1):
+                        continue
+                    if area.y0 - frontier > 16:
+                        continue
+                    if any(pattern.match("".join(s["text"] for s in ln["spans"]).strip()) for ln in following):
+                        continue
+                    caption_lines.extend(following)
+                    frontier = max(frontier, area.y1)
             if box.x1 < rect.x0 or box.x0 > rect.x1:
                 continue
-            gap = box.y0 - rect.y1 if box.y0 >= rect.y1 - 2 else rect.y0 - box.y1
+            extent = fitz.Rect(box)
+            if is_table:
+                for caption_line in caption_lines:
+                    continuation = fitz.Rect(caption_line["bbox"])
+                    # PDF text blocks can contain the caption AND every table cell.
+                    # Only caption lines outside the candidate table affect its gap.
+                    if ((box.y1 <= rect.y0 + 2 and continuation.y1 <= rect.y0 + 2)
+                            or (box.y0 >= rect.y1 - 2 and continuation.y0 >= rect.y1 - 2)):
+                        extent |= continuation
+            gap = extent.y0 - rect.y1 if extent.y0 >= rect.y1 - 2 else rect.y0 - extent.y1
             # Raw plot paths omit axis labels: the previous figure's caption may be closer than
             # this figure's own caption. For summaries prefer figures below and tables above.
-            preferred = (box.y1 <= rect.y0 + 2) if text.lower().startswith("table") else (box.y0 >= rect.y1 - 2)
-            if prefer_placement and not text.lower().startswith("table") and not preferred:
+            preferred = (extent.y1 <= rect.y0 + 2) if is_table else (box.y0 >= rect.y1 - 2)
+            if prefer_placement and not is_table and not preferred:
                 continue  # A top panel belongs to its following shared caption, not the preceding figure.
             score = (int(prefer_placement and not preferred), gap)
-            if -2 <= gap <= 40 and (best is None or score < best[0]):
+            if gap > 40 and preferred and not is_table:
+                blocked = False
+                for between in blocks:
+                    body = between.get("lines", [])
+                    first = "".join(s["text"] for s in body[0]["spans"]).strip() if body else ""
+                    if re.match(r"^\([a-z]\)", first, re.I):
+                        continue  # Separately positioned panel descriptions belong to this figure.
+                    for body_line in body:
+                        area = fitz.Rect(body_line["bbox"])
+                        content = "".join(s["text"] for s in body_line["spans"]).strip()
+                        if (rect.y1 + 2 < area.y0 < box.y0 - 2 and area.x0 < rect.x1 and area.x1 > rect.x0
+                                and (pattern.match(content) or len(content) > 100)):
+                            blocked = True
+                if blocked:
+                    continue
+            if -2 <= gap <= max_gap and (best is None or score < best[0]):
+                if is_table:
+                    caption_lines = [line for line in caption_lines if (
+                        line["bbox"][3] <= rect.y0 + 2 if box.y1 <= rect.y0 + 2
+                        else line["bbox"][1] >= rect.y1 - 2)]
                 best = score, caption_lines, box
     if best is None:
         return None

@@ -7,7 +7,8 @@ import re
 import sqlite3
 import threading
 
-from papeer.core.paths import sync_state_path
+from papeer.core.notes import migrate as _unified_notes
+from papeer.core.paths import sync_state_path, storage_location_settings
 # The folder path rules and the migration steps live in their own modules; they are imported here under
 # the same names (private ones included: tests name storage._status_codes and look it up in MIGRATIONS).
 from papeer.core.collection_paths import collection_ancestors as collection_ancestors
@@ -53,6 +54,9 @@ def library_missing(root: Path) -> bool:
     """
     if (root / "library.sqlite3").exists():
         return False
+    selected = storage_location_settings().get("path")
+    if selected and Path(selected).resolve() == root.resolve():
+        return True
     try:
         state = json.loads(sync_state_path(root).read_text("utf-8"))
     except (OSError, ValueError):
@@ -62,7 +66,7 @@ def library_missing(root: Path) -> bool:
 
 def missing_library_message(root: Path) -> str:
     return (f"データフォルダー（{root}）が見つかりません。移動・削除した場合は元の場所に戻してください。"
-            "新しいライブラリとして始める場合は、設定 → 保存先・同期で「新しいライブラリとして始める」を選んでください。")
+            "外付けドライブを使っている場合は、接続を確認してください。")
 
 
 # Schema migrations. PRAGMA user_version counts the steps a library database has been through.
@@ -80,7 +84,7 @@ def missing_library_message(root: Path) -> str:
 # Add a test in tests/test_schema_migration.py, and list any new columns in LATER_COLUMNS in
 # tests/_legacy_library.py (tests that make a current database look unversioned drop them).
 MIGRATIONS = [_baseline, _highlights, _bibliographic_ids, _status_codes, _paper_titles, _web_research, _paper_discovery,
-              _notebook_items]
+              _notebook_items, _unified_notes]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 # The sidecar opens a Library per request; concurrent first requests after an upgrade wait here
@@ -98,6 +102,17 @@ def migrate_database(root: Path) -> None:
     """Bring the library database to SCHEMA_VERSION: every pending step or none."""
     with closing(sqlite3.connect(root / "library.sqlite3", timeout=30, isolation_level=None)) as db:
         db.execute("PRAGMA journal_mode=WAL")
+        version_before = db.execute("PRAGMA user_version").fetchone()[0]
+        if _unified_notes in MIGRATIONS and version_before <= MIGRATIONS.index(_unified_notes) and db.execute("SELECT 1 FROM sqlite_master WHERE name='papers'").fetchone():
+            backup_path = root / "before-unified-notes.sqlite3"
+            if not backup_path.exists():
+                with closing(sqlite3.connect(backup_path)) as backup_db:
+                    db.backup(backup_db)
+                import shutil
+                for legacy_note in (root / 'papers').glob('*/note.md'):
+                    target = root / 'before-unified-notes-files' / legacy_note.relative_to(root)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(legacy_note, target)
         db.execute("BEGIN IMMEDIATE")
         try:
             # Read again under the write lock: another process may have migrated meanwhile.
@@ -126,6 +141,8 @@ class Library(PaperRecords, ItemRelations, Collections, Annotations, Choices, Co
     """
 
     def __init__(self, root: Path):
+        from papeer.core.migrations.legacy_startup import assert_legacy_startup
+        assert_legacy_startup(root)
         self.root = root
         if library_missing(root):
             raise LibraryMissingError(missing_library_message(root))
@@ -140,6 +157,16 @@ class Library(PaperRecords, ItemRelations, Collections, Annotations, Choices, Co
                 migrate_database(root)
         from papeer.core.memo_migration import migrate_memos
         migrate_memos(root)
+        from papeer.core.notes import migrate_legacy
+        with self.connection() as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='note_state'").fetchone() and db.execute("SELECT 1 FROM attachments WHERE format='md'").fetchone():
+                db.execute('BEGIN IMMEDIATE')
+                migrate_legacy(db, root)
 
         from papeer.core.notebook import recover
         recover(root)
+        from papeer.core.cloud_notes import recover as recover_notes
+        with self.connection() as db:
+            unified = db.execute("SELECT 1 FROM sqlite_master WHERE name='note_operations'").fetchone()
+        if unified:
+            recover_notes(self)

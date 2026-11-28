@@ -11,7 +11,7 @@ import re
 import threading
 import unicodedata
 
-from papeer.layout.math_layout import MATH_TOKEN
+from papeer.layout.math_layout import MATH_TOKEN, has_prose_letters
 from papeer.providers import AnswerRejected, TransientError, check_cancel, parse_json_answer
 from papeer.translation.translation_context import recovery_context, request_text
 
@@ -487,7 +487,7 @@ def _locked_request(provider, unit: dict, parts: list[dict], cancel, paper=None)
     # Last resort: the model translates prose fragments only. Formula positions
     # and identifiers are reconstructed locally in their original order (_locked_translation).
     fragments = [{"id": f"text{i}", "text": part["text"]} for i, part in enumerate(parts)
-                 if part["kind"] == "text" and re.search(r"[A-Za-z\u3040-\u30ff\u3400-\u9fff]", part["text"])]
+                 if part["kind"] == "text" and has_prose_letters(part["text"])]
     if not fragments:
         return fragments, ""
     check_cancel(cancel)

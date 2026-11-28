@@ -28,7 +28,7 @@ export type NotebookPageActions = {
   editPaper: (pageId: string) => void;
   paperTarget: PaperTarget | null;
   closePaper: () => void;
-  applyPaper: (spec: NotebookPaper) => Promise<boolean>;
+  applyPaper: (spec: NotebookPaper, fit?: boolean) => Promise<boolean>;
 };
 
 export const NotebookPageActionsContext = createContext<NotebookPageActions | null>(null);
@@ -45,10 +45,10 @@ export function useNotebookPageActions(id: string, document: NotebookDocument | 
   const [paperTarget, setPaperTarget] = useState<PaperTarget | null>(null);
   const pages = document?.pages ?? [];
 
-  const run = async (change: Omit<NotebookChange, "revision">) => {
+  const run = async (change: Omit<NotebookChange, "revision">, fit = false) => {
     // A change already under way is not queued behind: the tools and menus are off meanwhile.
     if (!document || useNotebookBusy.getState().ids.includes(id)) return false;
-    try { await changeNotebook(id, document, change); return true; }
+    try { await changeNotebook(id, document, change, fit); return true; }
     catch (error) { showError(error, "ページを変更できませんでした。書き込みを保存してから再試行してください"); return false; }
   };
   const reorder = async (from: string, to: string) => {
@@ -83,9 +83,9 @@ export function useNotebookPageActions(id: string, document: NotebookDocument | 
     },
     paperTarget,
     closePaper: () => { if (!busy) setPaperTarget(null); },
-    applyPaper: async (spec) => {
+    applyPaper: async (spec, fit) => {
       if (!paperTarget) return false;
-      const done = await run({ action: "paper", page_id: paperTarget.pageId, spec });
+      const done = await run({ action: "paper", page_id: paperTarget.pageId, spec }, fit);
       if (done) setPaperTarget(null);
       return done;
     },

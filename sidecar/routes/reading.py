@@ -8,14 +8,15 @@ import zipfile
 
 from fastapi import APIRouter, Depends, Query
 
-from papeer.core import drive_sync, glossary_domains, history_restore, reading_tools as tools
+from papeer.core import drive_sync, history_restore, reading_tools as tools
+from papeer.core.glossary import glossary_domains
 from papeer.core.errors import Invalid
 from papeer.providers import Cancelled, check_cancel
 from papeer.core.terminology import (
     GENERAL_DOMAIN, SPLIT_AT, add_glossary_term, domain_names, global_glossary, glossary_scope_key,
     paper_domains, paper_glossary, save_global_glossary, save_paper_domains, save_paper_glossary)
 from sidecar import deps
-from sidecar.job_types import JobKind, JobStarted
+from sidecar.lifecycle.job_types import JobKind, JobStarted
 from sidecar.schemas.reading import (
     ApplyTermReplacementRequest, TermCard, TermCardRequest, TermReplacementRequest, TermResearchRequest,
     BackupRequest,
@@ -152,12 +153,12 @@ def get_global_glossary():
 
 @router.post("/api/glossary/export")
 def export_glossary(body: GlossaryFileRequest):
-    from papeer.core.glossary_io import export_glossary
+    from papeer.core.glossary.glossary_io import export_glossary
     return {"count": export_glossary(Path(body.path), body.terms, deps.get_data_dir())}
 
 @router.post("/api/glossary/import")
 def import_glossary(body: GlossaryFileRequest):
-    from papeer.core.glossary_io import import_glossary
+    from papeer.core.glossary.glossary_io import import_glossary
     return import_glossary(Path(body.path), body.terms)
 
 @router.put("/api/glossary")

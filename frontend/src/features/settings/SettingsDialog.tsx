@@ -19,7 +19,6 @@ import { DriveSection } from "./DriveSection";
 import { OcrSection } from "./OcrSection";
 import { NoteTemplates, type TemplateLeaveGuard } from "../notes/NoteTemplates";
 import { useSettingsNavigation, type SettingsSection } from "./settingsNavigation";
-import { syncClientNames } from "@/lib/platform";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -27,7 +26,7 @@ interface SettingsDialogProps {
 }
 
 const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon; description: string }[] = [
-  { id: "connection", label: "AI 接続", icon: PlugZap, description: "翻訳・解説・チャットに使う AI の接続先とモデル" },
+  { id: "connection", label: "AI 接続", icon: PlugZap, description: "翻訳・サマリー・チャットに使う AI の接続先とモデル" },
   { id: "appearance", label: "表示", icon: Palette, description: "文字の大きさと画面の見た目" },
   { id: "reading-status", label: "読書状態", icon: BookOpen, description: "読書状態の選択肢を追加・削除（自動保存）" },
   { id: "tags", label: "論文のタグ", icon: Tags, description: "論文に付けるタグを追加・削除（自動保存）" },
@@ -37,7 +36,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon; descript
   { id: "ocr", label: "OCR", icon: ScanText, description: "スキャンした PDF の文字を読み取る方法（このPCの設定・自動保存）" },
   { id: "shortcuts", label: "ショートカット", icon: Keyboard, description: "キーボード操作の一覧" },
   { id: "backup", label: "バックアップ", icon: FileText, description: "ライブラリ全体の保存と復元" },
-  { id: "drive", label: "保存先・同期", icon: FileText, description: `${syncClientNames().service}でほかのPCと同期` },
+  { id: "drive", label: "保存先・同期", icon: FileText, description: "このPCの保存先とGoogle Driveへの保存・Web閲覧" },
 ];
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {

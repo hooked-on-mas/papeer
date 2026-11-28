@@ -1,6 +1,6 @@
 import { registerJobHandlers } from "@/features/jobs/jobHandlers";
 import { chatJobHandlers } from "@/features/chat/chatJobs";
-import { translationJobHandlers } from "@/features/reader/translationJobs";
+import { translationJobHandlers } from "@/features/reader/translation/translationJobs";
 import { settingsJobHandlers } from "@/features/settings/settingsJobs";
 import { summaryJobHandlers } from "@/features/summary/summaryJobs";
 import { ocrJobHandlers } from "@/features/ocr/ocrActions";

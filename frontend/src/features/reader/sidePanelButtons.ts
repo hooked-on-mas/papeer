@@ -5,5 +5,5 @@ import type { SidePanel } from "./sidePanel";
 export const SIDE_PANEL_BUTTONS: { tab: SidePanel; label: string; icon: typeof ScrollText; key: string }[] = [
   { tab: "summary", label: "サマリー", icon: ScrollText, key: "Ctrl+2" },
   { tab: "chat", label: "チャット", icon: MessageSquare, key: "Ctrl+3" },
-  { tab: "notes", label: "メモ", icon: NotebookPen, key: "Ctrl+4" },
+  { tab: "notes", label: "ノート", icon: NotebookPen, key: "Ctrl+4" },
 ];

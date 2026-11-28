@@ -1,10 +1,18 @@
-@import "tailwindcss";
+@import "tailwindcss" source(".");
+@source "../index.html";
+@source "../web/index.html";
+@source "../e2e";
 
 @media (prefers-reduced-motion: no-preference) {
   .reference-node { animation: reference-appear 350ms ease-out; transition: opacity 180ms ease; }
   @keyframes reference-appear { from { opacity: 0; } }
 }
 @import "@fontsource-variable/geist";
+
+.startup-gate { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; padding: 2rem; text-align: center; }
+.startup-gate h1 { font-size: 1.5rem; font-weight: 650; }
+.startup-gate p { max-width: 32rem; line-height: 1.7; }
+.startup-gate button { border: 1px solid var(--border); border-radius: .5rem; padding: .6rem 1rem; background: var(--secondary); color: var(--secondary-foreground); cursor: pointer; }
 
 /* dark: follows the theme setting (data-theme), not only the OS preference. */
 @custom-variant dark {
@@ -251,6 +259,57 @@
 .summary-prose pre code { padding: 0; background: transparent; }
 .summary-prose .citation-link { vertical-align: baseline; white-space: nowrap; }
 
+/* Shared document controls keep selection changes from resizing the fitted PDF. */
+.document-workspace { container-type: inline-size; container-name: document-workspace; height: 100%; }
+.document-workspace-columns { display: grid; height: 100%; min-height: 0; grid-template-columns: minmax(0, 1fr); }
+.document-workspace-docked { grid-template-columns: minmax(0, 1fr) minmax(280px, var(--workspace-editor-width, .65fr)); }
+@container document-workspace (max-width: 700px) {
+  .document-workspace-docked { grid-template-columns: minmax(0, 1fr); }
+  .document-workspace-reference { display: none; }
+}
+.canonical-paper-dialog label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.canonical-paper-dialog :is(input, select) { width: 100%; min-height: 36px; border: 1px solid var(--border); border-radius: 4px; padding: 4px; background: var(--background); }
+.document-writing-toolbar.ink-tools {
+  position: relative;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  width: 100%;
+  gap: 4px;
+  padding: 4px;
+  font-size: .8125rem;
+  background: var(--background);
+}
+.document-writing-toolbar.ink-tools > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: auto;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 4px 8px;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  cursor: pointer;
+}
+.document-writing-toolbar.ink-tools :is(label, select) { white-space: nowrap; font-size: inherit; }
+.document-writing-toolbar.ink-tools label { display: inline-flex; align-items: center; gap: 4px; }
+.document-writing-toolbar.ink-tools select { min-height: 32px; border: 1px solid var(--border); border-radius: 4px; background: var(--background); }
+.document-writing-toolbar.ink-tools input[type="color"] { width: 28px; height: 28px; padding: 0; border: 0; }
+.document-writing-toolbar.ink-tools > [role="status"] {
+  flex: 0 0 19em;
+  width: 19em;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.document-writing-toolbar.ink-tools > button:not(:disabled):hover { background: var(--accent); }
+.document-writing-toolbar.ink-tools > button[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
+.document-writing-toolbar.ink-tools > button:disabled { opacity: .45; cursor: default; }
+
 /* Indeterminate progress (no done/total in the job message). */
 [data-slot="progress-indicator"][data-indeterminate] {
   width: 35%;
@@ -267,4 +326,20 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Canonical reader controls share the same host-independent input affordances. */
+.canonical-reader-frame { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+@layer base {
+  .canonical-reader-frame :where(button:not([data-slot])) { border: 1px solid var(--border); background: var(--background); padding: 5px 9px; border-radius: 6px; font: inherit; color: inherit; cursor: pointer; }
+  .canonical-reader-frame :where(button:not([data-slot]):hover) { background: var(--muted); }
+  .canonical-reader-frame :where(button:disabled) { opacity: .5; cursor: default; }
+  .canonical-reader-frame :where(button, a, input, select, textarea):focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .canonical-reader-frame :where(input, select, textarea) { font: inherit; color: inherit; }
+}
+@media (max-width: 600px), (max-height: 500px) {
+  .canonical-reader-frame :where(button, summary, a) { touch-action: manipulation; }
+  .canonical-reader-frame input:not([type="checkbox"]):not([type="color"]),
+  .canonical-reader-frame select, .canonical-reader-frame textarea,
+  .canonical-reader-frame .document-writing-toolbar.ink-tools select { font-size: 1rem; min-height: 44px; }
 }

@@ -39,6 +39,7 @@
 | 破損PDF | 整合性検査を通る非PDFデータ、案内表示・実バイトの保存、修正版への更新、旧Blob URL失効 | `webDocumentFailures.browser.test.ts` |
 | HTML・メモの安全な表示 | sandbox/CSP、埋込スクリプト・外部画像の遮断、Markdownと保存済み相対画像 | `webLibrary.browser.test.ts`, runtime単体試験 |
 | PWA | `/papeer/`配下のmanifest・アイコン・scope、オフラインでの起動シェル、私有データのキャッシュ除外、複数タブを閉じてからの更新、下書き保持 | `webPwa.browser.test.ts` |
+| オフライン閲覧 | 取得済みPDFと読書位置の再起動後の復元、未取得資料の案内、PDF.js資産、書き込み保持とログイン後の送信、保存容量不足、版の一致、端末保存の削除 | `webOffline.browser.test.ts` |
 | 公開先 | 配信済みmanifest・アイコン・オフライン起動シェル | `publishedPwa.browser.test.ts`（公開URL指定時のみ） |
 | 公開の条件 | Pagesがブラウザー試験に依存すること、終了コードの伝達、権限・固定したActions、PC保存側の変更でも試験が走ること | `tests/test_ci_workflow.py` |
 

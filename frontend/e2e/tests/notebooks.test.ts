@@ -531,6 +531,9 @@ scenario("ノートのホイールめくり・右下のボタンとペン・つ�
   assert.equal(await page.getByRole("button", { name: "ページ 1", exact: true }).count(), 0, "ペンを近づけただけではつまみは開かない");
   await page.mouse.move(edge.x + edge.width / 2, edge.y + 200);
   await page.getByRole("button", { name: "ページ 1", exact: true }).waitFor();
+  // A mouse resting on the opened list keeps it open: it folds only once the mouse has left.
+  await page.waitForTimeout(600);
+  assert.equal(await page.getByRole("button", { name: "ページ 1", exact: true }).count(), 1, "つまみを開いたあと、マウスを置いたままでは閉じない");
   await page.mouse.move(700, 450);
   await page.getByRole("button", { name: "ページ 1", exact: true }).waitFor({ state: "detached" });
   // Writing on the paper folds a tab opened by a press.

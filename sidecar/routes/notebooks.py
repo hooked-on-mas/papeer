@@ -58,7 +58,7 @@ class NotebookMove(BaseModel):
 def list_notebooks():
     lib = deps.get_library()
     with lib.connection() as db:
-        identities = [row[0] for row in db.execute("SELECT id FROM papers WHERE kind='notebook' ORDER BY created_at,id")]
+        identities = [row[0] for row in db.execute("SELECT id FROM papers WHERE kind IN ('notebook','markdown') ORDER BY note_position,created_at,id")]
     return [paper_row(lib, lib.paper(identity)) for identity in identities]
 
 

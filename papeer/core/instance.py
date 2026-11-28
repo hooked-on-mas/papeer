@@ -32,12 +32,14 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 import os
+import secrets
 from pathlib import Path
 import sys
 import threading
 from typing import IO
 
 from papeer.core import file_lock
+from papeer.core.device_authority import PROTOCOL, device_writer
 from papeer.core.fileio import atomic_write_json
 from papeer.core.paths import device_directory
 
@@ -144,6 +146,7 @@ def _ensure_folder() -> Path:
     return folder
 
 
+@device_writer
 def write_instance(root: Path, info: InstanceInfo) -> None:
     """Publish `info` for the library at `root`, whole or not at all.
 
@@ -157,6 +160,7 @@ def write_instance(root: Path, info: InstanceInfo) -> None:
     atomic_write_json(info_path(root), info.to_dict(), indent=None)
 
 
+@device_writer
 def remove_instance(root: Path, pid: int) -> bool:
     """Delete the info file of the library at `root` if it holds `pid`; whether it did.
 
@@ -222,11 +226,13 @@ class LibraryLock:
         self._guard = threading.Lock()
         self._handle: IO[bytes] | None = None
         self._key: str | None = None
+        self._writer_nonce: str | None = None
 
     @property
     def held(self) -> bool:
         return self._handle is not None
 
+    @device_writer
     def try_acquire(self, root: Path) -> bool:
         """Take the library's lock without waiting: False when another process (or object) holds it.
 
@@ -249,12 +255,33 @@ class LibraryLock:
             if not acquired:
                 handle.close()
                 return False
-            self._handle, self._key = handle, key
+            nonce = secrets.token_hex(32)
+            try:
+                atomic_write_json(instance_folder() / (key + '.writer-v1.json'),
+                                  {'version': PROTOCOL, 'pid': os.getpid(), 'nonce': nonce}, indent=None)
+            except BaseException:
+                file_lock.unlock(handle)
+                raise
+            self._handle, self._key, self._writer_nonce = handle, key, nonce
             return True
+
+    def writer_protocol_current(self, root: Path) -> bool:
+        # A stale marker alone is not authority: require this exact live handle
+        # and its freshly generated private nonce for the same Library key.
+        with self._guard:
+            key = instance_key(root)
+            if self._handle is None or self._key != key or self._writer_nonce is None:
+                return False
+            try:
+                row = json.loads((instance_folder() / (key + '.writer-v1.json')).read_text('utf8'))
+            except (OSError, ValueError):
+                return False
+            return row == {'version': PROTOCOL, 'pid': os.getpid(), 'nonce': self._writer_nonce}
 
     def release(self) -> None:
         """Let go of the lock (a no-op when not held). The info file is removed first, by remove_instance."""
         with self._guard:
             handle, self._handle, self._key = self._handle, None, None
+            self._writer_nonce = None
         if handle is not None:
             file_lock.unlock(handle)

@@ -2,7 +2,7 @@
  * After the event stream reconnects: the jobs that ended while it was down sent a job.finished nobody
  * received, so what waited on them (a watcher, such as the sync's Promise, or the job list) would wait
  * for ever. They are asked about through GET /api/jobs/{job_id} (the sidecar keeps the last finished
- * jobs, FINISHED_JOBS_KEPT in sidecar/jobs.py). Kept free of React and the stores for tests/jobReconnect.test.ts.
+ * jobs, FINISHED_JOBS_KEPT in sidecar/lifecycle/jobs.py). Kept free of React and the stores for tests/jobReconnect.test.ts.
  */
 import type { JobFinished, JobInfo, JobKind } from "@/api/jobTypes";
 import type { Job } from "@/store";

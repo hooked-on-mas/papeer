@@ -1,0 +1,68 @@
+# Provider cache の cold offline 解除
+
+2026-11-04。P5.3／bootstrap O1 の実装契約。実装と受入の状態は `shared-app-plan.md` 第3節で管理する。この文書だけでO1を完了としない。
+
+## 利用者の操作と認可
+
+1. オンラインで本人Aと対象Libraryのowner/write・descriptor・activationを確認した状態で、利用者が「この端末でオフライン利用を許可」を選び、端末用の解除パスフレーズを設定する。
+2. cold起動では「オフラインで開く」からパスフレーズを入力する。成功するまでLibrary名・本文・候補件数をUI／host APIへ返さない。存在しないcacheや許可を空Libraryに置き換えない。
+3. 解除に成功したLibraryだけを既存のrepository・RuntimeIoGate・DocumentEditSessionsへ接続する。状態はprovider由来のofflineと明示し、local-createdやGoogle認証済みへ再分類しない。
+4. offline編集は同じscope・journal・耐久outboxへ保存する。転送は停止する。再接続は新しい本人Aと同じbinding／descriptorを通常のprovider経路で検証し、旧I/Oをdrainして同じruntimeへ再認可した後に行う。Bの認可でAの未送信を扱わない。
+5. 許可解除・lock・scope切替・pagehide・closeは世代を失効させ、進行中処理を取消／drainする。未確定内容やoutboxを消さない。パスフレーズを忘れたときに新しいvaultを黙って上書きしない。
+
+local-created Libraryの既存local-owner経路は独立して残す。provider cacheの許可をnamespace全体へ広げない。
+
+### オンライン利用中の一時的なprovider応答
+
+すでに認可済みのNative runtimeでdescriptorの再検証が型付きHTTP 429または5xxに失敗した場合、その要求は失敗として返し、既存のローカルadmissionを失効させない。失敗した検証を成功扱いしたり、保存済みdescriptorで新しい認可を発行したりしない。転送は成功したfresh検証を必要とし、ローカル操作でも世代・binding・hold・transactionの照合を維持する。通信不能中に新たなリモート失効を即時に検知する保証はない。
+
+実際の401／403、descriptorの変更、不一致・破損、本人／認証世代の変更は従来どおり失効させる。145の対象は上記の型付きHTTP応答のみで、通常のnetwork例外や未分類のValueErrorを一括して許可する変更ではない。cold起動のパスフレーズ解除条件も変えない。適用・検証状態は計画書P5.3で管理する。
+
+## 信頼境界
+
+既存LocalHostAuthorityと同じ、信頼されたapp origin／browser・OS profileを前提とする。過去のsubjectや最後のaccountという保存値だけでは新しい権限を発行しない。実際のlive provider admissionから事前の端末許可を作り、cold起動では利用者が知るパスフレーズによる解除を追加条件とする。
+
+この機能は既存の平文repository自体を暗号化するものではない。同originの任意コード実行、profile全体の悪意ある全置換、有効だった許可・カウンタ等の認可metadataや完全snapshotを過去へ戻すrollbackを検出する保証はない。その強い保証には独立した信頼anchorが必要であり、cacheと同じ場所に公開鍵を保存するだけでは解決しない。raw storageを直接調べた場合の暗号文row数も隠さない。UI／host APIの認可前非公開と区別する。
+
+WebAuthnやWindows Helloは将来の任意のhost認証方式にできるが、今回のcold offlineを使うための追加hardware要件にはしない。Nativeも実際に入力されたパスフレーズを検証する。DPAPIで既存Google tokenを復号できることやrendererから渡された成功boolを本人確認の代わりにしない。
+
+## Vault形式
+
+- 一つのdevice vault headerと、Library単位の暗号化した許可recordを使う。パスフレーズ・導出鍵を永続化したりproviderへ送ったりしない。
+- v1はPBKDF2-HMAC-SHA256を600,000回、random salt32bytes、AES-GCM-256、tag128bitsで固定する。headerのwrapには新しいKDF saltから得る専用鍵とrandom IV12bytesを使い、その鍵で繰り返し暗号化しない。パスフレーズは12〜1,024 codepoint、UTF-8最大4,096bytes。trimや黙った切詰めはせず、不正surrogateを拒否する。構造・サイズ・固定KDF値を高コスト処理の前に検査する。
+- headerはパスフレーズ由来鍵でrandom vault seedを封印する。HKDFのpurposeを分け、seedから許可record用AES鍵とカウンタ用HMAC鍵を導出する。Library数だけpassword KDFを繰り返さない。
+- 許可recordのIVはvault固有32-bit prefix＋64-bit counterの12bytes。既存vaultでは暗号化前に、オンラインownerのtransactionでnonceを耐久予約する。取消・保存失敗でも予約を戻さず、revokeでcounterを消さず、枯渇時は拒否する。counterの認証と新しいMACの計算はtransaction外、その後に前rowとのCASで予約をcommitする。immutable headerと別rowにし、他Libraryの予約だけで現在のoffline proofを失効させない。新規vaultの最初の暗号化は新しいseedに対して一度だけ行い、候補を失った場合にその鍵を再利用しない。
+- AADと暗号化payloadへversion・purpose・opaque record ID・device/local-owner contextを結び付ける。許可にはaccount／Library／epoch、peer、activation request、principal digest、descriptor／binding、profile／control／access／manifest／checkpoint markerの検証根拠を保持する。編集後の最新checkpoint hashを初期activation hashと混同しない。
+- 解除して得るのはhost内WeakMapで認識する世代付きopaque proof。保存された暗号文やcallerが作ったobject自体はlive proofではない。
+
+PBKDF2の値は[OWASPの推奨work factor](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2)を参照して選んだ。Browserの暗号処理は標準の[Web Cryptography API](https://www.w3.org/TR/2017/REC-WebCryptoAPI-20170126/)を用いる。実際の性能と両engineの相互運用は別途検証する。
+
+## Browserの接続
+
+既存schema9の `canonicalProviderArtifacts` に、通常provider requestとは異なるタグ付きkeyとscopeを設ける。例はscope `JSON.stringify(['host-offline-v1', contextId])`、key `JSON.stringify(['host-offline-v1', contextId, 'header'|'counter'|'grant', opaqueId])`。UUID namespaceを先頭に持つ通常requestやresource keyと衝突させない。`recoveries()` がraw namespaceのscope indexを走査するため、vault rowにraw namespaceのscopeを付けない。通常のcreate/join/recovery/import APIはreserved rowを返したり書き換えたりしない。
+
+登録は現在のlive A／選択済みLibraryのproofから、既存 `readProviderAdmission` と同等の全activation検証を通す。暗号処理をtransaction外で行い、その後の同じowner-controlled transactionでheader／許可のCASと認可を再確認して保存する。IDB transaction内でcryptoやtimerをawaitしない。並行登録・応答消失でも既存vaultや別Libraryの許可を上書きしない。
+
+暗号化する検証snapshotの型も固定する。`canonicalJson(Uint8Array)`とplainな数値key objectを同一視したhashだけで認可しない。binaryを識別するtyped codecと、実際のplan・artifact・descriptor bytes・resourceの独立した厳密検証を使う。最終writeのcommit後に失効を検出した場合は「保存されていない」と断定せず、同IDの照会／再開で結果を確認する。
+
+cold解除は既存cloud cacheだけを、現行と同じWeb Lockの下で開く。現在のcache acquisitionにある新規schema作成・local grant provisionを流用しない。欠落・blocked・破損は理由付き拒否とし、raw入力を維持する。
+
+解除後も `tuple.provider` と元のscopeを保持し、認可方式はProofRecord側のoffline fenceとして区別する。全repository操作のIDB transactionへartifacts storeを含め、通常のgrant／profile／control／peer／manifest／bindingと一緒にheader・許可rowの完全一致を照合する。write終了前とcallback返却時の世代照合も維持する。別tabによる失効も同じstoreのtransaction順序で検出する。memoryの取消だけでcross-tab失効としない。
+
+全activation plan・descriptor・初期resourceの厳密検証と暗号digest照合は解除時に行い、その結果からhost内だけのproofを作る。各編集transactionでは、そのproofへ結び付いた現在のlocal grant・profile・peer・controlとepoch／frozen列・active manifest・active binding・vault header／対象許可・hold・session世代を同じsnapshotで照合する。Nativeもこの境界に合わせ、全初期resourceの再hashを一つの小編集ごとに繰り返さない。通常repositoryのresource読取り時の長さ・SHA-256検証と、operationごとのaccess検査は維持する。
+
+これは履歴artifactを常時再検証する方式とは異なる。解除後に過去のactivation artifactやstaging bytesだけが破損しても、固定scopeの既発行proofをそれだけで取り消さない。その破損は次のcold解除で拒否する。現在の認可tuple・binding・vault rowが変われば次の操作を拒否する。通常のretire・revoke・本人変更が、検査しない履歴artifactだけを変更して有効な現在認可を残さないことを確認する。rendererから「検証済みtuple」を受け取ったり、このoffline proofでprovider転送権限を発行したりしない。
+
+許可保存の結果不明はcold再起動でも再開できるようにする。counterを耐久予約して一度だけ暗号化した最終許可のciphertextを、まずprivateな`pending` rowへ保存する。最終transactionは同じciphertextをそのまま`grant`へ移してpendingを削除する。再試行では復号・現在のactivation照合後に同じciphertextを使い、同nonceで再暗号化しない。pendingのcommit後に応答の現在性を確認できない場合もunknownとして扱う。pendingはoffline編集の許可にしない。
+
+freshなlive Aの現在Library proofとパスフレーズを検証してから、hostの`recoverEnrollment`が同じtupleの固定request IDと状態だけを返す。既存headerがある場合、secret検証前にIDや件数を返さない。acceptedなら既存許可を確認し、pendingなら同IDで最終化する。新しいcontrollerはこの確認を行ってから新しいIDを発行する。pendingとgrantの不整合や同Libraryの古いbinding／epochは黙って無視せず拒否し、raw recordと消費済みcounterを保持する。
+
+offline proofには `providerSync`／`providerRefresh` を発行しない。`beginProviderSync`／`refreshProvider` の拒否を維持する。Bootstrapは明示的な `provider-offline` modeを扱い、転送を停止したまま同じ編集sessionを使う。再接続の `sameAdmission` は認可方式だけで偽にならず、実際のactivation tupleが同一かを確認する。
+
+## Nativeと完了条件
+
+Nativeは既存のProviderOperationOwner・SQLite authorityに登録／解除と毎transactionのfenceを接続する。Browserだけの成功をNativeや製品O1全体の完了にしない。必要な暗号依存、private storage、API認可matrix、cold再起動、既存Windows利用者・保存先の保全、配布物の実画面を確認する。
+
+Nativeの`offline/lock`は認証済みの同じmemory leaseによる後片付けとして、耐久grantのrevision更新後も利用できる。資料の読書きや新しい認可は発行せず、要求したleaseの進行中処理と解除sessionだけを失効させる。lease固有の世代を同じauthority lock内で更新し、別leaseの新しいsessionや処理を停止しない。本人変更・provider admission更新・全体revokeによる全体世代の失効は別に維持する。偽造・別bearer・release済み・全体失効済みのleaseはlockにも使えず、後片付けの許可を通常IOの権限へ読み替えない。
+
+実検証には、live Aなし／事前許可なし／誤ったsecret、破損・欠落・tuple差替え・epoch差、crypto中やwrite中の取消・row置換、並行登録・revoke・別tab、current Bと旧callback、owner lock、通常recoveryへの混入拒否を含める。Browserは実IndexedDB・実WebCryptoで解除後の編集・cold再起動・同ID outbox保持・fresh Aだけの再送まで通す。Nativeは実SQLite・実host adapterで同じ条件を通す。合成ownerだけの成功やtoken helperの存在は完了証拠にしない。

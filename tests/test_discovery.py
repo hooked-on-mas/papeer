@@ -308,7 +308,7 @@ def test_discovery_api_auth_schema_and_disabled_setting(tmp_path, monkeypatch):
 
 
 def test_discovery_job_is_unique_and_does_not_block_read_actions(tmp_path):
-    from sidecar.jobs import ConcurrencyConflict, JobManager
+    from sidecar.lifecycle.jobs import ConcurrencyConflict, JobManager
     lib = Library(tmp_path / "library")
     source = add_paper(lib, 1, "Source")
     manager = JobManager()
@@ -350,8 +350,8 @@ def test_expired_bibliography_shows_saved_results_while_refreshing(tmp_path, mon
 
 
 def test_discovery_finished_event_and_doi_changes_refresh_the_map(tmp_path, monkeypatch):
-    from sidecar.jobs import JobManager
-    from sidecar.job_types import JobFinishedEvent
+    from sidecar.lifecycle.jobs import JobManager
+    from sidecar.lifecycle.job_types import JobFinishedEvent
     lib = Library(tmp_path / "library")
     source = add_paper(lib, 1, "Source", doi="10.1234/source")
     cache = {"nodes": [], "checked_at": "2099-01-01T00:00:00+00:00", "origin_identity": "10.1234/source", "version": discovery.CACHE_VERSION}

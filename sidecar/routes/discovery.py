@@ -3,7 +3,7 @@ import threading
 from fastapi import APIRouter, Depends, Query
 from papeer.core import discovery, map_groups
 from sidecar import deps
-from sidecar.job_types import JobKind, JobStarted
+from sidecar.lifecycle.job_types import JobKind, JobStarted
 from sidecar.schemas.discovery import DiscoveryRequest, DiscoveryResult, DiscoverySelection, MapGroupRequest, MapGroupResult
 from sidecar.schemas.research import ResearchRecord
 

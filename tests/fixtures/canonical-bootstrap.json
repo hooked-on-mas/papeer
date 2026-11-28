@@ -1,0 +1,39 @@
+{
+  "profile": {
+    "version": 1,
+    "revision": "00000000-0000-0000-0000-000000000001",
+    "identity": {
+      "accountId": "drive-permission-123",
+      "libraryId": "00000000-0000-0000-0000-000000000002"
+    },
+    "title": "Library",
+    "remote": null,
+    "initialization": null,
+    "origin": {
+      "kind": "activated-installation",
+      "source": "import",
+      "controlId": "00000000-0000-0000-0000-000000000004",
+      "manifestId": "00000000-0000-0000-0000-000000000005",
+      "installedScope": {
+        "accountId": "drive-permission-123",
+        "libraryId": "00000000-0000-0000-0000-000000000002",
+        "epoch": "epoch-1"
+      }
+    }
+  },
+  "peer": {
+    "version": 1,
+    "accountId": "drive-permission-123",
+    "peerId": "00000000-0000-0000-0000-000000000003"
+  },
+  "requestId": "00000000-0000-0000-0000-000000000004",
+  "epoch": "epoch-1",
+  "manifestId": "00000000-0000-0000-0000-000000000005",
+  "checkpointObjectId": "00000000-0000-0000-0000-000000000006",
+  "rootVersion": "00000000-0000-0000-0000-000000000007",
+  "golden": {
+    "requestJsonUtf8ByteCount": 1466,
+    "requestSha256": "1cb79fd993e82df613211e72ff0cea654e893c4ca9f5b6e2906bd1f9e653de59",
+    "checkpointSha256": "5b31ef46ccce60605c79ef780222eeb1964bfec4bd0afc965866858779c0f9a2"
+  }
+}

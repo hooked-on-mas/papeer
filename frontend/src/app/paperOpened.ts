@@ -1,6 +1,6 @@
 import { api, unwrap } from "@/api/client";
 import { useStore } from "@/store";
-import { createOpenTracker } from "@/lib/recentPapers";
+import { createOpenTracker } from "@/features/library/query/recentPapers";
 
 /**
  * Tells the sidecar which paper was opened (POST /api/papers/{id}/opened): it remembers when on this PC

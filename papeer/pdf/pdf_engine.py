@@ -11,7 +11,7 @@ from typing import Callable
 
 import pymupdf as fitz
 
-from papeer.layout.math_layout import LAYOUT_VERSION, MATH_TOKEN, annotate_math_fonts, formula_only_block, layout_blocks, merge_inline_items, merge_overlapping_prose, merge_continued_prose
+from papeer.layout.math_layout import LAYOUT_VERSION, MATH_TOKEN, annotate_math_fonts, formula_only_block, has_prose_letters, layout_blocks, merge_inline_items, merge_overlapping_prose, merge_continued_prose
 from papeer.core.bibliography import extract_bibliography
 from papeer.core.fileio import atomic_output
 from papeer.layout.reference_layout import mark_references
@@ -323,7 +323,7 @@ def translation_units(document: dict, limit: int | None = None) -> list[dict]:
             continue
         text = block.get("translation_text", block["text"])
         # Pure page numbers and symbol-only blocks are retained verbatim.
-        if re.fullmatch(r"\(\d+[a-z]?\)", text.strip()) or not re.search(r"[A-Za-z\u3040-\u30ff\u3400-\u9fff]", text):
+        if re.fullmatch(r"\(\d+[a-z]?\)", text.strip()) or not has_prose_letters(text):
             continue
         start, index = 0, 0
         while start < len(text):
@@ -620,6 +620,17 @@ def _restore_source_region(page: fitz.Page, source: fitz.Page, rect: fitz.Rect) 
     page.insert_image(target, stream=pixels.tobytes('png'), overlay=True)
 
 
+def _wrapped_word_tail(block: dict, blocks: list[dict]) -> bool:
+    """A short continuation of a hyphenated word is prose, not a plot symbol."""
+    rect = fitz.Rect(block['bbox'])
+    size = block['font_size']
+    return any(other['id'] != block['id'] and other.get('kind', 'text') == 'text'
+               and other['text'].rstrip().endswith('-')
+               and other['bbox'][0] - size <= rect.x0 <= other['bbox'][2]
+               and 0 <= rect.y0 - other['bbox'][3] <= size * 2
+               for other in blocks)
+
+
 def build_translated_pdf(source: Path, document: dict, translations: dict[str, str], output: Path,
                          page_numbers: set[int] | None = None,
                          translate_page_numbers: set[int] | None = None) -> dict:
@@ -809,7 +820,12 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                     obstacles.append(image)
                     if image.width >= 20 and image.height >= 20:
                         raster_images.append(image)
-            obstacles.extend(fitz.Rect(item["rect"]) for item in page.get_drawings())
+            # A single filled page rectangle is the paper background, not a
+            # diagram occupying all available whitespace around every caption.
+            obstacles.extend(fitz.Rect(item["rect"]) for item in page.get_drawings()
+                             if not (item.get("type") == "f" and len(item["items"]) == 1
+                                     and item["items"][0][0] == "re"
+                                     and fitz.Rect(item["rect"]).contains(bounds)))
             body_size = body_font_size(page_blocks)
             footnotes = footnote_ids(page_blocks, bounds.height)
             source_body = source_body_size(page_blocks)
@@ -842,7 +858,8 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 rect = fitz.Rect(block["bbox"]) & bounds
                 if (re.fullmatch(r"[A-Za-z]{1,4}", block["text"].strip())
                         and rect.width < block["font_size"] * 2
-                        and rect.height < block["font_size"] * 3):
+                        and rect.height < block["font_size"] * 3
+                        and not _wrapped_word_tail(block, page_blocks)):
                     preserved_label_blocks.append(block["id"])
                     continue
                 if rect.width < 45 and rect.height > rect.width * 4 and len(block["text"]) > 25:
@@ -921,7 +938,7 @@ def build_translated_pdf(source: Path, document: dict, translations: dict[str, s
                 if 'data-papeer-tall-math' in markup:
                     remaining, scale, flow_pdf = _fit_story_canvas(placement, markup, archive, bounds)
                 wrapped_images = [image for image in raster_images
-                                  if (image & rect).get_area() > 1]
+                                  if (image & placement).get_area() > 1]
                 if wrapped_images:
                     remaining, scale, flow_pdf = _fit_around_images(
                         placement, markup, archive, bounds, wrapped_images)

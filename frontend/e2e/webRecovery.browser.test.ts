@@ -43,7 +43,7 @@ test("Web recovers login, reads, scratch text and reading position without showi
     assert.equal(request.headers().authorization, "Bearer test-token");
     if (request.method() === "POST") { uploads++; await route.fulfill({ json: { id: "op" }, headers }); return; }
     const id = url.pathname.split("/").pop()!;
-    if (id === "files") await route.fulfill({ json: { files: url.searchParams.get("q")?.includes("ink-v1") ? []
+    if (id === "files") await route.fulfill({ json: { files: /ink-v1|notes-v1/.test(url.searchParams.get('q') ?? '') ? []
       : [{ id: anotherAccount ? "other-library" : "library", name: "papeer-library.json", modifiedTime: "2026-10-18T00:00:00Z" }] }, headers });
     else if (id === "library" || id === "other-library") {
       blobs.reading = Buffer.from(JSON.stringify({ version: 1, items: { [paper]: { pageCount: 2, translatedPages: {
@@ -84,7 +84,7 @@ test("Web recovers login, reads, scratch text and reading position without showi
     }, previousUrl);
   };
   await original.locator("canvas").waitFor();
-  await original.getByRole("button", { name: "文字メモ", exact: true }).click();
+  await page.getByRole('toolbar', { name: 'PDFの書き込みツール' }).getByRole("button", { name: "文字メモ", exact: true }).click();
   await original.getByTestId("web-ink").click({ position: { x: 120, y: 150 } });
   await page.getByLabel("PDFに追加するメモ").fill("配置前の文字メモを残す");
   await page.getByRole("button", { name: "次のページ", exact: true }).click();
@@ -139,7 +139,7 @@ test("Web recovers login, reads, scratch text and reading position without showi
   await page.getByRole("button", { name: "キャンセル", exact: true }).click();
   assert.equal(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith("papeer-text:")).length), 0);
   assert.equal(uploads, 0, "scratch text is not uploaded before placement");
-  await original.getByRole("button", { name: "ペン", exact: true }).click();
+  await page.getByRole('toolbar', { name: 'PDFの書き込みツール' }).getByRole("button", { name: "ペン", exact: true }).click();
   await page.evaluate(() => {
     const original = Storage.prototype.setItem;
     (window as unknown as { __restoreStorage: () => void }).__restoreStorage = () => { Storage.prototype.setItem = original; };

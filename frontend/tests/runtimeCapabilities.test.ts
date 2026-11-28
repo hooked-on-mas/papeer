@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { libraryQueryKey, type ArtifactView } from "../src/runtime/contracts.ts";
-import { webLibraryCapabilities } from "../src/runtime/capabilities.ts";
+import { DESKTOP_READER_PANEL_HOST, readerPanelCapabilities, webLibraryCapabilities } from "../src/runtime/capabilities.ts";
+import { itemCapabilities } from "../src/lib/itemKinds.ts";
 import { toLibraryItem } from "../src/runtime/libraryItems.ts";
 import { paperData } from "./support/paperData.ts";
 
@@ -42,4 +43,18 @@ test("read cache keys cannot collide across login epochs, libraries, or revision
     assert.notDeepEqual(libraryQueryKey({ ...scope, [part]: "changed" }, "reading", "paper"), key);
   }
   assert.notDeepEqual(libraryQueryKey(scope, "reading", "other-paper"), key);
+});
+
+test("reader panels combine item kinds, host permissions and saved content without granting generation", () => {
+  const browse = { readSaved: true, generateSummary: false, generateChat: false, editNotes: false, editStickyNotes: false };
+  const pdf = itemCapabilities({ kind: "pdf" });
+  assert.deepEqual(readerPanelCapabilities(pdf, browse), { summary: false, chat: false, notes: false, "sticky-notes": false });
+  assert.deepEqual(readerPanelCapabilities(pdf, DESKTOP_READER_PANEL_HOST), { summary: true, chat: true, notes: true, "sticky-notes": true });
+  assert.equal(readerPanelCapabilities(pdf, browse, { summary: true }).summary, true);
+  const notebook = itemCapabilities({ kind: "notebook" });
+  assert.equal(readerPanelCapabilities(notebook, browse, { chat: true }).chat, true);
+  assert.equal(readerPanelCapabilities(notebook, DESKTOP_READER_PANEL_HOST).chat, false);
+  const held = itemCapabilities({ kind: "notebook", parent_id: "owner" });
+  assert.equal(readerPanelCapabilities(held, DESKTOP_READER_PANEL_HOST, { notes: true }).notes, false);
+  assert.equal(readerPanelCapabilities(pdf, { ...browse, readSaved: false }, { chat: true }).chat, false);
 });

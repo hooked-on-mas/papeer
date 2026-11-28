@@ -2,7 +2,7 @@
 
 The dialog asks before offering the AI's glossary check (itself an AI request) and before
 spending usage on pages that already have a translation. The rules must stay those of
-PaperService.translate: tests/test_translation_plan.py runs the real translation and checks
+PaperService.translate: tests/translation/test_translation_plan.py runs the real translation and checks
 that the pages called reusable here are exactly the pages it takes from the cache.
 """
 from __future__ import annotations

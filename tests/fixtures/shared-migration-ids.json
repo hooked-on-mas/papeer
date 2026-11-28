@@ -1,0 +1,57 @@
+[
+  {
+    "libraryId": "00000000-0000-0000-0000-000000000001",
+    "kind": "ink",
+    "source": [
+      "old-paper",
+      "original",
+      "1",
+      "s1"
+    ],
+    "hash": "a87e9a0c731191672e52b01150e2bda80e76b4ee3259859f5c96163a635afbd6",
+    "targetId": "a87e9a0c-7311-8167-ae52-b01150e2bda8"
+  },
+  {
+    "libraryId": "00000000-0000-0000-0000-000000000001",
+    "kind": "ink",
+    "source": [
+      "old-paper",
+      "translated",
+      "1",
+      "s1"
+    ],
+    "hash": "926c542cc39093fbdb3a5f9b927046100287c2baae4bc28ae966f5437bfb05fa",
+    "targetId": "926c542c-c390-83fb-9b3a-5f9b92704610"
+  },
+  {
+    "libraryId": "00000000-0000-0000-0000-000000000001",
+    "kind": "page",
+    "source": [
+      "資料😀",
+      "original",
+      "page-id"
+    ],
+    "hash": "8529091449f92efbc6c1a2fee8a7649116efb6286f2bd735590ceccf8c98c035",
+    "targetId": "85290914-49f9-8efb-86c1-a2fee8a76491"
+  },
+  {
+    "libraryId": "00000000-0000-0000-0000-000000000001",
+    "kind": "ink",
+    "source": [
+      "a/b",
+      "c"
+    ],
+    "hash": "88785a9aa1d258b83b01337015e6e477cf40eb2f21d8f8e880732232ab997bc8",
+    "targetId": "88785a9a-a1d2-88b8-bb01-337015e6e477"
+  },
+  {
+    "libraryId": "00000000-0000-0000-0000-000000000001",
+    "kind": "ink",
+    "source": [
+      "a",
+      "b/c"
+    ],
+    "hash": "d2ccf4ca44b7cb186b9cbe40a641a584d668cd69ffcefe508c8e1f9d60796b85",
+    "targetId": "d2ccf4ca-44b7-8b18-ab9c-be40a641a584"
+  }
+]

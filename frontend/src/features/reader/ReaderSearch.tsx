@@ -6,7 +6,7 @@ import { onAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
 import { navigateTo } from "./navigation";
 import { stepSearchResult } from "./searchSteps";
-import { keyTarget } from "./pageTurn";
+import { keyTarget } from "./navigation/pageTurn";
 import { isImeKey } from "@/lib/imeKeys";
 
 export type SearchResult = { page: number; snippet: string; anchor_y: number };

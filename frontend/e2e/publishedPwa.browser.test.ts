@@ -23,7 +23,7 @@ test("Published PWA manifest, icons and offline shell", { timeout: 90_000 }, asy
   await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
   await cdp.send("Network.overrideNetworkState", { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("heading", { name: "論文を選んで、読み始めよう" }).waitFor();
+  await page.getByRole("button", { name: "この端末で使い始める", exact: true }).waitFor();
   await page.getByRole("status").filter({ hasText: "オフラインです" }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "Googleでログインして開く →" }).isDisabled(), true);
+  await page.getByRole("region", { name: "端末でのオフライン利用" }).getByLabel("端末のパスフレーズ").waitFor();
 });

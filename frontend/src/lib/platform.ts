@@ -22,7 +22,7 @@ export function detectPlatform(nav: { platform?: string; userAgent?: string } | 
   return "linux";
 }
 
-export const PLATFORM: Platform = detectPlatform(typeof navigator === "undefined" ? undefined : navigator);
+export const PLATFORM: Platform = detectPlatform({ platform: globalThis.navigator?.platform, userAgent: globalThis.navigator?.userAgent });
 export const IS_MAC = PLATFORM === "macos";
 
 // Apple's order for modifiers: ⌃ ⌥ ⇧ ⌘.

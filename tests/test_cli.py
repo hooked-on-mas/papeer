@@ -24,7 +24,7 @@ from papeer.cli.main import main
 from papeer.cli.output import Output, display_width, page_ranges, table
 from papeer.core import instance as discovery
 from papeer.core.storage import Library
-from sidecar.jobs import JobManager
+from sidecar.lifecycle.jobs import JobManager
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_PDF = Path(__file__).parent / "fixtures/sample.pdf"
@@ -1117,5 +1117,5 @@ def test_importing_the_cli_does_not_load_the_apps_heavy_packages():
     heavy, papeer_modules = result.stdout.strip().splitlines()
     assert heavy == "[]"
     allowed = {"papeer.core", "papeer.core.instance", "papeer.core.paths", "papeer.core.fileio", "papeer.core.file_lock",
-               "papeer.core.collection_paths"}
+               "papeer.core.collection_paths", "papeer.core.device_authority", "papeer.core.errors"}
     assert set(eval(papeer_modules)) <= allowed, papeer_modules

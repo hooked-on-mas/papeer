@@ -19,6 +19,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from papeer.core.device_authority import device_writer
 from papeer.core.fileio import atomic_write_json
 from papeer.core.paths import PaperFiles, app_env, device_directory
 from papeer.layout.ocr_engines import (ENGINE_CHOICES, LANGUAGES, TESSDATA, TESSDATA_URL, EngineSet, OcrOptions,
@@ -49,6 +50,7 @@ def ocr_settings() -> dict[str, str]:
     return {key: stored[key] if stored.get(key) in choices[key] else default for key, default in DEFAULT_SETTINGS.items()}
 
 
+@device_writer
 def save_ocr_settings(mode: str, engine: str, lang: str) -> dict[str, str]:
     if mode not in MODES:
         raise ValueError("OCR の使い方は、取り込み時に読む・聞く・使わないから選んでください。")

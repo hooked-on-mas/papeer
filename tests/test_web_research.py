@@ -8,12 +8,11 @@ import threading
 import time
 from types import SimpleNamespace
 
-from _summary_responses import clean_summary_response
-
 from fastapi.testclient import TestClient
 import pymupdf as fitz
 import pytest
 
+from _summary_responses import clean_summary_response
 from papeer.core import reference_pdf, scholarly_lookup, web_research
 from papeer.core.backup import create_backup, restore_backup
 from papeer.core.citations import citation_graph, extract_references
@@ -47,7 +46,7 @@ def evidence(**updates):
                       "version": "著者最終稿"}], **updates}
 
 
-def summary_reply(data):
+def summary_answer(data):
     try:
         request = json.loads(data)
     except ValueError:
@@ -78,7 +77,7 @@ class ResearchProvider(ProviderBackend):
             if isinstance(self.summary_failure, Cancelled):
                 self.cancel.set()
             raise self.summary_failure
-        return summary_reply(data)
+        return summary_answer(data)
 
     def search_web(self, instruction, data, schema=None):
         self.web.append((instruction, json.loads(data)))
@@ -854,40 +853,26 @@ def test_saving_information_off_cancels_reference_lookup_without_a_frontend(api_
         deps.job_manager.cancel_job(response.json()["job_id"])
 
 
-@pytest.mark.parametrize("cls,provider_id,module", [
-    (ClaudeCodeProvider, "claude", "papeer.providers.claude_code"),
-    (AntigravityProvider, "antigravity", "papeer.providers.antigravity"),
-])
-def test_cli_research_chat_and_pdf_import_share_the_same_api(api_env, monkeypatch, cls, provider_id, module):
+def test_claude_research_chat_and_pdf_import_share_the_same_api(api_env, monkeypatch):
     client, lib, source, _, _, _ = api_env
-    monkeypatch.setattr(deps, "get_settings", lambda: Settings(provider=provider_id, model="", paper_metadata_ai_enabled=True))
-    monkeypatch.setattr(cls, "command", lambda self: [provider_id])
-    monkeypatch.setattr(deps, "provider_for", lambda settings, cancel: cls(settings, cancel))
+    monkeypatch.setattr(deps, "get_settings", lambda: Settings(provider="claude", model="", paper_metadata_ai_enabled=True))
+    monkeypatch.setattr(ClaudeCodeProvider, "command", lambda self: ["claude"])
+    monkeypatch.setattr(deps, "provider_for", lambda settings, cancel: ClaudeCodeProvider(settings, cancel))
 
     def execute(**kwargs):
         prompt = kwargs["prompt_bytes"].decode("utf-8")
-        if provider_id == "antigravity":
-            prompt = json.loads(prompt)["message"]["content"]
         command = kwargs["command"]
-        searching = ((command[command.index("--tools") + 1] != "") if provider_id == "claude"
-                     else command[command.index("--agent") + 1] == "papeer-web")
+        searching = command[command.index("--tools") + 1] != ""
         if not searching:
             assert "--dangerously-skip-permissions" not in command
-            payload, _ = json.JSONDecoder().raw_decode(prompt.split("DOCUMENT_DATA_JSON:\n", 1)[1])
-            answer = summary_reply(payload if isinstance(payload, str) else json.dumps(payload))
-            if provider_id == "claude":
-                result = {"type": "result", "is_error": False, "result": answer}
-                if "--json-schema" in command:
-                    result["structured_output"] = json.loads(answer)
-                return json.dumps(result), ""
-            return json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": answer}}), ""
+            document, _ = json.JSONDecoder().raw_decode(prompt.split("DOCUMENT_DATA_JSON:\n", 1)[1])
+            answer = summary_answer(document if isinstance(document, str) else json.dumps(document))
+            return json.dumps({"type": "result", "is_error": False, "result": answer}), ""
         result = ({"answer": "外部情報を確認しました [Web 1]。", "sources": evidence()["sources"], "papers": [evidence()]}
                   if "Answer the question in Japanese" in prompt else evidence())
-        if provider_id == "claude":
-            return json.dumps({"type": "result", "is_error": False, "result": "", "structured_output": result}), ""
-        return json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": json.dumps(result)}}), ""
+        return json.dumps({"type": "result", "is_error": False, "result": "", "structured_output": result}), ""
 
-    monkeypatch.setattr(f"{module}.run_cli_process", execute)
+    monkeypatch.setattr("papeer.providers.claude_code.run_cli_process", execute)
     assert client.get("/api/research-capabilities").json() == {
         "paper_discovery_enabled": True, "web_search": True, "reference_research_enabled": True, "reference_lookup": True, "reference_web_search": True}
     key = research(client, source)

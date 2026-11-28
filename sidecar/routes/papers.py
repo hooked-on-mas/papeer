@@ -24,8 +24,8 @@ from papeer.core.storage import normalize_collection_name
 from papeer.pdf.pdf_viewer import pdf_page_count
 from papeer.providers import Cancelled
 from sidecar import deps
-from sidecar.job_types import ImportItemEvent, ImportPagesEvent, JobKind, JobStarted
-from sidecar.jobs import ConcurrencyConflict, TurnQueue
+from sidecar.lifecycle.job_types import ImportItemEvent, ImportPagesEvent, JobKind, JobStarted
+from sidecar.lifecycle.jobs import ConcurrencyConflict, TurnQueue
 from sidecar.routes.ocr import ocr_turn
 from sidecar.schemas.papers import (
     ApplyMovesRequest,

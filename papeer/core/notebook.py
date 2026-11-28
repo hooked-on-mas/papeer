@@ -278,7 +278,7 @@ def link(lib, paper_id: str, target_id: str) -> bool:
             raise Invalid("同じ項目どうしは紐づけられません。")
         if any(row["parent_id"] is not None for row in rows):
             raise Invalid("ほかの項目に入っているノートは紐づけられません。")
-        if sorted(row["kind"] for row in rows) != ["notebook", "pdf"]:
+        if sorted(row["kind"] for row in rows) not in (["notebook", "pdf"], ["markdown", "pdf"]):
             raise Invalid("紐づけられるのは論文とノートの組み合わせだけです。")
         first, second = sorted((paper_id, target_id))
         return db.execute("INSERT OR IGNORE INTO item_links(a,b) VALUES(?,?)", (first, second)).rowcount > 0

@@ -29,12 +29,12 @@ from papeer.core.paths import PaperFiles
 # papers.kind. A new kind needs a schema version of its own (library_schema._notebook_items).
 KIND_PDF = "pdf"
 KIND_NOTEBOOK = "notebook"
-ITEM_KINDS = (KIND_PDF, KIND_NOTEBOOK)
+ITEM_KINDS = (KIND_PDF, KIND_NOTEBOOK, "markdown")
 
 # WHERE conditions on the papers table: the PDF papers, and everything the library lists (a notebook
 # held by another item is listed under it, not on its own).
 PDF_PAPERS = "kind='pdf' AND parent_id IS NULL"
-LISTED_ITEMS = "kind IN ('pdf','notebook') AND parent_id IS NULL"
+LISTED_ITEMS = "kind IN ('pdf','notebook','markdown') AND parent_id IS NULL"
 
 ATTACHMENT_FORMATS = ("md", "html")
 TITLE_LIMIT = 200
@@ -76,11 +76,11 @@ def relation_counts(db: sqlite3.Connection, ids: Iterable[str] | None = None) ->
     # (key of NO_RELATIONS, query with its WHERE clause as {}, the column ids are matched on, the condition
     # of what is counted, or "" for all of it)
     queries = (
-        ("attachment_count", "SELECT owner_id,COUNT(*) FROM attachments {} GROUP BY owner_id", "owner_id", ""),
+        ("attachment_count", "SELECT owner_id,COUNT(*) FROM (SELECT owner_id FROM attachments UNION ALL SELECT parent_id AS owner_id FROM papers WHERE kind='markdown' AND parent_id IS NOT NULL) {} GROUP BY owner_id", "owner_id", ""),
         ("html_document_count", "SELECT owner_id,COUNT(*) FROM attachments {} GROUP BY owner_id", "owner_id",
          "format='html'"),
         ("owned_notebook_count", "SELECT parent_id,COUNT(*) FROM papers {} GROUP BY parent_id", "parent_id",
-         "parent_id IS NOT NULL"),
+         "parent_id IS NOT NULL AND kind='notebook'"),
         ("link_count", "SELECT id,COUNT(*) FROM (SELECT a AS id FROM item_links UNION ALL SELECT b FROM item_links) {}"
                        " GROUP BY id", "id", ""),
     )
@@ -111,6 +111,12 @@ class ItemRelations(LibraryBase):
         `source` says where it came from ("user", "imported", "summary", "chat"...). Invalid when the owner
         is itself held by another item (one level only), NotFound when it does not exist.
         """
+        if format == "md":
+            from papeer.core import notes
+            row = notes.create(self, title, parent_id=owner_id, content=content)
+            with self.connection() as db:
+                db.execute('UPDATE note_state SET source=? WHERE id=?', (source, row['id']))
+            return notes.attachment({**row, 'source': source})
         if format not in ATTACHMENT_FORMATS:
             raise Invalid("メモ・資料の形式が不正です。")
         title = " ".join(title.split())
@@ -125,8 +131,8 @@ class ItemRelations(LibraryBase):
                     raise NotFound("項目が見つかりません。")
                 if owner["parent_id"] is not None:
                     raise Invalid("ほかの項目に入っているノートには、メモや資料を追加できません。")
-                position = db.execute("SELECT COALESCE(MAX(position)+1,0) FROM attachments WHERE owner_id=?",
-                                      (owner_id,)).fetchone()[0]
+                position = db.execute("SELECT COALESCE(MAX(position)+1,0) FROM (SELECT position FROM attachments WHERE owner_id=? UNION ALL SELECT note_position AS position FROM papers WHERE parent_id=?)",
+                                      (owner_id, owner_id)).fetchone()[0]
                 db.execute("INSERT INTO attachments(id,owner_id,format,title,source,position) VALUES(?,?,?,?,?,?)",
                            (attachment_id, owner_id, format, title, source, position))
                 # Inside the transaction: a file that cannot be written leaves no row.
@@ -139,12 +145,21 @@ class ItemRelations(LibraryBase):
 
     def attachments(self, owner_id: str) -> list[dict]:
         """The memos and documents of an item, in their order."""
+        from papeer.core import notes
         with self.connection() as db:
-            return [dict(row) for row in db.execute(
-                "SELECT * FROM attachments WHERE owner_id=? ORDER BY position,created_at,id", (owner_id,))]
+            rows = [dict(row) for row in db.execute("SELECT * FROM attachments WHERE owner_id=?", (owner_id,))]
+            rows += [notes.attachment(dict(row)) for row in db.execute("SELECT p.*,s.updated_at,s.source FROM papers p JOIN note_state s ON s.id=p.id WHERE p.parent_id=? AND p.kind='markdown'", (owner_id,))]
+        return sorted(rows, key=lambda row: (row['position'], row['created_at'], row['id']))
 
     def attachment_text(self, attachment_id: str) -> str:
         """The text of an attachment's file; NotFound when it has no row, or its file is missing."""
+        _as_bytes = False
+        from papeer.core import notes
+        with self.connection() as db:
+            note = db.execute("SELECT id FROM papers WHERE id=? AND kind='markdown'", (attachment_id,)).fetchone()
+        if note:
+            content = notes.read(self, attachment_id)['content']
+            return content.encode('utf-8') if _as_bytes else content
         with self.connection() as db:
             row = db.execute("SELECT owner_id,format FROM attachments WHERE id=?", (attachment_id,)).fetchone()
         if row is None:
@@ -156,6 +171,13 @@ class ItemRelations(LibraryBase):
 
     def attachment_bytes(self, attachment_id: str) -> bytes:
         """The exact bytes of an attachment's file (no newline translation); NotFound as attachment_text."""
+        _as_bytes = True
+        from papeer.core import notes
+        with self.connection() as db:
+            note = db.execute("SELECT id FROM papers WHERE id=? AND kind='markdown'", (attachment_id,)).fetchone()
+        if note:
+            content = notes.read(self, attachment_id)['content']
+            return content.encode('utf-8') if _as_bytes else content
         with self.connection() as db:
             row = db.execute("SELECT owner_id,format FROM attachments WHERE id=?", (attachment_id,)).fetchone()
         if row is None:
@@ -166,13 +188,17 @@ class ItemRelations(LibraryBase):
             raise NotFound("メモ・資料のファイルが見つかりません。") from None
 
     def remove_attachment(self, attachment_id: str) -> None:
-        """Remove an attachment's row and file; NotFound when it has no row."""
+        with self.connection() as db:
+            note = db.execute("SELECT id FROM papers WHERE id=? AND kind='markdown'", (attachment_id,)).fetchone()
+        if note:
+            self.delete_paper(attachment_id)
+            return
         with self.connection() as db:
             row = db.execute("SELECT owner_id,format FROM attachments WHERE id=?", (attachment_id,)).fetchone()
             if row is None:
-                raise NotFound("メモ・資料が見つかりません。")
-            PaperFiles(self.folder(row["owner_id"])).attachment(attachment_id, row["format"]).unlink(missing_ok=True)
-            db.execute("DELETE FROM attachments WHERE id=?", (attachment_id,))
+                raise NotFound("ノート・資料が見つかりません。")
+            PaperFiles(self.folder(row['owner_id'])).attachment(attachment_id, row['format']).unlink(missing_ok=True)
+            db.execute('DELETE FROM attachments WHERE id=?', (attachment_id,))
 
     def update_attachment(self, owner_id: str, attachment_id: str, *, title: str | None = None,
                           content: str | None = None) -> dict:
@@ -180,6 +206,13 @@ class ItemRelations(LibraryBase):
 
         A document's (html) text is never edited: it is shown as it was added, so `content` is Invalid for it.
         """
+        from papeer.core import notes
+        with self.connection() as db:
+            note = db.execute("SELECT id FROM papers WHERE id=? AND parent_id=? AND kind='markdown'", (attachment_id, owner_id)).fetchone()
+        if note:
+            before = notes.read(self, attachment_id)
+            values = {key: value for key, value in {'title': title, 'content': content}.items() if value is not None}
+            return notes.attachment(notes.update(self, attachment_id, before['revision'], **values))
         if title is not None:
             title = " ".join(title.split())
             if not title or len(title) > TITLE_LIMIT:
@@ -199,12 +232,14 @@ class ItemRelations(LibraryBase):
 
     def reorder_attachments(self, owner_id: str, ids: list[str]) -> None:
         """Order all the owner's memos and documents, refusing a stale/incomplete/foreign list."""
+        current = self.attachments(owner_id)
+        if len(ids) != len(set(ids)) or set(ids) != {row['id'] for row in current}:
+            raise Invalid("ノート・資料の一覧が変わりました。")
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            current = [row[0] for row in db.execute("SELECT id FROM attachments WHERE owner_id=?", (owner_id,))]
-            if len(ids) != len(set(ids)) or set(ids) != set(current):
-                raise Invalid("メモ・資料の一覧が変わりました。再読み込みして並べ替えてください。")
-            db.executemany("UPDATE attachments SET position=? WHERE id=?", enumerate(ids))
+            for position, identity in enumerate(ids):
+                db.execute("UPDATE attachments SET position=? WHERE id=? AND owner_id=?", (position, identity, owner_id))
+                db.execute("UPDATE papers SET note_position=? WHERE id=? AND parent_id=?", (position, identity, owner_id))
 
     # --- Linking ---
 

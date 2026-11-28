@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyGlossaryReview, moveGlossaryTerms, withPaperTerms } from "../src/features/reader/paperGlossary.ts";
-import { effectiveTerms } from "../src/features/reader/translationStart.ts";
+import { applyGlossaryReview, moveGlossaryTerms, withPaperTerms } from "../src/features/reader/glossary/paperGlossary.ts";
+import { effectiveTerms } from "../src/features/reader/translation/translationStart.ts";
 
 test("review opts in to paper-only terms and remembers unchecked candidates", () => {
   const candidates = [{ source: "slope", target: "勾配", reason: "意味が変わる" }, { source: "work", target: "作業" }];

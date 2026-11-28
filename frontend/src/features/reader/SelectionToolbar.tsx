@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { NotebookPen, Sparkles, StickyNote as StickyIcon, Trash2 } from "lucide-react";
 import { showError } from "@/components/errorDialog";
 import { useItemCapabilities } from "@/api/hooks";
-import { useStore } from "@/store";
+import { useStore } from "@/store/index";
 import {
   HIGHLIGHT_COLORS, highlightAt, highlightColor, rectsBounds, selectionToolbarAllowed, toolbarPlacement,
   type Box, type HighlightColor,
@@ -13,8 +13,8 @@ import {
   stickyNoteForPassage, type Passage,
 } from "./readerPassage";
 import { passageActions, type PassageAction } from "./passageActions";
-import { noteDraft, type StickyNote } from "./stickyNotes";
-import { deleteStickyNote, openStickyNote, recolorHighlight, useStickyNotes } from "./stickyNotesStore";
+import { noteDraft, type StickyNote } from "./sticky/stickyNotes";
+import { deleteStickyNote, openStickyNote, recolorHighlight, useStickyNotes } from "./sticky/stickyNotesStore";
 
 type Target = { mode: "selection" } | { mode: "highlight"; id: number };
 
@@ -50,7 +50,7 @@ export function SelectionToolbarView({ mode, actions, color, busy, style, toolba
     </div>}
     {actions.has("highlight") && (actions.has("explain") || actions.has("quote") || actions.has("sticky")) && <span className="mx-0.5 h-4 border-l" />}
     {actions.has("explain") && <button type="button" className={button} disabled={busy} title="チャットでこの箇所を説明してもらう" onClick={onExplain}><Sparkles className="size-3.5" />説明</button>}
-    {actions.has("quote") && <button type="button" className={button} disabled={busy} title="メモに引用する（ページへのリンク付き）" onClick={onQuote}><NotebookPen className="size-3.5" />メモへ</button>}
+    {actions.has("quote") && <button type="button" className={button} disabled={busy} title="ノートに引用する（ページへのリンク付き）" onClick={onQuote}><NotebookPen className="size-3.5" />ノートへ</button>}
     {actions.has("sticky") && <button type="button" className={button} disabled={busy} title={mode === "selection" ? "選択した文章に付箋を貼る" : "このハイライトにメモ（付箋）を書く"} onClick={onSticky}>
       <StickyIcon className="size-3.5" />付箋</button>}
     {onDelete && actions.has("highlight") && <button type="button" className={button} disabled={busy} aria-label="ハイライトを削除" title="ハイライトを削除" onClick={onDelete}><Trash2 className="size-3.5" /></button>}
@@ -63,8 +63,8 @@ function highlightPassageOf(item: StickyNote): Passage {
 }
 
 /**
- * The small toolbar over text selected in a pane (highlight colours, 説明, メモへ, 付箋), and over a
- * highlight clicked on the page (its colour, 説明, メモへ, its memo, 削除). Only in reading mode: a writing
+ * The small toolbar over text selected in a pane (highlight colours, 説明, ノートへ, 付箋), and over a
+ * highlight clicked on the page (its colour, 説明, ノートへ, its memo, 削除). Only in reading mode: a writing
  * tool or placing a sticky note uses the pointer for itself. Positioned within `frame`, the element around
  * the pane's scroller `container`.
  */

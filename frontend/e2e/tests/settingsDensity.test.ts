@@ -10,7 +10,7 @@ scenario("表示設定の全項目、キー検索、多数のタグと重複名�
 }, async app => {
   const { page, api } = app;
   await waitForLibrary(page, ["Stochastic Gradient"]);
-  assert.equal(await page.getByText("PDFを追加 → AI接続を設定 → 翻訳・解説・チャット", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("PDFを追加 → AI接続を設定 → 翻訳・サマリー・チャット", { exact: true }).count(), 0);
   await page.getByRole("button", { name: "接続・設定", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "設定", exact: true });
   const nav = settings.getByRole("navigation", { name: "設定の項目", exact: true });

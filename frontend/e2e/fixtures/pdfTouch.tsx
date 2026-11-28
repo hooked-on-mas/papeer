@@ -2,25 +2,25 @@
 import { createRoot } from "react-dom/client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { PdfPane } from "../../src/features/reader/PdfPane";
-import { createScrollSync } from "../../src/features/reader/scrollSync";
-import { usePdfTouchOwner } from "../../src/features/reader/usePdfTouch";
+import { LegacyPdfPaneConnection as PdfPane } from "../../src/features/reader/LegacyPdfPaneConnection";
+import { createScrollSync } from "../../src/features/reader/navigation/scrollSync";
+import { getPdfPointerOwner } from "../../src/features/reader/usePdfTouch";
 import { useStore } from "../../src/store";
 import { InkOverlay } from "../../src/features/reader/InkOverlay";
-import type { InkEditor } from "../../src/features/reader/useInkEditor";
+import type { InkEditor } from "../../src/features/reader/inkEditor";
 import "../../src/index.css";
 
 function Fixture() {
   const zoom = useStore(s => s.zoom);
   const [ink, setInk] = useState(false);
   const left = useRef<HTMLDivElement>(null), right = useRef<HTMLDivElement>(null);
-  const sync = useMemo(() => createScrollSync(() => usePdfTouchOwner.getState().pane), []);
+  const sync = useMemo(() => createScrollSync(() => getPdfPointerOwner(left.current)), []);
   return <>
     <select aria-label="Test zoom" value={zoom} onChange={e => useStore.getState().setZoom(Number(e.target.value))}>
       <option value={zoom}>{zoom}</option>{[0, 0.8, 1, 2, 3, 4].filter(v => v !== zoom).map(v => <option key={v} value={v}>{v}</option>)}
     </select>
     <label><input type="checkbox" checked={ink} onChange={e => setInk(e.target.checked)} />Test ink overlay</label>
-    <div style={{ display: "flex", marginLeft: 100, marginTop: 60, width: 1100, height: 600 }}>
+    <div data-reader-root style={{ display: "flex", marginLeft: 100, marginTop: 60, width: 1100, height: 600 }}>
       <div data-test-pane="left" style={{ width: 500 }}>
         <PdfPane url="/touch-fixture.pdf" pageNumber={1} zoom={zoom} scrollRef={left} onScroll={e => sync(e.currentTarget, right.current)} />
       </div>

@@ -19,8 +19,8 @@ from papeer.core.reading_choices import all_tags as all_tags
 from papeer.core.reading_choices import choice_name as choice_name
 from papeer.core.reading_choices import note_templates as note_templates
 from papeer.core.reading_choices import template_name as template_name
-from papeer.core.glossary_draft import draft_glossary as draft_glossary
-from papeer.core.glossary_draft import validate_terms as validate_terms
+from papeer.core.glossary.glossary_draft import draft_glossary as draft_glossary
+from papeer.core.glossary.glossary_draft import validate_terms as validate_terms
 from papeer.core.library_search import _metadata_text as _metadata_text
 from papeer.core.library_search import _search_places as _search_places
 from papeer.core.library_search import library_search as library_search

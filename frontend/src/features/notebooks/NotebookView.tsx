@@ -2,14 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/store";
 import { backendUrl } from "@/api/client";
 import { useReading } from "@/api/hooks";
-import { PdfPane } from "@/features/reader/PdfPane";
+import { LegacyPdfPaneConnection as PdfPane } from "@/features/reader/LegacyPdfPaneConnection";
 import { SelectionButtons } from "@/features/reader/inkControls";
 import { useInkTools } from "@/features/reader/useInkEditor";
-import { fitNotebookToolbar } from "@/features/reader/readerBars";
+import { fitNotebookToolbar } from "@/features/reader/layout/readerBars";
 import { useViewerInput } from "@/features/reader/useViewerInput";
 import { usePageAnchor } from "@/features/reader/usePageAnchor";
 import { usePageNotes } from "@/features/reader/usePageNotes";
-import { useRowWidth } from "@/features/reader/useRowWidth";
+import { useRowWidth } from "@/features/reader/layout/useRowWidth";
 import { NotebookInkTools } from "./NotebookInkTools";
 import { NotebookPageCorner, CORNER_WIDTH } from "./NotebookPageCorner";
 import { NotebookPageSidebar } from "./NotebookPageSidebar";
@@ -17,7 +17,13 @@ import { NotebookPaperDialog } from "./NotebookPaperDialog";
 import { NotebookPaperMenu } from "./NotebookPaperMenu";
 import { NotebookToolbar } from "./NotebookToolbar";
 import { NotebookBarContext, type NotebookHistory } from "./notebookBar";
-import { useNotebook, useNotebookBusy } from "./notebooks";
+import { useNotebookBusy } from "./notebooks";
+import { desktopNotebookSession, loadDesktopNotebookSession } from '../../adapters/desktop/notebookSessions';
+import { useLoadedNoteSession } from '../notes/useLoadedNoteSession';
+import { useNoteEditorOwner } from '../notes/useNoteEditorOwner';
+import { NotebookEditorContext } from '../notes/NotebookEditorContext';
+import { NotebookDraftRecovery } from '../notes/NoteDocumentEditor';
+import type { NoteEditSession } from '../notes/noteEditSession';
 import { cornerPlacement, sidebarPlacement, SIDEBAR_WIDTH } from "./pageSidebar";
 import { NotebookPageActionsContext, useNotebookPageActions } from "./useNotebookPageActions";
 import { usePaperBox } from "./usePaperBox";
@@ -33,11 +39,17 @@ import { useWritingContact, writingContactActive } from "./writingContact";
  * the paper is the same size with them as without, and the toolbar is one row for the same reason.
  */
 export function NotebookView({ paperId }: { paperId: string }) {
+  const { session, error } = useLoadedNoteSession(paperId, loadDesktopNotebookSession, desktopNotebookSession);
+  if (!session) return <p role={error ? 'alert' : 'status'}>{error || 'ノートを読み込み中…'}</p>;
+  return <NotebookSessionView paperId={paperId} session={session} loadError={error} />;
+}
+function NotebookSessionView({ paperId, session, loadError }: { paperId: string; session: NoteEditSession; loadError: string }) {
+  const ownership = useNoteEditorOwner(session);
+  const notebook = ownership.state.note.document!;
   const currentPage = useStore((s) => s.currentPage);
   const zoom = useStore((s) => s.notebookZoom);
   const sidebarHidden = useStore((s) => s.notebookSidebarHidden);
   const focusMode = useStore((s) => s.focusMode);
-  const { data: notebook } = useNotebook(paperId, true);
   const { data: reading } = useReading(paperId);
   const busy = useNotebookBusy((s) => s.ids.includes(paperId));
   const actions = useNotebookPageActions(paperId, notebook);
@@ -76,12 +88,16 @@ export function NotebookView({ paperId }: { paperId: string }) {
   const bar = useMemo(() => ({ inlineStyle, historyInBar, setHistory, alertSlot }), [inlineStyle, historyInBar, alertSlot]);
 
   const page = notebook?.pages[currentPage - 1];
-  const url = notebook ? backendUrl(`/api/papers/${paperId}/files/original.pdf?v=${notebook.revision}`) : null;
+  const url = backendUrl(`/api/papers/${paperId}/files/original.pdf?v=${ownership.state.remote.document!.revision}`);
 
   return (
+    <NotebookEditorContext.Provider value={{ session, ...ownership }}>
     <NotebookPageActionsContext.Provider value={actions}>
     <NotebookBarContext.Provider value={bar}>
       <div ref={rootRef} className="flex flex-col h-full w-full bg-reader-bg">
+        {loadError && <p role="alert">{loadError}</p>}
+        {!ownership.editable && <p role="status">{ownership.state.editingBlocked ? 'ページを変更中…' : 'このノートは別の表示面で編集中です。'}</p>}
+        <NotebookDraftRecovery session={session} />
         <NotebookToolbar paperId={paperId} document={notebook} fit={fit} busy={busy}
           history={history} rowRef={rowRef} setToolsSlot={setToolsSlot} setAlertSlot={setAlertSlot} />
         <div ref={viewRef} className="flex-1 relative min-h-0">
@@ -120,5 +136,6 @@ export function NotebookView({ paperId }: { paperId: string }) {
       <NotebookPaperDialog />
     </NotebookBarContext.Provider>
     </NotebookPageActionsContext.Provider>
+    </NotebookEditorContext.Provider>
   );
 }

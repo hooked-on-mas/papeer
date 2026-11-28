@@ -1,9 +1,11 @@
+import { useNotes } from "@/features/notes/noteApi";
+import { useMemoSelection } from "@/features/notes/memoState";
 import React, { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   StickyNote, ChevronLeft, ChevronRight, Copy, Highlighter, Languages, MoveHorizontal, NotebookPen, Paperclip, Sparkles, ZoomIn, ZoomOut, Scan,
 } from "lucide-react";
-import { useStore, ZOOM_FIT_PAGE } from "@/store";
+import { useStore, ZOOM_FIT_PAGE } from "@/store/index";
 import { useItemCapabilities } from "@/api/hooks";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger,
@@ -13,7 +15,7 @@ import { changeZoom, movePage } from "./navigation";
 import { attachPassage, capturePassage, explainPassage, highlightPassage, quotePassageInNote, stickyNoteForPassage, type Passage } from "./readerPassage";
 import { highlightColor } from "./highlights";
 import { passageActions } from "./passageActions";
-import { useStickyNotes } from "./stickyNotesStore";
+import { useStickyNotes } from "./sticky/stickyNotesStore";
 import { emitAppEvent } from "@/lib/appEvents";
 import { shortcutLabel } from "@/lib/platform";
 
@@ -30,7 +32,10 @@ export function PdfContextMenu({ translated, disabled = false, children }: { tra
   const passage = useRef<Passage | null>(null);
   const lastColor = useStickyNotes(s => s.highlightColor);
   // What the open item can do: the items of what it cannot (a notebook is not translated) are not offered.
-  const caps = useItemCapabilities(useStore((s) => s.activePaperId));
+  const activeId = useStore(s => s.activePaperId);
+  const caps = useItemCapabilities(activeId);
+  const selectedNoteId = useMemoSelection(s => activeId ? s.selected[activeId] : undefined);
+  const destination = useNotes().data?.find(note => note.id === selectedNoteId && note.kind === 'markdown' && note.parent_id === activeId);
   const can = passageActions(caps);
 
   const handleOpen: NonNullable<React.ComponentProps<typeof ContextMenu>["onOpenChange"]> = (open, details) => {
@@ -85,7 +90,7 @@ export function PdfContextMenu({ translated, disabled = false, children }: { tra
               <Paperclip /> この箇所をチャットに添付
             </ContextMenuItem>}
             {can.has("quote") && <ContextMenuItem onClick={withPassage(quotePassageInNote)}>
-              <NotebookPen /> メモに引用
+              <NotebookPen /> {destination ? `「${destination.title}」に追加` : "ノートに引用…"}
             </ContextMenuItem>}
             {can.has("sticky") && <ContextMenuItem onClick={withPassage(stickyNoteForPassage)}>
               <StickyNote /> 選択した文章に付箋を貼る…

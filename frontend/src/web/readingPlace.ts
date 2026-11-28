@@ -1,5 +1,5 @@
 import type { ArtifactView } from "../runtime/contracts.ts";
-import type { ReadingPlace } from "../features/reader/readingPlace.ts";
+import type { ReadingPlace } from "../features/reader/navigation/readingPlace.ts";
 
 type DocumentPlace = { page: number; zoom: number; mode: "auto" | "single" | "split"; editing?: boolean; fitPage?: boolean };
 type LibraryPlace = { itemId: string; artifact: string };

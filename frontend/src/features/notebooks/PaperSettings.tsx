@@ -1,4 +1,4 @@
-import { DEFAULT_PAPER, PAPER_SIZES, PAPER_TEMPLATES, type NotebookPaper } from "./notebooks";
+import { DEFAULT_PAPER, PAPER_SIZES, PAPER_TEMPLATES, type NotebookPaper } from "./paperSpec";
 
 const colors = { white: "#ffffff", cream: "#fff7e0", dark: "#1f242b" };
 

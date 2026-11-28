@@ -13,7 +13,7 @@ import { ZoomControl, ZoomMenuGroup } from "@/features/reader/ZoomControl";
 import { SIDE_PANEL_BUTTONS } from "@/features/reader/sidePanelButtons";
 import { useInkPdfExport } from "@/features/reader/inkControls";
 import { useInkPreferences, useInkTools } from "@/features/reader/useInkEditor";
-import type { BarFit } from "@/features/reader/readerBars";
+import type { BarFit } from "@/features/reader/layout/readerBars";
 import type { NotebookHistory } from "./notebookBar";
 import type { NotebookDocument } from "./notebooks";
 import { usePageActions } from "./useNotebookPageActions";

@@ -1,3 +1,4 @@
+import { desktopReaderCommands } from "./useViewerInput";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
   ClipboardCheck, ListTree, Maximize2, Minimize2, MoreHorizontal,
@@ -13,16 +14,16 @@ import {
   DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { emitAppEvent } from "@/lib/appEvents";
-import { changeZoom, historyBack, navigateTo } from "./navigation";
+import { historyBack, navigateTo } from "./navigation";
 import { PageNavigator } from "./PageNavigator";
 import { ZoomControl, ZoomMenuGroup } from "./ZoomControl";
 import { SIDE_PANEL_BUTTONS } from "./sidePanelButtons";
 import { SidePanelChooser } from "./SidePanelChooser";
 import { currentOutlineIndex, type OutlineEntry } from "./pdfLinks";
-import { fitReaderToolbar } from "./readerBars";
+import { fitReaderToolbar } from "./layout/readerBars";
 import { ReaderSearch } from "./ReaderSearch";
 import { ReaderInkButton } from "./ReaderInkButton";
-import { TranslationReview } from "./TranslationReview";
+import { TranslationReview } from "./translation/TranslationReview";
 import { translationIssues } from "@/lib/translationIssues";
 import { withShortcutLabels } from "@/lib/platform";
 
@@ -233,8 +234,8 @@ export function ReaderToolbar({ paperId, search, setSearch, outline, ownsKey }: 
               <DropdownMenuItem onClick={() => useStore.getState().setActiveTab("sticky-notes")}><StickyNote /> {withShortcutLabels("付箋タブへ（Ctrl+5）")}</DropdownMenuItem>
             )}
             {!full("zoom") && <>
-              <DropdownMenuItem disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]} onClick={() => changeZoom(1)}><ZoomIn /> {withShortcutLabels("拡大（Ctrl++）")}</DropdownMenuItem>
-              <DropdownMenuItem disabled={zoom <= ZOOM_LEVELS[0]} onClick={() => changeZoom(-1)}><ZoomOut /> {withShortcutLabels("縮小（Ctrl+-）")}</DropdownMenuItem>
+              <DropdownMenuItem disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]} onClick={() => desktopReaderCommands("pdf").dispatch({ type: "zoom-step", steps: 1 })}><ZoomIn /> {withShortcutLabels("拡大（Ctrl++）")}</DropdownMenuItem>
+              <DropdownMenuItem disabled={zoom <= ZOOM_LEVELS[0]} onClick={() => desktopReaderCommands("pdf").dispatch({ type: "zoom-step", steps: -1 })}><ZoomOut /> {withShortcutLabels("縮小（Ctrl+-）")}</DropdownMenuItem>
             </>}
             {!shown("zoom") && <ZoomMenuGroup />}
             {caps.translate && <DropdownMenuGroup>

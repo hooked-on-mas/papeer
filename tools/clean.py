@@ -1,7 +1,7 @@
-"""Remove local build and scratch folders (build, dist, output, tmp) after listing them.
+"""Remove local build and scratch folders (build, dist, tmp) after listing them.
 
 Without --yes nothing is deleted: the folders and their sizes are only printed, so
-`just clean` is a dry run and `just clean yes` deletes. Nothing outside these four
+`just clean` is a dry run and `just clean yes` deletes. Nothing outside these three
 folders at the repository root is touched; a folder that is a symbolic link or a
 junction is unlinked without following it.
 """
@@ -16,7 +16,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 # Generated or scratch folders only; all of them are ignored by .gitignore.
-TARGETS = ("build", "dist", "output", "tmp")
+TARGETS = ("build", "dist", "tmp")
 
 
 def _is_link(path: Path) -> bool:
@@ -82,7 +82,7 @@ def clean(root: Path = ROOT, confirm: bool = False, out=None) -> list[Path]:
     out = sys.stdout if out is None else out
     found = targets(root)
     if not found:
-        print("削除対象はありません (build, dist, output, tmp)。", file=out)
+        print("削除対象はありません (build, dist, tmp)。", file=out)
         return found
     print("削除対象:" if confirm else "削除対象 (まだ削除していません):", file=out)
     for path in found:

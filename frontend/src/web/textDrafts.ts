@@ -1,5 +1,5 @@
 import type { Anchor } from "./annotations.ts";
-import type { Point } from "../features/reader/inkGeometry.ts";
+import type { Point } from "../features/ink/inkGeometry.ts";
 
 export type TextDraft = { at: Point; value: string };
 

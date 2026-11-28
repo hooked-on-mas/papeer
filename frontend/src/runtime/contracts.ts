@@ -4,9 +4,10 @@ export type LibraryItemView = Readonly<{
   title: string;
   /** Title first in the compact library tree; title retains the full author/year tooltip. */
   displayTitle: string;
-  kind: "pdf" | "notebook" | "unknown";
+  kind: "pdf" | "notebook" | "markdown" | "unknown";
   parentId: string | null;
   collectionName: string;
+  notePosition?: number;
 }>;
 
 export type AnnotationTarget = Readonly<{

@@ -18,7 +18,7 @@ from papeer.core.storage import Library
 from papeer.providers import Cancelled
 from sidecar import app as runtime, deps
 from sidecar.errors import job_error_message
-from sidecar.jobs import ConcurrencyConflict, JobManager
+from sidecar.lifecycle.jobs import ConcurrencyConflict, JobManager
 
 ORIGIN = "http://tauri.localhost"
 
@@ -178,8 +178,8 @@ def test_idle_routes_answer_409_while_a_job_runs(paper_env):
         with TestClient(runtime.app) as client:
             glossary = client.put("/api/glossary", json={"terms": [], "expected_terms": []})
             assert (glossary.status_code, glossary.json()["detail"]) == (409, "実行中の処理が終わってから共通辞書を保存してください。")
-            drive = client.put("/api/drive", json={"auto_sync": False})
-            assert (drive.status_code, drive.json()["detail"]) == (409, "実行中の処理が終わってから変更してください。")
+            drive = client.put("/api/storage", json={"path": "unused"})
+            assert (drive.status_code, drive.json()["detail"]) == (409, "実行中の処理が終わってから保存先を変更してください。")
             deleted = client.delete(f"/api/papers/{paper}")
             assert (deleted.status_code, deleted.json()["detail"]) == (409, "処理中のジョブがあるため削除できません。")
     finally:

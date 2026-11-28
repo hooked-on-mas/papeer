@@ -82,7 +82,7 @@
 .site-footer { display: flex; flex-wrap: wrap; justify-content: space-between; flex-shrink: 0; gap: 6px; padding: 5px 12px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: .75rem; }
 .sidebar-backdrop { display: none; }
 .ink-tools { position: sticky; top: 0; left: 0; width: var(--pdf-pane-width, 100%); z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 2px; background: var(--background); border-bottom: 1px solid var(--border); }
-.web-app .ink-tools > button, .ink-tool-set > button, .ink-history-inline > button, .ink-options > summary { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; padding: 4px; border: 0; border-radius: 4px; cursor: pointer; }
+.web-app .ink-tools:not(.document-writing-toolbar) > button, .ink-tool-set > button, .ink-history-inline > button, .ink-options > summary { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; padding: 4px; border: 0; border-radius: 4px; cursor: pointer; }
 .ink-tool-set { display: inline-flex; align-items: center; flex-shrink: 0; gap: 2px; }
 .ink-tool-divider { width: 1px; height: 24px; margin-inline: 4px; background: var(--border); flex-shrink: 0; }
 .ink-tools-compact .ink-tool-divider { display: none; }
@@ -147,7 +147,7 @@
 .web-language-switch svg { width: 14px; height: 14px; }
 .web-language-label { white-space: nowrap; }
 .web-pdf-pane > .asset-heading { padding: 2px 6px; font-size: .75rem; }
-.web-reader-tools + [data-slot="resizable-panel-group"] { overflow: hidden; }
+.web-document-reader > [data-slot="resizable-panel-group"] { overflow: hidden; }
 .reader-focus .web-document-header,
 .reader-focus .web-document-navigation,
 .reader-focus .document-controls,
@@ -194,8 +194,8 @@
   .web-reader-tools .web-panel-choice { font-size: 0; gap: 0; justify-content: center; }
   .web-panel-choice > svg:last-child { display: none; }
   .web-panel-choice > svg:first-child { width: 18px; height: 18px; }
-  .web-app .ink-tools { gap: 0; flex-wrap: nowrap; }
-  .web-app .ink-tools > button, .ink-options > summary { width: 44px; height: 44px; }
+  .web-app .ink-tools:not(.document-writing-toolbar) { gap: 0; flex-wrap: nowrap; }
+  .web-app .ink-tools:not(.document-writing-toolbar) > button, .ink-options > summary { width: 44px; height: 44px; }
   .ink-options > div { max-height: 60dvh; overflow: auto; font-size: .875rem; }
   .ink-options label { min-height: 44px; }
   .ink-mobile-actions { flex-wrap: wrap; gap: 4px; }
@@ -249,9 +249,12 @@
 @media (min-width: 680px) and (max-height: 500px) {
   /* A short, wide viewport has room for its title beside the controls. */
   .compact-reading .web-document-reader:not(:has(> [role="alert"])) { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto minmax(0, 1fr); }
+  .compact-reading .web-document-reader:not(:has(> [role="alert"])):has(.ink-tools) { grid-template-rows: auto auto minmax(0, 1fr); }
   .compact-reading .web-reader-title-row { grid-column: 1; grid-row: 1; border-bottom: 1px solid var(--border); background: var(--background); }
   .compact-reading .web-reader-tools { grid-column: 2; grid-row: 1; }
-  .compact-reading .web-reader-tools + [data-slot="resizable-panel-group"] { grid-column: 1 / -1; grid-row: 2; }
+  .compact-reading .web-document-reader > [data-slot="resizable-panel-group"] { grid-column: 1 / -1; grid-row: 2; }
+  .compact-reading .web-writing-toolbar-slot { grid-column: 1 / -1; grid-row: 2; }
+  .compact-reading .web-document-reader:has(.ink-tools) > [data-slot="resizable-panel-group"] { grid-row: 3; }
   .compact-reading .web-page-navigation { flex: initial; }
   .web-display-options > div { max-height: calc(100dvh - 56px); }
 }
@@ -261,3 +264,8 @@
 .ink-tools-compact .ink-history-menu { display: flex; flex-wrap: wrap; gap: 4px; }
 .ink-tools-compact .ink-history-menu button { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
 .ink-tools-compact .ink-history-menu button span { position: static; width: auto; height: auto; clip: auto; white-space: normal; margin-left: 4px; }
+
+/* One writing bar above the paired PDFs. */
+.web-writing-toolbar-slot { flex-shrink: 0; min-width: 0; z-index: 5; }
+.web-writing-toolbar-slot .ink-tools { width: 100%; position: relative; flex-wrap: wrap; }
+.ink-target select { min-height: 44px; max-width: 72px; }

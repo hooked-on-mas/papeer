@@ -45,12 +45,15 @@ def test_ci_runs_on_every_push_and_pull_request_and_by_hand_with_a_read_only_tok
         "group": "ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}-${{ github.event_name }}",
         "cancel-in-progress": True}
     jobs = workflow["jobs"]
-    assert set(jobs) == {"python", "frontend", "rust", "sidecar", "licenses"}
+    assert set(jobs) == {"audit", "python", "frontend", "rust", "sidecar", "licenses"}
     for job in jobs.values():
         assert "permissions" not in job
+        if "uses" in job:
+            assert job["uses"] == "./.github/workflows/dependency-audit.yml"
+            continue
         checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
         assert checkout["with"]["persist-credentials"] is False
-    for name in ("python", "frontend", "rust"):
+    for name in ("audit", "python", "frontend", "rust"):
         assert jobs[name]["if"] == NOT_OUR_PULL_REQUEST
 
 
@@ -92,19 +95,42 @@ def test_pages_cannot_deploy_without_the_web_browser_regressions():
                     "pnpm --dir frontend test", "pnpm --dir frontend build:web"]:
         assert runs.index(command) < runs.index(regression)
     # Changes to the gate or to PC export/import must also run the release gate on main.
-    for path in ["frontend/**", ".github/workflows/web-tests.yml", "papeer/**", "sidecar/schemas/ink.py", "uv.lock"]:
+    for path in ["frontend/**", ".github/workflows/web-tests.yml", "papeer/**", "sidecar/**", "schema/**", "tests/fixtures/**",
+                 "tools/generate_edit_contracts.py", "tools/build_edit_fixtures.py", "uv.lock"]:
         assert path in pages[True]["push"]["paths"] and path in web[True]["pull_request"]["paths"]
 
 
 def test_ci_pins_actions_to_the_same_commits_as_the_release():
     release = _load("release.yml")
     pinned = {step["uses"].split("@")[0]: step["uses"]
-              for job in release["jobs"].values() for step in job["steps"] if "uses" in step}
-    for job in _load("ci.yml")["jobs"].values():
-        for step in job["steps"]:
+              for job in release["jobs"].values() for step in job.get("steps", []) if "uses" in step}
+    jobs = list(_load("ci.yml")["jobs"].values()) + list(_load("dependency-audit.yml")["jobs"].values())
+    for job in jobs:
+        for step in job.get("steps", []):
             if "uses" in step:
                 assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
                 assert pinned.get(step["uses"].split("@")[0], step["uses"]) == step["uses"]
+
+
+def test_security_audits_cover_all_languages_and_python_platform_markers_without_ignored_failures():
+    workflow = _load("dependency-audit.yml")
+    assert workflow["permissions"] == {"contents": "read"}
+    assert set(workflow[True]) == {"workflow_call", "workflow_dispatch"}
+    audit = workflow["jobs"]["audit"]
+    assert set(audit["strategy"]["matrix"]["os"]) == {"windows-latest", "ubuntu-22.04", "macos-latest"}
+    assert audit["strategy"]["fail-fast"] is False
+    for ecosystem in ("python", "javascript", "rust"):
+        step = next(step for step in audit["steps"]
+                    if step.get("run", "").endswith(f"tools/audit_dependencies.py {ecosystem}"))
+        assert "continue-on-error" not in step
+        assert "||" not in step["run"]
+        if ecosystem == "python":
+            assert "if" not in step
+    assert any(step.get("with", {}).get("tool") == "cargo-audit@0.22.2" for step in audit["steps"])
+    for name in ("ci.yml", "release.yml", "pages.yml"):
+        assert _load(name)["jobs"]["audit"]["uses"] == "./.github/workflows/dependency-audit.yml"
+    assert "audit" in _load("release.yml")["jobs"]["build"]["needs"]
+    assert _load("pages.yml")["jobs"]["build"]["needs"] == "audit"
 
 
 def test_ci_runs_the_checks_of_just_test_and_just_lint():
@@ -143,6 +169,8 @@ def test_the_sidecar_is_built_as_the_release_builds_it_then_started_as_the_app_s
     sidecar = _load("ci.yml")["jobs"]["sidecar"]
     runs = _runs(sidecar)
     assert runs.index("uv sync --locked --all-groups") < runs.index("just build-sidecar")
+    assert runs.index("cargo fetch --locked --manifest-path frontend/src-tauri/Cargo.toml") < runs.index("just build-sidecar")
+    assert runs.index("just build-sidecar") < runs.index("uv run python tools/distribution_notices.py --check frontend/src-tauri/sidecar")
     assert runs[-1] == "cargo test --release sidecar -- --ignored"
     assert "TAURI_CONFIG" not in sidecar.get("env", {})  # The built sidecar folder is there.
 

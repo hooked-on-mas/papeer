@@ -3,8 +3,10 @@ name = "papeer"
 version = "0.2.0"
 description = "Papeer: Research Paper Translation and Reading Workspace"
 readme = "README.md"
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.12"
 dependencies = [
+    "cryptography==50.0.2",
     "pymupdf>=1.26.0",
     "pypdfium2>=5.13.0",
     "fonttools>=4.64.0",

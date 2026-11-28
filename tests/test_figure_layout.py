@@ -87,6 +87,20 @@ class FigureLayoutTests(unittest.TestCase):
                 page.insert_text((80, 225), 'Fig. 1. Response of the controlled system.', fontsize=8)
                 self.assertEqual(figure_regions(page), [frame])
 
+    def test_plot_frame_does_not_absorb_short_korean_sentence(self):
+        for text in ('MDP의간략한예시를나타낸다.', '총5회반복실험하였으며표4.1은평균값이다.',
+                     '그림1. 실험환경굴착결과'):
+            with self.subTest(text=text), fitz.open() as pdf:
+                page = pdf.new_page(width=400, height=400)
+                frame = _split_tick_plot(page, labels=False)
+                page.insert_text((85, 95), text, fontname='korea', fontsize=6)
+                page.insert_text((170, 225), 'Time', fontsize=8)
+                regions = figure_regions(page)
+                self.assertEqual(len(regions), 1)
+                self.assertGreaterEqual(regions[0].y0, frame.y0)
+                self.assertTrue(frame in regions[0])
+                self.assertGreater(regions[0].y1, frame.y1)  # Actual axis label stays protected.
+
     def test_plain_frames_and_interior_short_segments_do_not_establish_axes(self):
         with fitz.open() as pdf:
             page = pdf.new_page(width=400, height=400)

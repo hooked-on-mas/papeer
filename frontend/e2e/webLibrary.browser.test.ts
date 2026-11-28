@@ -91,8 +91,8 @@ test("Web Library reads PDF, memo, HTML and chat privately on desktop and mobile
   // The desktop's actual dock component keeps the PDF visible beside a saved memo.
   await page.getByLabel("表示倍率").selectOption("0.75");
   await page.getByRole("button", { name: "右パネルを選択" }).click();
-  await page.getByRole("menuitemcheckbox", { name: "メモを右に表示", exact: true }).click();
-  const right = page.getByRole("complementary", { name: "メモ（右パネル）" });
+  await page.getByRole("menuitemcheckbox", { name: "ノートを右に表示", exact: true }).click();
+  const right = page.getByRole("complementary", { name: "ノート（右パネル）" });
   await right.getByRole("heading", { name: "読書メモ", exact: true }).waitFor();
   await page.locator(".react-pdf__Page canvas").waitFor();
   assert.equal(await page.getByLabel("表示倍率").inputValue(), "0.75");
@@ -125,7 +125,7 @@ test("Web Library reads PDF, memo, HTML and chat privately on desktop and mobile
   await page.screenshot({ path: path.join(screenshots, "desktop-panels.png"), fullPage: true });
   await right.getByRole("button", { name: "右パネルを閉じる", exact: true }).click();
   await page.getByRole("button", { name: "右パネルを選択" }).click();
-  await page.getByRole("menuitemcheckbox", { name: "メモを右に表示", exact: true }).click();
+  await page.getByRole("menuitemcheckbox", { name: "ノートを右に表示", exact: true }).click();
   await right.waitFor();
   assert.ok(Math.abs((await right.boundingBox())!.width - resizedWidth) < 3, "right pane width survives closing");
   await page.getByRole("tab", { name: "チャット", exact: true }).click();
@@ -159,7 +159,7 @@ test("Web Library reads PDF, memo, HTML and chat privately on desktop and mobile
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.screenshot({ path: path.join(screenshots, "mobile-reading.png"), fullPage: true });
   await page.getByLabel("読書メニュー", { exact: true }).click();
-  await page.getByRole("button", { name: "メモを開く", exact: true }).click();
+  await page.getByRole("button", { name: "ノートを開く", exact: true }).click();
   await page.getByRole("heading", { name: "読書メモ", exact: true }).waitFor();
   await page.screenshot({ path: path.join(screenshots, "mobile.png"), fullPage: true });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

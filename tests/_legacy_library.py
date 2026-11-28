@@ -105,9 +105,9 @@ def legacy_backup(root: Path, destination: Path) -> None:
 # Columns that schema versions after the baseline add (storage.MIGRATIONS[1:]), by table. A database
 # saved before schema versioning never had them; add a later step's columns here (test_schema_migration
 # checks that this list is complete).
-LATER_COLUMNS = {"bookmarks": ("kind", "color", "rects"), "papers": ("doi", "arxiv_id", "venue", "kind", "parent_id"),
+LATER_COLUMNS = {"bookmarks": ("kind", "color", "rects"), "papers": ("doi", "arxiv_id", "venue", "kind", "parent_id", "note_position"),
                  "messages": ("research",)}
-LATER_TABLES = {"reference_research": {"source", "key", "data"}, "paper_discovery": {"source", "origin", "data"},
+LATER_TABLES = {"note_operations": {"id", "operation"}, "note_state": {"id", "revision", "content", "source", "updated_at"}, "note_legacy": {"id", "note_id"},"reference_research": {"source", "key", "data"}, "paper_discovery": {"source", "origin", "data"},
                 "attachments": {"id", "owner_id", "format", "title", "source", "position", "created_at", "updated_at"},
                 "item_links": {"a", "b"}}
 # Indexes on the columns above: a column cannot be dropped while one uses it.

@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { createVaultHeader, unlockVaultHeader, sealVaultGrant, openVaultGrant, signVaultCounter, verifyVaultCounter } from '../../../../../src/adapters/browser/provider/offline/offlineVaultCrypto.ts';
+import { offlineActivationDigest } from '../../../../../src/adapters/browser/provider/offline/offlineActivationDigest.ts';
+const context = '01234567-89ab-4def-8123-456789abcdef', id = 'abcdef01-2345-4789-8123-456789abcdef';
+const secret = 'synthetic-passphrase-42';
+test('real WebCrypto seal/unlock, authenticated counter and type-preserving activation digest', async () => {
+  const { header, master } = await createVaultHeader(context, secret);
+  assert.equal(header.iterations, 600000); assert.equal(header.salt.length, 32); assert.equal(header.iv.length, 12);
+  await assert.rejects(unlockVaultHeader(header, context, 'wrong-passphrase-000'), /offline-unlock-failed/);
+  await assert.rejects(unlockVaultHeader({ ...header, iterations: 1 }, context, secret), /offline-unlock-failed/);
+  const opened = await unlockVaultHeader(header, context, secret);
+  const value = { version: 1, scope: { accountId: context, epoch: 'synthetic' }, activationDigest: 'a'.repeat(64) };
+  const grant = await sealVaultGrant(header, master, id, '1', value);
+  assert.deepEqual(await openVaultGrant(opened.header, opened.master, grant), value);
+  const bad = structuredClone(grant); bad.ciphertext[0] ^= 1;
+  await assert.rejects(openVaultGrant(header, master, bad), /offline-unlock-failed/);
+  const counter = await signVaultCounter(header, master, '2');
+  assert.equal(await verifyVaultCounter(header, opened.master, counter), 2n);
+  await assert.rejects(verifyVaultCounter(header, master, { ...counter, next: '1' }), /offline-unlock-failed/);
+  assert.notEqual(await offlineActivationDigest({ bytes: new Uint8Array([1, 2]) }), await offlineActivationDigest({ bytes: { 0: 1, 1: 2 } }));
+  assert.equal((await offlineActivationDigest({ fraction: 1.25, limit: Number.MAX_SAFE_INTEGER })).length, 64);
+  assert.throws(() => offlineActivationDigest({ unsafe: Number.MAX_SAFE_INTEGER + 1 }), /offline-activation-unsupported/);
+  assert.throws(() => offlineActivationDigest({ negativeZero: -0 }), /offline-activation-unsupported/);
+  await assert.rejects(createVaultHeader(context, 'too-short'), /offline-unlock-failed/);
+  await assert.rejects(createVaultHeader(context, 'unpaired-surrogate-\ud800'), /offline-unlock-failed/);
+});

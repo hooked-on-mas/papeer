@@ -10,6 +10,7 @@ export type LibraryItemSource = {
   kind?: unknown;
   parent_id?: unknown;
   collection_name?: unknown;
+  note_position?: unknown;
 };
 
 function text(value: unknown): string {
@@ -29,9 +30,10 @@ export function toLibraryItem(row: LibraryItemSource): LibraryItemView {
     id: row.id,
     title: libraryItemTitle(row),
     displayTitle: text(row.title) || libraryItemTitle(row),
-    kind: row.kind == null || row.kind === "pdf" ? "pdf" : row.kind === "notebook" ? "notebook" : "unknown",
+    kind: row.kind == null || row.kind === "pdf" ? "pdf" : row.kind === "notebook" ? "notebook" : row.kind === "markdown" ? "markdown" : "unknown",
     parentId: text(row.parent_id) || null,
     collectionName: text(row.collection_name),
+    ...(typeof row.note_position === "number" ? { notePosition: row.note_position } : {}),
   });
 }
 

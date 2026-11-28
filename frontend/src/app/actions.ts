@@ -20,9 +20,9 @@ import { countInFolder } from "@/features/library/libraryTree";
 import { folderAncestors, folderName, isInsideFolder, normalizeCollection, subfolderPath } from "@/lib/collectionPath";
 import { bulkReport, runBulk } from "@/features/library/bulkOutcome";
 import { forgetPapers, movesRecord, undoLabel } from "@/features/library/undoHistory";
-import { LIBRARY_BUSY } from "@/lib/libraryBusy";
+import { LIBRARY_BUSY } from "@/features/library/state/libraryBusy";
 import { BULK_BUSY_MESSAGE, beginBulk, isBulkRunning } from "./bulkState";
-import { withPaperCollection } from "@/lib/paperRows";
+import { withPaperCollection } from "@/features/library/query/paperRows";
 import { applyTagChange, createTagQueue } from "@/lib/tagQueue";
 import { forgetDraftsOfPapers } from "@/lib/pendingSaves";
 import { showReaderOf } from "@/features/documents/documentState";
@@ -654,7 +654,7 @@ export async function exportPdf(paperId: string, kind: PdfExportKind): Promise<v
 export async function exportMarkdown(paperId: string): Promise<void> {
   const reading = queryClient.getQueryData<ReadingData>([QK.reading, paperId]);
   if (reading && !reading.has_article) {
-    await showMessage("未作成", "先に解説を作成してください。");
+    await showMessage("未作成", "先にサマリーを作成してください。");
     return;
   }
   try {

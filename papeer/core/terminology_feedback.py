@@ -9,7 +9,7 @@ from collections import Counter
 
 from papeer.core.errors import Conflict, Invalid
 from papeer.core.fileio import atomic_write_json
-from papeer.core.glossary_draft import validate_terms
+from papeer.core.glossary.glossary_draft import validate_terms
 from papeer.core.paragraph_revisions import save_revision_history, translation_paragraphs
 from papeer.core.paths import PaperFiles
 from papeer.core.terminology import (add_glossary_term, apply_glossary, effective_glossary, found_in, global_glossary,

@@ -33,7 +33,7 @@ from papeer.core import instance as discovery
 from papeer.core.paths import app_env, data_directory, log_directory
 
 EXIT_NO_SIDECAR = 3
-# The exit code of a sidecar that found the library served by another (sidecar/instance.py).
+# The exit code of a sidecar that found the library served by another (sidecar/lifecycle/instance.py).
 EXIT_LIBRARY_IN_USE = 4
 VERIFY_TIMEOUT = 2.0
 # How long a freshly started sidecar may take to come up: the first start of a frozen build is slow.

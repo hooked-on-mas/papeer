@@ -33,7 +33,7 @@ def test_memo_crud_reorder_and_owner_isolation(memos):
     edited = client.patch(f"{base}/{first['id']}", json={"title": "改名.md", "content": "変更"}).json()
     assert edited["title"] == "改名.md" and edited["content"] == "変更" and edited["updated_at"] != first["updated_at"]
     assert not (lib.folder(owner) / "note.md").exists()
-    assert PaperFiles(lib.folder(owner)).attachment(first["id"], "md").read_text("utf-8") == "変更"
+    assert (lib.folder(first["id"]) / "note.md").read_text("utf-8") == "変更"
     assert client.put(f"{base}/order", json={"ids": [second["id"], first["id"]]}).status_code == 200
     assert [row["id"] for row in client.get(base).json()] == [second["id"], first["id"]]
     assert client.put(f"{base}/order", json={"ids": [first["id"], first["id"]]}).status_code == 400
@@ -83,7 +83,7 @@ def test_one_way_migration_on_already_version8(memos, database, disk, count):
     assert "note" not in converted.paper(owner)
     with converted.connection() as db:
         assert db.execute("SELECT note FROM papers WHERE id=?", (owner,)).fetchone()[0] == ""
-    assert database_version(lib.root / "library.sqlite3") == SCHEMA_VERSION == 8
+    assert database_version(lib.root / "library.sqlite3") == SCHEMA_VERSION == 9
     assert Library(lib.root).attachments(owner) == rows
 
 
@@ -116,14 +116,17 @@ def test_retry_after_commit_does_not_duplicate_or_overwrite(memos, monkeypatch):
         return original(path, *args, **kwargs)
     with monkeypatch.context() as context:
         context.setattr(Path, "unlink", fail)
-        with pytest.raises(OSError):
-            Library(lib.root)
+        # The memo is committed by then, so a file that cannot be removed (another opener has it open) is left
+        # for the next open instead of failing this one.
+        Library(lib.root)
+    assert legacy.exists()
     rows = lib.attachments(owner)
     assert len(rows) == 1
     lib.update_attachment(owner, rows[0]["id"], content="移行後の編集")
     converted = Library(lib.root)
     assert len(converted.attachments(owner)) == 1
     assert converted.attachment_text(rows[0]["id"]) == "移行後の編集"
+    assert not legacy.exists()
 
 
 def test_partial_file_conversion_retries_without_duplicate_rows(memos, monkeypatch):

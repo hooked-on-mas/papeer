@@ -513,7 +513,7 @@ class ProvidersTests(unittest.TestCase):
         schema = {"type": "object", "properties": {"translation": {"type": "string"}}, "required": ["translation"]}
         with cli(AntigravityProvider), patch(POPEN, side_effect=capture_popen(launched, agy_stream(response))):
             settings = Settings(provider="antigravity", model="gemini-3.8-flash", reasoning_effort="high")
-            provider = create_provider(settings, threading.Event())
+            provider = AntigravityProvider(settings, threading.Event())
             result = provider.generate("Translate this", '{"text": "hello"}', schema=schema)
             self.assertEqual(json.loads(result), {"translation": "Gemini Agy Output"})
             self.assertNotIn("--json-schema", launched[0][0])
@@ -583,7 +583,7 @@ class ProvidersTests(unittest.TestCase):
             return Mock(poll=Mock(return_value=0), returncode=0)
 
         with cli(provider_cls), patch(POPEN, side_effect=mock_popen):
-            provider = create_provider(Settings(provider=provider_id, model="m"), threading.Event())
+            provider = provider_cls(Settings(provider=provider_id, model="m"), threading.Event())
             answers = [provider.generate("Translate", "text"), provider.generate("Translate", "text")]
         return answers, provider.usage_report()
 
@@ -743,7 +743,7 @@ class CliSafetyTests(unittest.TestCase):
         document = "本文 " * 20000  # Longer than the 32,767 characters a Windows command line holds.
         launched = []
         with cli(AntigravityProvider), patch(POPEN, side_effect=capture_popen(launched, agy_stream("訳文"))):
-            answer = create_provider(Settings(provider="antigravity", model=""), threading.Event()).generate(
+            answer = AntigravityProvider(Settings(provider="antigravity", model=""), threading.Event()).generate(
                 "Translate", document)
         self.assertEqual(answer, "訳文")
         command, stdin_text, _ = launched[0]
@@ -1280,7 +1280,7 @@ class UnusableAnswerTests(unittest.TestCase):
             return Mock(poll=Mock(return_value=code), returncode=code)
 
         with cli(cls), patch(POPEN, side_effect=popen), patch.object(cls, "transport_backoff", 0.0):
-            provider = create_provider(Settings(provider=provider_id), threading.Event())
+            provider = cls(Settings(provider=provider_id), threading.Event())
             try:
                 provider.generate("Translate", "data")
             except Exception as error:  # noqa: BLE001 - the test inspects the type

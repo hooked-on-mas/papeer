@@ -15,29 +15,39 @@ from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect, sta
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from papeer import __version__
 from papeer.core.errors import AppError
 from papeer.core.paths import app_env
 from papeer.translation import translation_preview
-from sidecar import deps, html_documents, instance
+from sidecar import deps, html_documents
+from sidecar.lifecycle import instance
 from sidecar.errors import AnswerUnexpectedErrors, error_response, log_to_file, where
-from sidecar.instance import TrackActivity
-from sidecar.job_types import event_schemas
-from sidecar.routes import ai_jobs, attachments, item_links, notebooks, drive, cloud_drive, ink, ocr, papers, reading, research, discovery, settings, system
+from sidecar.lifecycle.instance import TrackActivity
+from sidecar.lifecycle.job_types import event_schemas
+from sidecar.routes import notes, edits, canonical_bootstrap, provider_owner, ai_jobs, attachments, item_links, notebooks, drive, cloud_drive, ink, ocr, papers, reading, research, discovery, settings, storage, system
+from sidecar.canonical_host import AuthorityError
+from sidecar.migrations import preparation, routes as maintenance_routes
+from sidecar.edit_schema import add_edit_schemas
+from papeer.core.migrations.legacy_startup import legacy_startup_allowed, LegacyMigrationRequired
 
 
 def remove_unused_translation_runs() -> None:
     """Page previews of translations that stopped when the app was forced to close; see remove_unused_translation_runs."""
     try:
-        translation_preview.remove_unused_translation_runs(deps.get_data_dir())
+        root = deps.get_data_dir()
+        if not legacy_startup_allowed(root) or deps.read_native_startup_presence() != 'clear':
+            return
+        translation_preview.remove_unused_translation_runs(root)
     except Exception as exc:  # noqa: BLE001 - never a reason not to start (an odd library folder included): the next launch tries again.
         print(f"警告: 翻訳の一時ファイルを掃除できませんでした: {exc!r}", file=sys.stderr)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    provider_owner.start_lifetime()
     deps.job_manager.set_loop(asyncio.get_running_loop())
     # Before the first request, so no translation is writing a run folder its preview does not name yet. And
     # only the sidecar that holds the library's lock gets here (main() claims it before the server starts),
@@ -48,7 +58,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     grace = instance.idle_exit_grace()
     if grace is not None:
         instance.start_idle_exit(grace)
-    yield
+    try:
+        yield
+    finally:
+        await asyncio.to_thread(preparation.wait_for_shutdown)
+        await asyncio.to_thread(provider_owner.close_if_created)
 
 
 app = FastAPI(
@@ -61,12 +75,46 @@ app = FastAPI(
     openapi_url=None,
 )
 
+@app.exception_handler(AuthorityError)
+async def canonical_authority_error(request: Request, error: AuthorityError):
+    # Do not expose bearer, lease, admission or stored content in errors.
+    return JSONResponse(status_code=403, content={'detail':'canonical-authority-denied'}, headers={'Cache-Control':'no-store'})
+
+class CanonicalNoStore:
+    """Cache-Control: no-store on every answer under /api/edits/ (edit data, leases, previews).
+
+    A plain ASGI middleware, not @app.middleware("http"): BaseHTTPMiddleware wraps receive so that
+    request.is_disconnected() never sees the client leave, and the Notebook preview would keep reading
+    after the window cancelled it (r153 B3). Like the old one it sits innermost, so it marks what the
+    routes and exception handlers answer; refusals made by the outer middlewares are unchanged.
+    """
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not scope.get("path", "").startswith("/api/edits/"):
+            await self.app(scope, receive, send)
+            return
+
+        async def no_store(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message.setdefault("headers", [])
+                MutableHeaders(scope=message)["Cache-Control"] = "no-store"
+            await send(message)
+
+        await self.app(scope, receive, no_store)
+
+
+# Innermost of the middlewares added here (the last added runs first).
+app.add_middleware(CanonicalNoStore)
+
 
 # What must still answer while a sync, backup or restore holds the library: reading its progress (and how
 # the jobs a reconnecting window waited on ended), and stopping it or the whole app (closing the window
 # cancels the job, then calls /shutdown). /api/instance is what the CLI and a second window check a discovery
 # file's claim with: a sidecar busy with a sync must still answer it as itself.
-SNAPSHOT_READS = {"/health", "/api/instance", "/api/jobs", "/api/drive", "/api/cloud-drive"}
+SNAPSHOT_READS = {"/health", "/api/instance", "/api/jobs", "/api/storage", "/api/cloud-drive"}
 SNAPSHOT_JOB_READ = re.compile(r"/api/jobs/[^/]+")
 SNAPSHOT_CONTROLS = re.compile(r"/api/jobs/(?:cancel-all|[^/]+/cancel)|/shutdown")
 # What a background sync lets through (deps.snapshot_blocks): the PDFs, images and summary that pdf.js,
@@ -87,7 +135,34 @@ def allowed_during_snapshot(method: str, path: str) -> bool:
         return True
     if method == "GET":
         return path in SNAPSHOT_READS or SNAPSHOT_JOB_READ.fullmatch(path) is not None
+    return method == "POST" and (SNAPSHOT_CONTROLS.fullmatch(path) is not None or path in {"/api/edits/legacy-startup/read", "/api/edits/legacy-maintenance/status"})
+
+
+def allowed_during_legacy_hold(method: str, path: str) -> bool:
+    if method == "OPTIONS" or path.startswith("/api/edits/"):
+        return True
+    if method == "GET":
+        return path in {"/health", "/api/instance", "/api/jobs"} or SNAPSHOT_JOB_READ.fullmatch(path) is not None
     return method == "POST" and SNAPSHOT_CONTROLS.fullmatch(path) is not None
+
+
+class ProtectLegacyStartup:
+    """Refuse new old-runtime requests, including settings paths that do not initialize Library.
+
+    Already-admitted requests/jobs still require a separate drain before source capture.
+    """
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            request = Request(scope)
+            if (not allowed_during_legacy_hold(request.method, request.url.path)
+                    and deps.token_matches(deps.provided_token(request.headers.get("authorization"), request.query_params.get("token")))
+                    and not legacy_startup_allowed(deps.get_data_dir())):
+                await error_response(LegacyMigrationRequired())(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
 
 # The one conversion of failures into answers (sidecar/errors.py): Invalid, NotFound and Conflict (a refused
@@ -118,6 +193,14 @@ class ProtectLibrarySnapshot:
             return
         request = Request(scope)
         guarded = not allowed_during_snapshot(request.method, request.url.path)
+        if deps.maintenance_running():
+            controls = {('GET', '/health'), ('GET', '/api/instance'),
+                        ('POST', '/api/edits/legacy-maintenance/start'),
+                        ('POST', '/api/edits/legacy-maintenance/status'), ('POST', '/api/edits/legacy-maintenance/resume'),
+                        ('POST', '/api/edits/legacy-maintenance/abandon'), ('POST', '/shutdown'),
+                        ('POST', '/api/edits/legacy-maintenance/notebooks'),
+                        ('POST', '/api/edits/legacy-maintenance/notebook-preview')}
+            guarded = (request.method, request.url.path) not in controls
         # Authentication comes first: a request without the token is refused by its route (401), and must
         # neither learn that a snapshot is running nor be counted among the requests a snapshot waits for.
         if not guarded or not deps.token_matches(deps.provided_token(request.headers.get("authorization"),
@@ -138,6 +221,7 @@ class ProtectLibrarySnapshot:
 # Before CORS: the last middleware added runs first, so refusals and answers to bugs get the CORS headers too.
 # TrackActivity (what the idle exit looks at) is outside ProtectLibrarySnapshot, so a request it refuses with
 # 409 counts as activity, and inside CORS, so its 503 `sidecar_closing` is readable by a window.
+app.add_middleware(ProtectLegacyStartup)
 app.add_middleware(AnswerUnexpectedErrors)
 app.add_middleware(ProtectLibrarySnapshot)
 app.add_middleware(TrackActivity)
@@ -162,9 +246,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for module in (system, settings, papers, attachments, html_documents, item_links, notebooks, ai_jobs, reading, ink, drive, cloud_drive, ocr, research, discovery):
+for module in (notes, edits, canonical_bootstrap, provider_owner, system, settings, papers, attachments, html_documents, item_links, notebooks, ai_jobs, reading, ink, drive, cloud_drive, storage, ocr, research, discovery):
     app.include_router(module.router)
 app.include_router(system.public)
+app.include_router(maintenance_routes.router)
 # The document viewer takes a ticket, not the token (sidecar/html_documents.py): it admits itself.
 app.include_router(html_documents.public)
 
@@ -176,6 +261,7 @@ def openapi() -> dict[str, Any]:
         components = schema.setdefault("components", {}).setdefault("schemas", {})
         for name, event_schema in event_schemas().items():
             components.setdefault(name, event_schema)
+        add_edit_schemas(schema)
         app.openapi_schema = schema
     return app.openapi_schema
 
@@ -185,11 +271,14 @@ app.openapi = openapi
 
 @app.websocket("/ws/events")
 async def ws_events(websocket: WebSocket, token: str | None = Query(None)) -> None:
-    """Job progress and library changes, pushed to the frontend (the events of sidecar/job_types.py)."""
+    """Job progress and library changes, pushed to the frontend (the events of sidecar/lifecycle/job_types.py)."""
     if not deps.token_matches(token):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
+    if deps.maintenance_running():
+        await websocket.close(code=1013)
+        return
     await websocket.accept()
     manager = deps.job_manager
     queue: asyncio.Queue = asyncio.Queue()
@@ -269,12 +358,21 @@ def main() -> None:
     # at once, instead of its taking the library over afterwards.
     system.start_watching_stdin()
     system.stop_on_terminate()
-    # One sidecar per library (sidecar/instance.py): the lock first, so what the sidecar does to the library
+    # One sidecar per library (sidecar/lifecycle/instance.py): the lock first, so what the sidecar does to the library
     # at startup (the lifespan's cleanup of translation runs) cannot meet another sidecar's work. May exit
     # with instance.EXIT_LIBRARY_IN_USE.
-    root = deps.get_data_dir()
     who = instance.launcher()
-    instance.claim_library(root, who)
+    while True:
+        root = deps.get_data_dir()
+        instance.claim_library(root, who)
+        # A concurrent launch may have moved the library while this one waited for its lock.
+        if deps.get_data_dir() != root:
+            instance.release()
+            continue
+        # A saved pending location is legacy/device input, even if this source is
+        # empty. Do not copy SQL, recover or rewrite that setting before P6 admits
+        # both source and destination. Keep the current root locked and unchanged.
+        break
     sock = bind_socket(int(app_env("PORT") or str(DEFAULT_PORT)))
     port = sock.getsockname()[1]
     # Only now: whoever reads the file finds a socket that is listening.

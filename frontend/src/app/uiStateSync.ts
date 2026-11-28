@@ -1,7 +1,7 @@
 import { api, unwrap } from "@/api/client";
 import { useStore } from "@/store";
 import { retryUntil } from "@/lib/retry";
-import { librarySortOrder } from "@/lib/librarySort";
+import { librarySortOrder } from "@/features/library/query/librarySort";
 import { mergeSavedAnchors } from "@/features/reader/sidePanel";
 
 type UiStateFile = {

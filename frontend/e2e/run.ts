@@ -94,7 +94,7 @@ try {
   const made = spawnSync(PYTHON, [path.join(REPO, "tools", "e2e_pdfs.py"), pdfDir], { cwd: REPO, env, encoding: "utf8" });
   if (made.status !== 0) throw new Error(`テスト用の PDF を作れませんでした:\n${made.stderr}`);
 
-  const stub = start(PYTHON, [path.join(REPO, "tools", "e2e_stub_ai.py")], { cwd: REPO, env, log: path.join(runDir, "stub-ai.log") });
+  const stub = start(PYTHON, [path.join(REPO, "tools", "e2e_stub_ai.py"), "--papeer-e2e-run", runDir], { cwd: REPO, env, log: path.join(runDir, "stub-ai.log") });
   started.push(stub);
   const stubPort = await waitFor(() => {
     assertRunning(stub, "代役 API");

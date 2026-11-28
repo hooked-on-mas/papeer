@@ -3,7 +3,7 @@ import { cn } from "cn";
 import { useTheme } from "../../app/ThemeProvider";
 import { useStore } from "@/store";
 import { PAGE_FILTERS, pageAppearance, type PageFilter } from "../reader/pageAppearance";
-import { INK_BAR_STARTS } from "../reader/readerBars";
+import { INK_BAR_STARTS } from "../reader/layout/readerBars";
 
 const THEMES = [
   { id: "light", label: "ライト", icon: Sun },

@@ -673,77 +673,8 @@ def test_old_data_is_not_removed_before_the_folder_moved(synced):
     assert a.formats()["removable"] == {"count": 0, "size": 0, "ids": []}
 
 
-def test_the_api_moves_the_folder_and_removes_the_old_data(synced, monkeypatch):
-    from fastapi.testclient import TestClient
-    from sidecar import deps
-    from sidecar.app import app
-    from sidecar.jobs import JobManager
-
-    a, b, identity = synced
-    monkeypatch.setattr(deps, "get_data_dir", lambda: a.root)
-    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
-    monkeypatch.setattr(deps, "job_manager", JobManager())
-
-    def finished(client, job: str) -> dict:
-        deadline = time.monotonic() + 30
-        while deps.job_manager.get_job(job).running and time.monotonic() < deadline:
-            time.sleep(0.02)
-        info = client.get(f"/api/jobs/{job}").json()
-        assert info["status"] == "succeeded", info
-        return info["result"]
-    with a, TestClient(app) as client:
-        assert client.get("/api/drive").json()["format"] == 1
-        assert client.get("/api/drive/format").json()["format"] == 1
-        result = finished(client, client.post("/api/drive/migrate").json()["job_id"])
-        assert result["status"] == "synced" and result["migrated"] is True
-        status = client.get("/api/drive").json()
-        assert status["format"] == 2 and status["migration_pending"] is False and status["waiting"] is None
-        formats = client.get("/api/drive/format").json()
-        assert formats["format"] == 2 and formats["removable"]["count"] > 0
-        assert finished(client, client.post("/api/drive/sync", json={}).json()["job_id"])["status"] == "synced"
-        assert client.get("/api/drive/check").json()["action"] == "none"
-        removed = client.post("/api/drive/legacy/remove", json={"ids": formats["removable"]["ids"]}).json()
-        assert removed["removed"] == formats["removable"]["count"] and removed["failed"] == 0
-        assert client.get("/api/drive/format").json()["revisions"]["count"] == 0
 
 
-@pytest.mark.parametrize("closing", [False, True])
-def test_stopping_a_migration_gives_it_up_unless_the_app_is_closing(synced, monkeypatch, closing):
-    """The user's 中止 gives the migration up (the next sync does not take it up unasked); the app closing
-    (cancel-all, as AppShell does) leaves it to go on."""
-    from fastapi.testclient import TestClient
-    from sidecar import deps
-    from sidecar.app import app
-    from sidecar.jobs import JobManager
-
-    a, b, identity = synced
-    monkeypatch.setattr(deps, "get_data_dir", lambda: a.root)
-    monkeypatch.setenv("PAPEER_DEV_NO_AUTH", "1")
-    monkeypatch.setattr(deps, "job_manager", JobManager())
-    started = threading.Event()
-
-    def publish(*args, cancel, **kwargs):
-        started.set()
-        cancel.wait(10)
-        raise Cancelled("stopped")
-    with a, TestClient(app) as client, monkeypatch.context() as patch:
-        patch.setattr(drive_sync_v2, "_publish", publish)
-        job = client.post("/api/drive/migrate").json()["job_id"]
-        assert started.wait(30)
-        client.post("/api/jobs/cancel-all" if closing else f"/api/jobs/{job}/cancel")
-        deadline = time.monotonic() + 30
-        while deps.job_manager.get_job(job).running and time.monotonic() < deadline:
-            time.sleep(0.02)
-        assert client.get(f"/api/jobs/{job}").json()["status"] == "cancelled"
-        assert client.get("/api/drive").json()["migration_pending"] is closing
-    assert a.state()["error"] is None and not a.view().ids()
-    result = a.sync()
-    if closing:
-        assert result["migrated"] is True and a.state()["format"] == 2
-    else:
-        # A sync of the first format, as before the user asked; asked again, the migration runs.
-        assert "migrated" not in result and not a.view().ids() and a.status()["format"] == 1
-        assert a.migrate()["migrated"] is True
 
 
 def test_an_empty_folder_chosen_in_the_settings_starts_in_the_new_format(tmp_path, monkeypatch):

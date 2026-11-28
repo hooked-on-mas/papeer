@@ -153,7 +153,7 @@ def _effective(root: Path, paper_id: str) -> list[dict[str, str]]:
     folder = root / "papers" / paper_id
     if not PaperFiles(folder).automatic_glossary.is_file():
         return result
-    from papeer.core.automatic_terminology import automatic_terms
+    from papeer.core.glossary.automatic_terminology import automatic_terms
     with closing(sqlite3.connect(root / "library.sqlite3", timeout=30)) as db:
         text = "\n\n".join(row[0] for row in db.execute("SELECT text FROM pages WHERE paper_id=? ORDER BY number", (paper_id,)))
     known = {t["source"].casefold() for t in result}

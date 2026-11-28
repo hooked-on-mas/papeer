@@ -11,8 +11,9 @@
               yanked versions; cargo-audit is installed with `cargo install cargo-audit --locked`)
 
 Only dependency names and versions leave this machine: no library, paper, note or setting is read.
-Each tool prints its own report. The exit code is 0 only when every selected check ran and found
-nothing; a vulnerability, a failed run (for example no network) or a missing tool gives 1.
+Each tool prints its own report. The exit code is 0 only when every selected tool succeeds;
+cargo-audit can still report informational warnings (including unsound code) with exit code 0.
+A vulnerability error, a failed run (for example no network) or a missing tool gives 1.
 """
 from __future__ import annotations
 
@@ -51,6 +52,9 @@ def run(command: list[str], cwd: Path, capture: bool) -> tuple[int, str]:
 
 def _finish(ecosystem: str, code: int, tool: str) -> Result:
     if code == 0:
+        if ecosystem == "rust":
+            return Result(ecosystem, "ok", "cargo audit の脆弱性エラーはありません"
+                          "（警告は上の出力と docs/rust-dependency-review.md を確認してください）")
         return Result(ecosystem, "ok", "既知の脆弱性はありません")
     return Result(ecosystem, "found", f"脆弱性が見つかったか、{tool} の実行に失敗しました（上の出力を確認してください）")
 

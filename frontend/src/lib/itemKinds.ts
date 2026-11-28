@@ -18,7 +18,7 @@ export type ItemCapabilities = {
   translate: boolean;
   /** The reader's right pane (the translation, side by side with the original). */
   split: boolean;
-  /** Writing the サマリー (解説) of it, and its tab. */
+  /** Writing the サマリー of it, and its tab. */
   summary: boolean;
   /** Asking the AI about it, and the チャット tab. */
   chat: boolean;
@@ -77,7 +77,7 @@ const NOTEBOOK: ItemCapabilities = {
 };
 
 /** A Record, so that a kind the schema gains does not typecheck until it is given its capabilities. */
-const BY_KIND: Record<ItemKind, ItemCapabilities> = { pdf: PDF, notebook: NOTEBOOK };
+const BY_KIND: Record<ItemKind, ItemCapabilities> = { pdf: PDF, notebook: NOTEBOOK, markdown: { ...NONE, memo: true, rename: true, listedFirst: true, linkNotebook: true, fileExtension: ".md" } };
 
 /** Looked up by a string, which a row's kind may be beyond the schema's (a newer Papeer's). */
 const KINDS: ReadonlyMap<string, ItemCapabilities> = new Map(Object.entries(BY_KIND));

@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
+import { makeInitializationIntent, assertInitializationIntent } from '../src/runtime/edits/canonicalInitializationIntent.ts';
+import { checkpointHash } from '../src/runtime/edits/datasetManifest.ts';
+import type { CanonicalInitializeRequest, RepositoryCheckpoint } from '../src/runtime/edits/contracts.ts';
+const f=JSON.parse(readFileSync(new URL('../../tests/fixtures/canonical-bootstrap.json',import.meta.url),'utf8'));
+test('shared full and retired initialization intent contract',async()=>{
+  const {initialization: _initialization,origin: _origin,...profile}=f.profile;
+  const checkpoint: RepositoryCheckpoint={version:1,libraryId:profile.identity.libraryId,roots:[{kind:'library',id:profile.identity.libraryId,version:f.rootVersion,items:[],folders:[],links:[],deletions:[]}],edits:[]};
+  const manifest={version:1 as const,id:f.manifestId,scope:{...profile.identity,epoch:f.epoch},checkpointSha256:await checkpointHash(checkpoint),resources:[]};
+  const request: CanonicalInitializeRequest={expectedPeerId:f.peer.peerId,profile,control:{version:1,id:f.requestId,identity:profile.identity,epochs:[f.epoch],active:manifest,transition:{id:f.requestId,mode:'initialize',source:null,phase:'activated',publication:{manifest,checkpoint,checkpointObjectId:f.checkpointObjectId}}}};
+  const intent=await makeInitializationIntent(request,f.peer.accountId); await assertInitializationIntent(intent);
+  if ('retired' in intent) throw new Error('expected full');
+  const retired={version:1,accountId:intent.accountId,requestId:intent.requestId,requestSha256:intent.requestSha256,identity:profile.identity,result:{status:'rejected',reason:'collision'},retired:true};
+  await assertInitializationIntent(retired);
+  await assert.rejects(assertInitializationIntent({...intent,requestSha256:'a'.repeat(64)}));
+  await assert.rejects(assertInitializationIntent({...retired,identity:{...profile.identity,accountId:'other'}}));
+  const original=structuredClone(intent); const pending=assertInitializationIntent(intent); intent.request.profile.title='mutated';
+  const captured=await pending; assert.deepEqual(captured,original);
+  if ('retired' in captured) throw new Error('expected full');
+  captured.request.profile.title='output-mutated'; assert.equal(intent.request.profile.title,'mutated');
+});

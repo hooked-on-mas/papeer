@@ -16,8 +16,9 @@ from papeer.core.code_version import application_version
 from papeer.core.errors import NotFound
 from papeer.core.paths import app_env
 from papeer.providers.common import end_running_clis
-from sidecar import deps, instance
-from sidecar.job_types import JobInfo
+from sidecar import deps
+from sidecar.lifecycle import instance
+from sidecar.lifecycle.job_types import JobInfo
 from sidecar.schemas.system import HealthResponse, InstanceResponse, UIStateModel
 from sidecar.ui_state import load_ui_state, save_ui_state
 
@@ -41,6 +42,13 @@ SHUTDOWN_REQUEST_TIMEOUT = 5.0
 
 
 def exit_process() -> None:
+    from sidecar.migrations import preparation, preview_gate
+    # A Notebook preview still reading the backup keeps the process (its .analysis-* copy is removed
+    # first), and is waited for BEFORE the owner: owner.shutdown_wait releases the leases (r153 review).
+    if not preview_gate.gate.wait_idle(SHUTDOWN_JOB_TIMEOUT + SHUTDOWN_REQUEST_TIMEOUT):
+        return
+    if not preparation.shutdown_wait(SHUTDOWN_JOB_TIMEOUT + SHUTDOWN_REQUEST_TIMEOUT):
+        return
     # os._exit skips atexit and finally: the discovery file goes first, so that nobody is sent to a sidecar
     # that is gone (the lock itself is freed by the OS with the process).
     instance.withdraw()
@@ -59,13 +67,40 @@ def stop_work(end_clis: bool = False) -> tuple[int, bool]:
     instead of when each job gets to it. Returns how many jobs were cancelled, and whether everything had
     stopped in time.
     """
+    from sidecar.migrations import preview_gate
+    # One deadline for everything below, so the whole wait stays within the documented budget.
+    deadline = time.monotonic() + SHUTDOWN_JOB_TIMEOUT + SHUTDOWN_REQUEST_TIMEOUT
+
+    def remaining() -> float:
+        return max(0.0, deadline - time.monotonic())
+
+    # Sticky: from here on no Notebook preview is admitted until the process ends, and a running one is cancelled.
+    preview_gate.gate.close()
+    maintenance = instance.maintenance_owner()
+    if maintenance is not None:
+        cancelled = deps.job_manager.close()
+        if end_clis: end_running_clis()
+        # Never release the maintenance lease while a preview thread may still read the backup.
+        if not preview_gate.gate.wait_idle(remaining()):
+            return cancelled, False
+        return cancelled, maintenance.shutdown_wait(remaining())
+    # Cancel the provider's own HTTP requests before waiting for request drain;
+    # this is inert when no provider hub was ever opened.
+    from sidecar.routes import provider_owner
+    provider = None; provider_stopped = True
+    try: provider = provider_owner.stop_if_created()
+    except Exception: provider_stopped = False  # noqa: BLE001 - preserve unknown outcome or complete cleanup
     manager = deps.job_manager
     cancelled = manager.close()
     if end_clis:
         end_running_clis()
-    jobs_stopped = manager.wait_idle(SHUTDOWN_JOB_TIMEOUT)
-    requests_finished = deps.wait_for_library_requests(SHUTDOWN_REQUEST_TIMEOUT)
-    return cancelled, jobs_stopped and requests_finished
+    jobs_stopped = manager.wait_idle(min(SHUTDOWN_JOB_TIMEOUT, remaining()))
+    requests_finished = deps.wait_for_library_requests(min(SHUTDOWN_REQUEST_TIMEOUT, remaining()))
+    if provider is not None:
+        try: provider_stopped = provider.finish_shutdown(0, close_host=False) and provider_stopped
+        except Exception: provider_stopped = False  # noqa: BLE001 - preserve unknown outcome or complete cleanup
+    previews_stopped = preview_gate.gate.wait_idle(remaining())
+    return cancelled, jobs_stopped and requests_finished and provider_stopped and previews_stopped
 
 
 # The packaged app starts the sidecar with PAPEER_WATCH_STDIN=1 and a pipe as its standard input, which it
@@ -73,6 +108,17 @@ def stop_work(end_clis: bool = False) -> tuple[int, bool]:
 # it ends (a crash, a kill): the sidecar then stops its jobs (and the CLIs they run) and exits, as after
 # /shutdown. On Windows the app's job object ends it as well; on macOS and Linux this is what does.
 WATCH_STDIN_VARIABLE = "WATCH_STDIN"
+
+
+def _stop_before_process_exit() -> None:
+    _cancelled, stopped = stop_work(end_clis=True)
+    from sidecar.migrations import preparation, preview_gate
+    if not stopped and (instance.maintenance_owner() is not None or preview_gate.gate.inflight()):
+        # Keep the process and its library lease alive while a capture, its
+        # cleanup or a Notebook preview reader is still active. An OS-level
+        # forced kill can still interrupt it.
+        preparation.wait_for_shutdown()
+    exit_process()
 
 
 def watch_stdin(fd: int) -> None:
@@ -88,8 +134,7 @@ def watch_stdin(fd: int) -> None:
     except OSError:
         pass  # A broken or closed pipe: the app is gone all the same.
     print("標準入力が閉じたため（アプリが終了したため）、ジョブを止めて終了します。", file=sys.stderr, flush=True)
-    stop_work(end_clis=True)
-    exit_process()
+    _stop_before_process_exit()
 
 
 def start_watching_stdin() -> bool:
@@ -117,8 +162,7 @@ def stop_on_terminate() -> None:
         return
 
     def terminate(_signum: int, _frame: FrameType | None) -> None:
-        stop_work(end_clis=True)
-        exit_process()
+        _stop_before_process_exit()
 
     signal.signal(signal.SIGTERM, terminate)
 
@@ -130,7 +174,10 @@ def shutdown() -> dict[str, Any]:
     The caller waits for this response, so by the time it arrives nothing is writing any more;
     new jobs are refused from the first moment.
     """
+    from sidecar.migrations import preview_gate
     cancelled, stopped = stop_work()
+    if not stopped and (instance.maintenance_owner() is not None or preview_gate.gate.inflight()):
+        return {"status": "pending", "cancelled": cancelled, "stopped": False}
 
     exit_now = exit_process  # looked up now, so a test's replacement is still the one called later
 
@@ -147,7 +194,7 @@ def get_instance() -> dict[str, Any]:
     """Who answers: the CLI and a second window check the discovery file's claim here (papeer.core.instance).
 
     Allowed during a sync, backup or restore (app.SNAPSHOT_READS), and not counted as activity by the idle
-    exit (sidecar/instance.py).
+    exit (sidecar/lifecycle/instance.py).
     """
     return instance.describe()
 

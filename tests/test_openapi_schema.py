@@ -48,6 +48,40 @@ def test_the_schema_names_the_models_the_frontend_types_come_from():
     assert "required" not in schemas["TranslationReport"]
 
 
+def test_edit_payloads_use_the_generated_canonical_schema_without_pydantic_field_loss():
+    from papeer.core.edit_contracts import contract_definitions
+    schema = json.loads(export_openapi.openapi_text())
+    components = schema["components"]["schemas"]
+    definitions = contract_definitions()
+
+    def original_refs(value):
+        if isinstance(value, list):
+            return [original_refs(item) for item in value]
+        if isinstance(value, dict):
+            return {key: "#/$defs/" + item.rsplit("/Shared", 1)[1] if key == "$ref" else original_refs(item)
+                    for key, item in value.items()}
+        return value
+
+    for name, definition in definitions.items():
+        assert original_refs(components["Shared" + name]) == definition
+    for path, field, expected in [("initialize", "root", "Snapshot"), ("commit", "batch", "EditBatch"),
+                                  ("publish", "publication", "ContentPublication"), ("install-checkpoint", "checkpoint", "RepositoryCheckpoint"),
+                                  ("install-dataset", "manifest", "DatasetManifest"), ("install-dataset", "checkpoint", "RepositoryCheckpoint"),
+                                  ("replace-dataset-control", "record", "DatasetControlRecord"),
+                                  ("drive/save-resource", "metadata", "ResourceMetadata")]:
+        request = schema["paths"]["/api/edits/" + path]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        assert components[request["$ref"].rsplit("/", 1)[1]]["properties"][field] == {"$ref": "#/components/schemas/Shared" + expected}
+    assert schema["paths"]["/api/edits/checkpoint"]["post"]["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/SharedRepositoryCheckpoint"}
+    receive = components["ReceiveRecordsRequest"]["properties"]["records"]
+    assert receive == {"type": "array", "items": {"$ref": "#/components/schemas/SharedEditRecord"}}
+    assert schema["paths"]["/api/edits/pending-records"]["post"]["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "type": "array", "items": {"$ref": "#/components/schemas/SharedEditRecord"}}
+    assert schema["paths"]["/api/edits/datasets"]["post"]["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "type": "array", "items": {"$ref": "#/components/schemas/SharedDatasetManifest"}}
+    assert schema["paths"]["/api/edits/dataset-control"]["post"]["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "anyOf": [{"$ref": "#/components/schemas/SharedDatasetControlRecord"}, {"type": "null"}]}
+
+
 def _generator_arguments() -> list[str]:
     script = json.loads((FRONTEND / "package.json").read_text("utf-8"))["scripts"]["gen-api"]
     assert script.startswith(SCRIPT_START) and script.endswith(SCRIPT_END), script

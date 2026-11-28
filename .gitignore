@@ -13,9 +13,13 @@ sidecar-sources.txt
 
 # Secrets
 .env
+.env.*
+!.env.example
 
 # Local generated output and scratch files
 /output/
+/checkpoints/*
+!/checkpoints/README.md
 
 # Developer-downloaded desktop OAuth credentials (public ID defaults live in assets/google-oauth.json).
 client_secret_*.json
@@ -29,6 +33,8 @@ google-desktop-oauth.json
 /frontend/dist/
 /frontend/web-dist/
 /frontend/.vite/
+/frontend/.provider-ordinary-cache/
+*.tsbuildinfo
 
 # OS generated files
 .DS_Store
@@ -41,3 +47,9 @@ Thumbs.db
 
 # Parallel work trees
 /.worktrees/
+/.claude/worktrees/
+
+/pdfs/
+
+# Local package-manager store
+/.pnpm-store/

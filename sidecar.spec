@@ -21,6 +21,10 @@ CLI_EXCLUDES = [
 # Developer-owned OAuth configuration stays out of the public source tree. Desktop public clients
 # cannot keep this value confidential after distribution; user tokens are never bundled here.
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(SPECPATH)))
+from tools.distribution_notices import generate
+distribution_notices = generate(Path(SPECPATH))
 oauth_bundle = Path('build/google-desktop-oauth.json')
 oauth_datas = [(str(oauth_bundle), '.')] if oauth_bundle.is_file() else []
 
@@ -29,7 +33,7 @@ a = Analysis(
     ['sidecar/__main__.py'],
     pathex=[],
     binaries=[],
-    datas=[('papeer/core/prompts/*', 'papeer/core/prompts'), ('papeer/core/assets/fonts/*', 'papeer/core/assets/fonts'), ('papeer/core/assets/*', 'papeer/core/assets'), ('code-version.txt', '.'), *oauth_datas],
+    datas=[('papeer/core/prompts/*', 'papeer/core/prompts'), ('papeer/core/assets/fonts/*', 'papeer/core/assets/fonts'), ('papeer/core/assets/*', 'papeer/core/assets'), ('code-version.txt', '.'), (str(distribution_notices), 'licenses'), *oauth_datas],
     hiddenimports=['papeer'],
     hookspath=[],
     hooksconfig={},

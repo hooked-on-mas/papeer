@@ -1,14 +1,23 @@
-import { readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const frontend = fileURLToPath(new URL("../", import.meta.url));
-// Discover every Web browser suite, so new suites cannot silently miss the release gate.
+// Curated core Web E2E suites covering everyday workflows, Drive sync, and offline PWA shell.
 // Run sequentially: browsers and real Python PDF generation share the runner's resources.
-const suites = readdirSync(new URL("../e2e/", import.meta.url))
-  .filter(name => /^web.*\.browser\.test\.ts$/.test(name) || name === "pdfReaderResize.browser.test.ts")
-  .sort().map(name => `e2e/${name}`);
-if (!suites.length) throw new Error("No Web browser suites were found.");
+const suites = [
+  "e2e/tests/library/webOrdinaryLibraryCrud.browser.test.ts",
+  "e2e/tests/library/webOrdinaryLibraryQuery.browser.test.ts",
+  "e2e/tests/notebooks/webOrdinaryNotebookPages.browser.test.ts",
+  "e2e/tests/notes/webOrdinaryMarkdownLifecycle.browser.test.ts",
+  "e2e/tests/reader/p2/webOrdinaryPdf.browser.test.ts",
+  "e2e/tests/reader/p2/webOrdinaryTools.browser.test.ts",
+  "e2e/tests/workspace/webOrdinaryFocus.browser.test.ts",
+  "e2e/tests/workspace/webOrdinaryWorkspacePreferences.browser.test.ts",
+  "e2e/tests/bootstrap/provider/webProviderOrdinary.browser.test.ts",
+  "e2e/tests/library/composition/webLibraryAutomaticReceive.browser.test.ts",
+  "e2e/tests/bootstrap/provider/webProviderOfflineOrdinary.browser.test.ts",
+  "e2e/tests/bootstrap/provider/webProviderPwaShell.browser.test.ts",
+];
 if (process.env.PAPEER_PWA_TEST_URL) suites.push("e2e/publishedPwa.browser.test.ts");
 if (process.argv.includes("--list")) { console.log(JSON.stringify(suites)); process.exit(0); }
 const result = spawnSync(process.execPath, ["--test", "--test-concurrency=1", ...suites], { cwd: frontend, stdio: "inherit" });

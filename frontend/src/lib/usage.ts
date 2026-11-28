@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { components } from "../api/schema";
 
-/** Tokens used by one job, as the sidecar reports them (Usage in sidecar/job_types.py). input_tokens includes cached input. */
+/** Tokens used by one job, as the sidecar reports them (Usage in sidecar/lifecycle/job_types.py). input_tokens includes cached input. */
 export type Usage = components["schemas"]["Usage"];
 
 export type LimitWindow = components["schemas"]["LimitWindow"];

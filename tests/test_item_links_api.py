@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from papeer.core import notebook
-from papeer.core.storage import Library, database_version
+from papeer.core.storage import Library, SCHEMA_VERSION, database_version
 from sidecar import deps
 
 SAMPLE_PDF = Path(__file__).parent / "fixtures" / "sample.pdf"
@@ -79,7 +79,7 @@ def test_a_link_is_one_row_whichever_way_it_is_made_and_both_ends_list_it(world)
     assert events == []  # Nothing changed, so nothing is announced.
     a, b = sorted((paper, book))
     assert client.get("/api/item-links").json() == [{"a": a, "b": b}]
-    assert database_version(lib.root / "library.sqlite3") == 8
+    assert database_version(lib.root / "library.sqlite3") == SCHEMA_VERSION
 
     # Each end lists the other as a full row: the shape of the library list.
     from_paper = client.get(f"/api/papers/{paper}/links").json()

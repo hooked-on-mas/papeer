@@ -21,11 +21,11 @@ from fastapi import Header, HTTPException, Query, status
 
 from papeer.core.config import Settings, api_key_from_env
 from papeer.core.errors import Conflict
-from papeer.core.paths import app_env, data_directory
+from papeer.core.paths import app_env, data_directory, selected_data_directory, storage_location_settings
 from papeer.core.storage import Library, LibraryMissingError, NewerSchemaError, library_missing, missing_library_message
 from papeer.providers import ProviderBackend, check_cancel, create_provider
-from sidecar.job_types import SNAPSHOT_KINDS, JobKind, JobStarted, LibraryChangedEvent, PaperChangedEvent
-from sidecar.jobs import JobManager
+from sidecar.lifecycle.job_types import SNAPSHOT_KINDS, JobKind, JobStarted, LibraryChangedEvent, PaperChangedEvent
+from sidecar.lifecycle.jobs import JobManager
 from sidecar.schemas.settings import ProviderActionRequest
 
 job_manager = JobManager()
@@ -41,6 +41,7 @@ _library_requests = 0
 # wait for them (they only read), and a stream of pdf.js range requests would otherwise keep it from ever
 # finding none running. Every other snapshot waits for them too.
 _side_reads = 0
+_maintenance_owner: object | None = None
 SIDE_READ = "side-read"
 
 # The "code" of a 409 for a request refused unrun because a snapshot holds the library: the frontend may
@@ -86,13 +87,37 @@ def begin_library_request(read_only: bool = False) -> str | None:
     """Admit a request: None when a snapshot refuses it, else what to give end_library_request afterwards."""
     global _library_requests, _side_reads
     with _requests_condition:
-        if snapshot_blocks(read_only):
+        if _maintenance_owner is not None or snapshot_blocks(read_only):
             return None
         if read_only:
             _side_reads += 1
             return SIDE_READ
         _library_requests += 1
         return "request"
+
+
+def maintenance_running() -> bool:
+    with _requests_condition:
+        return _maintenance_owner is not None
+
+
+def reserve_library_maintenance(owner: object) -> None:
+    """Atomically refuse new requests; existing response bodies remain counted."""
+    global _maintenance_owner
+    with _requests_condition:
+        if _maintenance_owner is not None:
+            raise LibraryBusy()
+        _maintenance_owner = owner
+
+
+def release_library_maintenance(owner: object) -> None:
+    """End only the exact retained owner (isolated runtime disposal, not timeout)."""
+    global _maintenance_owner
+    with _requests_condition:
+        if _maintenance_owner is not owner:
+            raise ValueError('maintenance-owner-mismatch')
+        _maintenance_owner = None
+        _requests_condition.notify_all()
 
 
 def end_library_request(kind: object = "request") -> None:
@@ -183,6 +208,32 @@ def verify_token(authorization: str | None = Header(None), token: str | None = Q
 
 def get_data_dir() -> Path:
     return data_directory()
+
+
+def read_native_startup_presence():
+    """Observe the raw configured selection and deferred device inputs, without recovery."""
+    from papeer.core.migrations.legacy_startup import read_native_legacy_presence
+    selected = selected_data_directory()
+    # Check root/ancestors before any resolve can erase a link or junction.
+    presence = read_native_legacy_presence(selected)
+    if get_data_dir().resolve() != selected.resolve():
+        raise ValueError('legacy-root-selection-changed')
+    # A pending destination and its setting are legacy inputs even when an env
+    # override selects an empty root. Startup must not hide or apply them.
+    if storage_location_settings().get('pending') is not None:
+        return 'legacy-present'
+    return presence
+
+
+def get_canonical_storage_path() -> Path:
+    from papeer.core.edit_storage import edit_storage_root
+    return edit_storage_root(get_data_dir()) / 'content.sqlite3'
+
+
+def get_edit_connection():
+    # Canonical staging must not migrate/recover/write the captured legacy Library.
+    from papeer.core.edit_storage import canonical_edit_connection
+    return canonical_edit_connection(get_data_dir())
 
 
 def snapshot_running() -> bool:

@@ -12,7 +12,7 @@ from papeer.core.storage import Library
 from papeer.providers import Cancelled
 from sidecar import deps
 from sidecar.app import app
-from sidecar.jobs import JobManager, ConcurrencyConflict
+from sidecar.lifecycle.jobs import JobManager, ConcurrencyConflict
 from sidecar.schemas.discovery import MapGroupResult
 from test_citations import add_paper
 

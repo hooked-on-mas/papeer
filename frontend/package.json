@@ -1,6 +1,7 @@
 {
   "name": "papeer",
   "private": true,
+  "license": "AGPL-3.0-or-later",
   "version": "0.2.0",
   "type": "module",
   "scripts": {
@@ -10,9 +11,9 @@
     "build:web": "tsc && vite build --config vite.web.config.ts",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "node --test \"tests/*.test.*\"",
+    "test": "node --test \"tests/**/*.test.*\"",
     "test:web": "node scripts/test-web.mjs",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tests && tsc --noEmit -p e2e",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tests && tsc --noEmit -p e2e",
     "lint": "eslint --max-warnings 0 .",
     "gen-api": "openapi-typescript openapi.json --default-non-nullable false -o src/api/schema.d.ts"
   },
@@ -27,6 +28,7 @@
     "@codemirror/view": "^6.43.14",
     "@dnd-kit/core": "^6.3.1",
     "@fontsource-variable/geist": "^5.3.0",
+    "@pdf-lib/fontkit": "^1.1.1",
     "@tanstack/react-query": "^5.103.2",
     "@tanstack/react-virtual": "^3.14.13",
     "@tauri-apps/api": "^2",
@@ -41,6 +43,7 @@
     "lucide-react": "^1.47.0",
     "mermaid": "^12.0.0",
     "openapi-fetch": "^0.17.0",
+    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.3.289",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -51,6 +54,8 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
@@ -66,7 +71,6 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "openapi-typescript": "^7.13.0",
     "playwright-core": "^1.63.0",
-    "shadcn": "^4.21.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.3",
     "vite": "^8.0.16"

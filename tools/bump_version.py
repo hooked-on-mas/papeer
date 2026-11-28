@@ -38,6 +38,9 @@ SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 MSI_LIMITS = (255, 255, 65535)
 
 _V = r'"(?P<v>[^"\n]*)"'
+# A manifest saved with CRLF (an editor, autocrlf) is matched and rewritten in place: only the version text changes.
+_NL = r"\r?\n"
+_END = r"(?=\r?$)"
 
 
 @dataclass(frozen=True)
@@ -50,24 +53,24 @@ class Spot:
 
 def _section(header: str) -> str:
     # `version = "..."` inside a TOML table, before the next table header.
-    return rf"^{re.escape(header)}\n(?:(?:[^\[\n][^\n]*)?\n)*?version = {_V}$"
+    return rf"^{re.escape(header)}{_NL}(?:(?:[^\[\r\n][^\n]*)?{_NL})*?version = {_V}{_END}"
 
 
 def _lock(name: str) -> str:
     # The project's own entry in Cargo.lock / uv.lock (dependencies have their own [[package]] entries).
-    return rf'^\[\[package\]\]\nname = "{name}"\nversion = {_V}$'
+    return rf'^\[\[package\]\]{_NL}name = "{name}"{_NL}version = {_V}{_END}'
 
 
 SPOTS = (
     Spot("pyproject.toml", re.compile(_section("[project]"), re.M)),
-    Spot("papeer/__init__.py", re.compile(rf"^__version__ = {_V}$", re.M)),
-    Spot("frontend/package.json", re.compile(rf'^  "version": {_V},?$', re.M), json_key=True),
-    Spot("frontend/src-tauri/tauri.conf.json", re.compile(rf'^  "version": {_V},?$', re.M), json_key=True),
+    Spot("papeer/__init__.py", re.compile(rf"^__version__ = {_V}{_END}", re.M)),
+    Spot("frontend/package.json", re.compile(rf'^  "version": {_V},?{_END}', re.M), json_key=True),
+    Spot("frontend/src-tauri/tauri.conf.json", re.compile(rf'^  "version": {_V},?{_END}', re.M), json_key=True),
     Spot("frontend/src-tauri/Cargo.toml", re.compile(_section("[package]"), re.M)),
     Spot("frontend/src-tauri/Cargo.lock", re.compile(_lock("papeer"), re.M)),
     Spot("uv.lock", re.compile(_lock("papeer"), re.M)),
     # Generated from the sidecar (FastAPI version=papeer.__version__); kept in step so it need not be rebuilt.
-    Spot("frontend/openapi.json", re.compile(rf'^  "info": \{{\n    "title": "[^"\n]*",\n    "version": {_V}$', re.M)),
+    Spot("frontend/openapi.json", re.compile(rf'^  "info": \{{{_NL}    "title": "[^"\n]*",{_NL}    "version": {_V}{_END}', re.M)),
 )
 
 

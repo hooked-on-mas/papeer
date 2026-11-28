@@ -1,9 +1,9 @@
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { TermFeedback } from "../../src/features/reader/TermFeedback";
+import { TermFeedback } from "../../src/features/reader/glossary/TermFeedback";
 import { useJobEvents } from "../../src/features/jobs/jobEvents";
 import { registerJobHandlers } from "../../src/features/jobs/jobHandlers";
-import { translationJobHandlers } from "../../src/features/reader/translationJobs";
+import { translationJobHandlers } from "../../src/features/reader/translation/translationJobs";
 import { useStore } from "../../src/store";
 import "../../src/index.css";
 

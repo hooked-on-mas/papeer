@@ -12,7 +12,7 @@ export function SidePanelChooser({ selected, available, onChange, className, tit
   if (!choices.length) return null;
   const label = choices.find(choice => choice.tab === selected)?.label ?? "右パネル";
   return <DropdownMenu>
-    <DropdownMenuTrigger className={className} aria-label="右パネルを選択" title={selected ? `${label}を右に表示中` : "サマリー・チャット・メモを右に表示"}>
+    <DropdownMenuTrigger className={className} aria-label="右パネルを選択" title={selected ? `${label}を右に表示中` : "サマリー・チャット・ノートを右に表示"}>
       <PanelRight className="size-3.5" />{label}<ChevronDown className="size-3" />
     </DropdownMenuTrigger>
     <DropdownMenuContent align="end" className="w-44">

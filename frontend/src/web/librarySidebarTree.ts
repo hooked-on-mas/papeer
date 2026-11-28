@@ -1,5 +1,6 @@
 import type { ArtifactView, LibraryItemView } from "../runtime/contracts.ts";
 import { folderAncestors, folderName, normalizeCollection, parentFolder } from "../lib/collectionPath.ts";
+import { kindCapabilities } from "../lib/itemKinds.ts";
 
 export type WebLibraryChild = { kind: "owned"; item: LibraryItemView } | { kind: "attachment"; artifact: ArtifactView };
 export type WebLibraryEntry = { item: LibraryItemView; children: WebLibraryChild[] };
@@ -23,7 +24,7 @@ export function buildWebLibraryTree(items: readonly LibraryItemView[], artifacts
   };
   for (const item of items) {
     if (item.parentId && ids.has(item.parentId) && item.parentId !== item.id) continue;
-    const owned = children.get(item.id) ?? [];
+    const owned = (children.get(item.id) ?? []).slice().sort((a, b) => a.kind === "owned" && b.kind === "owned" ? (a.item.notePosition ?? 0) - (b.item.notePosition ?? 0) : a.kind === "owned" ? -1 : b.kind === "owned" ? 1 : 0);
     const itemMatches = matches(`${item.title} ${item.collectionName}`);
     const shown = term && !itemMatches ? owned.filter(child => matches(child.kind === "owned" ? child.item.title : child.artifact.label)) : owned;
     if (term && !itemMatches && !shown.length) continue;
@@ -42,7 +43,7 @@ export function buildWebLibraryTree(items: readonly LibraryItemView[], artifacts
     rows.sort((a, b) => !a.path ? 1 : !b.path ? -1 : compare(a.name, b.name));
     for (const node of rows) {
       finish(node.children);
-      node.entries.sort((a, b) => Number(b.item.kind === "notebook") - Number(a.item.kind === "notebook"));
+      node.entries.sort((a, b) => Number(kindCapabilities(b.item.kind).listedFirst) - Number(kindCapabilities(a.item.kind).listedFirst));
       node.count = node.entries.length + node.children.reduce((sum, child) => sum + child.count, 0);
     }
   };

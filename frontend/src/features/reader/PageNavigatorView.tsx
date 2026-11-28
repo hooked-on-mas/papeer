@@ -10,12 +10,13 @@ const button = "p-1 rounded text-muted-foreground hover:bg-muted hover:text-fore
  * buttons to the previous and next page. `compact` writes the page count after the field ("3 / 12"),
  * for a toolbar that has no room for a label of its own; `showGo` adds the 移動 button.
  */
-export function PageNavigatorView({ paperId, currentPage, count, atStart, atEnd, showGo = false, compact = false, onJump, onMove, inputId = "page-input", shortcuts = true }: {
+export function PageNavigatorView({ paperId, currentPage, count, atStart, atEnd, showGo = false, compact = false, onJump, onMove, inputId = "page-input", shortcuts = true, disabled = false }: {
   paperId: string;
   onJump: (page: number) => void;
   onMove: (delta: number) => void;
   inputId?: string;
   shortcuts?: boolean;
+  disabled?: boolean;
   currentPage: number;
   /** Pages in all; 0 while unknown. */
   count: number;
@@ -26,20 +27,23 @@ export function PageNavigatorView({ paperId, currentPage, count, atStart, atEnd,
 }) {
   const [pageText, setPageText] = useState(String(currentPage));
   const cancelledPageEdit = useRef(false);
-  useEffect(() => setPageText(String(currentPage)), [currentPage, paperId]);
+  const edited = useRef(false);
+  useEffect(() => { setPageText(String(currentPage)); edited.current = false; }, [currentPage, paperId]);
 
-  const commitPage = () => {
+  const commitPage = (explicit = false) => {
+    if (disabled) return;
     const value = parseInt(pageText.normalize("NFKC"), 10);
     if (Number.isFinite(value)) {
       const target = Math.max(1, Math.min(value, count || currentPage));
       setPageText(String(target));
-      if (target !== currentPage) onJump(target);
+      if (explicit || edited.current || target !== currentPage) onJump(target);
     }
     else setPageText(String(currentPage));
+    edited.current = false;
   };
 
   return <>
-    <button onClick={() => onMove(-1)} disabled={atStart} className={button} aria-label="前のページ" title={shortcuts ? "前のページ（← / PageUp / ページ先頭でホイール上）" : "前のページ"}>
+    <button onClick={() => onMove(-1)} disabled={disabled || atStart} className={button} aria-label="前のページ" title={shortcuts ? "前のページ（← / PageUp / ページ先頭でホイール上）" : "前のページ"}>
       <ChevronLeft className="w-4 h-4" />
     </button>
     <input
@@ -47,12 +51,14 @@ export function PageNavigatorView({ paperId, currentPage, count, atStart, atEnd,
       type="text"
       inputMode="numeric"
       value={pageText}
-      onChange={(e) => setPageText(e.target.value.replace(/[^0-9０-９]/g, ""))}
+      disabled={disabled}
+      onChange={(e) => { edited.current = true; setPageText(e.target.value.replace(/[^0-9０-９]/g, "")); }}
       onKeyDown={(e) => {
-        if (e.key === "Enter" && !isImeKey(e.nativeEvent)) commitPage();
+        if (e.key === "Enter" && !isImeKey(e.nativeEvent)) { e.preventDefault(); commitPage(true); }
         if (e.key === "Escape" && !isImeKey(e.nativeEvent)) {
           e.preventDefault();
           cancelledPageEdit.current = true;
+          edited.current = false;
           setPageText(String(currentPage));
           e.currentTarget.blur();
         }
@@ -73,11 +79,11 @@ export function PageNavigatorView({ paperId, currentPage, count, atStart, atEnd,
       {count > 0 && <span className="sr-only">全{count}ページ</span>}
     </span>}
     {showGo && (
-      <button onClick={commitPage} className="h-6 px-2 shrink-0 rounded border text-[0.75rem] hover:bg-muted">
+      <button onClick={() => commitPage(true)} disabled={disabled} className="h-6 px-2 shrink-0 rounded border text-[0.75rem] hover:bg-muted">
         移動
       </button>
     )}
-    <button onClick={() => onMove(1)} disabled={atEnd} className={button} aria-label="次のページ" title={shortcuts ? "次のページ（→ / PageDown / ページ末尾でホイール下）" : "次のページ"}>
+    <button onClick={() => onMove(1)} disabled={disabled || atEnd} className={button} aria-label="次のページ" title={shortcuts ? "次のページ（→ / PageDown / ページ末尾でホイール下）" : "次のページ"}>
       <ChevronRight className="w-4 h-4" />
     </button>
   </>;

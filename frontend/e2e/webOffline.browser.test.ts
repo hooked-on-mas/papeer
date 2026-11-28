@@ -64,10 +64,11 @@ test("downloaded PDFs reopen offline; missing versions, storage failures and log
     if (request.method() === "OPTIONS") { await route.fulfill({ status: 204, headers }); return; }
     if (request.method() === "POST") { uploads++; await route.fulfill({ json: { id: "op" }, headers }); return; }
     const id = url.pathname.split("/").pop()!;
-    if (id === "files" && !url.searchParams.get("q")?.includes("ink-v1") && holdLibraryList) {
+    const changes = /ink-v1|notes-v1/.test(url.searchParams.get('q') ?? '');
+    if (id === "files" && !changes && holdLibraryList) {
       listRequested(); await listReleased;
     }
-    if (id === "files") await route.fulfill({ json: { files: url.searchParams.get("q")?.includes("ink-v1") ? []
+    if (id === "files") await route.fulfill({ json: { files: changes ? []
       : [{ id: "library", name: "papeer-library.json", modifiedTime: "2026-10-21T00:00:00Z" }] }, headers });
     else if (id === "library") await route.fulfill({ json: { version: 1, revision: String(revision), updated_at: "2026-10-21T00:00:00Z", folder_id: "folder",
       items: [{ id: paper, title: "保存した論文" }, { id: missing, title: "未取得の論文" }], attachments: [], files: {
@@ -134,7 +135,7 @@ test("downloaded PDFs reopen offline; missing versions, storage failures and log
   await tree.getByRole("treeitem", { name: "保存した論文", exact: true }).click();
   await original.locator('[data-page-number="2"] canvas').waitFor();
   // Offline edits stay durable and are sent only after a new authenticated login.
-  await original.getByRole("button", { name: "ペン", exact: true }).click();
+  await page.getByRole('toolbar', { name: 'PDFの書き込みツール' }).getByRole("button", { name: "ペン", exact: true }).click();
   await original.getByTestId("web-ink").click({ position: { x: 110, y: 150 } });
   await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 1);
   await page.reload({ waitUntil: "domcontentloaded" });
@@ -228,7 +229,7 @@ test("WebKit reopens saved PDF bodies after restarting without Google", { timeou
     const headers = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*" };
     if (route.request().method() === "OPTIONS") { await route.fulfill({ status: 204, headers }); return; }
     const url = new URL(route.request().url()), id = url.pathname.split("/").pop();
-    if (id === "files") await route.fulfill({ json: { files: url.searchParams.get("q")?.includes("ink-v1") ? []
+    if (id === "files") await route.fulfill({ json: { files: /ink-v1|notes-v1/.test(url.searchParams.get('q') ?? '') ? []
       : [{ id: "library", name: "papeer-library.json", modifiedTime: "2026-10-21T00:00:00Z" }] }, headers });
     else if (id === "library") await route.fulfill({ json: { version: 1, revision: "webkit", updated_at: "2026-10-21T00:00:00Z",
       items: [{ id: paper, title: "WebKitの保存済みPDF" }], attachments: [], files: {
@@ -244,8 +245,13 @@ test("WebKit reopens saved PDF bodies after restarting without Google", { timeou
   assert.equal(await page.getByRole("alert").filter({ hasText: "資料を端末に保存できません" }).count(), 0);
   await page.getByRole("button", { name: "次のページ", exact: true }).click();
   await original.locator('[data-page-number="2"] canvas').waitFor();
+  // Make the current document offline too; setting only the next document's flag leaves a window
+  // where its focus listener correctly starts an online refresh against an already-aborted fixture.
+  await page.evaluate(() => {
+    sessionStorage.setItem("offline-test:no-google", "1");
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+  });
   offline = true;
-  await page.evaluate(() => sessionStorage.setItem("offline-test:no-google", "1"));
   await page.reload({ waitUntil: "domcontentloaded" });
   await original.locator('[data-page-number="2"] canvas').waitFor();
   assert.equal(await page.getByRole("heading", { name: "論文を選んで、読み始めよう" }).count(), 0);

@@ -85,12 +85,12 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
   const isCli = spec?.kind === "cli";
   // Listing models runs the CLI, so wait until the path stops changing.
   const queryPath = useDebounced(isCli ? option("cli_path") : undefined, 600);
-  const modelsQuery = useProviderModels(provider, { cliPath: queryPath, enabled: open && !!settings });
+  const modelsQuery = useProviderModels(provider, { cliPath: queryPath, enabled: open && !!settings && !!spec });
   const modelOptions = modelsQuery.data ?? [];
   const model = current.model ?? modelOptions[0]?.id ?? "";
   const debouncedModel = useDebounced(model, 400);
   const { data: effortOptions = [] } = useProviderEfforts(provider, debouncedModel,
-    { cliPath: queryPath, enabled: open && !!settings });
+    { cliPath: queryPath, enabled: open && !!settings && !!spec });
   const chosenEffort = option("reasoning_effort");
   const lookupProvider = metadataProvider || provider;
   const metadataSpec = providers.find(p => p.id === lookupProvider);
@@ -98,11 +98,13 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
   const metadataModel = metadataOption("paper_metadata_model");
   const metadataPath = useDebounced(metadataSpec?.kind === "cli" ? metadataOption("cli_path") : undefined, 600);
   const metadataModelsQuery = useProviderModels(lookupProvider,
-    { cliPath: metadataPath, enabled: open && !!settings && metadataAi });
+    { cliPath: metadataPath, enabled: open && !!settings && metadataAi && !!metadataSpec });
   const metadataFallbackModel = lookupProvider === provider ? model : metadataOption("model");
   // Fall back to the first choice when the model does not offer the saved value.
   const effort = effortOptions.some((o) => o.id === chosenEffort) ? chosenEffort : (effortOptions[0]?.id ?? "");
   const hasEfforts = effortOptions.length > 1;
+  // Keep a retired connection's saved options when editing an unrelated setting.
+  const savedEffort = spec ? (hasEfforts ? effort : "") : chosenEffort;
 
   function edit<T>(setter: (value: T) => void) {
     return (value: T) => {
@@ -120,7 +122,7 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
   const values = () => ({
     provider,
     model: model.trim(),
-    reasoning_effort: hasEfforts ? effort : "",
+    reasoning_effort: savedEffort,
     timeout_seconds: settings?.timeout_seconds ?? 900,
     translation_concurrency: concurrency,
     paper_metadata_ai_enabled: metadataAi,
@@ -128,7 +130,7 @@ export function useConnectionForm(open: boolean, settings: SettingsData | undefi
     paper_metadata_provider: metadataProvider,
     paper_metadata_model: metadataModel.trim(),
     // Each connection's fields plus the model/effort chosen for it, so switching back restores them.
-    provider_options: trimmed({ ...options, [provider]: { ...options[provider], model, reasoning_effort: hasEfforts ? effort : "" } }),
+    provider_options: trimmed({ ...options, [provider]: { ...options[provider], model, reasoning_effort: savedEffort } }),
     api_key: apiKey.trim(),
     semantic_scholar_api_key: semanticKey.trim(),
   });
@@ -203,8 +205,12 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
   const metadataProviderId = useId();
   const spec = form.spec;
   const isCli = spec?.kind === "cli";
+  const retiredMetadataProvider = ["antigravity", "gemini"].includes(form.metadataProvider);
   return (
     <div className="space-y-5">
+      {["antigravity", "gemini"].includes(form.provider) && <p role="alert" className="text-sm text-muted-foreground">
+        Antigravity連携は提供を終了しました。以下からAI接続を選び直してください。
+      </p>}
       <div role="radiogroup" aria-label="接続先" className="grid grid-cols-2 gap-2">
         {form.providers.map(({ id, label, description, kind }) => {
           const selected = form.provider === id;
@@ -246,7 +252,7 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
         <Field label="モデル">
           <div className="flex gap-2">
             {!isCli ? (
-              <Input value={form.model} onChange={(e) => form.setModel(e.target.value)} placeholder="モデル名" />
+              <Input value={form.model} onChange={(e) => form.setModel(e.target.value)} placeholder="モデル名" disabled={!spec} />
             ) : (
               <NativeSelect
                 aria-label="モデル"
@@ -257,7 +263,7 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
                 {form.modelOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </NativeSelect>
             )}
-            <Button variant="outline" onClick={() => form.refetchModels()} disabled={form.loadingModels} title="モデル一覧を再取得">
+            <Button variant="outline" onClick={() => form.refetchModels()} disabled={!spec || form.loadingModels} title="モデル一覧を再取得">
               <RefreshCw className={cn(form.loadingModels && "animate-spin")} />
               再取得
             </Button>
@@ -310,8 +316,12 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
             <NativeSelect id={metadataProviderId} aria-label="情報取得の接続先" value={form.metadataProvider}
               onChange={e => form.setMetadataProvider(e.target.value)} disabled={!form.metadataAi}>
               <option value="">翻訳などと同じ接続先</option>
+              {retiredMetadataProvider && <option value={form.metadataProvider} disabled>Antigravity（提供終了）</option>}
               {form.providers.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
             </NativeSelect>
+            {retiredMetadataProvider && <p role="alert" className="text-sm text-muted-foreground">
+              情報取得のAntigravity連携は提供を終了しました。情報取得の接続先を選び直してください。
+            </p>}
           </div>
           {form.metadataProvider && form.metadataProvider !== form.provider && (
             <div className="space-y-3">
@@ -335,7 +345,7 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
             <label htmlFor={metadataModelId} className="block">情報取得モデル</label>
             <Input id={metadataModelId} aria-label="情報取得モデル" list={`${metadataModelId}-choices`}
               value={form.metadataModel} onChange={e => form.setMetadataModel(e.target.value)}
-              disabled={!form.metadataAi} placeholder={form.metadataFallbackModel || "モデル名（空欄なら接続先の既定値）"}
+              disabled={!form.metadataAi || !form.metadataSpec} placeholder={form.metadataFallbackModel || "モデル名（空欄なら接続先の既定値）"}
               aria-describedby={`${metadataModelId}-hint`} />
             <datalist id={`${metadataModelId}-choices`}>
               {form.metadataModelOptions.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
@@ -349,7 +359,7 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
             {form.metadataSpec?.needs_login && form.metadataProvider && form.metadataProvider !== form.provider && (
               <Button variant="outline" onClick={form.metadataLogin} disabled={!form.metadataAi}><LogIn /> ログイン</Button>
             )}
-            <Button variant="outline" onClick={form.metadataCheck} disabled={!form.metadataAi || form.metadataChecking}>
+            <Button variant="outline" onClick={form.metadataCheck} disabled={!form.metadataAi || !form.metadataSpec || form.metadataChecking}>
               {form.metadataChecking ? <Loader2 className="animate-spin" /> : <PlugZap />}
               情報取得の接続を確認
             </Button>
@@ -369,7 +379,7 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
               <LogIn /> ログイン
             </Button>
           )}
-          <Button variant="outline" onClick={form.check} disabled={form.checking}>
+          <Button variant="outline" onClick={form.check} disabled={!spec || form.checking}>
             {form.checking ? <Loader2 className="animate-spin" /> : <PlugZap />}
             {form.checking ? "確認中…" : "接続を確認"}
           </Button>
@@ -386,8 +396,8 @@ export function ConnectionSection({ form }: { form: ConnectionForm }) {
 
       <p className="text-[0.75rem] leading-relaxed text-muted-foreground">
         {!isCli
-          ? "翻訳・解説・チャットを実行すると、対象テキストがこの API へ送られます。接続先によっては従量課金になります。"
-          : "翻訳・解説・チャットを実行すると、対象テキストがこの CLI へ送られます。実行できるかどうかは各ツールのログイン状態と利用枠に従います。"}
+          ? "翻訳・サマリー・チャットを実行すると、対象テキストがこの API へ送られます。接続先によっては従量課金になります。"
+          : "翻訳・サマリー・チャットを実行すると、対象テキストがこの CLI へ送られます。実行できるかどうかは各ツールのログイン状態と利用枠に従います。"}
       </p>
     </div>
   );

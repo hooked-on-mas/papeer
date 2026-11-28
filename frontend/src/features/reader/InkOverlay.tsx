@@ -1,21 +1,26 @@
 import { InkDrawing } from "./InkDrawing";
 export { InkDrawing } from "./InkDrawing";
-import { memo, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
 import { Trash2 } from "lucide-react";
-import { boundsOf, constrainedShapeEnd, eraseInk, fitInk, hitInk, hitShape, inBounds, isShape, kindOf, rectBetween, reshapeShape, selectInk, SHAPE_KINDS, shapeHandleCursor, shapeHandles, shapePoints, snapRotation, textPoints, transformInk,
-  type Bounds, type InkKind, type InkStroke, type Point, type ShapeHit } from "./inkGeometry";
-import type { InkEditor } from "./useInkEditor";
+import { boundsOf, constrainedShapeEnd, eraseInk, fitInk, hitInk, hitShape, inBounds, isShape, kindOf, rectBetween, reshapeShape, selectInk, SHAPE_KINDS, shapeHandleCursor, shapeHandles, snapRotation, textPoints, transformInk,
+  type Bounds, type InkKind, type InkStroke, type Point, type ShapeHit } from "../ink/inkGeometry";
+import type { InkEditor } from "./inkEditor";
+import type { CanonicalInkOperation } from './ink/canonicalInkOperations';
 import { AnnotationTextEditor } from "./AnnotationTextEditor";
-import { canResumeShape, inkChanged, LONG_PRESS_MS, LONG_PRESS_SLOP_PX, mayEditSelectedShape, pressTarget, shapeToolTarget, SHAPE_LIFT_GRACE_MS } from "./inkInteraction";
+import { canResumeShape, inkChanged, LONG_PRESS_MS, LONG_PRESS_SLOP_PX, mayEditSelectedShape, pressTarget, shapeToolTarget, SHAPE_LIFT_GRACE_MS } from "../ink/inkInteraction";
 import { useOpenEdit } from "@/lib/pendingSaves";
-import { usePdfTouchOwner } from "./usePdfTouch";
-export type { InkTool } from "./inkGeometry";
+import { isSamePaneReadingPinchContinuation, usePdfTouchOwner } from "./input/usePdfPointerInput";
+import { advanceInkDraft, beginInkDraft, inkDraftHasSize, type DrawingKind } from '../ink/inkDraft';
+import type { PdfInkGestureReadPort } from './pdf/pdfTextGesture';
+export type { InkTool } from "../ink/inkGeometry";
 
 type Gesture = {
   pointerId: number; mode: "draw" | "erase" | "select" | "capture" | "move" | "resize" | "rotate" | "reshape";
   start: Point; path: Point[]; base: InkStroke[]; result: InkStroke[]; selected: InkStroke[];
   stroke?: InkStroke; center: Point; anchor: Point; moved: boolean; commit: (strokes: InkStroke[]) => void;
   pointerType: string; end: Point; target?: InkStroke; hit?: ShapeHit; clickTarget?: InkStroke;
+  operations?: InkEditor['operations']; operation?: CanonicalInkOperation; fragmentIdSeed: string;
+  eraser: { radius: number; partial: boolean; highlightOnly: boolean };
 };
 
 /** How an ink colour shows over the page, e.g. lightened over a page inverted for the dark theme. */
@@ -42,21 +47,30 @@ const onRotateHandle = (box: Bounds, p: Point, height: number) => {
   return Math.hypot((p[0] - x) * 1000, (p[1] - y) * height) <= ROTATE_REACH;
 };
 
-const InkLayer = memo(function InkLayer({ strokes, ratio, inkColor }: { strokes: InkStroke[]; ratio: number; inkColor: InkColor }) {
-  return <>{strokes.map(stroke => <g key={stroke.id} data-ink-id={stroke.id} data-ink-kind={kindOf(stroke)} style={{ pointerEvents: "none" }}><InkDrawing stroke={stroke} ratio={ratio} inkColor={inkColor} /></g>)}</>;
+const InkLayer = memo(function InkLayer({ strokes, ratio, inkColor, renderStroke }: { strokes: InkStroke[]; ratio: number; inkColor: InkColor; renderStroke?: InkEditor['renderStroke'] }) {
+  return <>{strokes.map(stroke => <g key={stroke.id} data-ink-id={stroke.id} data-ink-kind={kindOf(stroke)} style={{ pointerEvents: "none" }}>{renderStroke ? renderStroke(stroke, ratio, inkColor) : <InkDrawing stroke={stroke} ratio={ratio} inkColor={inkColor} />}</g>)}</>;
 });
 
 const resultOf = (g: Gesture, ratio: number) => g.mode === "draw"
   ? [...g.base, ...fitInk([g.stroke!], ratio)] : g.result;
+
+function commitGesture(gesture: Gesture, ratio: number): boolean {
+  if (!gesture.operations) { gesture.commit(resultOf(gesture, ratio)); return true; }
+  if (gesture.mode === 'draw') return gesture.operations.commit({ type: 'create', drafts: fitInk([gesture.stroke!], ratio) });
+  return !!gesture.operation && gesture.operations.commit(gesture.operation);
+}
 
 
 /**
  * `pageMenu`: the page has a menu of its own (the notebook's), which a right click that opens none of the
  * layer's own menu (the 削除 over the writing selected) is left to reach, whichever tool is picked.
  */
-export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, onCapture, pageMenu = false }: { editor: InkEditor; aspectRatio: number; inkColor?: InkColor; onCapture: (box: Bounds) => void; pageMenu?: boolean }) {
-  const { strokes, tool, color, width, preferences, selectedIds } = editor;
+export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, onCapture, pageMenu = false, surfaceName = 'PDF', gestureReadRef }: { editor: InkEditor; aspectRatio: number; inkColor?: InkColor; onCapture: (box: Bounds) => void; pageMenu?: boolean; surfaceName?: string;
+  gestureReadRef?: RefObject<PdfInkGestureReadPort | null> }) {
+  const { strokes, tool, color, width, preferences, selectedIds, registerFinalizer } = editor;
   const active = useRef<Gesture | null>(null);
+  const drawingChanged = useRef(editor.onDrawingChange);
+  drawingChanged.current = editor.onDrawingChange;
   const svg = useRef<SVGSVGElement>(null);
   const pending = useRef<{ gesture: Gesture; liftedAt: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const live = useRef<SVGPathElement>(null);
@@ -69,7 +83,13 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
   const [menu, setMenu] = useState<Point | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const press = useRef<{ timer: ReturnType<typeof setTimeout>; id: number; x: number; y: number } | null>(null);
-  const [textDraft, setTextDraft] = useState<{ at: Point; text: string; previous?: InkStroke } | null>(null);
+  const [legacyTextDraft, setTextDraft] = useState<{ at: Point; text: string; previous?: InkStroke } | null>(null);
+  const textDraft = editor.text ? editor.text.draft : legacyTextDraft;
+  const beginText = (at: Point, previous?: InkStroke) => {
+    if (editor.text) editor.text.begin(at, previous);
+    else setTextDraft({ at, text: previous?.text ?? '', previous });
+  };
+  const cancelText = () => { if (editor.text) editor.text.cancel(); else setTextDraft(null); };
   useOpenEdit(!!textDraft, "書き込みテキスト");
   const root = useRef<HTMLDivElement>(null);
   const height = 1000 * ratio;
@@ -89,11 +109,28 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
     if (!g) return;
     // Clear first: releasing capture can synchronously dispatch lostpointercapture.
     active.current = null;
+    g.operations?.cancel();
+    drawingChanged.current?.(false);
     if (svg.current?.hasPointerCapture(g.pointerId)) svg.current.releasePointerCapture(g.pointerId);
     clearLiveNow.current(); setPreview(null); setPath([]);
   };
   const cancelActiveNow = useRef(cancelActive);
   cancelActiveNow.current = cancelActive;
+  useLayoutEffect(() => {
+    if (!gestureReadRef) return;
+    const port: PdfInkGestureReadPort = Object.freeze({
+      owns: (pointerId: number) => active.current?.pointerId === pointerId && ['pen', 'touch'].includes(active.current.pointerType),
+      cancelTouch: (pointerId: number) => {
+        if (active.current?.pointerType !== 'touch' || active.current.pointerId !== pointerId) return false;
+        cancelActiveNow.current(); return true;
+      },
+    });
+    gestureReadRef.current = port;
+    return () => {
+      if (active.current?.pointerType === 'touch') cancelActiveNow.current();
+      if (gestureReadRef.current === port) gestureReadRef.current = null;
+    };
+  }, [gestureReadRef]);
   const paint = (g: Gesture) => {
     if (frame.current !== null) return;
     frame.current = requestAnimationFrame(() => {
@@ -105,13 +142,22 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
       live.current?.setAttribute("d", points.length === 1 ? `${d} l0.001,0` : d);
     });
   };
+  const previewOperation = (g: Gesture) => {
+    if (frame.current !== null) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = null;
+      if (active.current !== g || !g.operations || !g.operation) return;
+      g.result = g.operations.preview(g.operation) ?? g.result;
+      setPreview(g.result);
+    });
+  };
   const commitPending = () => {
     const value = pending.current;
     if (!value) return null;
     clearTimeout(value.timer); pending.current = null;
     const result = resultOf(value.gesture, ratio);
-    value.gesture.commit(result); clearLive();
-    if (SHAPE_KINDS.includes(kindOf(value.gesture.stroke!))) editor.setSelectedIds([value.gesture.stroke!.id]);
+    const accepted = commitGesture(value.gesture, ratio); drawingChanged.current?.(false); clearLive();
+    if (accepted && SHAPE_KINDS.includes(kindOf(value.gesture.stroke!))) editor.setSelectedIds([value.gesture.stroke!.id]);
     return result;
   };
   useLayoutEffect(() => {
@@ -145,15 +191,21 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
       document.removeEventListener("visibilitychange", hidden);
     };
   }, [editor.beforeCommand]);
-  useEffect(() => () => {
+  const finalizeGesture = () => {
     const gesture = active.current ?? pending.current?.gesture;
     if (pending.current) clearTimeout(pending.current.timer);
     pending.current = null; active.current = null;
     if (frame.current !== null) cancelAnimationFrame(frame.current);
     if (gesture && !["select", "capture"].includes(gesture.mode)
-      && (gesture.mode === "draw" ? !SHAPE_KINDS.includes(kindOf(gesture.stroke!)) || gesture.moved : inkChanged(gesture.base, gesture.result)))
-      gesture.commit(resultOf(gesture, ratio));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- on unmount only: with ratio, a change of it would commit the gesture in progress
+      && (gesture.mode === "draw" ? inkDraftHasSize(gesture.stroke!, ratio) : gesture.operations ? !!gesture.operation : inkChanged(gesture.base, gesture.result)))
+      commitGesture(gesture, ratio);
+    drawingChanged.current?.(false);
+  };
+  const finalizeNow = useRef(finalizeGesture);
+  finalizeNow.current = finalizeGesture;
+  useLayoutEffect(() => registerFinalizer?.(() => finalizeNow.current()), [registerFinalizer]);
+  useEffect(() => () => {
+    finalizeNow.current();
   }, []);
   const point = (event: { clientX: number; clientY: number }, clamp = true, rect = root.current!.getBoundingClientRect()): Point => {
     const x = (event.clientX - rect.left) / rect.width, y = (event.clientY - rect.top) / rect.height;
@@ -184,8 +236,8 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
   useEffect(() => {
     // Capture may move to the PDF before the SVG ever receives gotpointercapture,
     // so lostpointercapture alone cannot cancel a two-finger long press.
-    const unsubscribe = usePdfTouchOwner.subscribe(({ pane }) => {
-      if (pane?.contains(root.current) && press.current) {
+    const unsubscribe = usePdfTouchOwner.subscribe(({ owners }) => {
+      if ([...owners.values()].some(pane => pane.contains(root.current)) && press.current) {
         clearTimeout(press.current.timer); press.current = null;
       }
     });
@@ -206,6 +258,7 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
     };
   }, [menu]);
   const saveText = () => {
+    if (editor.text) { editor.text.save(); return; }
     if (!textDraft || !textDraft.text.trim()) return;
     const previous = textDraft.previous;
     let points = textPoints(textDraft.text, textDraft.at, 0.025, ratio);
@@ -221,7 +274,8 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
     setTextDraft(null); editor.setTool("region"); editor.setSelectedIds([item.id]);
   };
   const down = (event: PointerEvent<SVGSVGElement>) => {
-    if (!interactive || active.current || event.pointerType === "touch" || (event.button !== 0 && event.button !== 5)) return;
+    if (!interactive || active.current || event.pointerType === "touch" && (!gestureReadRef || !preferences.fingerDraw) || (event.button !== 0 && event.button !== 5)) return;
+    if (event.pointerType === 'touch' && isSamePaneReadingPinchContinuation(editor.scopeRef.current, event.pointerId)) return;
     event.preventDefault(); event.stopPropagation();
     // The layer spans the whole PDF page; focusing it must not scroll the page
     // before we measure the pointer position for capture or drawing.
@@ -235,6 +289,7 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
       elapsed: performance.now() - waiting.liftedAt, previous: waiting.gesture.end, next: p,
       width: rect.width, height: rect.height,
     })) {
+      if (drawingChanged.current?.(true) === false) return;
       clearTimeout(waiting.timer); pending.current = null;
       const g = waiting.gesture;
       g.pointerId = event.pointerId; active.current = g;
@@ -246,8 +301,9 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
     const base = commitPending() ?? strokes;
     if (tool === "text") {
       const existing = [...strokes].reverse().find(s => kindOf(s) === "text" && hitInk(s, p, 0, ratio));
-      setTextDraft({ at: existing?.points[0] ?? p, text: existing?.text ?? "", previous: existing }); return;
+      beginText(existing?.points[0] ?? p, existing); return;
     }
+    if (drawingChanged.current?.(true) === false) return;
     const handle = (event.target as Element).getAttribute("data-ink-handle");
     const shapeHandle = (event.target as Element).getAttribute("data-shape-handle");
     const shapeScale = (event.target as Element).getAttribute("data-shape-scale");
@@ -290,10 +346,11 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
       if (mode === "draw") setHoverCursorValue(null);
     }
     event.currentTarget.setPointerCapture(event.pointerId);
-    const stroke: InkStroke = { id: crypto.randomUUID(), color, width, kind: tool as InkKind, points: [p],
-      ...(tool === "arrow" ? { arrowHeadLength: 0.025 } : {}) };
+    const stroke = mode === 'draw' ? beginInkDraft(crypto.randomUUID(), tool as DrawingKind, p, color, width) : undefined;
     const gesture: Gesture = { pointerId: event.pointerId, pointerType: event.pointerType, end: p, mode, start: p, path: [p], base, result: base,
-      selected: moving ? [moving] : editor.selected, center, anchor, moved: false, commit: editor.change, stroke: mode === "draw" ? stroke : undefined, target, hit, clickTarget };
+      selected: moving ? [moving] : editor.selected, center, anchor, moved: false, commit: editor.change, stroke, target, hit, clickTarget,
+      operations: editor.operations, fragmentIdSeed: crypto.randomUUID(),
+      eraser: { radius: eraserRadius / rect.width, partial: preferences.partial, highlightOnly: preferences.highlightOnly } };
     active.current = gesture;
     if (mode === "draw") {
       live.current?.setAttribute("stroke", inkColor(color));
@@ -303,7 +360,10 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
     }
     if (mode === "select" || mode === "capture") setPath([p]);
     if (mode === "erase") {
-      gesture.result = eraseInk(base, p, eraserRadius / rect.width, ratio, preferences.partial, preferences.highlightOnly);
+      if (gesture.operations) {
+        gesture.operation = { type: 'erase', path: gesture.path, ...gesture.eraser, fragmentIdSeed: gesture.fragmentIdSeed };
+        gesture.result = gesture.operations.preview(gesture.operation) ?? base;
+      } else gesture.result = eraseInk(base, p, eraserRadius / rect.width, ratio, preferences.partial, preferences.highlightOnly);
       setPreview(gesture.result);
     }
   };
@@ -320,24 +380,21 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
     }
     if (g.mode === "erase") {
       const previous = g.path[g.path.length - 1];
-      const radius = eraserRadius / rect.width;
+      const radius = g.operations ? g.eraser.radius : eraserRadius / rect.width;
       const steps = Math.max(1, Math.ceil(Math.hypot(p[0] - previous[0], (p[1] - previous[1]) * ratio) / radius));
-      for (let i = 1; i <= steps; i++) g.result = eraseInk(g.result, [previous[0] + (p[0] - previous[0]) * i / steps,
-        previous[1] + (p[1] - previous[1]) * i / steps], radius, ratio, preferences.partial, preferences.highlightOnly);
-      g.path.push(p);
-    } else if (g.mode === "draw") {
-      const kind = kindOf(g.stroke!);
-      if (kind === "pen" || (kind === "highlighter" && !preferences.straight && !event.shiftKey)) {
-        const samples = event.nativeEvent.getCoalescedEvents?.() ?? [];
-        for (const sample of samples.length ? samples : [event]) {
-          const next = point(sample, true, rect), previous = g.stroke!.points[g.stroke!.points.length - 1];
-          if (Math.hypot(next[0] - previous[0], (next[1] - previous[1]) * ratio) > 0.0004 && g.stroke!.points.length < 20000) g.stroke!.points.push(next);
-        }
-      } else {
-        const end: Point = kind === "highlighter" && event.shiftKey ? [p[0], g.start[1]]
-          : event.shiftKey ? constrainedShapeEnd(kind, g.start, p, ratio) : p;
-        g.stroke!.points = shapePoints(kind, g.start, end, ratio);
+      for (let i = 1; i <= steps; i++) {
+        const at: Point = [previous[0] + (p[0] - previous[0]) * i / steps, previous[1] + (p[1] - previous[1]) * i / steps];
+        if (g.operations) g.path.push(at);
+        else g.result = eraseInk(g.result, at, radius, ratio, preferences.partial, preferences.highlightOnly);
       }
+      if (g.operations) {
+        g.operation = { type: 'erase', path: g.path, ...g.eraser, fragmentIdSeed: g.fragmentIdSeed };
+        previewOperation(g);
+      } else g.path.push(p);
+    } else if (g.mode === "draw") {
+      const samples = event.nativeEvent.getCoalescedEvents?.() ?? [];
+      g.stroke = advanceInkDraft(g.stroke!, g.start, (samples.length ? samples : [event]).map(sample => point(sample, true, rect)), ratio,
+        { straightHighlighter: preferences.straight, shift: event.shiftKey });
       paint(g); return;
     } else if (g.mode === "reshape") {
       let end = p;
@@ -348,8 +405,13 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
         const snapped = constrainedShapeEnd(kindOf(g.target!), opposite, target, ratio);
         end = [g.start[0] + snapped[0] - handle[0], g.start[1] + snapped[1] - handle[1]];
       }
-      const next = reshapeShape(g.target!, g.hit!, g.start, end, ratio, event.shiftKey);
-      g.result = g.base.map(s => s.id === next.id ? next : s);
+      if (g.operations) {
+        g.operation = { type: 'reshape', id: g.target!.id, hit: g.hit!, start: g.start, end, keepAspect: event.shiftKey };
+        previewOperation(g);
+      } else {
+        const next = reshapeShape(g.target!, g.hit!, g.start, end, ratio, event.shiftKey);
+        g.result = g.base.map(s => s.id === next.id ? next : s);
+      }
     } else {
       let scale = 1, angle = 0, delta: Point = [0, 0], center = g.center;
       if (g.mode === "move") delta = [p[0] - g.start[0], p[1] - g.start[1]];
@@ -362,18 +424,26 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
         center = g.anchor;
         scale = Math.max(0.05, Math.min(20, Math.hypot(p[0] - center[0], (p[1] - center[1]) * ratio) / (Math.hypot(g.start[0] - center[0], (g.start[1] - center[1]) * ratio) || 1)));
       }
-      const transformed = new Map(fitInk(transformInk(g.selected, center, scale, angle, delta, ratio), ratio).map(s => [s.id, s]));
-      g.result = g.base.map(s => transformed.get(s.id) ?? s);
+      if (g.operations) {
+        g.operation = { type: 'transform', ids: g.selected.map(value => value.id), center, scale, angle, delta };
+        previewOperation(g);
+      } else {
+        const transformed = new Map(fitInk(transformInk(g.selected, center, scale, angle, delta, ratio), ratio).map(s => [s.id, s]));
+        g.result = g.base.map(s => transformed.get(s.id) ?? s);
+      }
     }
     setPreview(g.result);
   };
   const finish = (event: PointerEvent<SVGSVGElement>) => {
     const g = active.current;
     if (!g || g.pointerId !== event.pointerId) return;
-    if (event.type === "pointerup") move(event);
+    // Cancellation and capture loss relinquish the input; they are not a release/commit.
+    if (event.type !== 'pointerup') { cancelActive(); return; }
+    move(event);
+    if (g.operations && g.operation) g.result = g.operations.preview(g.operation) ?? g.result;
     active.current = null;
     const shapeDraw = g.mode === "draw" && SHAPE_KINDS.includes(kindOf(g.stroke!));
-    const shapeHasSize = Math.hypot(g.end[0] - g.start[0], (g.end[1] - g.start[1]) * ratio) > 0.003;
+    const shapeHasSize = !shapeDraw || inkDraftHasSize(g.stroke!, ratio);
     if (shapeDraw && shapeHasSize && g.pointerType === "pen" && event.type === "pointerup") {
       pending.current = { gesture: g, liftedAt: performance.now(), timer: setTimeout(commitPending, SHAPE_LIFT_GRACE_MS) };
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
@@ -388,11 +458,12 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
     } else if (shapeDraw && !shapeHasSize && event.type === "pointerup") {
       editor.setSelectedIds(g.clickTarget ? [g.clickTarget.id] : []);
     } else if ((g.mode === "draw" && (!shapeDraw || shapeHasSize)) || inkChanged(g.base, g.result)) {
-      g.commit(resultOf(g, ratio));
-      if (g.mode === "draw" && SHAPE_KINDS.includes(kindOf(g.stroke!))) editor.setSelectedIds([g.stroke!.id]);
+      const accepted = commitGesture(g, ratio);
+      if (accepted && g.mode === "draw" && SHAPE_KINDS.includes(kindOf(g.stroke!))) editor.setSelectedIds([g.stroke!.id]);
     }
     clearLive();
     setPreview(null); setPath([]);
+    drawingChanged.current?.(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
   const hoverAt = (event: PointerEvent<SVGSVGElement>) => {
@@ -423,7 +494,7 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
   const turning = selection ? rotationHandle(selection, height) : null;
   const rubber = path.length ? rectBetween(path[0], path[path.length - 1]) : null;
   return <div ref={root} className="absolute inset-px z-10" style={{ pointerEvents: "none" }}>
-    <svg ref={svg} aria-label="PDF書き込みレイヤー" tabIndex={interactive ? 0 : -1} className="w-full h-full outline-none"
+    <svg ref={svg} aria-label={`${surfaceName}書き込みレイヤー`} tabIndex={interactive ? 0 : -1} className="w-full h-full outline-none"
       style={{ pointerEvents: interactive ? "auto" : "none", touchAction: interactive ? "none" : "auto",
         cursor: hoverCursorValue && SHAPE_KINDS.includes(tool) ? hoverCursorValue : tool === "pen" || tool === "highlighter" ? pointerType === "pen" ? "none" : "default" : tool === "eraser" ? eraserCursor : selecting ? "default" : "crosshair" }}
       viewBox={`0 0 1000 ${height}`} preserveAspectRatio="none"
@@ -441,9 +512,9 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
       onDoubleClick={event => {
         if (!selecting) return;
         const p = point(event), item = [...strokes].reverse().find(s => kindOf(s) === "text" && hitInk(s, p, 0, ratio));
-        if (item) setTextDraft({ at: item.points[0], text: item.text ?? "", previous: item });
+        if (item) beginText(item.points[0], item);
       }}>
-      {editor.visible && <InkLayer strokes={shown} ratio={ratio} inkColor={inkColor} />}
+      {editor.visible && <InkLayer strokes={shown} ratio={ratio} inkColor={inkColor} renderStroke={editor.renderStroke} />}
       <path ref={live} data-ink-preview="true" fill="none" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: "none" }} />
       {tool === "capture" && captureBounds && !path.length && <rect data-image-selection="true"
         x={captureBounds.x * 1000} y={captureBounds.y * height} width={captureBounds.width * 1000} height={captureBounds.height * height}
@@ -480,7 +551,8 @@ export function InkOverlay({ editor, aspectRatio: ratio, inkColor = asPicked, on
     </div>}
     {textDraft && <div className="absolute z-20 max-w-full"
       style={{ left: `${Math.min(0.5, textDraft.at[0]) * 100}%`, top: `${Math.min(0.65, textDraft.at[1]) * 100}%` }}>
-      <AnnotationTextEditor label="書き込みテキスト" value={textDraft.text} onChange={text => setTextDraft({ ...textDraft, text })} onSave={saveText} onCancel={() => setTextDraft(null)} />
+      <AnnotationTextEditor label="書き込みテキスト" value={textDraft.text}
+        onChange={text => { if (editor.text) editor.text.change(text); else setTextDraft({ ...textDraft, text }); }} onSave={saveText} onCancel={cancelText} />
     </div>}
   </div>;
 }

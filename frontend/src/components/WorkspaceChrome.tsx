@@ -1,25 +1,27 @@
 /** Shared desktop/Web chrome. This module never imports a data store, sidecar or Tauri API. */
 import { useState, type ComponentProps, type ReactNode } from "react";
+import { PanelLeftClose } from "lucide-react";
 import { cn } from "cn";
 import { TabsList } from "./ui/tabs";
 import { ResizablePanel } from "./ui/resizable";
 
-export function WorkspaceRoot({ className, ...props }: ComponentProps<"div">) {
-  return <div className={cn("flex h-dvh w-full flex-col bg-background text-foreground overflow-hidden", className)} {...props} />;
+export function WorkspaceRoot({ className, contained = false, ...props }: ComponentProps<"div"> & { contained?: boolean }) {
+  return <div className={cn("flex w-full flex-col bg-background text-foreground overflow-hidden", contained ? "h-full min-h-0" : "h-dvh", className)} {...props} />;
 }
 
 export function WorkspaceSidebar({ children, footer, onCollapse, collapseTitle = "左パネルを閉じる", className }: {
   children: ReactNode; footer?: ReactNode; onCollapse: () => void; collapseTitle?: string; className?: string;
 }) {
   return <div className={cn("flex h-full min-h-0 flex-col bg-sidebar", className)} data-workspace-sidebar="">
-    <button type="button" className="h-12 flex items-center gap-2 px-4 border-0 rounded-none font-semibold text-[0.9375rem] shrink-0 hover:bg-muted/50 transition-colors text-left"
+    <button type="button" className="h-11 flex items-center gap-2 px-3 border-b rounded-none font-semibold text-[0.9375rem] shrink-0 hover:bg-muted/50 transition-colors text-left"
       onClick={onCollapse} title={collapseTitle} aria-label={collapseTitle}>
-      <span className="flex size-8 shrink-0 items-center justify-center">
-        <img src={`${import.meta.env.BASE_URL}papeer.png`} alt="" className="size-8 object-contain" />
+      <span className="flex size-7 shrink-0 items-center justify-center">
+        <img src={`${import.meta.env.BASE_URL}papeer.png`} alt="" className="size-7 object-contain" />
       </span>
-      Papeer
+      <span className="flex-1 truncate">Papeer</span>
+      <PanelLeftClose className="size-4 shrink-0 text-muted-foreground" />
     </button>
-    <div className="flex-1 min-h-0">{children}</div>
+    <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
     {footer}
   </div>;
 }

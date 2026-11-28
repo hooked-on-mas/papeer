@@ -9,7 +9,11 @@ on:
       - '.github/workflows/pages.yml'
       - '.github/workflows/web-tests.yml'
       - 'papeer/**'
-      - 'sidecar/schemas/ink.py'
+      - 'sidecar/**'
+      - 'schema/**'
+      - 'tests/fixtures/**'
+      - 'tools/generate_edit_contracts.py'
+      - 'tools/build_edit_fixtures.py'
       - 'pyproject.toml'
       - 'uv.lock'
 
@@ -23,7 +27,11 @@ concurrency:
 jobs:
   browser-tests:
     uses: ./.github/workflows/web-tests.yml
+  audit:
+    uses: ./.github/workflows/dependency-audit.yml
+
   build:
+    needs: audit
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

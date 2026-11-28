@@ -11,9 +11,9 @@ from collections import Counter, defaultdict
 import pymupdf as fitz
 
 
-LAYOUT_VERSION = 32
+LAYOUT_VERSION = 37
 MATH_TOKEN = re.compile(r"\[\[PD_MATH_[A-Za-z0-9_]+\]\]")
-_MATH_FONT = re.compile(r"(?:CMMI|CMSY|CMEX|MSAM|MSBM|CMBSY|CMMIB|Math|Symbol|MTMI|MTSY|MTEX|rsfs|LCIRCLE|AdvPSMP)", re.I)
+_MATH_FONT = re.compile(r"(?:CMMI|CMSY|CMEX|MSAM|MSBM|CMBSY|CMMIB|Math|Symbol|MTMI|MTSY|MTEX|rsfs|LCIRCLE|AdvPSMP|HyhwpEQ)", re.I)
 _SYMBOL = re.compile(r"[=+−×÷∑∏∫√∞≤≥≠≈≡∼∝∂∇∆∈∉⊂⊆⊃⊇∀∃∥⊤⊥∧∨∩∪∅±¬ℝℕℤℚℂα-ωΑ-Ω]|[\U0001d400-\U0001d7ff]")
 _FUNCTIONS = {"sin", "cos", "tan", "log", "ln", "exp", "min", "max", "arg", "argmin", "argmax", "lim", "sup", "inf", "det", "diag", "conv", "var", "cov", "prob", "pr", "tr", "vec", "col", "erf", "erfc", "pid", "nan", "minimize", "maximize"}
 _DIFFERENTIALS = {"dt", "dx", "dy", "dz", "ds", "du", "dv"}
@@ -22,11 +22,24 @@ _ATOM = r"(?:[A-Za-zα-ωΑ-Ω](?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+)?(?:\([^()\n]{1,2
 _EXPRESSION = re.compile(rf"(?<![A-Za-z]){_ATOM}(?:\s*[=+−×÷≤≥≠≈*/^_]\s*{_ATOM})+(?![A-Za-z])")
 _PROSE_LABEL = re.compile(r"^(?:(?:Assumption|Remark|Theorem|Lemma|Proposition|Corollary|Definition)\s+\d+(?:\.\d+)*\s*:|Proof\s*:)", re.I)
 _SHORT_PROSE = {"an", "as", "at", "be", "by", "do", "he", "if", "in", "is", "it", "me", "my", "no", "of", "on", "or", "so", "to", "up", "us", "we"}
+_TOC_LEADER = re.compile(r"(?:\.\s*){8,}(?:\d+|[ivxlcdm]+)?\s*$", re.I)
+_NUMERIC_TEXT = re.compile(r"[\d\s.,:;()（）\[\]{}/+−–—%\-]+")
+# These scripts carry prose without ASCII words (or spaces between words).
+# Include Hangul jamo, compatibility forms and supplementary Han characters.
+_ASIAN_PROSE = re.compile(r"[\u1100-\u11ff\u3040-\u30ff\u3130-\u318f\u31f0-\u31ff"
+                          r"\u3400-\u9fff\ua960-\ua97f\uac00-\ud7ff\uf900-\ufaff"
+                          r"\uff66-\uff9f\U00020000-\U000323af]+")
 
 
 def _italic_identifier(glyphs: list[dict], word: str) -> bool:
-    return (1 <= len(word) <= 2 and word.isalpha() and word.lower() not in _SHORT_PROSE
+    return (1 <= len(word) <= 2 and word.isalpha() and not _ASIAN_PROSE.search(word)
+            and word.lower() not in _SHORT_PROSE
             and all(c["flags"] & 2 or c["math_font"] for c in glyphs))
+
+
+def has_prose_letters(text: str) -> bool:
+    """Whether text can contain prose rather than only numbers/math symbols."""
+    return bool(re.search(r"[A-Za-z]", text) or _ASIAN_PROSE.search(text))
 
 
 def formula_only_block(block: dict) -> bool:
@@ -36,7 +49,7 @@ def formula_only_block(block: dict) -> bool:
     remaining = MATH_TOKEN.sub("", block.get("translation_text", block["text"]))
     remaining = re.sub(r"\(\s*\d+[a-z]?\s*\)", "", remaining)
     remaining = re.sub(r"\b(?:dt|dx|dy|dz|ds|du|dv)+\b", "", remaining)
-    return not re.search(r"[A-Za-z\u3040-\u30ff\u3400-\u9fff]", remaining)
+    return not has_prose_letters(remaining)
 
 
 def _chars(line: dict) -> list[dict]:
@@ -65,13 +78,23 @@ def annotate_math_fonts(items: list[dict]) -> None:
                 fonts[span["font"]].append(span)
     for name, spans in fonts.items():
         text = " ".join("".join(c["c"] for c in s["chars"]) for s in spans)
-        words = re.findall(r"[A-Za-z]{3,}", text)
-        prose = [w for w in words if w.lower() not in _FUNCTIONS]
+        words = re.findall(r"[A-Za-z]{2,}", text)
+        prose = [w for w in words if (len(w) >= 3 and w.lower() not in _FUNCTIONS)
+                 or w.lower() in _SHORT_PROSE] + _ASIAN_PROSE.findall(text)
+        # Tables and page labels often have a separate font containing only
+        # numbers, dates and punctuation. Absence of words is not math evidence.
+        numeric_only = bool(_NUMERIC_TEXT.fullmatch(text))
         # Repeated short identifiers / unmapped symbols, with virtually no prose.
-        inferred = (len(spans) >= 3 and len(text.strip()) >= 6
+        inferred = (not numeric_only and len(spans) >= 3 and len(text.strip()) >= 6
                     and sum(map(len, prose)) < len(text) * 0.05)
         for span in spans:
-            span["math_font"] = inferred or bool(_MATH_FONT.search(name))
+            # Even a mixed-use font may have hundreds of table cells alongside
+            # a few formulas. Numeric spans need local equation context rather
+            # than inheriting the entire font's inferred mathematical role.
+            span_text = "".join(c['c'] for c in span['chars'])
+            numeric_span = bool(_NUMERIC_TEXT.fullmatch(span_text)
+                                and not any(ord(c) < 32 for c in span_text))
+            span["math_font"] = bool(_MATH_FONT.search(name)) or inferred and not numeric_span
     # A publisher may emit a named exponent/subscript as a separate roman
     # span/line. Its nearby larger mathematical base establishes the context.
     spans = [s for group in fonts.values() for s in group]
@@ -93,14 +116,16 @@ def annotate_math_fonts(items: list[dict]) -> None:
 def _prose_words(line: dict) -> list[str]:
     chars = _chars(line)
     size = _text_size(chars)
-    text = "".join(c["c"] if not c["math_font"] and c["size"] >= size * 0.85 else " " for c in chars)
+    text = "".join(c["c"] if _ASIAN_PROSE.search(c["c"])
+                   or not c["math_font"] and c["size"] >= size * 0.85 else " " for c in chars)
+    asian_words = _ASIAN_PROSE.findall(text)
     text = re.sub(r"[A-Za-z]+", lambda m: " " * len(m[0])
                   if _italic_identifier(chars[m.start():m.end()], m[0]) else m[0], text)
     # Roman function names are not restricted to a vocabulary (Si, Range,
     # width, user-defined predicates, ...). Their argument list supplies the
     # mathematical context, while the rest of the sentence remains prose.
     text = re.sub(r"\b[A-Za-z]{2,}(?=\s*\()", " ", text)
-    return [w for w in re.findall(r"[A-Za-z]{2,}", text) if w.lower() not in _MATH_LABELS]
+    return asian_words + [w for w in re.findall(r"[A-Za-z]{2,}", text) if w.lower() not in _MATH_LABELS]
 
 
 def _text_size(chars: list[dict]) -> float:
@@ -109,7 +134,8 @@ def _text_size(chars: list[dict]) -> float:
     overall = max((c["size"] for c in chars), default=1)
     ordinary = [c for c in chars if not c["math_font"] and c["c"].isalpha()]
     words = re.findall(r'[A-Za-z]{2,}', ''.join(c['c'] if not c['math_font'] else ' ' for c in chars))
-    if len(ordinary) >= 3 and len(words) >= 2 and max(c['size'] for c in ordinary) < overall * .8:
+    asian = sum(bool(_ASIAN_PROSE.search(c['c'])) for c in ordinary)
+    if len(ordinary) >= 3 and (len(words) >= 2 or asian >= 3) and max(c['size'] for c in ordinary) < overall * .8:
         # A 20pt extension glyph can sit in a 10pt sentence. The sentence's
         # words, even when much smaller than that operator, set its baseline.
         return Counter(round(c['size'], 2) for c in ordinary).most_common(1)[0][0]
@@ -455,6 +481,7 @@ def _merge_inline_items_once(items: list[dict]) -> list[dict]:
 
 def _math_ranges(chars: list[dict]) -> list[tuple[int, int]]:
     text = "".join(c["c"] for c in chars)
+    asian_prose = bool(_ASIAN_PROSE.search(text))
     # Type3 mathematical glyphs can map to CR / FF / TAB. They are visible
     # symbols in the PDF, despite Python treating those codes as whitespace.
     selected = [bool(c["math_font"] and ord(c["c"]) < 32) for c in chars]
@@ -462,6 +489,8 @@ def _math_ranges(chars: list[dict]) -> list[tuple[int, int]]:
     italic_prose = (len(re.findall(r"[A-Za-z]{3,}", text)) >= 3
                     and sum(bool(c["flags"] & 2) for c in chars) > len(chars) * 0.8)
     for word in re.finditer(r"[A-Za-zﬀﬁﬂﬃﬄﬅﬆ]+|[^A-Za-zﬀﬁﬂﬃﬄﬅﬆ\s]", text):
+        if _ASIAN_PROSE.search(word[0]):
+            continue
         # A prose ligature can live in a tiny subset font otherwise used only
         # for symbols. Do not turn the middle of "classification" into math.
         if word[0] in "ﬀﬁﬂﬃﬄﬅﬆ" and (
@@ -469,7 +498,15 @@ def _math_ranges(chars: list[dict]) -> list[tuple[int, int]]:
                 or word.end() < len(text) and text[word.end()].isalpha()):
             continue
         glyphs = chars[word.start():word.end()]
-        font_math = any(c["math_font"] for c in glyphs)
+        # A font name/flag cannot turn surrounding Asian prose punctuation
+        # into a formula. Actual delimiters are added with their contents below.
+        # Hangul Word Processor equations use private-use codes for their
+        # visible Latin letters and operators. Keep these glyphs as crops,
+        # while an unidentified private-use prose font still needs OCR.
+        encoded_math = (all(0xE000 <= ord(c["c"]) <= 0xF8FF for c in glyphs)
+                        and all(_MATH_FONT.search(c["font"]) for c in glyphs))
+        font_math = (any(c["math_font"] for c in glyphs)
+                     and (not asian_prose or word[0].isalnum() or _SYMBOL.search(word[0]) or encoded_math))
         short_italic = ((not italic_prose or word[0] not in {"a", "A", "I"})
                         and _italic_identifier(glyphs, word[0]))
         # An italic sentence is prose; ordinary italic words are never math.
@@ -478,7 +515,8 @@ def _math_ranges(chars: list[dict]) -> list[tuple[int, int]]:
         if math_word or short_italic or _SYMBOL.search(word[0]):
             selected[word.start():word.end()] = [True] * len(word[0])
     for match in _EXPRESSION.finditer(text):
-        selected[match.start():match.end()] = [True] * len(match[0])
+        if not _ASIAN_PROSE.search(match[0]):
+            selected[match.start():match.end()] = [True] * len(match[0])
     for match in re.finditer(r'\d+(?:\.\d+)?(?:[eE][+-]?\d+)?', text):
         a, b = match.span()
         # Upright numeric powers may use only the prose font. Keep the base
@@ -490,6 +528,13 @@ def _math_ranges(chars: list[dict]) -> list[tuple[int, int]]:
                   and max(baselines) - min(baselines) > max(sizes) * .15)
         if any(selected[a:b]) or raised:
             selected[a:b] = [True] * (b - a)
+    for match in re.finditer(r'\d{1,3}(?:,\s*\d{3})+(?:\.\d+)?', text):
+        a, b = match.span()
+        # A thousands separator may use CMMI even in an ordinary quantity.
+        # Preserve the entire number when it belongs to an equation; otherwise
+        # do not extract just the comma as a tiny standalone formula.
+        mathematical = any(selected[i] for i in range(a, b) if text[i].isdigit())
+        selected[a:b] = [mathematical] * (b - a)
     # Keep numeric values adjacent to a selected operator. Otherwise the
     # translator can move the 0 in "f(x) = 0" outside its definition.
     for match in re.finditer(r"[=+−×÷≤≥≠≈<>-]\s*[+-]?\d+(?:\.\d+)?", text):
@@ -512,7 +557,8 @@ def _math_ranges(chars: list[dict]) -> list[tuple[int, int]]:
     for match in re.finditer(r"[\[({][^()\[\]{}\n]{1,45}[\])}]", text):
         a, b = match.span()
         words = re.findall(r"[A-Za-z]{3,}", match[0])
-        if any(selected[a:b]) and all(w.lower() in _FUNCTIONS for w in words):
+        if (any(selected[a:b]) and not _ASIAN_PROSE.search(match[0])
+                and all(w.lower() in _FUNCTIONS for w in words)):
             selected[a:b] = [True] * (b - a)
     # Include scripts and the punctuation / roman glyphs inside math expressions.
     changed = True
@@ -522,7 +568,7 @@ def _math_ranges(chars: list[dict]) -> list[tuple[int, int]]:
             a, b = match.span()
             if any(selected[a:b]) and not all(selected[a:b]):
                 # Do not swallow function arguments that are actually prose.
-                if not re.search(r"[A-Za-z]{4,}", match[0]):
+                if not re.search(r"[A-Za-z]{4,}", match[0]) and not _ASIAN_PROSE.search(match[0]):
                     selected[a:b] = [True] * (b - a)
                     changed = True
         for i, c in enumerate(chars):
@@ -531,6 +577,7 @@ def _math_ranges(chars: list[dict]) -> list[tuple[int, int]]:
             # a tall operator. Require mathematical typography or reduced size,
             # and never propagate selection through whitespace into prose.
             if (script and i and selected[i - 1] and not selected[i]
+                    and not _ASIAN_PROSE.search(c["c"])
                     and not c["c"].isspace() and (c["math_font"] or c["size"] < size * .85)):
                 selected[i] = True
                 changed = True
@@ -579,7 +626,7 @@ def _display(line: dict) -> bool:
     text = "".join(c["c"] for c in chars).strip()
     prose = _prose_words(line)
     math = bool(_SYMBOL.search(text) or any(c["math_font"] for c in chars))
-    if re.search(r"[\u3040-\u30ff\u3400-\u9fff]", text):
+    if _ASIAN_PROSE.search(text) or _TOC_LEADER.search(text):
         return False
     optimization_label = bool(re.fullmatch(r'[A-Z]{1,5}\s*:\s*(?:min|max|inf|sup)', text)
                               or re.match(r"[A-Z]{1,5}\s*:", text) and math
@@ -596,11 +643,12 @@ def layout_blocks(item: dict, page_number: int, first_index: int) -> list[dict]:
         lines = _merge_inline_fragments(lines)
     kinds = [bool(item.get('display_math')) or _display(line) for line in lines]
     if any(kinds) and not any(_prose_words(line) for line in lines):
-        kinds = [True] * len(lines)
+        kinds = [not bool(_TOC_LEADER.search("".join(c['c'] for c in _chars(line)))) for line in lines]
     # Matrix brackets, limits, and equation numbers may be separate PDF lines.
     for i, line in enumerate(lines):
         text = "".join(c["c"] for c in _chars(line)).strip()
-        if not _prose_words(line) and re.fullmatch(r"[\s\d()\[\]{}.,;:|a-z\u2212-]+", text) and len(text) < 20:
+        if (not _prose_words(line) and not _TOC_LEADER.search(text)
+                and re.fullmatch(r"[\s\d()\[\]{}.,;:|a-z\u2212-]+", text) and len(text) < 20):
             if (i and kinds[i - 1]) or (i + 1 < len(lines) and kinds[i + 1]):
                 kinds[i] = True
     if item.get("algorithm") or item.get("algorithm_step"):

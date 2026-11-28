@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
   autoGlossaryJobs, checkedDomains, nextAutoStart, countDomainTerms, domainFailureMessage, domainJobMessage, domainNamesIn, inDomainFilter, readSplitChecked,
   recordSplitChecked, selectionOf, splitCheckedCounts, splitDoneMessage, toggledChoice, unchosenNewDomains, unchosenNewDomainsMessage, withDomain,
-} from "../src/features/reader/glossaryDomains.ts";
+} from "../src/features/reader/glossary/glossaryDomains.ts";
 
 const base = {
   availableDomains: ["強化学習", "電池"], domainCounts: { 共通: 10, 強化学習: 20, 電池: 5 },

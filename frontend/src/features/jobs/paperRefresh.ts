@@ -2,8 +2,8 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
 import { getPaper, type PaperData } from "@/api/hooks";
 import { invalidate } from "@/api/mutations";
-import { requestPaperRefresh, type PaperChanges } from "@/lib/libraryRefresh";
-import { paperChangeEffects, withPaperRow } from "@/lib/paperRows";
+import { requestPaperRefresh, type PaperChanges } from "@/features/library/state/libraryRefresh";
+import { paperChangeEffects, withPaperRow } from "@/features/library/query/paperRows";
 import { QK } from "@/lib/queryKeys";
 
 /**

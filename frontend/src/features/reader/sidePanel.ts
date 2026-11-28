@@ -58,7 +58,7 @@ export function openBesideReader(panel: SidePanel): Partial<TabState> {
 }
 
 /**
- * Where a 解説 that has just been written is shown: in the side panel while the reader is shown with
+ * Where a サマリー that has just been written is shown: in the side panel while the reader is shown with
  * the panel open, keeping the PDF in view ("none" when the panel already shows it); in its tab otherwise
  * (focus mode turns that into the side panel too, see tabChange).
  */

@@ -16,10 +16,11 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from papeer.core import prompts
-from papeer.core.summary_review import reference_issues
+from papeer.core.summary.review import reference_issues
+from papeer.core.summary.figures import SUMMARY_IMAGE_VERSION
 
 
-def verify(folder: Path) -> dict:
+def verify(folder: Path, *, require_image_manifest: bool = True) -> dict:
     article = (folder / "article.md").read_text("utf-8")
     report = json.loads((folder / "article-review.json").read_text("utf-8"))
     document = json.loads((folder / "document.json").read_text("utf-8"))
@@ -39,6 +40,11 @@ def verify(folder: Path) -> dict:
         "valid_scope": bool(pages) and pages <= set(range(1, document["page_count"] + 1)),
         "references": not reference_issues(article, folder.name, pages, assets, folder / "media"),
     }
+    if require_image_manifest:
+        checks["image_manifest"] = (report.get("image_extraction_version") == SUMMARY_IMAGE_VERSION
+            and report.get("image_coverage") == "complete"
+            and {item["path"] for item in report.get("image_catalog", [])} == assets
+            and (bool(assets) or not report.get("source_caption_pages")))
     for key, name in (("prompt_sha256", "_summary_review"), ("audit_prompt_sha256", "_summary_audit"),
                       ("verify_prompt_sha256", "_summary_verify")):
         checks[name] = report.get(key) == hashlib.sha256(prompts.builtin(name).encode()).hexdigest()

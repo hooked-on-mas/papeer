@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
-import { createPlaceKeeper, scrollForPlace, type PaneView, type ReadingPlace } from "../features/reader/readingPlace";
-import { getPdfPlace, persistPdfPlaces, rememberPdfPlace } from "./readingPlace";
+import { ReadingLanding } from "../features/reader/ReadingLanding";
+import { useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
+import { createPlaceKeeper, scrollForPlace, type PaneView, type ReadingPlace } from "../features/reader/navigation/readingPlace";
+export type PdfReadingPlacePort = {
+  get: (key: string, page: number) => ReadingPlace | undefined;
+  remember: (key: string, page: number, place: ReadingPlace) => void;
+  flush: (key: string) => void;
+};
 
 function paneView(pane: HTMLElement, surface: HTMLElement): PaneView {
   const frame = pane.getBoundingClientRect(), box = surface.getBoundingClientRect();
@@ -12,7 +17,8 @@ function paneView(pane: HTMLElement, surface: HTMLElement): PaneView {
 type Layout = { key: string; storageKey?: string; page: number; fitPage: boolean; width: number; pageWidth: number; ready: boolean };
 
 /** Keep a page's passage across width changes, pane remounts and offline restarts. */
-export function usePdfReadingPlace(container: RefObject<HTMLDivElement | null>, layout: Layout, onWidth: (width: number) => void) {
+export function usePdfReadingPlace(container: RefObject<HTMLDivElement | null>, layout: Layout, onWidth: (width: number) => void, persistence?: PdfReadingPlacePort, positionEnabled = true) {
+  const landing = useContext(ReadingLanding);
   const keeper = useMemo(createPlaceKeeper, []);
   const current = useRef<Layout>({ ...layout, key: "" });
   const pending = useRef<{ key: string; place: ReadingPlace } | null>(null);
@@ -21,20 +27,26 @@ export function usePdfReadingPlace(container: RefObject<HTMLDivElement | null>, 
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const remember = useCallback((view: PaneView) => {
     const state = current.current;
-    if (!state.storageKey || !state.ready || state.fitPage || pending.current || resume.current) return;
+    if (!positionEnabled || !state.storageKey || !state.ready || state.fitPage || pending.current || resume.current) return;
     const point = keeper.measure(state.key, view, state.pageWidth);
     if (!point) return;
-    rememberPdfPlace(state.storageKey, state.page, point);
+    persistence?.remember(state.storageKey, state.page, point);
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => persistPdfPlaces(state.storageKey!), 300);
-  }, [keeper]);
+    timer.current = setTimeout(() => persistence?.flush(state.storageKey!), 300);
+  }, [keeper, persistence, positionEnabled]);
   const { key, storageKey, page, fitPage, width, pageWidth, ready } = layout;
+  const landingKey = JSON.stringify([storageKey ?? key, page]);
   useLayoutEffect(() => {
     const previous = current.current;
     current.current = { key, storageKey, page, fitPage, width, pageWidth, ready };
+    if (!positionEnabled) {
+      pending.current = null; resume.current = null; lastView.current = null; keeper.reset(); clearTimeout(timer.current);
+      return;
+    }
     if (key !== previous.key) {
       pending.current = null; lastView.current = null; keeper.reset();
-      const saved = !fitPage && storageKey ? getPdfPlace(storageKey, page) : undefined;
+      const saved = (landing && !landing.consumed.has(landingKey)) || (landing === undefined && previous.key && previous.storageKey === storageKey && previous.page !== page) ? { x: 0, y: landing?.toEnd ? 1 : 0 }
+        : !fitPage && storageKey ? persistence?.get(storageKey, page) : undefined;
       resume.current = !fitPage ? { key, place: saved ?? { x: 0, y: 0 } } : null;
     }
     if (fitPage) { pending.current = null; resume.current = null; lastView.current = null; keeper.reset(); }
@@ -49,9 +61,10 @@ export function usePdfReadingPlace(container: RefObject<HTMLDivElement | null>, 
       pane.scrollTo(scroll.left, scroll.top);
       keeper.restored(key, restore.place, paneView(pane, surface), pageWidth);
     }
+    if (ready) landing?.consumed.add(landingKey);
     const view = paneView(pane, surface);
     lastView.current = { key, pageWidth, view }; remember(view);
-  }, [container, key, storageKey, page, fitPage, width, pageWidth, ready, keeper, remember]);
+  }, [container, key, storageKey, page, fitPage, width, pageWidth, ready, keeper, remember, landing, landingKey, persistence, positionEnabled]);
   useEffect(() => {
     const root = container.current, pane = root?.closest<HTMLElement>(".web-pdf-pane");
     if (!root) return;
@@ -59,7 +72,7 @@ export function usePdfReadingPlace(container: RefObject<HTMLDivElement | null>, 
     const observer = new ResizeObserver(([entry]) => {
       const nextWidth = Math.max(1, entry.contentRect.width), state = current.current;
       const surface = root.querySelector<HTMLElement>(".web-pdf-surface");
-      if (measured && nextWidth !== state.width && !state.fitPage && !resume.current && pane && surface?.querySelector("canvas")) {
+      if (positionEnabled && measured && nextWidth !== state.width && !state.fitPage && !resume.current && pane && surface?.querySelector("canvas")) {
         const saved = lastView.current;
         // Widening can clamp scrollLeft before ResizeObserver; keep the earlier view.
         const before = saved?.key === state.key && saved.pageWidth === state.pageWidth ? saved.view
@@ -80,14 +93,14 @@ export function usePdfReadingPlace(container: RefObject<HTMLDivElement | null>, 
     };
     // The viewport supplies base width; the PDF itself grows with zoom for sticky tools.
     observer.observe(pane ?? root.parentElement ?? root);
-    pane?.addEventListener("scroll", scroll, { passive: true });
+    if (positionEnabled) pane?.addEventListener("scroll", scroll, { passive: true });
     return () => { observer.disconnect(); pane?.removeEventListener("scroll", scroll); };
-  }, [container, onWidth, keeper, remember]);
+  }, [container, onWidth, keeper, remember, positionEnabled]);
   useEffect(() => {
-    if (!storageKey) return;
-    const flush = () => { clearTimeout(timer.current); persistPdfPlaces(storageKey); };
+    if (!positionEnabled || !storageKey) return;
+    const flush = () => { clearTimeout(timer.current); persistence?.flush(storageKey); };
     const visibility = () => { if (document.visibilityState === "hidden") flush(); };
     window.addEventListener("pagehide", flush); document.addEventListener("visibilitychange", visibility);
     return () => { flush(); window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", visibility); };
-  }, [storageKey]);
+  }, [storageKey, persistence, positionEnabled]);
 }

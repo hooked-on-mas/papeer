@@ -11,13 +11,13 @@ const fixture = `
 import React,{useRef,useState} from 'react'; import {createRoot} from 'react-dom/client';
 import {usePdfPinchZoom} from './usePdfPinchZoom'; import {usePairedPdfScroll} from './usePairedPdfScroll'; import './style.css';
 function Reader({side}){const root=useRef(null);const[zoom,setZoom]=useState(1);
- usePdfPinchZoom(root,zoom,setZoom);
+ usePdfPinchZoom(root,zoom,value=>setZoom(value===0?.5:value),undefined,{minimumZoom:.5});
  return <div style={{display:'flex',flexDirection:'column',flex:1,minWidth:0}} data-reader={side}>
  <header style={{height:56,flexShrink:0}}><output aria-label="倍率">{zoom}</output></header>
  <section className="web-pdf-pane" aria-label={side}><div className="pdf" ref={root} data-rendered="true">
  <div className="web-pdf-surface" style={{width:390*zoom,minHeight:900*zoom}}>PDF本文</div></div></section></div>}
 function App(){const root=useRef(null);const[split,setSplit]=useState(false);usePairedPdfScroll(root,split,String(split));return <div className="web-app" style={{height:'100dvh',display:'flex',flexDirection:'column'}}>
- <button onClick={()=>setSplit(s=>!s)}>分割切替</button><main ref={root} style={{display:'flex',flex:1,minHeight:0}}><Reader side="left"/>{split&&<Reader side="right"/>}</main></div>}
+ <button onClick={()=>setSplit(s=>!s)}>分割切替</button><main data-reader-root ref={root} style={{display:'flex',flex:1,minHeight:0}}><Reader side="left"/>{split&&<Reader side="right"/>}</main></div>}
 createRoot(document.getElementById('root')).render(<App/>);`;
 
 async function gesture(target: Locator, type: string, scale: number, x: number, y: number) {
@@ -82,7 +82,9 @@ for (const engine of ["webkit", "chromium"] as const) test(`PDF pinch interactio
   await parent.test("pinch limits, cancellation and header geometry are stable", async t => {
     const page = await open(t), pane = page.getByRole("region", { name: "left" }), box = (await pane.boundingBox())!;
     const header = (await page.locator('header').boundingBox())!;
-    for (const [scale, expected] of [[30, "4"], [.001, "0.5"]] as const) {
+    // The inline onZoom callback changes on every render. Repeated gestures must not
+    // lose their listeners or current zoom between consecutive React commits.
+    for (const [scale, expected] of Array.from({ length: 4 }, () => [[30, "4"], [.001, "0.5"]] as const).flat()) {
       await gesture(pane, "gesturestart", 1, box.x + 150, box.y + 150);
       await gesture(pane, "gesturechange", scale, box.x + 150, box.y + 150);
       await gesture(pane, "gestureend", scale, box.x + 150, box.y + 150);

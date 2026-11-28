@@ -17,14 +17,15 @@ from papeer.core.storage import Library, in_collection, normalize_collection_nam
 from papeer.layout.math_layout import restore_formula_text
 from papeer.translation.translation import same_page_source
 from papeer.layout.reading_flow import unit_pages, materialize_flows, join_unit_translations, resolve_unit_joins
-from papeer.core.summary_figures import summary_figures
-from papeer.core.summary_source import summary_source_text
+from papeer.core.summary.figures import (SUMMARY_IMAGE_VERSION, render_summary_figure, summary_caption_labels,
+                                        summary_figures)
+from papeer.core.summary.source import summary_source_text
 from papeer.core import prompts
 from papeer.core.terminology import apply_glossary, glossary_for_folder
 from papeer.core.translation_run import TranslationRun
-from papeer.core.summary_scope import page_ranges, validate_summary_pages
-from papeer.core.summary_review import normalize_citation_code, reference_issues
-from papeer.core.summary_quality import finalize_article
+from papeer.core.summary.scope import page_ranges, validate_summary_pages
+from papeer.core.summary.review import normalize_citation_code, reference_issues
+from papeer.core.summary.quality import finalize_article
 
 
 # Given to the model with HTML documents as evidence (the prompt may be the user's own, without it).
@@ -192,18 +193,26 @@ class PaperService:
         figures_by_page = {}
         figure_images = {}
         source_texts = {}
+        caption_pages = []
         cached_pages = {page["number"]: page["text"] for page in document["pages"]}
         with PDF_LOCK, fitz.open(files.original_pdf) as pdf:
             for number in sorted(selected):
                 check_cancel(self.cancel)
                 page = pdf[number - 1]
                 page.set_rotation(0)
-                figures = summary_figures(page, document.get("blocks", []), number)
+                figures = summary_figures(page, document.get("blocks", []), number,
+                                          following_page=pdf[number] if number + 1 in selected else None)
+                labels = summary_caption_labels(page)
+                if labels:
+                    caption_pages.append({"page": number, "labels": labels})
                 source_texts[number] = summary_source_text(page, cached_pages[number], document.get("blocks", []),
                                                           number, figures)
                 for figure in figures:
-                    figure_images[f"{figure['id']}.png"] = page.get_pixmap(clip=figure["rect"], dpi=150).tobytes("png")
+                    figure_images[f"{figure['id']}.png"] = render_summary_figure(page, figure)
                     figures_by_page.setdefault(number, []).append(figure)
+        if caption_pages and not figure_images:
+            raise ValueError("原文に図表キャプションがありますが、図表画像を抽出できませんでした。"
+                             "画像なしのサマリーとして保存せず、PDFの図表領域を確認してください。")
         # Keep newly rendered figures in memory until quality acceptance. A rejected
         # generation must not overwrite the images used by the previous article.
 
@@ -277,6 +286,16 @@ class PaperService:
         for name, data in figure_images.items():
             atomic_write_bytes(files.media / name, data)
         review["available_images"] = sorted(assets)
+        review["image_extraction_version"] = SUMMARY_IMAGE_VERSION
+        review["image_catalog"] = [
+            {"path": f"media/{figure['id']}.png", "page": number, "kind": figure["kind"],
+             "caption": figure["caption"], "rotation": figure.get("rotation", 0),
+             "caption_page": figure.get("caption_page", number),
+             "bbox": [figure["rect"].x0, figure["rect"].y0,
+                                                      figure["rect"].x1, figure["rect"].y1]}
+            for number, figures in figures_by_page.items() for figure in figures]
+        review["image_coverage"] = "complete"
+        review["source_caption_pages"] = caption_pages
         review["reference_checks"] = "passed"
         # The report identifies its exact article, including when an interrupted write leaves an older report.
         review["article_sha256"] = hashlib.sha256(article.encode("utf-8")).hexdigest()

@@ -48,29 +48,29 @@ before(async () => {
     React: await import("react"),
     server: await import("react-dom/server"),
     query: await import("@tanstack/react-query"),
-    Reader: (await load("/src/features/reader/Reader.tsx")).Reader,
+    Reader: (await load("/src/features/reader/LegacyPdfReaderConnection.tsx")).LegacyPdfReaderConnection,
     NotebookView: (await load("/src/features/notebooks/NotebookView.tsx")).NotebookView,
     Header: (await load("/src/app/Header.tsx")).Header,
-    ReaderArea: (await load("/src/app/ReaderArea.tsx")).ReaderArea,
+    ReaderArea: (await load("/src/app/LegacyReaderAreaConnection.tsx")).LegacyReaderAreaConnection,
     ReaderTab: (await load("/src/app/ReaderArea.tsx")).ReaderTab,
     Tabs: (await load("/src/components/ui/tabs.tsx")).Tabs,
     lazyPanes: await load("/src/app/lazyPanes.tsx"),
-    PdfPane: (await load("/src/features/reader/PdfPane.tsx")).PdfPane,
+    PdfPane: (await load("/src/features/reader/LegacyPdfPaneConnection.tsx")).LegacyPdfPaneConnection,
     useStore: (await load("/src/store/index.ts")).useStore,
-    useInkPanes: (await load("/src/features/reader/useInkEditor.ts")).useInkPanes,
     inkStore: await load("/src/features/reader/inkStore.ts"),
     notebooks: await load("/src/features/notebooks/notebooks.ts"),
+    notebookSessions: await load("/src/adapters/desktop/notebookSessions.ts"),
     pendingSaves: await load("/src/lib/pendingSaves.ts"),
     SelectionToolbarView: (await load("/src/features/reader/SelectionToolbar.tsx")).SelectionToolbarView,
     passageActions: (await load("/src/features/reader/passageActions.ts")).passageActions,
     kindCapabilities: (await load("/src/lib/itemKinds.ts")).kindCapabilities,
     highlightPassage: (await load("/src/features/reader/readerPassage.ts")).highlightPassage,
-    useStickyNotes: (await load("/src/features/reader/stickyNotesStore.ts")).useStickyNotes,
+    useStickyNotes: (await load("/src/features/reader/sticky/stickyNotesStore.ts")).useStickyNotes,
     api: (await load("/src/api/client.ts")).api,
     memoState: await load("/src/features/notes/memoState.ts"),
     queryClient: (await load("/src/lib/queryClient.ts")).queryClient,
-    StickyNotesTab: (await load("/src/features/reader/StickyNotesTab.tsx")).StickyNotesTab,
-    glossaryEditor: await load("/src/features/reader/GlossaryEditor.tsx"),
+    StickyNotesTab: (await load("/src/features/reader/sticky/StickyNotesTab.tsx")).StickyNotesTab,
+    glossaryEditor: await load("/src/features/reader/glossary/GlossaryEditor.tsx"),
     LibrarySidebar: (await load("/src/features/library/LibrarySidebar.tsx")).LibrarySidebar,
     useDragOver: (await load("/src/features/library/LibrarySidebar.tsx")).useDragOver,
     useMenuRow: (await load("/src/features/library/LibrarySidebar.tsx")).useMenuRow,
@@ -180,15 +180,14 @@ const reading = {
 };
 
 /**
- * Renders `element` with the store's state, and the writing panes' (`inkPanes`), set as given, and
+ * Renders `element` with the store's state set as given, and
  * `queries` ([key, data] pairs) in the query cache besides the paper's reading. Server rendering reads
  * a store's initial state, which is put back afterwards so that no test sees another's.
  */
-function render(element, state, inkPanes = {}, queries = []) {
-  const { React, server: { renderToString }, query: { QueryClient, QueryClientProvider }, useStore, useInkPanes } = modules;
-  const saved = [[useStore.getInitialState(), { ...useStore.getInitialState() }], [useInkPanes.getInitialState(), { ...useInkPanes.getInitialState() }]];
+function render(element, state, queries = []) {
+  const { React, server: { renderToString }, query: { QueryClient, QueryClientProvider }, useStore } = modules;
+  const saved = [[useStore.getInitialState(), { ...useStore.getInitialState() }]];
   Object.assign(useStore.getInitialState(), { activePaperId: "p1", currentPage: 1, focusMode: false, inkBarOpen: false, ...state });
-  Object.assign(useInkPanes.getInitialState(), inkPanes);
   const client = new QueryClient();
   client.setQueryData(["reading", "p1"], reading);
   for (const [key, data] of queries) client.setQueryData(key, data);
@@ -204,9 +203,6 @@ function render(element, state, inkPanes = {}, queries = []) {
   }
 }
 
-// Panes say that they have a page to write on from an effect, which the server doesn't run.
-const writableOriginal = { active: "original", hosts: { original: true, translated: false } };
-
 // The open item's row, which tells the reader's screen from a notebook's once it has loaded.
 const pdfRow = [["papers", "p1"], { id: "p1", kind: "pdf", title: "Paper", original_name: "paper.pdf" }];
 
@@ -219,11 +215,11 @@ test("neither screen is mounted until the open item's kind is known", () => {
 test("an item listed in the library is shown by its kind at once, before its own row has loaded", () => {
   const { React, ReaderArea } = modules;
   const row = (kind) => [["papers", "list", "", 0], [{ id: "p1", kind, title: "Item", original_name: "item", collection_name: "", pages: 1, parent_id: null }]];
-  const pdf = render(React.createElement(ReaderArea), { activeTab: "reader" }, {}, [row("pdf")]);
+  const pdf = render(React.createElement(ReaderArea), { activeTab: "reader" }, [row("pdf")]);
   assert.match(pdf, /id="page-input"/);
   assert.doesNotMatch(pdf, /aria-label="ノートの道具"|読み込んでいます…/);
-  const notebook = render(React.createElement(ReaderArea), { activeTab: "reader" }, {}, [row("notebook")]);
-  assert.match(notebook, /aria-label="ノートの道具"/);
+  const notebook = render(React.createElement(ReaderArea), { activeTab: "reader" }, [row("notebook")]);
+  assert.match(notebook, /ノートを読み込み中…/);
   assert.doesNotMatch(notebook, /aria-label="目次"|読み込んでいます…/);
 });
 
@@ -235,13 +231,13 @@ test("the reader renders a paper with its toolbar and both panes", () => {
   assert.match(html, /data-ink-toolbar-slot/);
 });
 
-test("a notebook opens in its own view: one row of tools, page and zoom, and nothing of a PDF's reading", () => {
+test("a notebook opens in its own view: one row of tools, page and zoom, and nothing of a PDF's reading", async () => withNotebookWriter(async f => {
   const { React, ReaderArea, NotebookView } = modules;
-  const notebook = { id: "p1", kind: "notebook", title: "ノート", original_name: "ノート", collection_name: "", pages: 1, parent_id: null };
-  const document = { version: 1, revision: 1, pages: [{ id: "a", size: "A4", orientation: "portrait", template: "ruled7", color: "white" }] };
-  const queries = [[["papers", "p1"], notebook], [["notebook", "p1"], document]];
-  for (const html of [render(React.createElement(NotebookView, { paperId: "p1" }), {}, {}, queries),
-    render(React.createElement(ReaderArea), { activeTab: "reader" }, {}, queries)]) {
+  await f.loadDesktopNotebookSession(f.id);
+  const notebook = { id: f.id, kind: "notebook", title: "ノート", original_name: "ノート", collection_name: "", pages: 1, parent_id: null };
+  const queries = [[["papers", f.id], notebook], [["notebook", f.id], f.document]];
+  for (const html of [render(React.createElement(NotebookView, { paperId: f.id }), { activePaperId: f.id }, queries),
+    render(React.createElement(ReaderArea), { activePaperId: f.id, activeTab: "reader" }, queries)]) {
     assert.match(html, /role="toolbar" aria-label="ノートの道具"/);
     assert.match(html, /id="page-input"/);
     // The row is not measured on the server, so only what always shows is there.
@@ -249,10 +245,10 @@ test("a notebook opens in its own view: one row of tools, page and zoom, and not
     assert.match(html, /role="region" aria-label="ノート"/);
     assert.doesNotMatch(html, /aria-label="目次"|論文内検索|aria-label="原文"|本文選択|aria-label="書き込みツール"|>原文</);
   }
-});
+}));
 
 test("the reader renders in focus mode with the writing toolbar open, which waits for its shared slot", () => {
-  const html = render(modules.React.createElement(modules.Reader), { focusMode: true, sidePanel: "chat", inkBarOpen: true }, writableOriginal);
+  const html = render(modules.React.createElement(modules.Reader), { focusMode: true, sidePanel: "chat", inkBarOpen: true });
   assert.match(html, /aria-label="集中表示を終了"/);
   assert.match(html, /data-ink-toolbar-slot/);
   // The slot is set from a ref after the first render; until then the pane shows no toolbar rather than
@@ -263,23 +259,22 @@ test("the reader renders in focus mode with the writing toolbar open, which wait
 test("a pane renders its writing toolbar in place when there is no shared slot", () => {
   const html = render(modules.React.createElement(modules.PdfPane, {
     url: "/original.pdf", pageNumber: 1, zoom: 1, inkPage: { paperId: "p1", page: 1 }, caption: "原文",
-  }), { inkBarOpen: true }, writableOriginal);
+  }), { inkBarOpen: true });
   assert.match(html, /aria-label="PDFの書き込み"/);
   assert.match(html, /aria-label="書き込みツールを閉じる"/);
 });
 
 test("the store's state set for one render is not left for the next", () => {
-  render(modules.React.createElement(modules.Reader), { focusMode: true, sidePanel: "chat", inkBarOpen: true }, writableOriginal);
+  render(modules.React.createElement(modules.Reader), { focusMode: true, sidePanel: "chat", inkBarOpen: true });
   assert.equal(modules.useStore.getInitialState().sidePanel, null);
   assert.equal(modules.useStore.getInitialState().focusMode, false);
-  assert.equal(modules.useInkPanes.getInitialState().hosts.original, false);
 });
 
 test("the reader renders with the chat open beside it in the normal view", async () => {
   const { React, ReaderArea, lazyPanes } = modules;
   const state = { activeTab: "reader", sidePanel: "chat" };
   // The first render starts loading the chat's code and shows the pane's loading state meanwhile.
-  const loading = render(React.createElement(ReaderArea), state, {}, [pdfRow]);
+  const loading = render(React.createElement(ReaderArea), state, [pdfRow]);
   assert.match(loading, /data-side-panel="chat"/);
   assert.match(loading, /aria-label="チャット（右パネル）"/);
   assert.match(loading, /id="page-input"/);
@@ -287,7 +282,7 @@ test("the reader renders with the chat open beside it in the normal view", async
   await server.ssrLoadModule("/src/features/chat/ChatPane.tsx");
   await new Promise((resolve) => setTimeout(resolve, 0));
   // Once loaded, the chat itself renders in the panel.
-  const html = render(React.createElement(ReaderArea), state, {}, [pdfRow]);
+  const html = render(React.createElement(ReaderArea), state, [pdfRow]);
   assert.match(html, /data-side-panel="chat"/);
   assert.doesNotMatch(html, /読み込み中…|表示できませんでした/);
   assert.match(html, /<textarea[^>]*placeholder="例：従来手法と比べた改善点と、実験の限界は？"/);
@@ -295,7 +290,7 @@ test("the reader renders with the chat open beside it in the normal view", async
 });
 
 test("the side panel is not rendered while another tab is shown, so that its pane never mounts twice", () => {
-  const html = render(modules.React.createElement(modules.ReaderArea), { activeTab: "chat", sidePanel: "chat" }, {}, [pdfRow]);
+  const html = render(modules.React.createElement(modules.ReaderArea), { activeTab: "chat", sidePanel: "chat" }, [pdfRow]);
   assert.doesNotMatch(html, /data-side-panel/);
   // Its room stays, empty, so that the reader keeps its size while hidden.
   assert.match(html, /id="side-panel"/);
@@ -305,7 +300,7 @@ test("the side panel is not rendered while another tab is shown, so that its pan
 
 test("the reader tab stays laid out, invisible and inert, while another tab is shown", () => {
   const { React, Tabs, ReaderTab } = modules;
-  const inTabs = (activeTab) => render(React.createElement(Tabs, { value: activeTab }, React.createElement(ReaderTab)), { activeTab }, {}, [pdfRow]);
+  const inTabs = (activeTab) => render(React.createElement(Tabs, { value: activeTab }, React.createElement(ReaderTab, { active: activeTab === "reader" }, React.createElement(modules.ReaderArea))), { activeTab }, [pdfRow]);
   const hidden = inTabs("notes");
   // Not display: none, which would lose the panes' scroll positions and size.
   assert.doesNotMatch(hidden, /<div[^>]*role="tabpanel"[^>]*\shidden=""/);
@@ -326,7 +321,7 @@ test("the toolbar over a selection offers the highlight colours, 説明, メモ�
   assert.match(html, /role="toolbar" aria-label="選択した文章"/);
   for (const label of ["黄", "緑", "青", "ピンク", "紫"]) assert.match(html, new RegExp(`aria-label="ハイライト：${label}"`));
   assert.match(html, />説明</);
-  assert.match(html, />メモへ</);
+  assert.match(html, />ノートへ</);
   assert.match(html, />付箋</);
   assert.doesNotMatch(html, /ハイライトを削除/);
   // Over a highlight: its colour is shown pressed, and it can be deleted.
@@ -337,7 +332,7 @@ test("the toolbar over a selection offers the highlight colours, 説明, メモ�
   // An item that has no chat, 付箋 or such has no button for them: a notebook keeps only its memo.
   const notebook = render(React.createElement(SelectionToolbarView, { mode: "selection", actions: passageActions(kindCapabilities("notebook")),
     color: "yellow", ...handlers }));
-  assert.match(notebook, />メモへ</);
+  assert.match(notebook, />ノートへ</);
   assert.doesNotMatch(notebook, />説明</);
   assert.doesNotMatch(notebook, />付箋</);
   assert.doesNotMatch(notebook, /ハイライト/);
@@ -382,10 +377,10 @@ test("the sticky-notes tab lists a highlight by its colour and offers to write t
     anchor_x: 0, anchor_y: 0.5, created_at: "", kind: "note", color: "", rects: [] };
   const highlight = { ...note, id: 2, page: 1, quote: "the energy term", label: "", note: "", kind: "highlight", color: "green",
     rects: [[0.1, 0.2, 0.5, 0.02]] };
-  const html = render(React.createElement(StickyNotesTab), {}, {}, [[["sticky-notes", "all"], [note, highlight]]]);
+  const html = render(React.createElement(StickyNotesTab), {}, [[["sticky-notes", "all"], [note, highlight]]]);
   assert.match(html, /ハイライト（緑）/);
   assert.match(html, /<mark[^>]*>the energy term<\/mark>/);
-  assert.match(html, /メモに書き出す/);
+  assert.match(html, /ノートに書き出す/);
   assert.match(html, /aria-label="付箋・ハイライトで絞り込み"/);
 });
 
@@ -398,7 +393,7 @@ test("the translation dialog's glossary shows the saved glossary until it is edi
       canGenerate: true, onGenerate: () => {}, onPending: () => {},
       domains: { record: undefined, canSplit: true, onSplit: () => {}, onChoose: () => {} } });
   }
-  const html = render(React.createElement(Glossary), {}, {}, [[["glossary"], [{ source: "observer", target: "オブザーバ" }]]]);
+  const html = render(React.createElement(Glossary), {}, [[["glossary"], [{ source: "observer", target: "オブザーバ" }]]]);
   assert.match(html, /辞書全体（1件）/);
   assert.match(html, /value="observer"/);
   assert.match(html, /value="オブザーバ"/);
@@ -418,7 +413,7 @@ test("paper dictionary choices are separate from shared dictionary management", 
         domains: { record, canSplit: true, onSplit: () => {}, onChoose: () => {} } }));
   }
   const terms = [{ source: "RL", target: "強化学習" }, { source: "cell", target: "セル", domain: "電池" }, { source: "cell", target: "細胞", domain: "生物" }];
-  const html = render(React.createElement(Glossary), {}, {}, [[["glossary"], terms]]);
+  const html = render(React.createElement(Glossary), {}, [[["glossary"], terms]]);
   assert.match(html, /辞書全体（3件）/);
   assert.match(html, /選択中の分野辞書：/);
   assert.match(html, /共通（常に適用/);
@@ -466,11 +461,11 @@ test("startup waits for the reading place without flashing the first-use screen"
 test("missing library data is loading, and only a loaded empty library invites adding PDFs", () => {
   const sidebar = modules.React.createElement(modules.LibrarySidebar);
   for (const queries of [[], [[["papers", "list", "", 0], []]], [[["collections"], []]]]) {
-    const pending = render(sidebar, libraryState, {}, queries);
+    const pending = render(sidebar, libraryState, queries);
     assert.match(pending, /ライブラリを読み込んでいます/);
     assert.doesNotMatch(pending, /0 件の論文|読み始めましょう|見つかりませんでした/);
   }
-  const ready = render(sidebar, libraryState, {}, [
+  const ready = render(sidebar, libraryState, [
     [["papers", "list", "", 0], []], [["collections"], []],
   ]);
   assert.match(ready, /0 件の論文/);
@@ -484,7 +479,7 @@ test("the library renders its folder tree, with the open paper and its translati
       { job_id: "t1", paper_id: "p1", kind: "translate", status: "running" },
       { job_id: "a1", paper_id: "p2", kind: "article", status: "running" },
     ],
-  }, {}, libraryQueries);
+  }, libraryQueries);
   // Folders, each with its count including subfolders, and 未分類 last.
   const folders = [...html.matchAll(/data-tree-key="folder:([^"]*)"/g)].map((m) => m[1]);
   assert.deepEqual(folders, ["Empty", "ML", "ML / NLP", ""]);
@@ -512,7 +507,7 @@ test("the library tree is a tree of treeitems for assistive technology, and one 
   initial.tabStop = "paper:p2";
   let html;
   try {
-    html = render(React.createElement(LibrarySidebar), libraryState, {}, libraryQueries);
+    html = render(React.createElement(LibrarySidebar), libraryState, libraryQueries);
   } finally {
     initial.tabStop = saved;
   }
@@ -573,7 +568,7 @@ test("the library shows the papers selected together apart from the open one, an
   Object.assign(initial, { ids: new Set(["p2", "p3"]), anchor: "paper:p2" });
   let html;
   try {
-    html = render(React.createElement(LibrarySidebar), { ...libraryState, selectedFolder: null }, {}, libraryQueries);
+    html = render(React.createElement(LibrarySidebar), { ...libraryState, selectedFolder: null }, libraryQueries);
   } finally {
     Object.assign(initial, saved);
   }
@@ -599,7 +594,7 @@ test("the library shows the papers selected together apart from the open one, an
 });
 
 test("without papers selected together, the open paper is the selected row and nothing is counted", () => {
-  const html = render(modules.React.createElement(modules.LibrarySidebar), libraryState, {}, libraryQueries);
+  const html = render(modules.React.createElement(modules.LibrarySidebar), libraryState, libraryQueries);
   assert.match(openingTag(html, 'id="paper-row-p1"'), /aria-selected="true"/);
   assert.match(openingTag(html, 'id="paper-row-p2"'), /aria-selected="false"/);
   assert.doesNotMatch(html, /件を選択中/);
@@ -612,7 +607,7 @@ test("while an action on several papers runs, the library shows its progress wit
   initial.progress = { label: "「ML」へ移動中", ran: 2, total: 5, stopping: false };
   let html;
   try {
-    html = render(React.createElement(LibrarySidebar), libraryState, {}, libraryQueries);
+    html = render(React.createElement(LibrarySidebar), libraryState, libraryQueries);
   } finally {
     initial.progress = saved;
   }
@@ -630,7 +625,7 @@ test("a long library renders only the rows in view, placed in a list as tall as 
   initial.tabStop = "paper:m399";
   let html;
   try {
-    html = render(React.createElement(LibrarySidebar), libraryState, {}, [
+    html = render(React.createElement(LibrarySidebar), libraryState, [
       [["papers", "list", "", 0], many], [["collections"], ["Many"]],
     ]);
   } finally {
@@ -670,7 +665,7 @@ function renderLibrary(queries, stores = []) {
   const saved = stores.map(([store]) => [store, { ...store.getInitialState() }]);
   for (const [store, values] of stores) Object.assign(store.getInitialState(), values);
   try {
-    return render(modules.React.createElement(modules.LibrarySidebar), libraryState, {}, queries);
+    return render(modules.React.createElement(modules.LibrarySidebar), libraryState, queries);
   } finally {
     for (const [store, values] of saved) Object.assign(store.getInitialState(), values);
   }
@@ -740,7 +735,7 @@ test("the OCR part of the translation review lists the pages, and disables readi
     paperId: "p1", busy: false, onJump: () => undefined,
     reading: { completed_pages: [1], ocr_pages: [{ page: 2, reason: "image" }],
                ocr_applied: [{ page: 3, reason: "garbled", engine: "tesseract", lang: "en", skew: 0.4 }] },
-  }), {}, {}, [[["ocr"], ocrStatus({ available: false, reason, provider: "antigravity", label: "agy" })]]);
+  }), {}, [[["ocr"], ocrStatus({ available: false, reason, provider: "antigravity", label: "agy" })]]);
   assert.match(html, /要OCRのページを OCR で読む…/);
   assert.match(html, /p\.2：要OCR（まだ読んでいません）/);
   assert.match(html, /p\.3：Tesseract・英語で読みました（傾き 0\.4°を補正）/);
@@ -760,34 +755,34 @@ test("the OCR part of the translation review is left out when no page needs OCR 
 });
 
 
-test("notebook ink keeps a stable address when numbers move and a late deleted-page reply cannot resurrect its journal", async () => {
+test("a late PDF save reply cannot resurrect its forgotten journal", async () => {
   const { api, inkStore: { InkPage } } = modules;
   const original = { GET: api.GET, PUT: api.PUT };
   const calls = [];
   let release;
   api.GET = async () => ({ data: { strokes: [] }, response: new Response(null, { status: 200 }) });
   api.PUT = async (route, options) => { calls.push({ route, options }); await new Promise(resolve => { release = resolve; }); return { data: {}, response: new Response(null, { status: 200 }) }; };
-  const entry = new InkPage("a".repeat(32), "original", 1, "stable-page");
+  const entry = new InkPage("a".repeat(32), "original", 1);
   try {
     await entry.load();
     entry.change([{ id: "stroke", points: [[.1,.2]], color: "#000000", width: .003 }]);
     await new Promise(resolve => setImmediate(resolve));
     entry.page = 4;
-    assert.equal(calls[0].route, "/api/notebooks/{notebook_id}/pages/{page_id}/ink");
-    assert.equal(calls[0].options.params.path.page_id, "stable-page");
+    assert.equal(calls[0].route, "/api/papers/{paper_id}/ink-v2/{side}/{page}");
+    assert.equal(calls[0].options.params.path.page, 1);
     const saving = entry.save();
     entry.forget(); release(); await saving;
-    assert.equal(localStorage.getItem(`papeer-notebook-ink:${"a".repeat(32)}:stable-page`), null);
+    assert.equal(localStorage.getItem(`papeer-ink:${"a".repeat(32)}:original:1`), null);
     assert.equal(calls.length, 1);
   } finally { release?.(); entry.forget(); api.GET = original.GET; api.PUT = original.PUT; }
 });
 
-test("a notebook page forgotten during GET never becomes ready again", async () => {
+test("a PDF page forgotten during GET never becomes ready again", async () => {
   const { api, inkStore: { InkPage } } = modules;
   const original = api.GET;
   let release;
   api.GET = async () => { await new Promise(resolve => { release = resolve; }); return { data: { strokes: [] }, response: new Response(null, { status: 200 }) }; };
-  const entry = new InkPage("b".repeat(32), "original", 1, "deleted-page");
+  const entry = new InkPage("b".repeat(32), "original", 1);
   try {
     const loading = entry.load(); await new Promise(resolve => setImmediate(resolve));
     entry.forget(); release(); await loading;
@@ -795,199 +790,123 @@ test("a notebook page forgotten during GET never becomes ready again", async () 
   } finally { release?.(); api.GET = original; }
 });
 
-test("flushing notebook ink finds an unseen journal after restart and preserves it on failure", async () => {
-  const { api, inkStore: { flushInkSaves }, pendingSaves: { forgetDraftsOfPapers } } = modules;
-  const owner = "c".repeat(32), key = `papeer-notebook-ink:${owner}:unseen`;
-  const stroke = { id: "draft", points: [[.1,.2]], color: "#000000", width: .003 };
-  const original = { GET: api.GET, PUT: api.PUT, storage: globalThis.localStorage };
-  const values = { [key]: JSON.stringify([stroke]) };
-  globalThis.localStorage = Object.assign(values, { getItem: name => values[name] ?? null, setItem: (name, value) => { values[name] = value; }, removeItem: name => { delete values[name]; } });
-  api.GET = async route => ({ data: route === "/api/notebooks/{notebook_id}" ? { pages: [{ id: "unseen" }] } : { strokes: [] }, response: new Response(null, { status: 200 }) });
-  api.PUT = async () => { throw new Error("offline"); };
-  try {
-    await assert.rejects(flushInkSaves(owner), /offline/);
-    assert.equal(localStorage.getItem(key), JSON.stringify([stroke]));
-    let sent;
-    api.PUT = async (_route, options) => { sent = options; return { data: {}, response: new Response(null, { status: 200 }) }; };
-    await flushInkSaves(owner);
-    assert.deepEqual(sent.body.strokes, [stroke]);
-    assert.equal(sent.params.path.page_id, "unseen");
-    assert.equal(localStorage.getItem(key), null);
-  } finally { forgetDraftsOfPapers([owner]); api.GET = original.GET; api.PUT = original.PUT; globalThis.localStorage = original.storage; }
-});
-
-
-test("a failed notebook page operation keeps the saved unseen draft attached to its original stable page", async () => {
-  const { api, notebooks: { changeNotebook, useNotebookBusy }, inkStore: { notebookDraftInk }, pendingSaves: { forgetDraftsOfPapers }, useStore, queryClient } = modules;
-  const owner = "d".repeat(32), key = `papeer-notebook-ink:${owner}:original-page`;
-  const stroke = { id: "kept", points: [[.1,.2]], color: "#000000", width: .003 };
-  const document = { version: 1, revision: 1, pages: [{ id: "original-page", size: "A4", orientation: "portrait", template: "blank", color: "white", width_mm: 210, height_mm: 297 }] };
-  const original = { GET: api.GET, PUT: api.PUT, POST: api.POST, storage: globalThis.localStorage, state: useStore.getState() };
-  const values = { [key]: JSON.stringify([stroke]) };
-  globalThis.localStorage = Object.assign(values, { getItem: name => values[name] ?? null, setItem: (name, value) => { values[name] = value; }, removeItem: name => { delete values[name]; } });
-  api.GET = async route => ({ data: route === "/api/notebooks/{notebook_id}" ? document : { strokes: [] }, response: new Response(null, { status: 200 }) });
-  const sent = [];
-  api.PUT = async (_route, options) => { sent.push(options.body.strokes); return { data: {}, response: new Response(null, { status: 200 }) }; };
-  api.POST = async () => { assert.equal(sent.length, 1, "ink saves before the page operation"); throw new Error("page operation offline"); };
-  useStore.setState({ activePaperId: owner, currentPage: 1 });
-  try {
-    const successfulPut = api.PUT, failingPost = api.POST;
-    api.PUT = async () => { throw new Error("ink offline"); };
-    api.POST = async () => { assert.fail("a failed ink save must stop the page operation"); };
-    await assert.rejects(changeNotebook(owner, document, { action: "append" }), /ink offline/);
-    assert.equal(localStorage.getItem(key), JSON.stringify([stroke]));
-    assert.deepEqual(notebookDraftInk(owner, "original-page"), [stroke]);
-    assert.equal(useNotebookBusy.getState().ids.includes(owner), false);
-    api.PUT = successfulPut; api.POST = failingPost;
-    await assert.rejects(changeNotebook(owner, document, { action: "append" }), /page operation offline/);
-    assert.deepEqual(sent, [[stroke]]);
-    assert.deepEqual(notebookDraftInk(owner, "original-page"), [stroke]);
-    assert.deepEqual(queryClient.getQueryData(["notebook", owner]), document);
-    assert.equal(useNotebookBusy.getState().ids.includes(owner), false);
-    assert.equal(useStore.getState().currentPage, 1);
-  } finally { forgetDraftsOfPapers([owner]); api.GET = original.GET; api.PUT = original.PUT; api.POST = original.POST; globalThis.localStorage = original.storage; useStore.setState(original.state); queryClient.clear(); }
-});
-
-// A page deleted on the server whose reply and recovery read were both lost: the old document stays on screen,
-// still takes ink for the page, and the entry would be saved to a missing page forever.
-// With `journal: false` the browser storage refuses writes, so the drafts only live in memory.
-async function lostNotebookDeletion(owner, { journal = true } = {}) {
-  const { React, api, notebooks: { changeNotebook }, inkStore: { useInkPage }, useStore, server: { renderToString } } = modules;
-  const page = id => ({ id, size: "A4", orientation: "portrait", template: "blank", color: "white", width_mm: 210, height_mm: 297 });
-  const ok = data => ({ data, response: new Response(null, { status: 200 }) });
-  const stroke = id => ({ id, points: [[.1, .2]], color: "#000000", width: .003 });
-  const old = { version: 1, revision: 1, pages: [page("keep"), page("gone")] };
-  const latest = { version: 1, revision: 2, pages: [page("keep")] };
-  const server = { document: old, getDown: false, putDown: false, gate: null, puts: [], missing: [] };
-  // Unlike the shared stub, this one lists its keys, as the flush does to find journals.
-  const values = {};
-  globalThis.localStorage = Object.assign(values, { getItem: name => values[name] ?? null,
-    setItem: (name, value) => { if (!journal) throw new DOMException("quota", "QuotaExceededError"); values[name] = value; },
-    removeItem: name => { delete values[name]; } });
-  api.GET = async route => {
-    if (route !== "/api/notebooks/{notebook_id}") return ok({ strokes: [] });
-    const { document, gate } = server;
-    if (server.getDown) throw new Error("read lost");
-    if (gate) await gate;
-    return ok(document);
+async function withNotebookWriter(run) {
+  const id = crypto.randomUUID().replaceAll('-', ''), pageId = '1'.repeat(32);
+  const document = { version: 1, revision: 1, pages: [{ id: pageId, size: 'A4', orientation: 'portrait', template: 'blank', color: 'white', width_mm: 210, height_mm: 297 }] };
+  const fixture = { id, kind: 'notebook', title: 'Shared writer', parent_id: null, collection_name: '', note_position: 0, revision: 'base', document, ink: {} };
+  const values = {}, prior = { fetch: globalThis.fetch, storage: globalThis.localStorage, POST: modules.api.POST, GET: modules.api.GET };
+  const remote = { note: structuredClone(fixture), offline: false, quota: false, loseReply: false, writes: [], reads: 0, readGate: null, revision: 0 };
+  globalThis.localStorage = Object.assign(values, { getItem: key => values[key] ?? null,
+    setItem: (key, value) => { if (remote.quota) throw new Error('quota'); values[key] = value; }, removeItem: key => { delete values[key]; } });
+  globalThis.fetch = async (url, options) => {
+    assert.equal(new URL(String(url)).pathname, `/api/notes/${id}/document`);
+    if (remote.offline) throw new Error('offline');
+    if (options.method === 'GET') { remote.reads++; const note = structuredClone(remote.note); if (remote.readGate) await remote.readGate; return Response.json(note); }
+    const body = JSON.parse(options.body); remote.writes.push(body);
+    if (body.revision !== remote.note.revision) return Response.json({ detail: 'revision conflict' }, { status: 409 });
+    remote.note = { ...body.note, revision: 'saved-' + ++remote.revision };
+    if (remote.loseReply) { remote.loseReply = false; throw new Error('accepted reply lost'); }
+    return Response.json(remote.note);
   };
-  api.PUT = async (_route, options) => {
-    const id = options.params.path.page_id;
-    if (server.putDown) throw new Error("offline");
-    if (!server.document.pages.some(value => value.id === id)) { server.missing.push(id); return { error: {}, response: new Response(null, { status: 404 }) }; }
-    server.puts.push([id, options.body.strokes]);
-    return ok({});
-  };
-  api.POST = async () => { server.document = latest; server.getDown = true; throw new Error("reply lost"); };
-  const entries = {};
-  renderToString(React.createElement(function Pages() {
-    entries.keep = useInkPage(owner, "original", 1, "keep").entry;
-    entries.gone = useInkPage(owner, "original", 2, "gone").entry;
-    return null;
-  }));
-  await Promise.all([entries.keep.load(), entries.gone.load()]);
-  useStore.setState({ activePaperId: owner, currentPage: 2 });
-  await assert.rejects(changeNotebook(owner, old, { action: "delete", page_id: "gone" }), /reply lost/);
-  // The server committed the deletion; the old UI keeps drawing on both pages while saves fail.
-  server.putDown = true;
-  entries.keep.change([stroke("kept")]);
-  entries.gone.change([stroke("doomed")]);
-  await new Promise(resolve => setImmediate(resolve));
-  server.putDown = false; server.getDown = false;
-  const keys = { keep: `papeer-notebook-ink:${owner}:keep`, gone: `papeer-notebook-ink:${owner}:gone` };
-  assert.equal(entries.gone.snapshot.dirty, true);
-  assert.equal(entries.keep.snapshot.dirty, true);
-  if (journal) {
-    assert.deepEqual(JSON.parse(localStorage.getItem(keys.gone)), [stroke("doomed")]);
-    assert.deepEqual(JSON.parse(localStorage.getItem(keys.keep)), [stroke("kept")]);
-  } else {
-    assert.equal(localStorage.getItem(keys.gone), null);
-    assert.equal(localStorage.getItem(keys.keep), null);
+  modules.api.GET = async () => ({ data: remote.note.document, response: new Response(null, { status: 200 }) });
+  const stroke = id => ({ id, points: [[.1, .2]], color: '#000000', width: .003 });
+  try { await run({ ...modules.notebookSessions, id, pageId, document, fixture, remote, values, stroke }); }
+  finally {
+    modules.pendingSaves.forgetDraftsOfPapers([id]); globalThis.fetch = prior.fetch; globalThis.localStorage = prior.storage;
+    modules.api.POST = prior.POST; modules.api.GET = prior.GET; modules.queryClient.clear();
   }
-  return { server, entries, keys, stroke, page, ok };
 }
 
-test("a successful notebook read settles ink of a page deleted by a lost reply, even when an older read is delayed", async () => {
-  const { api, notebooks: { fetchNotebook }, inkStore: { flushInkSaves, notebookDraftInk, useInkPage }, pendingSaves: { forgetDraftsOfPapers }, useStore, queryClient, React, server: { renderToString } } = modules;
-  const owner = "e".repeat(32);
-  const original = { GET: api.GET, PUT: api.PUT, POST: api.POST, storage: globalThis.localStorage, state: useStore.getState() };
-  try {
-    const { server, entries, keys, stroke, page, ok } = await lostNotebookDeletion(owner);
-    await fetchNotebook(owner);
-    assert.equal(localStorage.getItem(keys.gone), null);
-    assert.equal(notebookDraftInk(owner, "gone"), undefined);
-    assert.deepEqual(notebookDraftInk(owner, "keep"), [stroke("kept")], "the surviving draft stays");
-    await flushInkSaves(owner);
-    assert.deepEqual(server.puts, [["keep", [stroke("kept")]]]);
-    assert.deepEqual(server.missing, [], "no save is sent to the deleted page");
-    assert.equal(localStorage.getItem(keys.keep), null);
-    // A newer document adds a page that takes a draft; the older read, sent before and answered after it, is ignored.
-    const older = server.document;
-    let release;
-    server.gate = new Promise(resolve => { release = resolve; });
-    const late = fetchNotebook(owner);
-    await new Promise(resolve => setImmediate(resolve));
-    server.gate = null;
-    server.document = { ...older, revision: 3, pages: [...older.pages, page("fresh")] };
-    await fetchNotebook(owner);
-    let fresh;
-    renderToString(React.createElement(function Fresh() { fresh = useInkPage(owner, "original", 2, "fresh").entry; return null; }));
-    await fresh.load();
-    server.putDown = true;
-    fresh.change([stroke("new")]);
-    await new Promise(resolve => setImmediate(resolve));
-    release();
-    await late;
-    assert.deepEqual(notebookDraftInk(owner, "fresh"), [stroke("new")]);
-    assert.deepEqual(JSON.parse(localStorage.getItem(`papeer-notebook-ink:${owner}:fresh`)), [stroke("new")]);
-    server.putDown = false;
-    await flushInkSaves(owner);
-    assert.deepEqual(server.puts.at(-1), ["fresh", [stroke("new")]]);
-    assert.deepEqual(server.missing, []);
-  } finally { forgetDraftsOfPapers([owner]); api.GET = original.GET; api.PUT = original.PUT; api.POST = original.POST; globalThis.localStorage = original.storage; useStore.setState(original.state); queryClient.clear(); }
-});
+test('central and panel loads share one writer and Undo retains the other placement after reopening', async () => withNotebookWriter(async f => {
+  const [central, panel] = await Promise.all([f.loadDesktopNotebookSession(f.id), f.loadDesktopNotebookSession(f.id)]);
+  assert.equal(central, panel); assert.equal(f.remote.reads, 1);
+  const rightOwner = Symbol(), centralOwner = Symbol(); panel.acquireEditor(rightOwner);
+  panel.editFrom(rightOwner, { ...panel.getSnapshot().note, ink: { [f.pageId]: [f.stroke('right-A')] } }); await panel.flush(); panel.releaseEditor(rightOwner);
+  const reopened = await f.loadDesktopNotebookSession(f.id); assert.equal(reopened, panel); reopened.acquireEditor(centralOwner);
+  reopened.editFrom(centralOwner, { ...reopened.getSnapshot().note, ink: { [f.pageId]: [...reopened.getSnapshot().note.ink[f.pageId], f.stroke('central-B')] } }); await reopened.flush();
+  reopened.undo(centralOwner); await reopened.flush();
+  assert.deepEqual(f.remote.note.ink[f.pageId].map(s => s.id), ['right-A']);
+  assert.ok(f.remote.writes.every(value => value.revision), 'every save carries the acknowledged document revision');
+}));
 
-test("flushing notebook ink settles a page deleted by a lost reply before saving, so shutdown and backup succeed", async () => {
-  const { api, inkStore: { flushInkSaves, notebookDraftInk }, pendingSaves: { forgetDraftsOfPapers }, useStore, queryClient } = modules;
-  const owner = "f".repeat(32);
-  const original = { GET: api.GET, PUT: api.PUT, POST: api.POST, storage: globalThis.localStorage, state: useStore.getState() };
-  try {
-    const { server, keys, stroke } = await lostNotebookDeletion(owner);
-    server.missing.length = 0;
-    await flushInkSaves(owner);
-    assert.deepEqual(server.missing, [], "no save is sent to the deleted page");
-    assert.deepEqual(server.puts, [["keep", [stroke("kept")]]]);
-    assert.equal(localStorage.getItem(keys.gone), null);
-    assert.equal(localStorage.getItem(keys.keep), null);
-    assert.equal(notebookDraftInk(owner, "gone"), undefined);
-    await flushInkSaves(owner);
-    assert.deepEqual(server.missing, []);
-  } finally { forgetDraftsOfPapers([owner]); api.GET = original.GET; api.PUT = original.PUT; api.POST = original.POST; globalThis.localStorage = original.storage; useStore.setState(original.state); queryClient.clear(); }
-});
+test('the shared notebook writer retains a failed durable draft and stops page changes until retry', async () => withNotebookWriter(async f => {
+  const session = await f.loadDesktopNotebookSession(f.id), owner = Symbol(); session.acquireEditor(owner);
+  f.remote.quota = true; session.editFrom(owner, { ...session.getSnapshot().note, ink: { [f.pageId]: [f.stroke('pending')] } });
+  await assert.rejects(f.flushDesktopNotebooks(f.id), /quota/); assert.equal(session.canLeave(), false);
+  await assert.rejects(session.changeDocument(async () => assert.fail('page change ran before save')), /quota/);
+  f.remote.quota = false; f.remote.offline = true;
+  await assert.rejects(f.flushDesktopNotebooks(f.id));
+  assert.equal(session.getSnapshot().durable, true); assert.deepEqual(JSON.parse(localStorage.getItem(`papeer-handwriting:${f.id}`)).ink[f.pageId], [f.stroke('pending')]);
+  f.remote.offline = false; await f.flushDesktopNotebooks(f.id);
+  assert.deepEqual(f.remote.note.ink[f.pageId], [f.stroke('pending')]); assert.equal(localStorage.getItem(`papeer-handwriting:${f.id}`), null);
+}));
 
-test("flushing notebook ink also reconciles a draft that only lives in memory because the journal cannot be written", async () => {
-  const { api, inkStore: { flushInkSaves, notebookDraftInk }, pendingSaves: { forgetDraftsOfPapers }, useStore, queryClient } = modules;
-  const owner = "9".repeat(32);
-  const original = { GET: api.GET, PUT: api.PUT, POST: api.POST, storage: globalThis.localStorage, state: useStore.getState() };
-  try {
-    // No notebook query is active and no journal exists: only the in-memory entries know of the owner.
-    const { server, entries, stroke } = await lostNotebookDeletion(owner, { journal: false });
-    server.missing.length = 0;
-    server.getDown = true;
-    await assert.rejects(flushInkSaves(owner), /read lost/);
-    assert.deepEqual(server.puts, []);
-    assert.deepEqual(server.missing, [], "nothing is sent before the document is known");
-    assert.equal(entries.keep.snapshot.dirty, true, "a failed read keeps the drafts");
-    assert.deepEqual(notebookDraftInk(owner, "keep"), [stroke("kept")]);
-    assert.deepEqual(notebookDraftInk(owner, "gone"), [stroke("doomed")]);
-    server.getDown = false;
-    await flushInkSaves(owner);
-    assert.deepEqual(server.missing, [], "no save is sent to the deleted page");
-    assert.deepEqual(server.puts, [["keep", [stroke("kept")]]]);
-    assert.equal(entries.keep.snapshot.dirty, false);
-    assert.equal(notebookDraftInk(owner, "gone"), undefined);
-    await flushInkSaves(owner);
-    assert.deepEqual(server.missing, []);
-    assert.deepEqual(server.puts, [["keep", [stroke("kept")]]]);
-  } finally { forgetDraftsOfPapers([owner]); api.GET = original.GET; api.PUT = original.PUT; api.POST = original.POST; globalThis.localStorage = original.storage; useStore.setState(original.state); queryClient.clear(); }
-});
+test('a restarted notebook writer restores the whole revisioned draft and preserves stable page identities', async () => withNotebookWriter(async f => {
+  const draft = { ...f.fixture, ink: { [f.pageId]: [f.stroke('journal')] } };
+  localStorage.setItem(`papeer-handwriting:${f.id}`, JSON.stringify(draft));
+  const session = await f.loadDesktopNotebookSession(f.id); assert.equal(session.getSnapshot().pending, true);
+  await f.flushDesktopNotebooks(f.id); assert.deepEqual(f.remote.note.ink[f.pageId], draft.ink[f.pageId]);
+  assert.equal(f.remote.writes[0].revision, 'base'); assert.equal(f.remote.writes[0].note.document.pages[0].id, f.pageId);
+}));
+
+test('a malformed notebook journal is retained verbatim and cannot be overwritten by a new edit', async () => withNotebookWriter(async f => {
+  const key = `papeer-handwriting:${f.id}`, raw = '{broken journal \ud800'; localStorage.setItem(key, raw);
+  const session = await f.loadDesktopNotebookSession(f.id);
+  session.edit({ ...session.getSnapshot().note, ink: { [f.pageId]: [f.stroke('new-in-memory')] } });
+  await assert.rejects(session.flush(), /以前の下書き/);
+  assert.equal(localStorage.getItem(key), raw); assert.equal(f.remote.writes.length, 0);
+  assert.equal(session.getSnapshot().pending, true); assert.equal(session.canLeave(), false);
+  assert.equal(JSON.parse(session.getSnapshot().recoveredDrafts[0]).raw, raw);
+}));
+
+test('a notebook save reply lost after commit is confirmed without another mutation or loss of Undo', async () => withNotebookWriter(async f => {
+  const session = await f.loadDesktopNotebookSession(f.id); f.remote.loseReply = true;
+  session.edit({ ...session.getSnapshot().note, ink: { [f.pageId]: [f.stroke('confirmed')] } }); await session.flush();
+  assert.equal(f.remote.writes.length, 1); assert.equal(session.getSnapshot().pending, false);
+  assert.equal(session.getSnapshot().note.revision, f.remote.note.revision); assert.equal(session.getSnapshot().canUndo, true);
+  session.undo(); await session.flush(); assert.deepEqual(f.remote.note.ink[f.pageId] ?? [], []);
+  assert.equal(f.remote.writes.length, 2); assert.equal(session.getSnapshot().pending, false);
+}));
+
+test('a restored draft already committed before restart is confirmed against content without adopting another remote body', async () => withNotebookWriter(async f => {
+  const draft = { ...f.fixture, ink: { [f.pageId]: [f.stroke('before-restart')] } };
+  f.remote.note = { ...draft, revision: 'already-committed' }; localStorage.setItem(`papeer-handwriting:${f.id}`, JSON.stringify(draft));
+  const session = await f.loadDesktopNotebookSession(f.id); await session.flush();
+  assert.equal(session.getSnapshot().note.revision, 'already-committed'); assert.equal(session.getSnapshot().pending, false);
+  assert.equal(localStorage.getItem(`papeer-handwriting:${f.id}`), null);
+}));
+
+test('a page operation lost after commit reconciles the same writer before either placement can edit', async () => withNotebookWriter(async f => {
+  const session = await f.loadDesktopNotebookSession(f.id);
+  modules.api.POST = async () => {
+    assert.equal(session.getSnapshot().editingBlocked, true);
+    f.remote.note = { ...f.remote.note, revision: 'remote-page', document: { ...f.document, revision: 2, pages: [...f.document.pages, { ...f.document.pages[0], id: '2'.repeat(32) }] } };
+    throw new Error('reply lost');
+  };
+  await assert.rejects(modules.notebooks.changeNotebook(f.id, f.document, { action: 'append' }), /reply lost/);
+  assert.deepEqual(session.getSnapshot().note, f.remote.note); assert.equal(session.getSnapshot().editingBlocked, false);
+  assert.equal(session.getSnapshot().note.document.pages.length, 2);
+}));
+
+test('an old notebook GET cannot reinstall a forgotten document session', async () => withNotebookWriter(async f => {
+  let release; f.remote.readGate = new Promise(resolve => { release = resolve; });
+  const loading = f.loadDesktopNotebookSession(f.id); await new Promise(resolve => setImmediate(resolve));
+  modules.pendingSaves.forgetDraftsOfPapers([f.id]); release();
+  await assert.rejects(loading, /閉じられたか削除/); assert.equal(f.desktopNotebookSession(f.id), undefined);
+}));
+
+test('old unversioned page journals stay recoverable and are never silently replayed over another writer', async () => withNotebookWriter(async f => {
+  const key = `papeer-notebook-ink:${f.id}:${f.pageId}`, raw = JSON.stringify([f.stroke('old-page-draft')]);
+  localStorage.setItem(key, raw); const session = await f.loadDesktopNotebookSession(f.id);
+  await f.flushDesktopNotebooks(f.id); assert.equal(f.remote.writes.length, 0);
+  assert.equal(localStorage.getItem(key), raw); assert.equal(session.getSnapshot().recoveredDrafts.length, 1);
+}));
+
+test('remote deletion cannot turn pending notebook ink into an unversioned overwrite', async () => withNotebookWriter(async f => {
+  const session = await f.loadDesktopNotebookSession(f.id); f.remote.offline = true;
+  session.edit({ ...session.getSnapshot().note, ink: { [f.pageId]: [f.stroke('retained')] } }); await assert.rejects(session.flush());
+  f.remote.offline = false; f.remote.note = { ...f.remote.note, revision: 'remote-deletion', document: { ...f.document, revision: 2, pages: [{ ...f.document.pages[0], id: '3'.repeat(32) }] } };
+  await f.loadDesktopNotebookSession(f.id); await assert.rejects(session.flush(), /revision conflict/);
+  assert.equal(session.getSnapshot().remote.revision, 'remote-deletion'); assert.deepEqual(session.getSnapshot().note.ink[f.pageId], [f.stroke('retained')]);
+  assert.equal(f.remote.note.ink[f.pageId], undefined); assert.ok(localStorage.getItem(`papeer-handwriting:${f.id}`));
+}));

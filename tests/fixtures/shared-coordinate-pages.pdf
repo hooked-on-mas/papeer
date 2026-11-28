@@ -1,0 +1,43 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 5 /Kids [3 0 R 4 0 R 5 0 R 6 0 R 7 0 R] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 640 800] /CropBox [40 60 580 760] /Rotate 0 /UserUnit 1.5 /Resources << >> /Contents 8 0 R >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 640 800] /CropBox [40 60 580 760] /Rotate 90 /UserUnit 2 /Resources << >> /Contents 8 0 R >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 640 800] /CropBox [40 60 580 760] /Rotate 180 /UserUnit 1.25 /Resources << >> /Contents 8 0 R >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 640 800] /CropBox [40 60 580 760] /Rotate 270 /UserUnit 1.75 /Resources << >> /Contents 8 0 R >>
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 640 800] /CropBox [41.137 62.523 581.115 761.203] /Rotate 0 /UserUnit 1.333333 /Resources << >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 0 >>
+stream
+endstream
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000139 00000 n 
+0000000292 00000 n 
+0000000444 00000 n 
+0000000600 00000 n 
+0000000756 00000 n 
+0000000930 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R >>
+startxref
+978
+%%EOF

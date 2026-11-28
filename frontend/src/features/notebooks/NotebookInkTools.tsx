@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Popover } from "@base-ui/react/popover";
 import { Eraser, Hand, Highlighter, PenLine, Redo2, Shapes, StickyNote, Type, Undo2, type LucideIcon } from "lucide-react";
 import { withShortcutLabels } from "@/lib/platform";
-import { SHAPE_KINDS, type InkTool } from "@/features/reader/inkGeometry";
+import { SHAPE_KINDS, type InkTool } from "@/features/ink/inkGeometry";
 import {
   EraserSettings, InkCustomColor, InkFavorites, InkShapeSelect, InkStraightOption, InkSwatches, InkWidthSelect, SelectionActions,
   useInkSaveRetry, type InkToolbarProps,

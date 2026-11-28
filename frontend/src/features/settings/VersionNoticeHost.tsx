@@ -4,7 +4,7 @@ import { persist } from "zustand/middleware";
 import { useSettings } from "@/api/hooks";
 import { askConfirm } from "@/components/AppDialogs";
 import { isAppClosing } from "@/app/appClosing";
-import { useSyncState } from "./driveSync";
+import { isRunning, useStore } from "@/store";
 import {
   parseTold, toldAfter, VERSION_NOTICE_KEEP_LABEL, VERSION_NOTICE_OFF_LABEL, VERSION_NOTICE_TITLE, versionNoticeKeys, versionNoticeMessage,
 } from "./settingsVersionNotice";
@@ -62,12 +62,11 @@ let asking = false;
 
 /**
  * Tells about the latest unknown keys unless there is nothing new to tell (versionNoticeKeys), a notice is
- * already up, the app is closing, or a sync holds the screen with its waiting dialog. The keys count as
+ * already up, the app is closing, or a job is running. The keys count as
  * told once the notice is answered, i.e. it was on screen; keys that arrived meanwhile are told next.
  */
 function tellUnknownKeys(): void {
-  const sync = useSyncState.getState();
-  if (asking || isAppClosing() || (sync.busy && !sync.background)) return;
+  if (asking || isAppClosing() || useStore.getState().activeJobs.some(isRunning)) return;
   // Read now rather than subscribed: turning the notice back on in the settings takes effect from the
   // next launch (or the next keys), instead of putting it up over the settings at once.
   const keys = versionNoticeKeys(latestKeys, { dismissed: useVersionNoticePrefs.getState().dismissed, told: readTold() });
@@ -86,16 +85,16 @@ function tellUnknownKeys(): void {
 /**
  * Mounted once: tells the user, when the settings are loaded (at launch, or again after a sync or a save),
  * that settings.json holds keys this version does not know. The notice waits its turn among the other
- * questions (dialogQueue), and while a sync holds the screen with its waiting dialog.
+ * questions (dialogQueue), and while a job is running.
  */
 export function SettingsVersionNotice() {
   const { data } = useSettings();
   const unknownKeys = data?.unknown_keys;
-  const syncHoldsScreen = useSyncState((s) => s.busy && !s.background);
+  const jobRunning = useStore((s) => s.activeJobs.some(isRunning));
   useEffect(() => {
     latestKeys = unknownKeys;
     tellUnknownKeys();
-  }, [unknownKeys, syncHoldsScreen]);
+  }, [unknownKeys, jobRunning]);
   return null;
 }
 

@@ -11,7 +11,7 @@ import { useErrorDialog } from "@/components/errorDialog";
 import { showToast } from "@/components/toast";
 import { errorAdvice, type ErrorReport } from "@/lib/errorReports";
 import { QK } from "@/lib/queryKeys";
-import { requestLibraryRefresh } from "@/lib/libraryRefresh";
+import { requestLibraryRefresh } from "@/features/library/state/libraryRefresh";
 import { useLastUsage, usageSummary, type Usage } from "@/lib/usage";
 import { readingTime } from "@/lib/statusLifetime";
 import { markConnected, markDisconnected, useConnection } from "./connection";

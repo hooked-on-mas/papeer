@@ -4,7 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { createServer } from "vite";
 import { chromium, type Page } from "playwright-core";
-import type { Term } from "../src/features/reader/translationStart.ts";
+import type { Term } from "../src/features/reader/translation/translationStart.ts";
 
 async function openDictionary(page: Page) {
   await openAdvanced(page);

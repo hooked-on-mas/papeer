@@ -95,7 +95,8 @@ def list_attachments(paper_id: str):
 def all_attachments():
     lib = deps.get_library()
     with lib.connection() as db:
-        return [dict(row) for row in db.execute("SELECT * FROM attachments ORDER BY owner_id,position,created_at,id")]
+        owners = [row[0] for row in db.execute("SELECT id FROM papers WHERE parent_id IS NULL")]
+    return [row for owner in owners for row in lib.attachments(owner)]
 
 
 @router.post("/api/papers/{paper_id}/attachments", response_model=MemoContent)

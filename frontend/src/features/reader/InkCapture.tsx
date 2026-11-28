@@ -2,7 +2,7 @@ import { useItemCapabilities } from "@/api/hooks";
 import { useEffect, useState } from "react";
 import { api, authorizedUrl, unwrap } from "@/api/client";
 import { useStore } from "@/store";
-import type { Bounds } from "./inkGeometry";
+import type { Bounds } from "../ink/inkGeometry";
 import type { InkSide } from "./inkStore";
 import { flushInkSaves } from "./inkStore";
 
@@ -26,7 +26,7 @@ export function InkCapture({ paperId, page, pageId, side, box, onClose }: { pape
   const url = file ? authorizedUrl(`/api/papers/${paperId}/${file}`) : "";
   const copy = async () => {
     try {
-      if (!navigator.clipboard?.write) throw new Error("この環境では画像コピーが使えません。「メモに追加」を利用してください。");
+      if (!navigator.clipboard?.write) throw new Error("この環境では画像コピーが使えません。「ノートに追加」を利用してください。");
       // Start the clipboard operation during the user's click, keeping browser permission valid.
       await navigator.clipboard.write([new ClipboardItem({ "image/png": fetch(url).then(r => {
         if (!r.ok) throw new Error("画像を取得できませんでした。"); return r.blob();
@@ -44,7 +44,7 @@ export function InkCapture({ paperId, page, pageId, side, box, onClose }: { pape
           const store = useStore.getState();
           store.setNoteInsert({ paperId, text: `\n\n![p.${page} ${side === "original" ? "原文" : "日本語訳"}の図・数式](${file})\n\n[出典 p.${page}](papeer://${paperId}/${page})\n` });
           store.openSidePanel("notes"); onClose();
-        }}>メモに追加</button></div></>}
+        }}>ノートに追加</button></div></>}
     {error && <p role="alert" className="mt-2 text-destructive">{error}</p>}
   </div>;
 }

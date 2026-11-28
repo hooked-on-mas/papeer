@@ -3,7 +3,7 @@ import { useStore } from "@/store";
 import type { JobFinished, JobHandlers } from "@/features/jobs/jobHandlers";
 import { showSummary } from "@/features/reader/navigation";
 
-/** Open the job's paper and show its 解説 (beside the PDF when the side panel is open there). */
+/** Open the job's paper and show its サマリー (beside the PDF when the side panel is open there). */
 function openSummary(event: JobFinished): void {
   if (!event.paper_id) return;
   const store = useStore.getState();
@@ -16,10 +16,10 @@ export const summaryJobHandlers: JobHandlers = {
   article: {
     succeeded: (event, { visible, done }) => {
       done("「サマリー」タブで確認できます。ページ参照をクリックすると原文へ移動します。", {
-        title: "解説ができました",
+        title: "サマリーができました",
         action: visible ? undefined : { label: "開く", run: () => openSummary(event) },
       });
-      notifyIfAway("解説ができました", "「サマリー」タブで確認できます。");
+      notifyIfAway("サマリーができました", "「サマリー」タブで確認できます。");
       const store = useStore.getState();
       if (event.paper_id && event.paper_id === store.activePaperId) showSummary();
     },

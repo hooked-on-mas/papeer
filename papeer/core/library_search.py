@@ -43,6 +43,8 @@ def library_search(lib: Library, query: str, limit: int = 200) -> dict:
     # Every item the library lists: metadata/tags and pages' text (after OCR for a notebook).
     # Memo search is a later stage. The hit opens in the reader by paper_id whatever its kind.
     papers = lib.items()
+    with lib.connection() as db:
+        markdown_texts = {r[0]: r[1] for r in db.execute('SELECT id,content FROM note_state')}
     documents = _document_places(lib, terms, {paper["id"] for paper in papers})
     index = search_index.SearchIndex(lib.root)
     try:
@@ -56,7 +58,7 @@ def library_search(lib: Library, query: str, limit: int = 200) -> dict:
             candidates = []
             for position, paper in enumerate(papers):
                 metadata = _metadata_text(paper).casefold()
-                in_metadata = any(term in metadata for term in terms)
+                in_metadata = any(term in metadata or term in markdown_texts.get(paper["id"], "").casefold() for term in terms)
                 count = counts.get(paper["id"], 0) + (len(documents.get(paper["id"], ())) if counted else 0)
                 # A short term is not counted: any paper may have it, and each is checked in turn.
                 if in_metadata or count or not counted or paper["id"] in unindexed or paper["id"] in documents:
@@ -108,6 +110,10 @@ def _search_places(lib: Library, terms: list[str], limit: int, candidates, docum
     with lib.connection() as db:
         for paper, places in candidates:
             add(paper, "metadata", None, _metadata_text(paper))
+            if paper.get('kind') == 'markdown':
+                content = db.execute('SELECT content FROM note_state WHERE id=?', (paper['id'],)).fetchone()
+                if content:
+                    add(paper, 'metadata', None, content[0])
             pages = None if places is None else {page for side, page, _ in places if side == "original"}
             if pages is None or pages:
                 for number, text in db.execute("SELECT number,text FROM pages WHERE paper_id=? ORDER BY number", (paper["id"],)):

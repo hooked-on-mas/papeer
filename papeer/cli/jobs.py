@@ -2,7 +2,7 @@
 sidecar it ran on went away.
 
 A job lives in one sidecar's memory. The sidecar the CLI started leaves when idle and the window's takes
-the library over from it (cancelling its jobs without the user's 中止, sidecar/instance.py): in both cases
+the library over from it (cancelling its jobs without the user's 中止, sidecar/lifecycle/instance.py): in both cases
 the job we wait on is gone with its sidecar. Telling that apart from a 中止 in the window is what
 `Session.gone` is for: when the sidecar we talked to no longer serves the library, the request is sent
 again to the one that does (at most `reconnects` times). That is safe because the work is restartable: a
@@ -49,7 +49,7 @@ class _Lost(Exception):
 
 @dataclass
 class JobInfo:
-    """A job as GET /api/jobs/{job_id} tells it (sidecar/job_types.JobInfo)."""
+    """A job as GET /api/jobs/{job_id} tells it (sidecar/lifecycle/job_types.JobInfo)."""
     job_id: str
     kind: str
     status: str

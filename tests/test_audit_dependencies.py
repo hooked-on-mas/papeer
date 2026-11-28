@@ -45,7 +45,9 @@ def test_every_check_runs_on_the_lock_files():
     assert cargo == ["C:/bin/cargo.exe", "audit", "--file", str(ROOT / "frontend/src-tauri/Cargo.lock")]
     # The reports go straight to the terminal; only the probes are captured.
     assert [call[2] for call in tools.calls] == [True, False, False, True, False]
-    assert out.getvalue().count("既知の脆弱性はありません") == 3
+    assert out.getvalue().count("既知の脆弱性はありません") == 2
+    assert "cargo audit の脆弱性エラーはありません" in results[-1].message
+    assert "警告" in results[-1].message and "docs/rust-dependency-review.md" in results[-1].message
 
 
 def test_a_missing_cargo_audit_is_explained_and_fails():

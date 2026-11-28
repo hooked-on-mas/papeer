@@ -15,7 +15,7 @@ const KIND_LABELS: Record<string, string> = {
   "glossary-split": "辞書の分野分け",
   "term-replace": "訳語の一括置換",
   "term-research": "訳語のWeb調査",
-  article: "解説の作成",
+  article: "サマリーの作成",
   ask: "チャットの回答",
   check: "接続の確認",
   import: "PDFの追加",

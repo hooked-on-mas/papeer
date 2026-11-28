@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, with_config
 
 from papeer.core.translation_status import TranslationStatus
 from papeer.core.pdf_outline import PdfOutlineEntry
-from sidecar.job_types import GlossaryTerm, OrganizeProposal, Usage
+from sidecar.lifecycle.job_types import GlossaryTerm, OrganizeProposal, Usage
 from sidecar.schemas.common import Stored
 
 
@@ -135,7 +135,7 @@ class PaperRow(BaseModel):
     arxiv_id: str
     venue: str
     # What the item is: the viewer, and which features apply, follow from it (papeer/core/item_relations.py).
-    kind: Literal["pdf", "notebook"]
+    kind: Literal["pdf", "notebook", "markdown"]
     # The item a notebook is held by; None for an item that stands on its own (every PDF paper).
     parent_id: str | None
     # When it was last opened on this PC, UTC ISO text; None if never.
@@ -149,6 +149,7 @@ class PaperRow(BaseModel):
     # can be asked about, with no OCR.
     html_document_count: int = 0
     owned_notebook_count: int = 0
+    note_position: int = 0
     link_count: int = 0
     # Translation progress (library_list.translation_state).
     translated_count: int = 0

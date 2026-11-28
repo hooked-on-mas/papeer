@@ -5,7 +5,7 @@ from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, Field
 
-from sidecar.job_types import Usage
+from sidecar.lifecycle.job_types import Usage
 from sidecar.schemas.common import Stored
 from sidecar.schemas.research import ChatResearch
 

@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Reader } from "../../src/features/reader/Reader";
+import { LegacyPdfReaderConnection as Reader } from "../../src/features/reader/LegacyPdfReaderConnection";
 import { useStore } from "../../src/store";
 import { queryClient } from "../../src/lib/queryClient";
 import "../../src/index.css";

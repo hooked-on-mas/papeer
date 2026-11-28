@@ -1,14 +1,17 @@
-import type { InkStroke } from "../features/reader/inkGeometry.ts";
+import type { InkStroke } from "../features/ink/inkGeometry.ts";
 import type { Manifest } from "./drive.ts";
 import type { LibraryTransport } from "./offlineLibrary.ts";
 
 export type Anchor = { paper_id: string; side: "original" | "translated"; source_sha256: string; page: number };
-export type Operation = Anchor & { version: 1; id: string; library_id: string } &
-  ({ action: "add"; stroke: InkStroke } | { action: "remove"; target: string });
+export type InkChange = { action: "add"; stroke: InkStroke } | { action: "remove"; target: string };
+export type Operation = Anchor & { id: string; library_id: string } &
+  (({ version: 1 } & InkChange) | { version: 2; action: 'edit'; changes: InkChange[] });
 export type PageInk = { strokes: InkStroke[]; highlights: { color: string; rects: number[][] }[] };
 export type BaseInk = { version: 1; pages: Record<string, PageInk>; applied: string[] };
 const uuid = /^[a-f0-9-]{36}$/;
 const webId = /^web-[a-f0-9-]{36}$/;
+// A grouped Undo may restore an entire legal page (200k points and 3k text objects).
+export const MAX_INK_OPERATION_BYTES = 32 * 1024 * 1024;
 export function validStroke(s: InkStroke): boolean {
   return !!s && typeof s.id === "string" && s.id.length > 0 && s.id.length <= 80 && /^#[a-f\d]{6}$/i.test(s.color) && Number.isFinite(s.width) && s.width > 0 && s.width <= .08
     && Array.isArray(s.points) && s.points.length > 0 && s.points.length <= 20000
@@ -18,28 +21,40 @@ export function validStroke(s: InkStroke): boolean {
 }
 export function parseOperation(value: unknown, libraryId: string): Operation {
   const op = value as Operation;
-  if (!op || op.version !== 1 || typeof op.id !== "string" || !uuid.test(op.id) || op.library_id !== libraryId
+  if (!op || ![1, 2].includes(op.version) || typeof op.id !== "string" || op.id.length !== 36 || !uuid.test(op.id) || op.library_id !== libraryId
     || typeof op.paper_id !== "string" || !/^[a-f0-9]{32}$/.test(op.paper_id) || !["original", "translated"].includes(op.side)
     || typeof op.source_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(op.source_sha256)
     || !Number.isSafeInteger(op.page) || op.page < 1 || op.page > 100000
-    || Object.keys(op).some(key => !["paper_id", "side", "source_sha256", "page", "version", "id", "library_id", "action", "stroke", "target"].includes(key))
-    || (op.action === "add" ? "target" in op || !validStroke(op.stroke) || op.stroke.id !== "web-" + op.id
-      : op.action !== "remove" || "stroke" in op || typeof op.target !== "string" || !webId.test(op.target))) {
+    || Object.keys(op).some(key => !["paper_id", "side", "source_sha256", "page", "version", "id", "library_id", "action", "stroke", "target", "changes"].includes(key))) {
     throw new Error("保存されたWeb書き込みの形式が不正です。再読み込みしても続く場合はDriveの書き込みファイルを確認してください。");
+  }
+  const validChange = (change: InkChange) => !!change && (change.action === 'add'
+    ? Object.keys(change).every(key => key === 'action' || key === 'stroke') && validStroke(change.stroke) && change.stroke.id.length === 40 && webId.test(change.stroke.id)
+    : change.action === 'remove' && Object.keys(change).every(key => key === 'action' || key === 'target') && typeof change.target === 'string' && change.target.length === 40 && webId.test(change.target));
+  if (op.version === 1) {
+    const change: InkChange = op.action === 'add' ? { action: 'add', stroke: op.stroke } : { action: 'remove', target: op.target };
+    if ('changes' in op || !['add', 'remove'].includes(op.action) || !validChange(change)
+      || (op.action === 'add' ? 'target' in op || op.stroke.id !== 'web-' + op.id : 'stroke' in op)) throw new Error('保存されたWeb書き込みの操作が不正です。');
+  } else {
+    if (op.action !== 'edit' || 'stroke' in op || 'target' in op || !Array.isArray(op.changes) || !op.changes.length || op.changes.length > 3000
+      || !op.changes.every(validChange)) throw new Error('保存されたWeb書き込みの一括操作が不正です。');
+    const ids = op.changes.map(change => change.action === 'add' ? change.stroke.id : change.target);
+    if (new Set(ids).size !== ids.length) throw new Error('一括操作の書き込みIDが重複しています。');
   }
   return op;
 }
+export const operationChanges = (op: Operation): InkChange[] => op.version === 2 ? op.changes : [op.action === 'add' ? { action: 'add', stroke: op.stroke } : { action: 'remove', target: op.target }];
 export const samePage = (a: Anchor, b: Anchor) => a.paper_id === b.paper_id && a.side === b.side
   && a.source_sha256 === b.source_sha256 && a.page === b.page;
 
 export function mergeInk(base: InkStroke[], operations: Operation[], anchor: Anchor, applied: readonly string[]): InkStroke[] {
   const page = operations.filter(op => samePage(op, anchor));
-  const deleted = new Set(page.flatMap(op => op.action === "remove" ? [op.target] : []));
+  const deleted = new Set(page.flatMap(op => operationChanges(op).flatMap(change => change.action === 'remove' ? [change.target] : [])));
   const result = new Map(base.map(s => [s.id, s]));
   const imported = new Set(applied);
-  for (const op of page) if (op.action === "add" && !imported.has(op.id) && !deleted.has(op.stroke.id) && !result.has(op.stroke.id)) result.set(op.stroke.id, op.stroke);
+  for (const op of page) for (const change of operationChanges(op)) if (change.action === "add" && !imported.has(op.id) && !deleted.has(change.stroke.id) && !result.has(change.stroke.id)) result.set(change.stroke.id, change.stroke);
   // Imported deletes are already represented by the snapshot. Later PC edits/undo stay authoritative.
-  for (const op of page) if (op.action === "remove" && !imported.has(op.id)) result.delete(op.target);
+  for (const op of page) for (const change of operationChanges(op)) if (change.action === "remove" && !imported.has(op.id)) result.delete(change.target);
   return [...result.values()];
 }
 
@@ -51,6 +66,7 @@ export class AnnotationStore {
   private base: BaseInk = { version: 1, pages: {}, applied: [] };
   private listeners = new Set<() => void>();
   private prefix: string;
+  private admissionPrefix: string;
   private controller = new AbortController();
   private disposed = false;
   private inFlight: Promise<void> | undefined;
@@ -70,6 +86,7 @@ export class AnnotationStore {
       this.storage = new Proxy({} as Storage, { get() { throw new Error("このブラウザーでは端末の保存領域を利用できません。サイトの保存設定を確認してください。"); } });
     }
     this.prefix = `papeer-ink:${libraryId}:`;
+    this.admissionPrefix = `papeer-ink-admission:${libraryId}:`;
   }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getSnapshot = () => this.state;
@@ -94,6 +111,13 @@ export class AnnotationStore {
         try { this.storage = localStorage; this.blockedStorage = false; }
         catch { throw new Error("このブラウザーでは端末の保存領域を利用できないため、書き込みを保存できません。サイトの保存設定を確認してください。"); }
       }
+      // A closed tab can leave a capacity probe behind. It is never an operation.
+      const abandonedProbes: string[] = [];
+      for (let i = 0; i < this.storage.length; i++) {
+        const key = this.storage.key(i)!;
+        if (key.startsWith(this.admissionPrefix)) abandonedProbes.push(key);
+      }
+      for (const key of abandonedProbes) this.storage.removeItem(key);
       for (let i = 0; i < this.storage.length; i++) {
         const key = this.storage.key(i)!;
         if (!key.startsWith(this.prefix)) continue;
@@ -128,7 +152,7 @@ export class AnnotationStore {
     // A few requests at once, without starting thousands of simultaneous downloads.
     for (let i = 0; i < files.length; i += 6) {
       const values = await Promise.all(files.slice(i, i + 6).map(async file => {
-        if (Number(file.size) > 1024 * 1024) throw new Error("Web書き込みファイルが大きすぎます。");
+        if (Number(file.size) > MAX_INK_OPERATION_BYTES) throw new Error("Web書き込みファイルが大きすぎます。");
         const knownId = /^ink-([a-f0-9-]{36})\.json$/.exec(file.name)?.[1];
         if (knownId && this.operations.has(knownId) && !this.pending.has(knownId)) return;
         return parseOperation(await this.session.annotation(file.id, this.controller.signal), this.libraryId);
@@ -150,14 +174,47 @@ export class AnnotationStore {
   remove(anchor: Anchor, target: string) {
     this.commit({ ...anchor, version: 1, id: crypto.randomUUID(), library_id: this.libraryId, action: "remove", target });
   }
-  private commit(op: Operation) {
+  edit(anchor: Anchor, change: { remove?: string[]; add?: Omit<InkStroke, 'id'>[] }): InkStroke[] {
+    const added = (change.add ?? []).map(stroke => ({ ...stroke, id: 'web-' + crypto.randomUUID() }));
+    const changes: InkChange[] = [...(change.remove ?? []).map(target => ({ action: 'remove' as const, target })), ...added.map(stroke => ({ action: 'add' as const, stroke }))];
+    if (changes.length) this.commit({ ...anchor, version: 2, id: crypto.randomUUID(), library_id: this.libraryId, action: 'edit', changes });
+    return added;
+  }
+  private commit(value: Operation) {
     try {
+      const op = structuredClone(value);
       if (!this.state.ready || this.disposed) throw new Error("書き込みの読み込みが終わるまでお待ちください。");
       parseOperation(op, this.libraryId);
-      if (op.action === "add") {
-        const strokes = this.page(op).strokes;
-        if (strokes.length >= 3000 || strokes.reduce((n, s) => n + s.points.length, op.stroke.points.length) > 200000) {
-          throw new Error("このページの書き込みが多すぎます。別のページに追加してください。");
+      const changes = operationChanges(op), removed = new Set(changes.flatMap(change => change.action === 'remove' ? [change.target] : []));
+      const strokes = [...this.page(op).strokes.filter(stroke => !removed.has(stroke.id)), ...changes.flatMap(change => change.action === 'add' ? [change.stroke] : [])];
+      if (strokes.length > 3000 || strokes.reduce((n, s) => n + s.points.length, 0) > 200000) {
+        throw new Error("このページの書き込みが多すぎます。別のページに追加してください。");
+      }
+      if (new TextEncoder().encode(JSON.stringify(op)).byteLength > MAX_INK_OPERATION_BYTES) throw new Error('一操作の書き込みが大きすぎます。');
+      const restored = this.page(op).strokes.filter(stroke => removed.has(stroke.id));
+      if (restored.length) {
+        // Wire limits are larger than localStorage's quota. Admit a destructive
+        // operation only when its complete inverse fits the actual local journal.
+        // This cannot reserve capacity against later writes by other tabs.
+        const inverse: Operation = { paper_id: op.paper_id, side: op.side, source_sha256: op.source_sha256, page: op.page,
+          id: crypto.randomUUID(), library_id: this.libraryId, version: 2, action: 'edit', changes: [
+          ...changes.flatMap(change => change.action === 'add' ? [{ action: 'remove' as const, target: change.stroke.id }] : []),
+          ...restored.map(stroke => ({ action: 'add' as const, stroke: { ...stroke, id: 'web-' + crypto.randomUUID() } })),
+        ] };
+        const probeKey = this.admissionPrefix + crypto.randomUUID();
+        try {
+          const body = JSON.stringify(inverse);
+          if (new TextEncoder().encode(body).byteLength > MAX_INK_OPERATION_BYTES) throw new Error('復元操作が大きすぎます。');
+          // Offline Undo must coexist with the still-pending forward operation.
+          // Probe both bodies and both durable keys in one scratch write; never
+          // persist a real deletion until admission succeeds. JSON array syntax
+          // adds a small conservative margin to the Storage UTF-16 footprint.
+          const keyPadding = Math.max(0, (this.prefix + op.id).length + (this.prefix + inverse.id).length - probeKey.length);
+          this.storage.setItem(probeKey, JSON.stringify([op, inverse]) + ' '.repeat(keyPadding));
+          this.storage.removeItem(probeKey);
+        } catch (error) {
+          try { this.storage.removeItem(probeKey); } catch { /* Next initialization cleans abandoned probes. */ }
+          throw new Error('元に戻すための保存領域が足りません。一度に消去する量を減らしてください。' + String(error));
         }
       }
       // Synchronous durable write BEFORE showing the stroke or starting the network request.

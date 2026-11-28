@@ -31,7 +31,7 @@ from tools.smoke_sidecar import stub_answer  # noqa: E402
 # papeer.core.reading_tools sends {"source": ..., "existing_terms": [...]} for the glossary draft.
 GLOSSARY_MARKER = '"existing_terms"'
 GLOSSARY_TERMS = 6
-# papeer.core.glossary_domains sends {"paper": ..., "available_domains": [...]} to choose a paper's domain
+# papeer.core.glossary.glossary_domains sends {"paper": ..., "available_domains": [...]} to choose a paper's domain
 # dictionaries and {"domain": ..., "terms": [...], "existing_domains": [...]} to split one.
 SELECT_MARKER = '"available_domains"'
 SPLIT_MARKER = '"existing_domains"'

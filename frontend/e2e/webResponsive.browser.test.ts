@@ -6,7 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { createServer } from "vite";
 import { chromium, webkit } from "playwright-core";
-import type { Operation } from "../src/web/annotations.ts";
+import type { Operation } from '../src/web/annotations';
 
 for (const variant of ["mouse", "touch", "webkit"] as const) {
   test(`reader adapts to available space and preserves editing (${variant})`, { timeout: 120_000 }, async t => {
@@ -14,7 +14,9 @@ for (const variant of ["mouse", "touch", "webkit"] as const) {
     const output = path.resolve(frontend, "../output/pwa/responsive", variant);
     fs.mkdirSync(output, { recursive: true });
     const server = await createServer({ cacheDir: path.join(output, "vite-" + randomUUID()),
-      configFile: path.join(frontend, "vite.web.config.ts"), logLevel: "error", server: { host: "127.0.0.1", port: 0, hmr: false } });
+      configFile: path.join(frontend, "vite.web.config.ts"), logLevel: "error", server: { host: "127.0.0.1", port: 0, hmr: false,
+        fs: { allow: [frontend, fs.realpathSync(path.join(frontend, 'node_modules/@fontsource-variable/geist')),
+          fs.realpathSync(path.join(frontend, 'node_modules/katex'))] } } });
     await server.listen(); t.after(() => server.close());
     const browser = variant === "webkit" ? await webkit.launch({ headless: true }) : await chromium.launch({ channel: "msedge", headless: true });
     const context = await browser.newContext({ viewport: { width: 834, height: 1194 }, hasTouch: variant !== "mouse",
@@ -59,27 +61,29 @@ $$
         [`papers/${paper}/article.md`]: { ...file("summary"), mime: "text/markdown" },
         "library-data.json": { ...file("db"), mime: "application/json" },
       } };
+    const operations = new Map<string, Operation>();
     await context.route("https://accounts.google.com/gsi/client", route => route.fulfill({ contentType: "text/javascript", body:
       'window.google={accounts:{oauth2:{initTokenClient:opts=>({requestAccessToken:()=>opts.callback({access_token:"responsive-test",expires_in:3600})})}}};' }));
-    const operations = new Map<string, Operation>();
     await context.route("https://www.googleapis.com/**", async route => {
       const req = route.request(), url = new URL(req.url());
       const headers = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*" };
       if (req.method() === "OPTIONS") { await route.fulfill({ status: 204, headers }); return; }
       assert.equal(req.headers().authorization, "Bearer responsive-test");
       if (req.method() === "POST") {
-        const boundary = req.headers()["content-type"].split("boundary=")[1];
-        const parts = req.postData()!.split("--" + boundary);
-        const operation: Operation = JSON.parse(parts[2].split("\r\n\r\n")[1].trim());
+        const boundary = req.headers()['content-type'].split('boundary=')[1];
+        const parts = req.postData()!.split('--' + boundary);
+        const metadata = JSON.parse(parts[1].split('\r\n\r\n')[1].trim());
+        assert.equal(metadata.properties.papeer, 'ink-v1');
+        const operation: Operation = JSON.parse(parts[2].split('\r\n\r\n')[1].trim());
         operations.set(operation.id, operation);
-        await route.fulfill({ json: { id: "event-" + operation.id }, headers }); return;
+        await route.fulfill({ json: { id: 'event-' + operation.id }, headers }); return;
       }
       const id = url.pathname.split("/").pop()!;
-      if (id === "files") await route.fulfill({ json: { files: url.searchParams.get("q")?.includes("ink-v1")
-        ? [...operations.values()].map(op => ({ id: "event-" + op.id, name: `ink-${op.id}.json`, size: String(Buffer.byteLength(JSON.stringify(op))) }))
-        : [{ id: "library", name: "papeer-library.json", modifiedTime: manifest.updated_at }] }, headers });
+      if (id === "files") await route.fulfill({ json: { files: url.searchParams.get('q')?.includes('ink-v1')
+        ? [...operations.values()].map(operation => ({ id: 'event-' + operation.id, name: `ink-${operation.id}.json`, size: String(Buffer.byteLength(JSON.stringify(operation))) }))
+        : url.searchParams.get('q')?.includes('notes-v1') ? [] : [{ id: "library", name: "papeer-library.json", modifiedTime: manifest.updated_at }] }, headers });
       else if (id === "library") await route.fulfill({ json: manifest, headers });
-      else if (id.startsWith("event-")) await route.fulfill({ json: operations.get(id.slice(6)), headers });
+      else if (id.startsWith('event-')) { assert.ok(operations.has(id.slice(6))); await route.fulfill({ json: operations.get(id.slice(6)), headers }); }
       else { assert.ok(blobs[id], id); await route.fulfill({ body: blobs[id], headers }); }
     });
     await page.goto(process.env.PAPEER_WEB_TEST_URL || server.resolvedUrls!.local[0]);
@@ -92,11 +96,11 @@ $$
     const ready = async () => {
       await translated.locator('[data-page-number="2"] canvas').waitFor();
       await page.waitForFunction(() => [...document.querySelectorAll<HTMLElement>('.web-pdf-pane')].every(pane => {
-        const canvas = pane.querySelector('canvas'), pen = [...pane.querySelectorAll<HTMLButtonElement>('.ink-tools button')].find(button => button.title === "ペン");
+        const canvas = pane.querySelector('canvas'), pen = [...document.querySelectorAll<HTMLButtonElement>('.ink-tools button')].find(button => button.title === "ペン");
         const style = getComputedStyle(pane), width = pane.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
         const zoom = Number(document.querySelector<HTMLSelectElement>('[aria-label="表示倍率"]')?.value ?? 1);
-        return !!canvas && !!pen && !pen.disabled && !!pane.querySelector('[data-testid="web-ink"]')
-          && Math.abs(canvas.getBoundingClientRect().width - Math.floor(width * zoom)) < 1;
+        return !!canvas && !!pen && !pen.disabled && !!pane.querySelector('.pdf[data-rendered="true"] [data-testid="web-ink"]')
+          && Math.abs(canvas.getBoundingClientRect().width - width * zoom) <= 1;
       }));
     };
     await mode.waitFor();
@@ -112,7 +116,7 @@ $$
     await page.getByLabel("ペンの太さ").selectOption("0.006");
     await page.getByLabel("書き込みの色").fill("#0066ff");
     assert.equal(await page.getByLabel("ペンの太さ").inputValue(), "0.006");
-    for (const name of ["本文", "サマリー", "チャット", "メモ", "付箋"]) {
+    for (const name of ["本文", "サマリー", "チャット", "ノート", "付箋"]) {
       assert.equal(await page.getByRole("tab", { name, exact: true }).isVisible(), true);
     }
     await page.getByRole("tab", { name: "サマリー", exact: true }).click();
@@ -121,7 +125,7 @@ $$
     assert.equal(await page.locator(".katex-error").count(), 0);
     assert.equal(await page.getByRole("button", { name: "サマリーを右に表示", exact: true }).count(), 0);
     await page.screenshot({ path: path.join(output, "tablet-summary-math.png") });
-    await page.getByRole("tab", { name: "メモ", exact: true }).click();
+    await page.getByRole("tab", { name: "ノート", exact: true }).click();
     await page.getByRole("heading", { name: "比較しながら読むメモ", exact: true }).waitFor();
     await page.getByRole("tab", { name: "チャット", exact: true }).click();
     await page.locator(".reading-data .katex").waitFor();
@@ -159,7 +163,7 @@ $$
     await page.getByRole("button", { name: "日本語訳を表示", exact: true }).click();
     await page.getByRole("button", { name: "次のページ", exact: true }).click();
     await ready();
-    await translated.getByRole("button", { name: "ペン", exact: true }).click();
+    await page.getByRole('toolbar', { name: 'PDFの書き込みツール' }).getByRole("button", { name: "ペン", exact: true }).click();
     const ink = translated.getByTestId("web-ink"); const box = (await ink.boundingBox())!;
     await page.mouse.move(box.x + 100, box.y + 100); await page.mouse.down();
     await page.mouse.move(box.x + 160, box.y + 120, { steps: 4 }); await page.mouse.up();
@@ -217,7 +221,7 @@ $$
     await page.screenshot({ path: path.join(output, "tall-single.png") });
     assert.equal(await translated.locator("[data-ink-id]").count(), 1);
     // Keyboard/focus changes do not replace an in-progress memo editor.
-    await translated.getByRole("button", { name: "文字メモ", exact: true }).click();
+    await page.getByRole('toolbar', { name: 'PDFの書き込みツール' }).getByRole("button", { name: "文字メモ", exact: true }).click();
     await translated.getByTestId("web-ink").click({ position: { x: 120, y: 150 } });
     const memo = page.getByLabel("PDFに追加するメモ"); await memo.fill("回転しても残る下書き");
     await page.setViewportSize({ width: 1194, height: 834 });
@@ -334,22 +338,22 @@ $$
     });
     const beforeNotes = await readingPoint();
     await page.getByRole("button", { name: "右パネルを選択", exact: true }).click();
-    await page.getByRole("menuitemcheckbox", { name: "メモを右に表示", exact: true }).click();
-    await page.getByRole("complementary", { name: "メモ（右パネル）" }).waitFor(); await settled();
+    await page.getByRole("menuitemcheckbox", { name: "ノートを右に表示", exact: true }).click();
+    await page.getByRole("complementary", { name: "ノート（右パネル）" }).waitFor(); await settled();
     const besideNotes = await readingPoint();
     assert.ok(Math.abs(beforeNotes.y - besideNotes.y) < .005 && Math.abs(beforeNotes.x - besideNotes.x) < .005, "opening notes preserves the reading passage");
     await page.getByRole("button", { name: "右パネルを閉じる", exact: true }).click(); await settled();
     const afterNotes = await readingPoint();
     assert.ok(Math.abs(beforeNotes.y - afterNotes.y) < .005 && Math.abs(beforeNotes.x - afterNotes.x) < .005, "closing notes restores the passage too");
     await page.getByRole("button", { name: "右パネルを選択", exact: true }).click();
-    await page.getByRole("menuitemcheckbox", { name: "メモを右に表示", exact: true }).click();
-    const notesPanel = page.getByRole("complementary", { name: "メモ（右パネル）" }); await notesPanel.waitFor();
+    await page.getByRole("menuitemcheckbox", { name: "ノートを右に表示", exact: true }).click();
+    const notesPanel = page.getByRole("complementary", { name: "ノート（右パネル）" }); await notesPanel.waitFor();
     await page.setViewportSize({ width: 834, height: 1194 });
     await notesPanel.waitFor({ state: "hidden" });
     assert.equal(await page.getByRole("button", { name: "右パネルを選択", exact: true }).count(), 0);
-    await page.getByRole("tab", { name: "メモ", exact: true }).click();
+    await page.getByRole("tab", { name: "ノート", exact: true }).click();
     await page.getByRole("heading", { name: "比較しながら読むメモ", exact: true }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "メモを右に表示", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "ノートを右に表示", exact: true }).count(), 0);
     await page.getByRole("tab", { name: "本文", exact: true }).click();
     await page.setViewportSize({ width: 1366, height: 768 }); await notesPanel.waitFor();
     await page.getByRole("button", { name: "右パネルを閉じる", exact: true }).click();
@@ -374,27 +378,27 @@ $$
     await page.keyboard.press("Escape");
     assert.equal(await page.locator(".web-display-options[open]").count(), 0);
     assert.equal(await menu.evaluate(element => document.activeElement === element), true);
-    const inkMenu = translated.getByLabel("書き込み設定", { exact: true });
+    const inkMenu = page.getByLabel("書き込み設定", { exact: true });
     await inkMenu.click(); await menuBounds(".ink-options[open] > div");
-    const finger = translated.getByRole("checkbox", { name: "指でも書く" });
+    const finger = page.getByRole("checkbox", { name: "指でも書く" });
     await finger.scrollIntoViewIfNeeded(); await finger.check(); assert.equal(await finger.isChecked(), true);
     await page.setViewportSize({ width: 393, height: 300 });
     await menuBounds(".ink-options[open] > div");
-    const lastAction = translated.locator(".ink-history-menu").getByRole("button", { name: "書き込みを同期・再試行", exact: true });
+    const lastAction = page.locator(".ink-history-menu").getByRole("button", { name: "書き込みを同期・再試行", exact: true });
     await lastAction.scrollIntoViewIfNeeded();
-    const actionBox = (await lastAction.boundingBox())!, popup = (await translated.locator('.ink-options > div').boundingBox())!;
+    const actionBox = (await lastAction.boundingBox())!, popup = (await page.locator('.ink-options > div').boundingBox())!;
     assert.ok(actionBox.y >= popup.y && actionBox.y + actionBox.height <= popup.y + popup.height,
       "the last menu action fits fully inside the scrollable popup, including in a short pane");
-    const tools = (await translated.locator('.ink-tools').boundingBox())!;
-    const paneBox = (await translated.boundingBox())!;
+    const tools = (await page.locator('.web-writing-toolbar-slot .ink-tools').boundingBox())!;
+    const paneBox = (await reader.boundingBox())!;
     assert.ok(tools.x >= paneBox.x && tools.x + tools.width <= paneBox.x + paneBox.width + 1, "panning the enlarged PDF keeps its toolbar in view");
     const beforeDismiss = await translated.locator("[data-ink-id]").count();
     await page.mouse.click(15, 285);
-    assert.equal(await translated.locator(".ink-options[open]").count(), 0);
+    assert.equal(await page.locator(".ink-options[open]").count(), 0);
     assert.equal(await translated.locator("[data-ink-id]").count(), beforeDismiss, "dismissing over the PDF does not draw a dot");
     await inkMenu.click(); await menuBounds(".ink-options[open] > div");
     await page.keyboard.press("Escape");
-    assert.equal(await translated.locator(".ink-options[open]").count(), 0);
+    assert.equal(await page.locator(".ink-options[open]").count(), 0);
     await page.screenshot({ path: path.join(output, "short-reader-after-menu-operations.png") });
     // First visit chooses a concrete default; old saved auto preferences migrate too.
     await page.setViewportSize({ width: 1194, height: 834 });

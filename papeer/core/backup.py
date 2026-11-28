@@ -176,12 +176,15 @@ def validate_library(folder: Path, cancel: threading.Event | None = None, *, sch
         for paper_id, digest, kind in db.execute(f"SELECT id,sha256,{'kind' if has_kind else repr(KIND_PDF)} FROM papers"):
             _stop_if_cancelled(cancel)
             files = PaperFiles(folder / "papers" / paper_id)
-            if not re.fullmatch(r"[0-9a-f]{32}", paper_id) or not files.original_pdf.is_file():
+            if not re.fullmatch(r"[0-9a-f]{32}", paper_id) or (kind != "markdown" and not files.original_pdf.is_file()):
                 raise ValueError("バックアップの論文ファイルが不足しています。")
             if kind == KIND_PDF:
                 with files.original_pdf.open("rb") as stream:
                     if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
                         raise ValueError("バックアップの原文PDFが破損しています。")
+            elif kind == "markdown":
+                if not (folder / "papers" / paper_id / "note.md").is_file():
+                    raise ValueError("バックアップのMarkdownノートが不足しています。")
             elif kind == KIND_NOTEBOOK:
                 # sha256 of a notebook is not a digest of its PDF, which is made again whenever its pages change.
                 if not files.notebook_json.is_file():
@@ -211,9 +214,9 @@ def _swap_in(root: Path, staging: Path, previous: Path, cancel: threading.Event 
     _stop_if_cancelled(cancel)
     _rename_folder(root, previous)
     try:
-        staging.rename(root)
+        _rename_folder(staging, root)
     except Exception:
-        previous.rename(root)
+        _rename_folder(previous, root)
         raise
     return previous
 

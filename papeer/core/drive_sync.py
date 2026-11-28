@@ -28,6 +28,7 @@ import zipfile
 from papeer import __version__
 from papeer.core import local_history, sync_store
 from papeer.core.errors import Invalid
+from papeer.core.device_authority import device_writer
 from papeer.core.fileio import atomic_output, atomic_write_json, ensure_free_space, is_temporary
 from papeer.core.item_relations import LISTED_ITEMS
 from papeer.core.paths import fingerprint_cache_path, sync_state_path
@@ -49,6 +50,7 @@ def read_state(root: Path) -> dict:
     return json.loads(path.read_text("utf-8")) if path.exists() else {}
 
 
+@device_writer
 def save_state(root: Path, state: dict) -> None:
     path = state_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,7 +185,7 @@ def start_new_library(root: Path) -> dict:
 # so removing memos is not reported as papers lost. A revision or state recorded by an earlier Papeer
 # lacks the last two: a kind missing on either side is not compared (shrunk_kinds).
 COUNT_LABELS = {"papers": "論文", "stickies": "付箋", "ink": "書き込み",
-                "notebooks": "ノート", "attachments": "メモ・資料"}
+                "notebooks": "手書きノート", "markdown": "Markdownノート", "attachments": "メモ・資料"}
 # "Far fewer" is at least SHRINK_MIN_ITEMS items and at least half of a kind. The absolute floor keeps
 # ordinary deletions in a small library (1 of 2 papers) from stopping sync; the ratio keeps a clean-up
 # in a large one (30 of 300) from doing so. Losing every paper always asks: an empty library is how a
@@ -208,18 +210,19 @@ def _database_counts(db: sqlite3.Connection, schema: str = "main") -> dict[str, 
     return {"papers": count("papers", "WHERE kind='pdf'" if "kind" in kinds else ""),
             "stickies": count("bookmarks"), "ink": count("pdf_ink", "WHERE strokes NOT IN ('','[]')"),
             "notebooks": count("papers", "WHERE kind='notebook'") if "kind" in kinds else 0,
-            "attachments": count("attachments")}
+            "markdown": count("papers", "WHERE kind='markdown'") if "kind" in kinds else 0,
+            "attachments": count("attachments") + (count("papers", "WHERE kind='markdown' AND parent_id IS NOT NULL") if "kind" in kinds else 0)}
 
 
 def holds_items(counts: dict | None) -> bool:
     """Whether recorded counts say the library had a paper or a notebook (an empty one has nothing to go back to)."""
-    return bool(counts) and bool(counts.get("papers") or counts.get("notebooks"))
+    return bool(counts) and bool(counts.get("papers") or counts.get("notebooks") or counts.get("markdown"))
 
 
 def holds_no_items(counts: dict | None) -> bool:
     """Whether recorded counts say the library had no paper and no notebook; False when they say nothing
     (a revision of an earlier Papeer has no counts of notebooks, which it could not have)."""
-    return bool(counts) and counts.get("papers") == 0 and not counts.get("notebooks")
+    return bool(counts) and counts.get("papers") == 0 and not counts.get("notebooks") and not counts.get("markdown")
 
 
 def shrunk_kinds(before: dict | None, after: dict) -> list[str]:
@@ -310,7 +313,7 @@ def library_difference(local: Path, other: Path) -> dict:
                 f"SELECT title FROM {mine}.papers WHERE {listed(mine)} AND id NOT IN (SELECT id FROM {theirs}.papers)"
                 " ORDER BY title")]
         local_only, remote_only = titles("main", "theirs"), titles("theirs", "main")
-        attachments = _differing_rows(db, "attachments", ("id",), owner_column="owner_id")
+        attachments = _differing_rows(db, "attachments", ("id",), owner_column="owner_id") + _differing_notes(db)
         stickies = _differing_rows(db, "bookmarks", ("id",))
         ink = _differing_rows(db, "pdf_ink", ("paper_id", "side", "page"), "strokes NOT IN ('', '[]')")
         counts = [_database_counts(db, "main"), _database_counts(db, "theirs")]
@@ -321,6 +324,27 @@ def library_difference(local: Path, other: Path) -> dict:
 
 def _quoted(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
+
+
+def _differing_notes(db: sqlite3.Connection) -> int:
+    """Compare durable Markdown bodies, including children of shared items.
+
+    Child IDs need not exist on both PCs; their common owner is sufficient. A
+    standalone note listed on only one side is already counted in local/remote_only.
+    Revisions and timestamps are excluded: migrating the same text isn't an edit.
+    """
+    def rows(schema: str) -> str:
+        if not db.execute(f"PRAGMA {schema}.table_info(note_state)").fetchone():
+            return "SELECT NULL id,NULL parent_id,NULL title,NULL note_position,NULL content,NULL source WHERE 0"
+        return (f"SELECT p.id,p.parent_id,p.title,p.note_position,n.content,n.source FROM {schema}.papers p"
+                f" JOIN {schema}.note_state n ON n.id=p.id WHERE p.kind='markdown'"
+                " AND COALESCE(p.parent_id,p.id) IN common")
+
+    return db.execute(
+        "WITH common(id) AS (SELECT id FROM main.papers INTERSECT SELECT id FROM theirs.papers),"
+        f" a AS ({rows('main')}), b AS ({rows('theirs')})"
+        " SELECT COUNT(*) FROM (SELECT id FROM (SELECT * FROM a EXCEPT SELECT * FROM b)"
+        " UNION SELECT id FROM (SELECT * FROM b EXCEPT SELECT * FROM a))").fetchone()[0]
 
 
 def _differing_rows(db: sqlite3.Connection, table: str, key: tuple[str, ...], where: str = "", owner_column: str = "paper_id") -> int:

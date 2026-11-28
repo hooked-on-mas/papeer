@@ -25,14 +25,14 @@ export function HistorySection({ disabled, onRestore }: { disabled: boolean; onR
   const [shown, setShown] = useState<string | null>(null);
   return <div className="border-t pt-4 space-y-4">
     <h3 className="font-medium">このPCの履歴から戻す</h3>
-    <p>フォルダー同期で保存・取り込みしたときの状態と、選ばなかった側・戻す前の状態を、このPCに残しています（同期はされません）。同じ内容は1回だけ保存するため、容量はライブラリ1つ分と変更分です。</p>
+    <p>復元前の状態と、以前のフォルダー同期で残した記録を、このPCに保存しています。同じ内容は1回だけ保存するため、容量はライブラリ1つ分と変更分です。</p>
     {overview.error ? <p role="alert" className="text-destructive">履歴を読み込めませんでした。</p>
       : !overview.data ? <p className="text-muted-foreground">読み込み中…</p>
       : <>
         <p className="text-muted-foreground text-xs">使用量：{formatSize(overview.data.usage.bytes)}（{overview.data.usage.entries}件の記録）</p>
         {overview.data.usage.unreadable > 0 && <p role="alert" className="text-amber-700 dark:text-amber-400">
           読み取れない記録が{overview.data.usage.unreadable}件あります（破損しているか、新しいバージョンのPapeerで作られています）。その間は、使われなくなったデータを片付けません。</p>}
-        {!overview.data.entries.length ? <p className="text-muted-foreground">記録はまだありません。フォルダー同期をすると記録されます。</p>
+        {!overview.data.entries.length ? <p className="text-muted-foreground">記録はまだありません。復元前の状態や以前の同期の記録がここに表示されます。</p>
           : groupEntries(overview.data.entries).map(part => <section key={part.group} aria-label={part.label} className="space-y-2">
             <h4 className="text-sm font-medium">{part.label}</h4>
             <ul className="space-y-2">{part.entries.map(entry =>

@@ -12,14 +12,18 @@ export const ZOOM_FIT_PAGE = 0;
 /** Every level Ctrl+wheel and the zoom buttons step through, smallest first. */
 export const ZOOM_LEVELS = [ZOOM_FIT_PAGE, ...ZOOM_PRESETS];
 
-/** Continuous touch zoom can pass between fitting the page and fitting its width. */
-export const MIN_ZOOM = 0.1;
-
 /** A valid zoom: ZOOM_FIT_PAGE, or a continuous multiplier up to the largest preset. */
 export function clampZoom(zoom: number): number {
   if (zoom === ZOOM_FIT_PAGE) return ZOOM_FIT_PAGE;
-  if (!Number.isFinite(zoom)) return ZOOM_PRESETS[0];
-  return Math.max(MIN_ZOOM, Math.min(ZOOM_PRESETS[ZOOM_PRESETS.length - 1], zoom));
+  if (!Number.isFinite(zoom) || zoom < 0) return ZOOM_PRESETS[0];
+  // Tall pages can fit below 10%; the measured surface supplies the effective minimum.
+  return Math.min(ZOOM_PRESETS[ZOOM_PRESETS.length - 1], zoom);
+}
+
+/** Canonical gestures start from the displayed fit scale, retaining continuous intermediate levels. */
+export function continuousZoom(actual: number, factor: number, minimum: number): number {
+  const lower = Math.min(4, Math.max(Number.MIN_VALUE, minimum));
+  return Math.max(lower, Math.min(4, actual * factor));
 }
 
 /** The level `steps` away from the one nearest `zoom`. */
@@ -73,10 +77,12 @@ export function scrollsSideways(zoom: number, pageWidth: number, room: number): 
  * tall. `ratio` is the page's height over its width.
  */
 export function pageWidthFor(zoom: number, fitWidth: number, fitHeight: number, ratio: number): number {
-  if (zoom !== ZOOM_FIT_PAGE) return Math.round(fitWidth * zoom);
-  if (!(fitHeight > 0) || !(ratio > 0)) return Math.round(fitWidth);
+  const model = readerZoom(zoom);
+  const requested = model.kind === "scale" ? Math.round(fitWidth * model.value) : 0;
+  if (!(fitHeight > 0) || !(ratio > 0)) return zoom === ZOOM_FIT_PAGE ? Math.round(fitWidth) : requested;
   // Floored, so that rounding never leaves the page a pixel taller than the pane.
-  return Math.max(1, Math.min(Math.round(fitWidth), Math.floor(fitHeight / ratio)));
+  const fitted = Math.max(1, Math.min(Math.round(fitWidth), Math.floor(fitHeight / ratio)));
+  return zoom === ZOOM_FIT_PAGE ? fitted : Math.max(fitted, requested);
 }
 
 /** The label the zoom menu shows for a level. */
@@ -84,4 +90,13 @@ export function zoomLabel(zoom: number): string {
   if (zoom === ZOOM_FIT_PAGE) return "ページ全体";
   if (zoom === 1) return "幅に合わせる";
   return `${Math.round(zoom * 100)}%`;
+}
+
+/** Semantic zoom shared by readers; numeric zero is the legacy storage encoding. */
+export type ReaderZoom = { kind: "fit-page" } | { kind: "scale"; value: number };
+export function readerZoom(value: number): ReaderZoom {
+  return value === ZOOM_FIT_PAGE ? { kind: "fit-page" } : { kind: "scale", value: clampZoom(value) };
+}
+export function zoomAtMinimum(value: number, minimum: number): number {
+  return value === ZOOM_FIT_PAGE || value <= minimum ? ZOOM_FIT_PAGE : clampZoom(value);
 }

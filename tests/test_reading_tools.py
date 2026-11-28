@@ -22,7 +22,7 @@ from papeer.core import local_history
 from papeer.core.storage import Library
 from _legacy_library import mark_unversioned
 from papeer.layout.math_layout import MATH_TOKEN
-from sidecar.jobs import JobManager, ConcurrencyConflict
+from sidecar.lifecycle.jobs import JobManager, ConcurrencyConflict
 
 FIXTURE = Path(__file__).parent / "fixtures/sample.pdf"
 

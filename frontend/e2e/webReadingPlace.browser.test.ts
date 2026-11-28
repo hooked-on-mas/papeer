@@ -98,9 +98,13 @@ for (const variant of ["mouse", "webkit"] as const) {
     await page.getByRole('button',{name:'次のページ',exact:true}).click();await settle();
     assert.deepEqual(await translated.evaluate(p=>({left:p.scrollLeft,top:p.scrollTop})),{left:0,top:0},'an unread page opens at the beginning');
     const second=await move(translated,.1,.7);
-    await page.getByRole('button',{name:'前のページ',exact:true}).click();await near(first,'returning to a previously read page restores its passage');
-    await page.getByRole('button',{name:'次のページ',exact:true}).click();await near(second,'the next page keeps its independent passage too');
-    await page.getByRole('tab',{name:'メモ',exact:true}).click();await page.getByRole('heading',{name:'比較しながら読むメモ',exact:true}).waitFor();
+    await page.getByRole('button',{name:'前のページ',exact:true}).click();await settle();assert.equal(await translated.evaluate(p=>p.scrollTop),0,'previous page opens at its beginning');
+    await page.getByRole('button',{name:'次のページ',exact:true}).click();await settle();assert.equal(await translated.evaluate(p=>p.scrollTop),0,'next page opens at its beginning');await move(translated,.1,.7);
+    await page.setViewportSize({width:1180,height:760});await mode.selectOption('split');await layout('split');await near(second,'a layout remount does not replay the last page turn');
+    await mode.selectOption('single');await page.setViewportSize({width:820,height:1080});await layout('single');await near(second,'a new Blob URL preserves the same stable page position');
+    await page.getByLabel('ページ番号',{exact:true}).fill('1');await page.getByLabel('ページ番号',{exact:true}).press('Enter');await settle();
+    await translated.evaluate(p=>{p.setAttribute('tabindex','0');(p as HTMLElement).focus();});await page.keyboard.press('Alt+ArrowLeft');await near(second,'history restores the previously read passage');
+    await page.getByRole('tab',{name:'ノート',exact:true}).click();await page.getByRole('heading',{name:'比較しながら読むメモ',exact:true}).waitFor();
     await page.getByRole('tab',{name:'本文',exact:true}).click();await near(second,'returning from the memo tab preserves the passage');
     await page.reload();await near(second,'a local restart restores the passage without Google login');
     assert.equal(await page.getByLabel('ページ番号',{exact:true}).inputValue(),'2');

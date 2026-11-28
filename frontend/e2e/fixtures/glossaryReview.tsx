@@ -2,9 +2,9 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Header, TranslationDialogHost } from "../../src/app/Header";
 import { useStore } from "../../src/store";
-import { useGlossaryDrafts } from "../../src/features/reader/glossaryDraft";
+import { useGlossaryDrafts } from "../../src/features/reader/glossary/glossaryDraft";
 import { AppDialogs } from "../../src/components/AppDialogs";
-import type { Term } from "../../src/features/reader/translationStart";
+import type { Term } from "../../src/features/reader/translation/translationStart";
 import "../../src/index.css";
 
 const paper = "driving";

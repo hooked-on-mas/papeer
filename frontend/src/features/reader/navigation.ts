@@ -4,8 +4,8 @@ import { QK } from "@/lib/queryKeys";
 import { itemCapabilities, type ItemCapabilities } from "@/lib/itemKinds";
 import { queryClient } from "@/lib/queryClient";
 import { showReaderOf } from "@/features/documents/documentState";
-import { edgePage, steppedPage } from "./pageTurn";
-import { goBack, goForward, rememberPlace, type HistoryEntry } from "./readerHistory";
+import { edgePage, steppedPage } from "./navigation/pageTurn";
+import { goBack, goForward, rememberPlace, type HistoryEntry } from "./navigation/readerHistory";
 import { summaryPlacement } from "./sidePanel";
 import { stepZoom, ZOOM_FIT_PAGE } from "./zoomLevels";
 
@@ -144,7 +144,7 @@ export function showPassage(paperId: string, passage: PassageLocation): void {
   store.setActiveTab("reader");
 }
 
-/** Shows the open paper's 解説, beside the PDF when the side panel is open there (see summaryPlacement). */
+/** Shows the open paper's サマリー, beside the PDF when the side panel is open there (see summaryPlacement). */
 export function showSummary(): void {
   const store = useStore.getState();
   const place = summaryPlacement(store);

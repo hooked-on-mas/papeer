@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { apiRequest } from "@/api/client";
+import { refreshNotes, noteApi } from "@/features/notes/noteApi";
 import { openDocument } from "@/features/documents/documentState";
 import { create } from "zustand";
 import { NotebookPen } from "lucide-react";
@@ -58,6 +60,7 @@ function CreateNotebookForm({ request, busy, setBusy, close }: {
   const { data: notebooks = NO_PAPERS } = useNotebooks();
   const { data: folders = NO_COLLECTIONS } = useCollections();
   const [destination, setDestination] = useState(request.collection);
+  const [noteKind, setNoteKind] = useState<'notebook' | 'markdown'>(() => localStorage.getItem('papeer-last-note-kind') === 'markdown' ? 'markdown' : 'notebook');
   const [paper, setPaper] = useState<NotebookPaper>(() => useStore.getState().lastNotebookPaper ?? DEFAULT_PAPER);
   const [today] = useState(() => new Date());
   // What was typed, once something was; until then the name follows the folder chosen.
@@ -75,9 +78,11 @@ function CreateNotebookForm({ request, busy, setBusy, close }: {
     if (busy || !title.trim()) return;
     setBusy(true);
     try {
-      const row = await unwrap(api.POST("/api/notebooks", { body: { ...paper, title, parent_id: owner?.id ?? null, collection: destination } }));
+      const row = await apiRequest<PaperData>('POST', '/api/notes', { kind: noteKind, spec: noteKind === 'notebook' ? paper : null, title, parent_id: owner?.id ?? null, collection: destination });
+      localStorage.setItem('papeer-last-note-kind', noteKind);
       useStore.getState().setLastNotebookPaper(paper);
       await invalidate({ kind: "library" });
+      await refreshNotes();
       const store = useStore.getState();
       // A search replaces the tree with its hits, which the new notebook is not among.
       store.setLibrarySearch("");
@@ -90,13 +95,14 @@ function CreateNotebookForm({ request, busy, setBusy, close }: {
     } catch (error) { showError(error); } finally { setBusy(false); }
   };
   return <form onSubmit={e => { e.preventDefault(); void submit(); }} className="space-y-4">
+    <label className="flex gap-2 text-sm">種類<select aria-label="ノートの種類" value={noteKind} disabled={busy} onChange={e => setNoteKind(e.target.value as 'notebook' | 'markdown')}><option value="notebook">手書き</option><option value="markdown">Markdown</option></select></label>
     <label className="block text-sm">ノート名<Input ref={input} aria-label="ノート名" value={title} maxLength={200} onChange={e => setTyped(e.target.value)} disabled={busy} autoFocus /></label>
     {owner ? <p className="text-sm">持ち主：<span className="font-medium">{owner.title}</span></p>
       : <label className="flex items-center gap-2 text-sm">作成先：
         <select aria-label="作成先" value={destination} onChange={e => setDestination(e.target.value)} disabled={busy} className="border rounded p-1 min-w-0 flex-1 bg-background">
           {choices.map(path => <option key={path || "(unfiled)"} value={path}>{path || "未分類"}</option>)}
         </select></label>}
-    <fieldset disabled={busy}><PaperSettings value={paper} onChange={setPaper} /></fieldset>
+    {noteKind === "notebook" && <fieldset disabled={busy}><PaperSettings value={paper} onChange={setPaper} /></fieldset>}
     <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={close} disabled={busy}>キャンセル</Button><Button type="submit" disabled={busy || !title.trim()}>{busy ? "作成中…" : "作成"}</Button></div>
   </form>;
 }
@@ -104,9 +110,12 @@ function CreateNotebookForm({ request, busy, setBusy, close }: {
 export function NotebookDialogs() {
   const request = useDialog(s => s.request);
   const [destination, setDestination] = useState("");
+  const [moveCollection, setMoveCollection] = useState("");
+  const { data: folders = [] } = useCollections();
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (request?.kind === "move") setDestination(request.item.parent_id ?? ""); }, [request]);
+
   const { data: papers = [] } = usePaperList("", 0);
+  useEffect(() => { if (request?.kind === "move") { setDestination(request.item.parent_id ?? ""); setMoveCollection(papers.find(p => p.id === request.item.parent_id)?.collection_name ?? request.item.collection_name); } }, [request, papers]);
   const { data: notebooks = [] } = useNotebooks();
   const { data: attachments = [] } = useAttachments();
   const { data: linked = [], isError: linksError, refetch: reloadLinks } = useLinkedItems(request?.kind === "holdings" && request.includeLinks ? request.owner.id : "");
@@ -120,12 +129,14 @@ export function NotebookDialogs() {
     setBusy(true);
     try {
       if (request.kind === "move") {
-        await unwrap(api.POST("/api/notebooks/{notebook_id}/placement", { params: { path: { notebook_id: request.item.id } }, body: { parent_id: destination || null, collection: useStore.getState().currentCollection } }));
+        const note = await noteApi.read(request.item.id);
+        await noteApi.update(note.id, note.revision, { parent_id: destination || null, collection: moveCollection });
         if (destination) {
           const owner = papers.find(row => row.id === destination);
           if (owner) { useStore.getState().setCurrentCollection(owner.collection_name); expandMemoOwner(owner.id, true); }
         }
         await invalidate({ kind: "library" });
+      await refreshNotes();
       }
       useDialog.setState({ request: null });
     } catch (error) { showError(error); } finally { setBusy(false); }
@@ -133,18 +144,20 @@ export function NotebookDialogs() {
   return <Dialog open={!!request} onOpenChange={open => { if (!open) close(); }}>
     <DialogContent className="sm:max-w-lg">
       <DialogHeader><DialogTitle>{request?.kind === "create" ? request.owner ? "専用ノートを作る" : "ノートを作る" : request?.kind === "move" ? "ノートの持ち主を変更" : request?.kind === "delete" ? "持ち物も削除されます" : "持ち物"}</DialogTitle>
-        <DialogDescription>{request?.kind === "create" ? request.owner ? `「${request.owner.title}」の持ち物として作ります。` : "用紙を選んで手書きを始めます。" : request?.kind === "delete" ? request.message : "専用ノートは中央で、メモは右パネルで開きます。"}</DialogDescription>
+        <DialogDescription>{request?.kind === "create" ? request.owner ? `「${request.owner.title}」の持ち物として作ります。` : "種類と作成先を選んで書き始めます。" : request?.kind === "delete" ? request.message : "ノートを選んで開きます。"}</DialogDescription>
       </DialogHeader>
       {request?.kind === "create" && <CreateNotebookForm key={request.serial} request={request} busy={busy} setBusy={setBusy} close={close} />}
       {request?.kind === "move" && <div className="space-y-3">
         <select aria-label="ノートの持ち主" value={destination} onChange={e => setDestination(e.target.value)} disabled={busy} className="border rounded p-2 w-full">
-          <option value="">独立ノート（現在の追加先へ）</option>{papers.filter(row => row.id !== request.item.id && !row.parent_id).map(row => <option key={row.id} value={row.id}>{row.title}</option>)}
-        </select><p className="text-xs text-muted-foreground">中身や紐づけのあるノートは、先に整理すると持ち物にできます。</p>
+          <option value="">独立ノート（下でフォルダーを選択）</option>{papers.filter(row => row.id !== request.item.id && !row.parent_id).map(row => <option key={row.id} value={row.id}>{row.title}</option>)}
+        </select>
+        {!destination && <label>移動先フォルダー<select aria-label="移動先フォルダー" value={moveCollection} onChange={e => setMoveCollection(e.target.value)}><option value="">未分類</option>{folders.filter(Boolean).map(folder => <option key={folder} value={folder}>{folder}</option>)}</select></label>}
+        <p className="text-xs text-muted-foreground">中身や紐づけのあるノートは、先に整理すると持ち物にできます。</p>
         <Button onClick={() => void submit()} disabled={busy}>{busy ? "変更中…" : "変更"}</Button>
       </div>}
       {request?.kind === "holdings" && <div className="max-h-80 overflow-auto space-y-1">
         {notebooks.filter(row => row.parent_id === request.owner.id).map(row => <Button key={row.id} variant="ghost" className="w-full justify-start" onClick={() => { useStore.getState().setActiveTab("reader"); openPaper(row.id, request.owner.collection_name); close(); }}><NotebookPen className="size-4 mr-2" />{row.title}</Button>)}
-        {attachments.filter(row => row.owner_id === request.owner.id).map(row => <Button key={row.id} variant="ghost" className="w-full justify-start" onClick={() => { openPaper(request.owner.id, request.owner.collection_name); if (row.format === "html") openDocument(request.owner.id, row.id); else openMemo(request.owner.id, row.id); close(); }}>{row.format === "html" ? "🌐 " : ""}{row.title}</Button>)}
+        {attachments.filter(row => row.owner_id === request.owner.id && row.format === "html").map(row => <Button key={row.id} variant="ghost" className="w-full justify-start" onClick={() => { openPaper(request.owner.id, request.owner.collection_name); if (row.format === "html") openDocument(request.owner.id, row.id); else openMemo(request.owner.id, row.id); close(); }}>{row.format === "html" ? "🌐 " : ""}{row.title}</Button>)}
         {request.includeLinks && linked.length > 0 && <p className="text-xs text-muted-foreground border-t pt-2">紐づけ（本体は元のフォルダーにあります）</p>}
         {request.includeLinks && linksError && <p role="alert" className="text-xs">紐づけを読み込めませんでした。<button className="underline" onClick={() => void reloadLinks()}>再試行</button></p>}
         {request.includeLinks && linked.map(row => <Button key={`link:${row.id}`} variant="ghost" className="w-full justify-start" onClick={() => { useStore.getState().setActiveTab("reader"); openPaper(row.id, row.collection_name); close(); }}>↗ {paperDisplayName(row)}</Button>)}

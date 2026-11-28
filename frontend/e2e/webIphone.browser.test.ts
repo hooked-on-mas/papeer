@@ -7,6 +7,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { createServer } from "vite";
 import { chromium, webkit, devices } from "playwright-core";
+import { waitForSnapshot } from './support/waitForSnapshot.ts';
 
 for (const engine of ["webkit", "chromium"] as const) {
   test(`iPhone reading, full-width PDF, controls, ink and rotation (${engine})`, { timeout: 150_000 }, async t => {
@@ -15,7 +16,9 @@ for (const engine of ["webkit", "chromium"] as const) {
     fs.mkdirSync(output, { recursive: true });
     const server = await createServer({ cacheDir: path.join(output, "vite-" + randomUUID()),
       configFile: path.join(frontend, "vite.web.config.ts"), logLevel: "error",
-      server: { host: "127.0.0.1", port: 0, hmr: false } });
+      server: { host: "127.0.0.1", port: 0, hmr: false,
+        fs: { allow: [frontend, fs.realpathSync(path.join(frontend, 'node_modules/@fontsource-variable/geist')),
+          fs.realpathSync(path.join(frontend, 'node_modules/katex'))] } } });
     await server.listen(); t.after(() => server.close());
     const browser = engine === "webkit" ? await webkit.launch({ headless: true }) : await chromium.launch({ channel: "msedge", headless: true });
     // A worker can bypass network routes, sending a mock token to the real API.
@@ -73,7 +76,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       assert.equal(request.headers().authorization, "Bearer iphone-test-token");
       if (request.method() === "POST") { uploads++; await route.fulfill({ json: { id: `event-${uploads}` }, headers }); return; }
       const id = url.pathname.split("/").pop()!;
-      if (id === "files") await route.fulfill({ json: { files: url.searchParams.get("q")?.includes("ink-v1") ? []
+      if (id === "files") await route.fulfill({ json: { files: /ink-v1|notes-v1/.test(url.searchParams.get('q') ?? '') ? []
         : [{ id: "library", name: "papeer-library.json", modifiedTime: manifest.updated_at },
           { id: "second-library", name: "papeer-library.json", modifiedTime: manifest.updated_at }] }, headers });
       else if (id === "library" || id === "second-library") await route.fulfill({ json: manifest, headers });
@@ -98,7 +101,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
         const width = pane ? pane.clientWidth - parseFloat(style!.paddingLeft) - parseFloat(style!.paddingRight) : 0;
         const zoom = Number(document.querySelector<HTMLSelectElement>('[aria-label="表示倍率"]')?.value ?? 1);
         return canvas && getComputedStyle(canvas).display !== "none"
-          && Math.abs(canvas.getBoundingClientRect().width - Math.floor(width * zoom)) < 1
+          && Math.abs(canvas.getBoundingClientRect().width - width * zoom) <= 1
           && !!document.querySelector('[data-testid="web-ink"]');
       });
     };
@@ -149,7 +152,8 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
       assert.equal(await page.evaluate(() => getSelection()?.toString()), points.text, "the PDF supports native partial selection");
       if (engine === "chromium") {
         await page.keyboard.press("Control+C");
-        await page.waitForFunction(async expected => await navigator.clipboard.readText() === expected, points.text);
+        const copied = await waitForSnapshot(() => page.evaluate(() => navigator.clipboard.readText()), value => value === points.text);
+        assert.equal(copied, points.text, 'copy writes the selected PDF text to the clipboard');
       }
       await capture("native-text-selection-css");
       await page.evaluate(() => getSelection()?.removeAllRanges());
@@ -357,7 +361,7 @@ sys.stdout.buffer.write(pdf.tobytes())`], { cwd: path.resolve(frontend, ".."), m
     await openMenu(); await capture("landscape-menu-css"); await closeMenu();
     await page.setViewportSize({ width: 390, height: 664 });
     await openMenu();
-    await page.getByRole("button", { name: "メモを開く", exact: true }).tap();
+    await page.getByRole("button", { name: "ノートを開く", exact: true }).tap();
     await page.getByRole("heading", { name: "iPhone読書メモ", exact: true }).waitFor();
     await capture("saved-memo-css");
     await page.getByRole("tab", { name: "本文", exact: true }).tap();

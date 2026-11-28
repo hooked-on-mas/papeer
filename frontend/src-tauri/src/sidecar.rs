@@ -16,7 +16,7 @@
 //!   terminated here and when the app exits however it exits (「タスクの終了」 included);
 //! - on Linux, it is also sent SIGTERM when the app's process ends (PR_SET_PDEATHSIG).
 //!
-//! Only one sidecar serves a library at a time (sidecar/instance.py). The app starts its sidecar as the
+//! Only one sidecar serves a library at a time (sidecar/lifecycle/instance.py). The app starts its sidecar as the
 //! launcher "app": it takes the library over from a headless sidecar the CLI started, and a sidecar that
 //! finds the library in use by another Papeer exits with code 4, which the app reports (watch_startup).
 //!
@@ -40,16 +40,16 @@ const SIDECAR_DIR: &str = "sidecar";
 const SIDECAR_EXE: &str = "papeer-sidecar";
 /// Tells the sidecar to end when its standard input (the app's pipe) closes (sidecar/routes/system.py).
 const WATCH_STDIN_VARIABLE: &str = "PAPEER_WATCH_STDIN";
-/// Tells the sidecar who started it (sidecar/instance.py): "app" may take the library over from the CLI's
+/// Tells the sidecar who started it (sidecar/lifecycle/instance.py): "app" may take the library over from the CLI's
 /// headless sidecar. A development sidecar (`just dev-sidecar`, which a debug build talks to instead of
 /// launching one) is "dev" by default, so this module, release builds only, always says "app".
 const LAUNCHER_VARIABLE: &str = "PAPEER_LAUNCHER";
 const LAUNCHER: &str = "app";
 /// The exit code of a sidecar that gave up because another Papeer serves the library
-/// (EXIT_LIBRARY_IN_USE in sidecar/instance.py).
+/// (EXIT_LIBRARY_IN_USE in sidecar/lifecycle/instance.py).
 const LIBRARY_IN_USE_EXIT_CODE: i32 = 4;
 /// How long after the start the app looks for that exit: a handover from the CLI's sidecar may take its
-/// jobs' stopping time (SHUTDOWN_JOB_TIMEOUT + SHUTDOWN_REQUEST_TIMEOUT + 5 s in sidecar/instance.py).
+/// jobs' stopping time (SHUTDOWN_JOB_TIMEOUT + SHUTDOWN_REQUEST_TIMEOUT + 5 s in sidecar/lifecycle/instance.py).
 const STARTUP_WATCH: Duration = Duration::from_secs(120);
 /// What the dialog says when the sidecar gave up (the app ends after it).
 const LIBRARY_IN_USE_MESSAGE: &str =

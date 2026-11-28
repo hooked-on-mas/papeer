@@ -4,7 +4,6 @@ from __future__ import annotations
 import threading
 
 from papeer.core.config import Settings
-from papeer.providers.antigravity import AntigravityProvider
 from papeer.providers.base import ProviderBackend, ProviderSpec
 from papeer.providers.claude_code import ClaudeCodeProvider
 from papeer.providers.codex import CodexProvider
@@ -13,8 +12,9 @@ from papeer.providers.openai_compat import OpenAICompatProvider
 # In the order the settings dialog shows them.
 BACKENDS: dict[str, type[ProviderBackend]] = {
     backend.spec.id: backend
-    for backend in (CodexProvider, ClaudeCodeProvider, AntigravityProvider, OpenAICompatProvider)
+    for backend in (CodexProvider, ClaudeCodeProvider, OpenAICompatProvider)
 }
+RETIRED_PROVIDER_IDS = frozenset({"antigravity", "gemini"})
 
 
 def specs() -> list[ProviderSpec]:
@@ -22,6 +22,8 @@ def specs() -> list[ProviderSpec]:
 
 
 def backend_class(provider_id: str) -> type[ProviderBackend]:
+    if provider_id in RETIRED_PROVIDER_IDS:
+        raise ValueError("Antigravity連携は提供を終了しました。設定のAI接続でCodex・Claude Code・APIを選んでください。")
     try:
         return BACKENDS[provider_id]
     except KeyError:

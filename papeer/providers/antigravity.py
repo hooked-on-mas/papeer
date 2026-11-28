@@ -1,4 +1,8 @@
-"""Gemini through the Antigravity CLI (agy), signed in with the user's Google account."""
+"""Legacy Antigravity transport, retained for compatibility tests only.
+
+Not registered or offered by Papeer: consumer Antigravity terms prohibit access
+through third-party software. Application entry points reject this provider.
+"""
 from __future__ import annotations
 
 import json

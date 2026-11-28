@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 import unicodedata
 import uuid
 
+import pymupdf as fitz
+
 from papeer.core.bibliography import clean_arxiv_id, typed_doi
 from papeer.core.collection_paths import in_collection, normalize_collection_name
 from papeer.core.errors import NotFound
@@ -23,7 +25,8 @@ from papeer.core.shared_json import read_shared_json, remember
 from papeer.core.translation_review import cached_review_pages
 from papeer.core.translation_status import TranslationStatus
 from papeer.layout.math_layout import LAYOUT_VERSION
-from papeer.pdf.pdf_engine import OcrRun, extract_pdf
+from papeer.layout.ocr_pages import refresh_caption_ocr
+from papeer.pdf.pdf_engine import PDF_LOCK, OcrRun, extract_pdf
 from papeer.translation.translation_context import paper_title
 
 
@@ -130,11 +133,11 @@ class PaperRecords(LibraryBase):
                 OR instr(lower(p.first_author),lower(?))>0 OR instr(p.publication_year,?)>0
                 OR instr(lower(p.collection_name),lower(?))>0 OR instr(lower(p.original_name),lower(?))>0
                 OR instr(lower(p.tags),lower(?))>0 OR EXISTS
-                (SELECT 1 FROM pages x WHERE x.paper_id=p.id AND instr(lower(x.text),lower(?))>0))"""
+                (SELECT 1 FROM pages x WHERE x.paper_id=p.id AND instr(lower(x.text),lower(?))>0) OR EXISTS (SELECT 1 FROM note_state n WHERE n.id=p.id AND instr(lower(n.content),lower(?))>0))"""
             forms = search_forms(query)
             sql += " AND (" + " OR ".join([one] * len(forms)) + ")"
             for form in forms:
-                arguments += [form] * 7
+                arguments += [form] * 8
         sql += " ORDER BY created_at DESC, id"
         with self.connection() as db:
             return [self._paper(row) for row in db.execute(sql, arguments)]
@@ -235,7 +238,7 @@ class PaperRecords(LibraryBase):
         name = nfc(name.strip())
         with self.connection() as db:
             row = db.execute("SELECT kind FROM papers WHERE id=?", (paper_id,)).fetchone()
-        if row is not None and row["kind"] == "notebook":
+        if row is not None and row["kind"] in ("notebook", "markdown"):
             if not name or len(name) > 200:
                 raise ValueError("ノート名は1〜200文字で入力してください。")
             with self.connection() as db:
@@ -295,6 +298,10 @@ class PaperRecords(LibraryBase):
         Shared with every caller until the file changes (shared_json): read it, never modify it in
         place; code that adjusts blocks works on its own copies (materialize_flows and the like).
         """
+        if self.paper(paper_id)["kind"] == "markdown":
+            from papeer.core import notes
+            row = notes.read(self, paper_id)
+            return {'title': row['title'], 'page_count': 0, 'pages': [], 'blocks': [], 'ocr_pages': []}
         if self.paper(paper_id)["kind"] == "notebook":
             from papeer.core.notebook import read
             notebook = read(self, paper_id)
@@ -306,7 +313,15 @@ class PaperRecords(LibraryBase):
         path = PaperFiles(folder).document_json
         document = read_shared_json(path)
         previous_title = document["title"]
-        if document.get("layout_version") != LAYOUT_VERSION:
+        if document.get("layout_version") == 36 and LAYOUT_VERSION == 37:
+            # This version changes only diagram scan detection. Re-extracting would
+            # discard edited paragraph boundaries and invalidate their translations.
+            with PDF_LOCK, fitz.open(PaperFiles(folder).original_pdf) as pdf:
+                refreshed = refresh_caption_ocr(pdf, document)
+            refreshed["layout_version"] = LAYOUT_VERSION
+            write_document(path, refreshed)
+            document = refreshed
+        elif document.get("layout_version") != LAYOUT_VERSION:
             saved = load_readings(folder)
             run = OcrRun(saved=saved)
             refreshed = extract_pdf(PaperFiles(folder).original_pdf, run=run)

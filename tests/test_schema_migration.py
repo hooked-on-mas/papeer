@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
+import traceback
 import zipfile
 
 import pytest
@@ -36,6 +37,11 @@ def dump(root: Path) -> list[str]:
 
 def set_version(root: Path, version: int) -> None:
     with closing(sqlite3.connect(root / "library.sqlite3")) as db:
+        if version < 9:
+            for table in ('note_state', 'note_legacy', 'note_operations'):
+                db.execute('DROP TABLE IF EXISTS ' + table)
+            if 'note_position' in {row[1] for row in db.execute('PRAGMA table_info(papers)')}:
+                db.execute('ALTER TABLE papers DROP COLUMN note_position')
         if version < 8:
             # Version 8 (storage._notebook_items): items of other kinds, what they hold, and links.
             db.execute("DROP TABLE IF EXISTS item_links")
@@ -270,8 +276,8 @@ def test_concurrent_first_opens_migrate_once(tmp_path, monkeypatch):
         start.wait()
         try:
             assert Library(root).paper(identity)["bibliography_version"] == 1
-        except BaseException as exc:  # noqa: BLE001 - reported below, as a thread cannot fail the test
-            errors.append(exc)
+        except BaseException:  # noqa: BLE001 - reported below, as a thread cannot fail the test
+            errors.append(traceback.format_exc())  # The traceback, not only the exception: where it was raised.
 
     threads = [threading.Thread(target=open_library) for _ in range(8)]
     for thread in threads:
@@ -280,6 +286,116 @@ def test_concurrent_first_opens_migrate_once(tmp_path, monkeypatch):
         thread.join()
     assert errors == [] and calls == [root]
     assert database_version(root / "library.sqlite3") == SCHEMA_VERSION
+
+
+def test_memo_conversion_survives_the_old_file_vanishing_under_it(tmp_path, monkeypatch):
+    # Two openers can convert the same legacy memo at once: the one that finished removes note.md after the other
+    # saw it exist and before it read it. That opener must carry on, not fail with FileNotFoundError.
+    root = tmp_path / "legacy"
+    identity = legacy_library(root, "oldest")
+    read_text = Path.read_text
+
+    def read_after_the_other_opener_removed_it(self, *args, **kwargs):
+        if self.name == "note.md":
+            self.unlink(missing_ok=True)
+        return read_text(self, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "read_text", read_after_the_other_opener_removed_it)
+        lib = Library(root)
+    assert read_memo(lib, identity) == "古いメモ"
+    assert len([row for row in lib.attachments(identity) if row["format"] == "md"]) == 1
+    assert not (root / "papers" / identity / "note.md").exists()
+
+
+def memos(lib, identity):
+    return [lib.attachment_text(row["id"]) for row in lib.attachments(identity) if row["format"] == "md"]
+
+
+def test_memo_conversion_survives_another_opener_holding_the_old_file(tmp_path):
+    # The mirror of the vanishing file: an opener still has note.md open when the one that finished converting
+    # removes it. Windows refuses that delete (WinError 32); the memo is already committed, so the open must go on.
+    root = tmp_path / "legacy"
+    identity = legacy_library(root, "oldest")
+    note = root / "papers" / identity / "note.md"
+    with note.open(encoding="utf-8") as held:
+        lib = Library(root)
+        assert held.read() == "古いメモ"
+    assert memos(lib, identity) == ["古いメモ"]
+    lib = Library(root)  # What the locked delete left is removed here, and nothing is added.
+    assert memos(lib, identity) == ["古いメモ"] and not note.exists()
+
+
+@pytest.mark.parametrize("variant, expected", [("same", ["古いメモ"]), ("file-only", ["古いメモ"]),
+                                               ("different", ["古いメモ", "別の内容"])])
+def test_an_old_file_that_could_not_be_removed_is_neither_read_nor_converted_again(tmp_path, monkeypatch, variant, expected):
+    root = tmp_path / "legacy"
+    identity = legacy_library(root, "oldest")
+    note = root / "papers" / identity / "note.md"
+    if variant == "file-only":
+        with closing(sqlite3.connect(root / "library.sqlite3")) as db, db:
+            db.execute("UPDATE papers SET note='' WHERE id=?", (identity,))
+    if variant == "different":
+        note.write_text("別の内容", "utf-8")
+    unlink, read_text = Path.unlink, Path.read_text
+
+    def locked(self, *args, **kwargs):
+        if self.name == "note.md":
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+        return unlink(self, *args, **kwargs)
+
+    def must_not_read(self, *args, **kwargs):
+        assert self.name != "note.md", "a converted memo's old file was read"
+        return read_text(self, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "unlink", locked)
+        lib = Library(root)
+    assert sorted(memos(lib, identity)) == sorted(expected) and note.exists()
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "read_text", must_not_read)
+        lib = Library(root)
+    assert sorted(memos(lib, identity)) == sorted(expected)
+    assert not note.exists()  # Removed by that open.
+
+
+@pytest.mark.parametrize("variant, expected", [("same", ["移行後の編集"]), ("file-only", ["移行後の編集"]),
+                                               ("different", ["移行後の編集", "別の内容"])])
+def test_a_crash_between_commit_and_removing_the_old_file_does_not_convert_again(tmp_path, monkeypatch, variant, expected):
+    # The process dies (power loss, kill) right after the memos are committed, before note.md is removed and before
+    # Library.__init__ moves them into the notes. They are still attachments then, so the next open must recognise
+    # them by their deterministic IDs: no second copy, no IntegrityError, and an edit made meanwhile survives.
+    class Crash(BaseException):
+        pass
+
+    root = tmp_path / "legacy"
+    identity = legacy_library(root, "oldest")
+    note = root / "papers" / identity / "note.md"
+    if variant == "file-only":
+        with closing(sqlite3.connect(root / "library.sqlite3")) as db, db:
+            db.execute("UPDATE papers SET note='' WHERE id=?", (identity,))
+    if variant == "different":
+        note.write_text("別の内容", "utf-8")
+    unlink = Path.unlink
+
+    def die(self, *args, **kwargs):
+        if self.name == "note.md":
+            raise Crash
+        return unlink(self, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "unlink", die)
+        with pytest.raises(Crash):
+            Library(root)
+    assert note.exists()
+    with closing(sqlite3.connect(root / "library.sqlite3")) as db:
+        rows = db.execute("SELECT id FROM attachments WHERE owner_id=? AND format='md' ORDER BY position", (identity,)).fetchall()
+    assert len(rows) == len(expected)  # Committed as attachments; not yet moved into the notes.
+    (root / "papers" / identity / "attachments" / (rows[0][0] + ".md")).write_text("移行後の編集", "utf-8")
+    lib = Library(root)
+    assert sorted(memos(lib, identity)) == sorted(expected)
+    assert not note.exists()
+    assert sorted(memos(Library(root), identity)) == sorted(expected)  # And a further open changes nothing.
 
 
 def test_a_later_step_runs_once_on_top_of_the_current_version(tmp_path, monkeypatch):

@@ -13,7 +13,7 @@ from papeer.core.errors import Conflict, Invalid, NotFound
 from papeer.core.library_organize import MAX_PAPERS, organize_candidates, propose_organization
 from papeer.core.storage import Library
 from papeer.providers import Cancelled
-from sidecar.jobs import JobManager
+from sidecar.lifecycle.jobs import JobManager
 
 
 class Scripted:

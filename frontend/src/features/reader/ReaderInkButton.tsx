@@ -1,7 +1,7 @@
 import { PenLine } from "lucide-react";
 import { useStore } from "@/store";
 import { useInkTools } from "./useInkEditor";
-import { inkToolbarOpen } from "./readerBars";
+import { inkToolbarOpen } from "./layout/readerBars";
 
 /** A labeled writing entry that stays immediately before the table of contents. */
 export function ReaderInkButton() {

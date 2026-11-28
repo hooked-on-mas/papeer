@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useStore } from "@/store";
 import { bindReaderViewport } from "./navigation";
-import { onScreen } from "./pageTurn";
+import { onScreen } from "./navigation/pageTurn";
 import { savedAnchor } from "./sidePanel";
 import type { JumpTarget } from "./PdfPane";
 

@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, unwrap } from "@/api/client";
 import { QK } from "@/lib/queryKeys";
-import type { StickyNote } from "./stickyNotes";
+import type { StickyNote } from "./sticky/stickyNotes";
 
 // Stable while the notes are loading or failed: a new array would redraw the text layer on every render.
 const NO_NOTES: StickyNote[] = [];

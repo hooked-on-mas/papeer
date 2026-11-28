@@ -25,7 +25,7 @@ from papeer.core.paths import opened_papers_path, review_cache_path
 from papeer.core.storage import Library
 from sidecar.app import app
 from sidecar.deps import job_manager
-from sidecar.job_types import PaperChangedEvent
+from sidecar.lifecycle.job_types import PaperChangedEvent
 
 FIXTURE_PDF = Path(__file__).parent / "fixtures/sample.pdf"
 
@@ -319,9 +319,9 @@ def test_opened_times_of_removed_papers_are_forgotten_and_other_files_ignored(li
 
 
 def test_the_frontend_offers_exactly_the_orders_the_sidecar_accepts():
-    """SORT_LABELS (frontend/src/lib/librarySort.ts) names each LibrarySort by its number, and no other:
+    """SORT_LABELS names each LibrarySort by its number, and no other:
     an order the sidecar refuses (400) would leave the library looking empty."""
-    source = (Path(__file__).parents[1] / "frontend/src/lib/librarySort.ts").read_text("utf-8")
+    source = (Path(__file__).parents[1] / "frontend/src/features/library/query/librarySort.ts").read_text("utf-8")
     labels = re.search(r"export const SORT_LABELS = \[(.*?)\];", source, re.S)
     assert labels is not None
     assert len(re.findall(r'"[^"]+"', labels[1])) == len(LibrarySort)

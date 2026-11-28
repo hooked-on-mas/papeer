@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { TranslationDialog } from "../../src/features/reader/TranslationDialog";
+import { TranslationDialog } from "../../src/features/reader/translation/TranslationDialog";
 import "../../src/index.css";
 
 function Fixture() {

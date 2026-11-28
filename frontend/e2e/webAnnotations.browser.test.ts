@@ -11,7 +11,7 @@ import { chromium, type Page } from "playwright-core";
 import type { Manifest } from "../src/web/drive.ts";
 import type { Operation } from "../src/web/annotations.ts";
 
-test("PC translation and ink survive Web pen, highlight, memo, offline retry, reload and PC import", { timeout: 180_000 }, async t => {
+test("PC translation and ink survive Web pen, highlight, memo, shapes, offline retry, reload and PC import", { timeout: 300_000 }, async t => {
   const frontend = path.resolve(import.meta.dirname, "..");
   const root = path.resolve(frontend, "..");
   const directory = path.join(root, "output/web-library", "test-" + randomUUID());
@@ -39,7 +39,8 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   const operations = new Map<string, Operation>();
   let failSave = false;
   const server = await createServer({ cacheDir: path.join(directory, "vite-cache"), configFile: path.join(frontend, "vite.web.config.ts"), logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false } });
+    server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false,
+      fs: { allow: [root, fs.realpathSync(path.join(frontend, 'node_modules/@fontsource-variable/geist'))] } } });
   await server.listen(); t.after(() => server.close());
   const webUrl = process.env.PAPEER_WEB_TEST_URL || server.resolvedUrls!.local[0];
   const browser = await chromium.launch({ channel: "msedge", headless: true }); t.after(() => browser.close());
@@ -66,7 +67,7 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
       const op: Operation = JSON.parse(parts[2].split("\r\n\r\n")[1].trim());
       assert.deepEqual(metadata.parents, ["folder"]);
       assert.equal(metadata.properties.library, "library");
-      assert.equal(op.side, "translated");
+      assert.ok(op.side === "original" || op.side === "translated");
       operations.set(op.id, op);
       await route.fulfill({ json: { id: "event-" + op.id }, headers }); return;
     }
@@ -81,10 +82,11 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   const page = await context.newPage();
   const open = async (p: Page) => {
     await p.goto(webUrl);
-    // A reload reuses an unexpired tab grant; a new tab still needs its first login.
-    if (!await p.evaluate(() => sessionStorage.getItem("papeer-google-session:v1"))) {
-      await p.getByRole("button", { name: /^Googleでログイン(?:して開く →)?$/ }).first().click();
-    }
+    // Account restoration can remove the login button while Playwright is waiting to click it.
+    await Promise.race([
+      p.getByLabel("表示する資料").waitFor(),
+      p.getByRole("button", { name: /^Googleでログイン(?:して開く →)?$/ }).first().click(),
+    ]);
     await p.getByLabel("表示する資料").waitFor();
     assert.equal(await p.getByLabel("表示する資料").getByRole("option", { name: "日本語訳", exact: true }).count(), 1);
     assert.equal(await p.getByLabel("表示する資料").getByRole("option", { name: /review-backups/ }).count(), 0);
@@ -113,6 +115,56 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
     await p.mouse.down(); await p.mouse.move(b.x + b.width * .45, b.y + b.height * (y + .02), { steps: 8 }); await p.mouse.up();
   };
   await open(page);
+  // A single document toolbar controls both panes, with per-page undo histories.
+  await page.getByLabel("本文の表示方法").selectOption("split");
+  const originalPane = page.getByRole("region", { name: "原文", exact: true });
+  const translatedPane = page.getByRole("region", { name: "日本語訳", exact: true });
+  await originalPane.getByTestId("web-ink").waitFor();
+  await translatedPane.getByTestId("web-ink").waitFor();
+  assert.equal(await page.getByRole("toolbar", { name: "PDFの書き込みツール" }).count(), 1);
+  assert.equal(await originalPane.locator('.ink-tools').count(), 0);
+  assert.equal(await translatedPane.locator('.ink-tools').count(), 0);
+  await page.getByRole("button", { name: "蛍光ペン", exact: true }).click();
+  await page.getByLabel("書き込みの色", { exact: true }).fill("#123456");
+  await page.getByLabel("ペンの太さ", { exact: true }).selectOption("0.006");
+  for (const [pane, side, base] of [[originalPane, "original", 0], [translatedPane, "translated", 1]] as const) {
+    const svg = pane.getByTestId("web-ink");
+    await svg.scrollIntoViewIfNeeded();
+    const box = (await svg.boundingBox())!;
+    await page.mouse.move(box.x + box.width * .25, box.y + box.height * .3);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * .4, box.y + box.height * .32, { steps: 4 });
+    await page.mouse.up();
+    await saved(page);
+    assert.equal(await pane.locator('[data-ink-id]').count(), base + 1);
+    assert.equal(await page.getByLabel("書き込みの操作対象").inputValue(), side);
+    assert.equal(await page.getByRole("button", { name: "蛍光ペン", exact: true }).getAttribute("aria-pressed"), "true");
+    const operation = [...operations.values()].filter(op => op.side === side && op.action === "add").pop()!;
+    assert.equal(operation.action === "add" && operation.stroke.color, "#123456");
+    assert.equal(operation.action === "add" && operation.stroke.width, .03);
+  }
+  // Switching layout remounts surfaces without discarding the current page's undo/redo journal.
+  await page.getByLabel("本文の表示方法").selectOption("single");
+  await page.getByTestId("web-ink").waitFor();
+  assert.equal(await page.locator('[data-ink-id]').count(), 2);
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click(); await saved(page);
+  assert.equal(await page.locator('[data-ink-id]').count(), 1);
+  await page.getByRole("button", { name: "やり直す", exact: true }).click(); await saved(page);
+  assert.equal(await page.locator('[data-ink-id]').count(), 2);
+  await page.getByLabel("本文の表示方法").selectOption("split");
+  await originalPane.getByTestId("web-ink").waitFor();
+  await translatedPane.getByTestId("web-ink").waitFor();
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click(); await saved(page);
+  assert.equal(await translatedPane.locator('[data-ink-id]').count(), 1);
+  assert.equal(await originalPane.locator('[data-ink-id]').count(), 1);
+  await page.getByLabel("書き込みの操作対象").selectOption("original");
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click(); await saved(page);
+  assert.equal(await originalPane.locator('[data-ink-id]').count(), 0);
+  await page.getByRole("button", { name: "ペン", exact: true }).click();
+  await page.getByLabel("書き込みの色", { exact: true }).fill("#d93c36");
+  await page.getByLabel("ペンの太さ", { exact: true }).selectOption("0.003");
+  await page.screenshot({ path: path.join(directory, "shared-writing-toolbar.png") });
+  await page.getByLabel("本文の表示方法").selectOption("single");
   assert.equal(await page.getByText("ペンはApple Pencil・マウスに対応。", { exact: false }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "ペン", exact: true }).getAttribute("aria-pressed"), "true");
   assert.equal(await page.getByTestId("web-ink").evaluate(element => getComputedStyle(element).touchAction), "pinch-zoom");
@@ -219,18 +271,48 @@ test("PC translation and ink survive Web pen, highlight, memo, offline retry, re
   assert.equal(await page.getByRole("button", { name: "ペン", exact: true }).getAttribute("aria-pressed"), "true");
   await page.getByRole("button", { name: "前のページ" }).click();
   await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 7);
+  // All PDF shape creation uses the same draft geometry as desktop and notebooks.
+  for (const [index, kind] of (['line', 'arrow', 'rectangle', 'ellipse'] as const).entries()) {
+    await page.getByLabel('描画の種類', { exact: true }).selectOption(kind);
+    const svg = page.getByTestId('web-ink'); await svg.scrollIntoViewIfNeeded();
+    const box = (await svg.boundingBox())!;
+    await page.mouse.move(box.x + box.width * .2, box.y + box.height * .2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * .6, box.y + box.height * .4, { steps: 5 });
+    await page.mouse.up(); await saved(page);
+    assert.equal(await count(page), 8 + index);
+    const operation = [...operations.values()].filter(op => op.action === 'add').pop()!;
+    assert.ok(operation.action === 'add'); assert.equal(operation.stroke.kind, kind);
+    assert.equal(operation.stroke.points.length, { line: 2, arrow: 5, rectangle: 5, ellipse: 65 }[kind]);
+    assert.ok(operation.stroke.points.every(point => point.every(value => value >= 0 && value <= 1)));
+    await page.getByRole('button', { name: '元に戻す', exact: true }).click(); await saved(page);
+    assert.equal(await count(page), 7 + index);
+    await page.getByRole('button', { name: 'やり直す', exact: true }).click(); await saved(page);
+    assert.equal(await count(page), 8 + index);
+  }
+  // A tap on a shape tool does not add a degenerate object or an Undo entry.
+  await page.getByTestId('web-ink').click({ position: { x: 150, y: 180 } });
+  assert.equal(await count(page), 11);
+  // open() exercises the wide header. The compact header intentionally has no artifact select.
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await open(page); assert.equal(await count(page), 11);
+  assert.equal(await page.locator('[data-ink-kind="ellipse"]').count(), 1);
   fs.writeFileSync(path.join(directory, "operations.json"), JSON.stringify([...operations.values()]));
-  assert.equal(fixture("import").strokes, 7);
+  assert.equal(fixture("import").strokes, 11);
   readSnapshot("import");
   assert.deepEqual(blobs.get(manifest!.files[`papers/${paper}/translated.pdf`].id), originalPdf);
   await clickAccountAction(page, "更新");
   await page.getByRole("region", { name: "日本語訳", exact: true }).waitFor();
   await page.getByLabel("本文の表示方法").selectOption("single");
-  await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 7);
+  await page.waitForFunction(() => document.querySelectorAll("[data-ink-id]").length === 11);
   await saved(page); // Imported operations aren't drawn twice on top of PC ink.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.getByLabel('書き込み設定', { exact: true }).click();
+  await page.getByLabel('描画の種類', { exact: true }).selectOption('rectangle');
+  assert.equal(await page.getByLabel('描画の種類', { exact: true }).inputValue(), 'rectangle');
+  await page.keyboard.press('Escape');
   await page.screenshot({ path: path.join(directory, "mobile-writing.png"), fullPage: true });
   assert.deepEqual(errors, []); assert.deepEqual(forbidden, []);
 });

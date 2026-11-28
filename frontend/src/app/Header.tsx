@@ -14,7 +14,7 @@ import { activeItemCapabilities } from "@/features/reader/navigation";
 import { itemCapabilities } from "@/lib/itemKinds";
 import { PaperStatusBadge } from "../components/ui/PaperStatusBadge";
 import { paperTranslationStatus } from "@/lib/paperStatus";
-import { TranslationDialog } from "../features/reader/TranslationDialog";
+import { TranslationDialog } from "../features/reader/translation/TranslationDialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent,
   DropdownMenuSubTrigger, DropdownMenuTrigger,
@@ -90,6 +90,7 @@ export function Header() {
   const { data: reading } = useReading(activePaperId);
   // What the open item can do: the controls of what it cannot (a notebook is not translated) are not offered.
   const caps = itemCapabilities(paper);
+  const isNote = caps.notebook || paper?.kind === "markdown";
   const { data: notebook } = useNotebook(activePaperId, caps.notebook);
   const { exporting: exportingInk, exportPdf: exportInkPdf } = useInkPdfExport();
 
@@ -139,24 +140,24 @@ export function Header() {
   ].filter(Boolean).join(" · ");
   // A notebook's line says what it is and where, and how long: 「ノート · フォルダー · nページ」, or whose it is.
   // (No date of its last change: the API doesn't give one.)
-  const pageText = `${notebook?.pages.length ?? paper?.pages ?? 0}ページ`;
+  const pageText = paper?.kind === "markdown" ? "Markdown" : `${notebook?.pages.length ?? paper?.pages ?? 0}ページ`;
 
   return (
     <WorkspaceHeader>
       {toggleSidebar}
       <div className="flex flex-col min-w-0 flex-1 pr-4">
-        {paper && caps.notebook ? <NotebookTitle paper={paper} /> : <h1
+        {paper && isNote ? <NotebookTitle paper={paper} /> : <h1
           className="text-[0.9375rem] font-semibold truncate"
           title={paper ? paperDisplayName(paper) : ""}
         >
           {paper ? (paper.title || paperDisplayName(paper)) : "読み込み中…"}
         </h1>}
         <div className="flex items-center gap-2 text-[0.75rem] text-muted-foreground mt-0.5 min-w-0">
-          {paper && caps.notebook ? (
+          {paper && isNote ? (
             <span className="truncate" data-notebook-meta="">
               {paper.parent_id ? <>
                 {owner ? <button type="button" className="underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-                  title="持ち主の論文を開く" onClick={() => openPaper(owner.id, owner.collection_name)}>{owner.title || paperDisplayName(owner)}</button> : "読み込み中…"}
+                  title="持ち主に戻る" onClick={() => openPaper(owner.id, owner.collection_name)}>{owner.title || paperDisplayName(owner)}</button> : "読み込み中…"}
                 の専用ノート
               </> : `ノート · ${paper.collection_name || "未分類"}`} · {pageText}
             </span>
@@ -174,7 +175,7 @@ export function Header() {
           onClick={() => emitAppEvent("open-paper-details", { paperId: activePaperId })}
           className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[0.8125rem] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
         >
-          <FileText className="w-4 h-4" /> {caps.notebook ? "情報・整理" : "論文情報・整理"}
+          <FileText className="w-4 h-4" /> {isNote ? "情報・整理" : "論文情報・整理"}
         </button>
         {!caps.translate ? null : translateJobId ? (
           <button onClick={handleCancel} className="flex items-center gap-1.5 bg-destructive text-white px-3 py-1.5 rounded-md text-[0.8125rem] font-medium hover:opacity-90 transition-opacity">
@@ -197,10 +198,10 @@ export function Header() {
             <MoreVertical className="w-4 h-4" /> その他
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-64">
-            {caps.notebook && <DropdownMenuItem onClick={() => emitAppEvent("edit-item-title")}>
+            {isNote && <DropdownMenuItem onClick={() => emitAppEvent("edit-item-title")}>
               <Pencil className="w-4 h-4 mr-2" /> 名前を変更…
             </DropdownMenuItem>}
-            {paper && caps.notebook && <DropdownMenuItem onClick={() => moveNotebook(paper)}>持ち主を変更・独立させる…</DropdownMenuItem>}
+            {paper && isNote && <DropdownMenuItem onClick={() => moveNotebook(paper)}>持ち主を変更・独立させる…</DropdownMenuItem>}
             {paper && !paper.parent_id && <DropdownMenuItem onClick={() => newNotebook({ owner: paper })}>専用ノートを作る…</DropdownMenuItem>}
             {caps.notebook && <DropdownMenuItem disabled={exportingInk || !notebook} onClick={() => void exportInkPdf(activePaperId, "original")}>
               <Download className="w-4 h-4 mr-2" /> {exportingInk ? "出力中…" : "書き込み付きPDFとして保存…"}
@@ -209,7 +210,7 @@ export function Header() {
               <BookOpen className="w-4 h-4 mr-2" /> 訳語・辞書
             </DropdownMenuItem>}
             {caps.summary && <DropdownMenuItem disabled={workBusy} onClick={() => generateArticle(activePaperId)}>
-              <ScrollText className="w-4 h-4 mr-2" /> サマリー（解説）を作成
+              <ScrollText className="w-4 h-4 mr-2" /> サマリーを作成
             </DropdownMenuItem>}
             {caps.translate && <DropdownMenuSub>
               <DropdownMenuSubTrigger disabled={workBusy || exportBlocked}>
@@ -242,7 +243,7 @@ export function Header() {
                 <Download className="w-4 h-4 mr-2" /> 原文PDFを名前を付けて保存…
               </DropdownMenuItem>
             </>}
-            {caps.rename && !caps.notebook && <DropdownMenuItem onClick={() => renamePaperFile(activePaperId)}>
+            {caps.rename && !isNote && <DropdownMenuItem onClick={() => renamePaperFile(activePaperId)}>
               <Pencil className="w-4 h-4 mr-2" /> ファイル名を変更…
             </DropdownMenuItem>}
             <DropdownMenuItem onClick={() => openPaperFolder(activePaperId)}>

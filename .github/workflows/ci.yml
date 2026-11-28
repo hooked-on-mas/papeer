@@ -57,6 +57,10 @@ defaults:
     shell: pwsh
 
 jobs:
+  audit:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    uses: ./.github/workflows/dependency-audit.yml
+
   python:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: python (${{ matrix.os }})
@@ -262,16 +266,22 @@ jobs:
       - name: uv sync
         run: uv sync --locked --all-groups
 
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: stable
+
+      - name: Fetch sources for bundled Rust license notices
+        run: cargo fetch --locked --manifest-path frontend/src-tauri/Cargo.toml
+
       - name: just build-sidecar
         run: just build-sidecar
+
+      - name: Verify bundled license notices
+        run: uv run python tools/distribution_notices.py --check frontend/src-tauri/sidecar
 
       - name: Linux libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
-
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
-        with:
-          toolchain: stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:

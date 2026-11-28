@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from copy import deepcopy
 
 import pymupdf as fitz
 
@@ -243,6 +244,53 @@ def garbled_block(block: dict) -> bool:
     return _garbled_chars(block) > 0
 
 
+def _captioned_figure_page(page: fitz.Page, blocks: list[dict], top: float, bottom: float) -> bool:
+    """A short native caption beside an illustration is readable, including rotated captions.
+
+    Keep full-page scans eligible for OCR even when a caption has been added on top.
+    Image areas may overlap (a university watermark behind a diagram), so their sum
+    cannot distinguish such an illustration from a scan.
+    """
+    captions = [b for b in blocks if b.get("kind") == "figure"
+                and re.match(r"(?:Fig(?:ure)?\.?|図|그림)\s*\d", b.get("text", ""), re.I)]
+    if not captions or not abs(page.rect):
+        return False
+    if any(abs(fitz.Rect(info["bbox"]) & page.rect) / abs(page.rect) >= .85 for info in page.get_image_info()):
+        return False
+    for block in blocks:
+        if block in captions or block.get("running_header"):
+            continue
+        y = (block["bbox"][1] + block["bbox"][3]) / 2
+        if top <= y <= bottom and any(c.isalpha() for c in block.get("text", "")):
+            return False
+    return True
+
+
+def refresh_caption_ocr(pdf: fitz.Document, document: dict) -> dict:
+    """Recheck old image-only flags without replacing edited extraction or OCR readings.
+
+    Layout 37 changes only short-caption scan detection. Keeping every source block
+    preserves validated translations and manual layout corrections from layout 36.
+    The caller holds PDF_LOCK while using the open PDF.
+    """
+    restored = set()
+    for entry in document.get("ocr_pages", []):
+        if entry.get("reason") != "image":
+            continue
+        number = entry["page"]
+        page = pdf[number - 1]
+        blocks = [b for b in document["blocks"] if b["page"] == number]
+        top, bottom = page.cropbox.height * IMAGE_PAGE_MARGIN, page.cropbox.height * (1 - IMAGE_PAGE_MARGIN)
+        if _captioned_figure_page(page, blocks, top, bottom):
+            restored.add(number)
+    refreshed = deepcopy(document)
+    refreshed["ocr_pages"] = [entry for entry in refreshed.get("ocr_pages", []) if entry["page"] not in restored]
+    for block in refreshed["blocks"]:
+        if block["page"] in restored:
+            block.pop("needs_ocr", None)
+    return refreshed
+
+
 def ocr_check(page: fitz.Page, items: list[dict], blocks: list[dict]) -> dict | None:
     """Why the page needs OCR, or None; marks the blocks kept as the original ("needs_ocr").
 
@@ -255,7 +303,8 @@ def ocr_check(page: fitz.Page, items: list[dict], blocks: list[dict]) -> dict | 
                     if not char["c"].isspace() and top <= (char["bbox"][1] + char["bbox"][3]) / 2 <= bottom)
     result, ratio = None, None
     # A full-page figure has a caption; a scan has no text at all (or a few stray glyphs).
-    if body_text < IMAGE_PAGE_TEXT and _image_coverage(page) >= IMAGE_COVERAGE:
+    if (body_text < IMAGE_PAGE_TEXT and _image_coverage(page) >= IMAGE_COVERAGE
+            and not _captioned_figure_page(page, blocks, top, bottom)):
         result = {"reason": "image"}
     else:
         ratio = _measure(items, blocks, (top, bottom))

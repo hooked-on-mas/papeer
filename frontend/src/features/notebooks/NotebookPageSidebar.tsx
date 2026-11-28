@@ -9,7 +9,8 @@ import { onAppEvent } from "@/lib/appEvents";
 import { useStore } from "@/store";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { InkDrawing } from "@/features/reader/InkOverlay";
-import { notebookDraftInk, type InkStroke } from "@/features/reader/inkStore";
+import type { InkStroke } from '../ink/inkGeometry';
+import { desktopNotebookSession } from '../../adapters/desktop/notebookSessions';
 import { PaperPreview } from "./PaperSettings";
 import { NotebookPageMenuItems, useMouseOnlyMenu } from "./NotebookPageMenu";
 import { rowHeight, SIDEBAR_WIDTH, tabPosition, TAB_WIDTH, thumbnailSize, type SidebarPlacement } from "./pageSidebar";
@@ -119,6 +120,32 @@ export function NotebookPageSidebar({ paperId, notebook, placement }: { paperId:
     return () => { document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", escape, true); };
   }, [placement, open]);
 
+  // The mouse opens the tab by being put on it and folds it by leaving. The leaving cannot be taken from
+  // onPointerLeave alone: React derives it from the pointerout of the element the pointer was on, and that
+  // element is gone once the tab has been swapped for the thumbnails (the browser then sends no pointerout
+  // for it), so a mouse that moves off at once leaves without React ever hearing of it. Watching where the
+  // mouse is does not depend on that.
+  useEffect(() => {
+    if (placement !== "tab" || !open) return;
+    const timer = { current: undefined as ReturnType<typeof setTimeout> | undefined };
+    const leave = () => {
+      if (timer.current !== undefined) return;
+      timer.current = setTimeout(() => { timer.current = undefined; if (!menuOpen.current && !dragging.current) fold(); }, LEAVE_MS);
+    };
+    const moved = (event: PointerEvent) => {
+      if (event.pointerType !== "mouse" || pinned.current) return;
+      if (event.target instanceof Node && root.current?.contains(event.target)) { clearTimeout(timer.current); timer.current = undefined; return; }
+      leave();
+    };
+    // This effect runs after the opening render: a mouse that has already left by now made its last move before
+    // the listener existed, so where it is now is looked at once. ":is(:hover)" and not the bare ":hover": a
+    // review found the bare form answering false under a resting mouse in Edge's Chromium, which would fold the
+    // list under the pointer (here it answers true, so the e2e step that rests the mouse on it guards this).
+    if (!pinned.current && root.current && !root.current.matches(":is(:hover)")) leave();
+    document.addEventListener("pointermove", moved, true);
+    return () => { clearTimeout(timer.current); document.removeEventListener("pointermove", moved, true); };
+  }, [placement, open]);
+
   // The drawings on the thumbnails: the saved writing, with the drafts not saved yet laid over it.
   const [, redrawInk] = useState(0);
   useEffect(() => onAppEvent("ink-changed", (event) => { if (event.paperId === paperId) redrawInk((value) => value + 1); }), [paperId]);
@@ -213,7 +240,7 @@ export function NotebookPageSidebar({ paperId, notebook, placement }: { paperId:
             if (!item) return null;
             return <div key={item.id} className="absolute left-0 w-full px-1 pt-1" style={{ top: slot.start, height: slot.size }}>
               <Thumbnail page={item} number={slot.index + 1} active={current === slot.index + 1}
-                strokes={notebookDraftInk(paperId, item.id) ?? savedInk[item.id]?.strokes as InkStroke[] ?? []}
+                strokes={desktopNotebookSession(paperId)?.getSnapshot().note.ink?.[item.id] ?? savedInk[item.id]?.strokes as InkStroke[] ?? []}
                 select={(keyboard) => choose(slot.index + 1, keyboard)}
                 onFocusChange={(focused) => {
                   // Losing the focus to a disabled button (busy) is not the user's moving away.

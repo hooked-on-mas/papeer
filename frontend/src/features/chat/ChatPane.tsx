@@ -3,13 +3,13 @@ import { FileText, Globe, Loader2, MessageSquare, Send, Square, X } from "lucide
 import { create } from "zustand";
 import { useStore, type PassageAttachment, type PassageLocation } from "@/store";
 import { paperBusyFor, runningPaperJob } from "@/features/jobs/jobSelectors";
-import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { UsageLine } from "@/components/UsageLine";
 import { useCollections, useMessages, usePaperList } from "@/api/hooks";
 import { requestCancel, startJob } from "@/features/jobs/jobEvents";
 import { showError } from "@/components/errorDialog";
 import { showPassage } from "@/features/reader/navigation";
 import { CitationEvidence } from "./CitationEvidence";
+import { ChatAnswer } from "./ChatAnswer";
 import { isImeKey } from "@/lib/imeKeys";
 import { useResearch, useWebSearchCapability } from "@/features/references/researchHooks";
 import { ResearchCard } from "@/features/references/ResearchDetails";
@@ -258,7 +258,7 @@ export function ChatPane() {
           ) : (
             <div key={idx}>
               <div className="text-[0.75rem] font-medium text-muted-foreground mb-1">回答 · {msg.research?.web_search ? "Web検索あり" : msg.research?.attached_keys.length ? "論文＋添付資料" : "論文のみ"}</div>
-              <MarkdownRenderer content={msg.content} paperId={activePaperId} className="max-w-none" />
+              <ChatAnswer content={msg.content} paperId={activePaperId} />
               <CitationEvidence content={msg.content} />
               {!!msg.research?.sources.length && <details className="mt-3 text-xs"><summary className="cursor-pointer">Webの出典 · {msg.research.sources.length}件</summary>
                 <ul className="space-y-2 mt-2">{msg.research.sources.map((source, i) => <li key={`${source.url}:${i}`}><button className="text-primary hover:underline text-left break-all" onClick={() => void shell.openUrl(source.url).catch(e => showError(e, "出典を開けませんでした"))}>［Web {i + 1}］{source.title} ↗</button></li>)}</ul>

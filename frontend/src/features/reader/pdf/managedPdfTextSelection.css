@@ -1,0 +1,6 @@
+[data-managed-pdf-text-selection] .textLayer,
+[data-managed-pdf-text-selection] .textLayer * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}

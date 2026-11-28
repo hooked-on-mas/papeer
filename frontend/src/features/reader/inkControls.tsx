@@ -9,8 +9,9 @@ import { showSaved } from "@/app/savedNotice";
 import { withShortcutLabels } from "@/lib/platform";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { flushInkSaves, type InkSide } from "./inkStore";
-import type { InkEditor } from "./useInkEditor";
-import type { InkTool } from "./inkGeometry";
+import type { PersistedInkEditor as InkEditor } from "./inkEditor";
+import type { InkTool } from "../ink/inkGeometry";
+import { DrawingKindSelect } from "./DrawingKindSelect";
 
 /**
  * The parts of the writing tools that the PDF's toolbar (InkToolbar) and the notebook's
@@ -98,16 +99,12 @@ function styleOf(editor: InkEditor) {
 
 /** The pen kinds: the select that switches between them. */
 export function InkKindSelect({ editor }: { editor: InkEditor }) {
-  return <select aria-label="描画の種類" className="h-7 border rounded bg-background text-xs" value={editor.tool} onChange={e => editor.setTool(e.target.value as InkTool)}>
-    <option value="pen">ペン</option><option value="highlighter">蛍光ペン</option><option value="line">直線</option><option value="arrow">矢印</option><option value="rectangle">四角</option><option value="ellipse">丸</option>
-  </select>;
+  return <DrawingKindSelect className="h-7 border rounded bg-background text-xs" value={editor.tool} onChange={editor.setTool} />;
 }
 
 /** The shapes only, for the notebook's 図形 button. */
 export function InkShapeSelect({ editor }: { editor: InkEditor }) {
-  return <select aria-label="図形の種類" className="h-7 border rounded bg-background text-xs" value={editor.tool} onChange={e => editor.setTool(e.target.value as InkTool)}>
-    <option value="line">直線</option><option value="arrow">矢印</option><option value="rectangle">四角</option><option value="ellipse">丸</option>
-  </select>;
+  return <DrawingKindSelect shapesOnly className="h-7 border rounded bg-background text-xs" value={editor.tool} onChange={editor.setTool} />;
 }
 
 export function InkSwatches({ editor, disabled = false }: { editor: InkEditor; disabled?: boolean }) {

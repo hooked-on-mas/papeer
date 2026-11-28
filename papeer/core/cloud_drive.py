@@ -1,7 +1,7 @@
 """Private Drive publication with a commit-last manifest and additive browser-ink import."""
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -15,10 +15,11 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 import uuid
 
-from papeer.core import cloud_drive_auth, drive_sync, cloud_annotations
+from papeer.core import cloud_drive_auth, drive_sync, cloud_annotations, cloud_notes
 from papeer.core.backup import DATABASE_FILES
 from papeer.core.fileio import atomic_write_bytes, atomic_write_text, ensure_free_space, is_temporary
 from papeer.core.paths import device_directory, library_key, PaperFiles
+from papeer.core.device_authority import device_writer
 from papeer.core.reading_state import reading_state
 from papeer.core.storage import Library
 from papeer.pdf.pdf_ink import annotated_pdf
@@ -37,6 +38,7 @@ def state(root: Path) -> dict:
     return json.loads(path.read_text("utf-8")) if path.is_file() else {}
 
 
+@device_writer
 def save_state(root: Path, value: dict):
     path = _state_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,14 +52,33 @@ def status(root: Path) -> dict:
 
 
 class Drive:
+    def __init__(self, *, account_id=None, lease_id=None):
+        self.generation = (cloud_drive_auth.lease_generation(account_id, lease_id) if lease_id is not None
+                           else cloud_drive_auth.generation())
+
+    def bind_account(self, account_id):
+        value = self.json(API.removesuffix("/files") + "/about?fields=user(permissionId)")
+        if value.get("user", {}).get("permissionId") != account_id:
+            raise ValueError("drive-account-mismatch")
+        self.lease_id = cloud_drive_auth.transfer_lease(account_id, self.generation)
+        return self
+
+    def assert_current(self):
+        with cloud_drive_auth.transfer_guard(self.generation):
+            pass
+
+    @contextmanager
     def request(self, url: str, *, method: str = "GET", data: bytes | None = None, headers: dict | None = None):
-        request = Request(url, method=method, data=data,
-                          headers={"Authorization": "Bearer " + cloud_drive_auth.access_token(), **(headers or {})})
-        try:
-            return urlopen(request, timeout=60)
-        except (HTTPError, URLError, TimeoutError) as exc:
-            code = exc.code if isinstance(exc, HTTPError) else "通信"
-            raise ValueError(f"Google Driveへの転送に失敗しました（{code}）。接続・空き容量を確認して再試行してください。") from exc
+        token = cloud_drive_auth.capture_provider_access_token(self.generation)
+        with cloud_drive_auth.transfer_guard(self.generation):
+            request = Request(url, method=method, data=data,
+                              headers={"Authorization": "Bearer " + token, **(headers or {})})
+            try:
+                with urlopen(request, timeout=60) as response:
+                    yield response
+            except (HTTPError, URLError, TimeoutError) as exc:
+                code = exc.code if isinstance(exc, HTTPError) else "通信"
+                raise ValueError(f"Google Driveへの転送に失敗しました（{code}）。接続・空き容量を確認して再試行してください。") from exc
 
     def json(self, url: str, *, method: str = "GET", value: dict | None = None) -> dict:
         with self.request(url, method=method, data=json.dumps(value).encode() if value is not None else None,
@@ -67,7 +88,7 @@ class Drive:
     def list(self, query: str) -> list[dict]:
         files, token = [], None
         while True:
-            params = {"q": query + " and trashed = false", "fields": "nextPageToken,files(id,name,size,sha256Checksum)", "pageSize": "1000"}
+            params = {"q": query + " and trashed = false", "fields": "nextPageToken,files(id,name,size,sha256Checksum,version,properties)", "pageSize": "1000"}
             if token:
                 params["pageToken"] = token
             result = self.json(API + "?" + urlencode(params))
@@ -98,10 +119,13 @@ class Drive:
                            "Content-Range": f"bytes {offset}-{end - 1}/{size}" if size else "bytes */0"}
                 # urllib regards 308 as HTTPError; it is the normal intermediate upload response.
                 try:
-                    request = Request(location, data=chunk, method="PUT", headers={
-                        "Authorization": "Bearer " + cloud_drive_auth.access_token(), **headers})
-                    with urlopen(request, timeout=60) as response:
-                        return json.load(response)["id"]
+                    token = cloud_drive_auth.capture_provider_access_token(self.generation)
+                    with cloud_drive_auth.transfer_guard(self.generation):
+                        request = Request(location, data=chunk, method="PUT", headers={
+                            "Authorization": "Bearer " + token, **headers})
+                        with urlopen(request, timeout=60) as response:
+                            result = json.load(response)["id"]
+                        return result
                 except HTTPError as exc:
                     if exc.code != 308:
                         raise ValueError(f"Google Driveへの転送に失敗しました（{exc.code}）。再試行してください。") from exc
@@ -129,6 +153,9 @@ def snapshot(lib: Library, target: Path, cancel) -> dict:
         reading[paper_id] = {"pageCount": state["page_count"], "translatedPages": {
             number: {"artifactPath": f"papers/{paper_id}/{page['file']}", "page": page["index"] + 1} if page else None
             for number, page in state["translated_pages"].items()}}
+    for paper_id in paper_ids:
+        if lib.paper(paper_id)['kind'] == 'markdown':
+            cloud_notes.notes.read(lib, paper_id)
     files = []
     for path in lib.root.rglob("*"):
         check_cancel(cancel)
@@ -184,6 +211,14 @@ def snapshot(lib: Library, target: Path, cancel) -> dict:
     # Baked PDFs remain available as downloads and for older browser releases.
     atomic_write_text(target / "web-annotations.json", json.dumps(browser_ink, ensure_ascii=False))
     atomic_write_text(target / "web-reading.json", json.dumps({"version": 1, "items": reading}, ensure_ascii=False))
+    browser_notes = [cloud_notes.record(lib, row['id']) for row in papers if row.get('kind') in ('markdown', 'notebook')]
+    imported_note_ops = [json.loads(row['operation']) for row in tables.get('note_operations', [])]
+    for browser_note in browser_notes:
+        for operation in imported_note_ops:
+            if operation.get('note_id') == browser_note['id'] and operation.get('result_revision') == browser_note['revision']:
+                browser_note['revision'] = operation['id']
+                break
+    atomic_write_text(target / 'web-notes.json', json.dumps({'version': 1, 'notes': browser_notes, 'applied': [row['id'] for row in tables.get('note_operations', [])]}, ensure_ascii=False))
     return {"version": 1, "items": papers, "attachments": tables.get("attachments", [])}
 
 
@@ -196,6 +231,7 @@ def publish(lib: Library, cancel, progress, *, force: bool = False) -> dict:
         if saved.get("manifest_id"):
             progress("Webの書き込みを取り込んでいます…")
             cloud_annotations.import_operations(lib, drive, saved["manifest_id"], cancel)
+            cloud_notes.import_operations(lib, drive, saved["manifest_id"], cancel)
         fingerprint = drive_sync.fingerprint(lib, cancel)
         # Navigation alone does not trigger another upload. Verify the previous manifest still exists.
         if (not force and saved.get("web_ink_version") == 1 and saved.get("web_reading_version") == 1

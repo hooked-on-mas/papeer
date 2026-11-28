@@ -59,7 +59,9 @@ CLI_EXE = SIDECAR_DIR / ("papeer-cli.exe" if os.name == "nt" else "papeer-cli")
 # Every launcher of the folder (tools/place_sidecar.py, tools/sign_sidecar.py): the sidecar's first.
 LAUNCHERS = (SIDECAR_EXE, CLI_EXE)
 # What PyInstaller bundles from the source tree (sidecar.spec) and the dependencies it installs.
-_BUNDLED = ("papeer", "sidecar", "sidecar.spec", "pyproject.toml", "uv.lock")
+_BUNDLED = ("papeer", "sidecar", "sidecar.spec", "pyproject.toml", "uv.lock", "LICENSE",
+            "tools/distribution_notices.py", "tools/distribution_licenses", "tools/license_inventory.py",
+            "frontend/src-tauri/Cargo.toml", "frontend/src-tauri/Cargo.lock")
 
 
 def _digest(root: Path, paths) -> str:

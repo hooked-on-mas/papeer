@@ -2,19 +2,21 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Folder, Search, X } from "lucide-react";
 import { LibraryChildRowView, LibraryFolderRowView, LibraryPaperRowView } from "../features/library/LibraryRows";
 import { folderAncestors } from "../lib/collectionPath";
+import { resolveTabStop, treeKeyAction, typeaheadMatch, type TreeRow } from "../features/library/treeKeys";
 import type { DriveLibraryRuntime } from "./libraryRuntime";
 import { buildWebLibraryTree, type WebLibraryChild, type WebLibraryEntry, type WebLibraryFolder } from "./librarySidebarTree";
 
 type Line = { key: string; parent?: string; level: number } & (
   { kind: "folder"; folder: WebLibraryFolder; open: boolean }
   | { kind: "paper"; entry: WebLibraryEntry; open: boolean }
+  | { kind: "more"; owner: string; count: number }
   | { kind: "child"; child: WebLibraryChild; owner: string }
 );
 
 /** Same row presentation as desktop; this host supplies only browsing and saved metadata search. */
-export function WebLibrarySidebar({ runtime, selectedItemId, selectedArtifactId, onSelectItem, onSelectArtifact, onAllFiles }: {
+export function WebLibrarySidebar({ runtime, selectedItemId, selectedArtifactId, onSelectItem, onSelectArtifact, onAllFiles, onShowNotes }: {
   runtime: DriveLibraryRuntime; selectedItemId: string; selectedArtifactId?: string;
-  onSelectItem(id: string): void; onSelectArtifact(itemId: string, artifactId: string): void; onAllFiles?(): void;
+  onSelectItem(id: string): void; onSelectArtifact(itemId: string, artifactId: string): void; onAllFiles?(): void; onShowNotes?(id: string): void;
 }) {
   const items = runtime.query.listItems();
   // Query per item so internal review history stays out of the normal library browser.
@@ -24,6 +26,7 @@ export function WebLibrarySidebar({ runtime, selectedItemId, selectedArtifactId,
   const [openPapers, setOpenPapers] = useState<Set<string>>(() => new Set());
   const [focused, setFocused] = useState("");
   const refs = useRef(new Map<string, HTMLDivElement>());
+  const typed = useRef({ text: "", time: 0 });
   const tree = useMemo(() => buildWebLibraryTree(items, artifacts, query), [items, artifacts, query]);
   const searching = !!query.trim();
   useEffect(() => {
@@ -44,14 +47,25 @@ export function WebLibrarySidebar({ runtime, selectedItemId, selectedArtifactId,
       for (const entry of folder.entries) {
         const paperKey = `paper:${entry.item.id}`, paperOpen = searching || openPapers.has(entry.item.id);
         lines.push({ kind: "paper", key: paperKey, parent: key, level: level + 1, entry, open: paperOpen });
-        if (paperOpen) for (const child of entry.children) lines.push({ kind: "child", key: child.kind === "owned" ? `paper:${child.item.id}` : `artifact:${child.artifact.id}`,
-          parent: paperKey, level: level + 2, child, owner: entry.item.id });
+        if (paperOpen) {
+          const owned = entry.children.filter(child => child.kind === 'owned');
+          for (const child of [...owned.slice(0, 5), ...entry.children.filter(child => child.kind !== 'owned')]) lines.push({ kind: "child", key: child.kind === "owned" ? `paper:${child.item.id}` : `artifact:${child.artifact.id}`, parent: paperKey, level: level + 2, child, owner: entry.item.id });
+          if (owned.length > 5) lines.push({ kind: 'more', key: `notes:${entry.item.id}`, parent: paperKey, level: level + 2, owner: entry.item.id, count: owned.length });
+        }
       }
     }
   };
   visit(tree, 1);
   const selectedKey = selectedArtifactId ? `artifact:${selectedArtifactId}` : `paper:${selectedItemId}`;
-  const tabStop = lines.some(line => line.key === focused) ? focused : lines.some(line => line.key === selectedKey) ? selectedKey : lines[0]?.key;
+  const rows: TreeRow[] = lines.map(line => ({
+    key: line.key, parent: line.parent ?? null, level: line.level, folder: "", id: line.key,
+    kind: line.kind === "child" || line.kind === "more" ? "owned" : line.kind,
+    expandable: line.kind === "folder" || (line.kind === "paper" && line.entry.children.length > 0),
+    expanded: (line.kind === "folder" || line.kind === "paper") && line.open,
+    label: line.kind === "folder" ? line.folder.name : line.kind === "paper" ? line.entry.item.displayTitle
+      : line.kind === "more" ? "すべてのノート" : line.child.kind === "owned" ? line.child.item.displayTitle : line.child.artifact.label,
+  }));
+  const tabStop = resolveTabStop(rows, focused || null, selectedKey);
   const toggle = (line: Line, open?: boolean) => {
     if (line.kind === "folder") setClosedFolders(before => {
       const next = new Set(before); if (open ?? !line.open) next.delete(line.folder.path); else next.add(line.folder.path); return next;
@@ -63,30 +77,30 @@ export function WebLibrarySidebar({ runtime, selectedItemId, selectedArtifactId,
   const activate = (line: Line) => {
     if (line.kind === "folder") toggle(line);
     else if (line.kind === "paper") onSelectItem(line.entry.item.id);
+    else if (line.kind === "more") onShowNotes?.(line.owner);
     else if (line.child.kind === "owned") onSelectItem(line.child.item.id);
     else onSelectArtifact(line.owner, line.child.artifact.id);
   };
   const focus = (key?: string) => { if (key) { setFocused(key); refs.current.get(key)?.focus(); } };
   const keyDown = (event: KeyboardEvent<HTMLDivElement>, line: Line) => {
     if (event.target !== event.currentTarget || event.nativeEvent.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
-    const index = lines.indexOf(line);
-    if (event.key === "ArrowDown") focus(lines[Math.min(index + 1, lines.length - 1)]?.key);
-    else if (event.key === "ArrowUp") focus(lines[Math.max(0, index - 1)]?.key);
-    else if (event.key === "Home") focus(lines[0]?.key);
-    else if (event.key === "End") focus(lines[lines.length - 1]?.key);
-    else if (event.key === "ArrowRight") {
-      if (line.kind !== "child" && !line.open) toggle(line, true);
-      else if (lines[index + 1]?.parent === line.key) focus(lines[index + 1].key);
-    } else if (event.key === "ArrowLeft") {
-      if (line.kind !== "child" && line.open) toggle(line, false); else focus(line.parent);
-    } else if (event.key === "Enter" || event.key === " ") activate(line);
-    else return;
+    const action = treeKeyAction(rows, line.key, event.key === " " ? "Enter" : event.key, { canCollapse: !searching });
+    if (action?.type === "focus") focus(action.key);
+    else if (action?.type === "expand" || action?.type === "collapse") {
+      if (!searching) toggle(line, action.type === "expand");
+      else if (action.type === "collapse") focus(line.parent);
+    } else if (action?.type === "activate") activate(line);
+    else if (!action) {
+      if (Array.from(event.key).length !== 1) return;
+      typed.current = { text: (event.timeStamp - typed.current.time < 700 ? typed.current.text : "") + event.key, time: event.timeStamp };
+      focus(typeaheadMatch(rows, line.key, typed.current.text) ?? undefined);
+    }
     event.preventDefault(); event.stopPropagation();
   };
   return <div data-web-library-sidebar className="flex flex-col h-full min-h-0 text-[0.8125rem] select-none">
     <div className="p-2 shrink-0"><div className="relative">
       <Search className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-      <input aria-label="ライブラリを検索" placeholder="タイトル・メモ名を検索" title="保存されたタイトル・著者・フォルダー名・メモ名を検索"
+      <input aria-label="ライブラリを検索" placeholder="タイトル・ノート名を検索" title="保存されたタイトル・著者・フォルダー名・ノート名を検索"
         className="w-full h-8 pl-8 pr-7 rounded-md bg-background border text-[0.8125rem] focus:outline-none focus:ring-2 focus:ring-ring"
         value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Escape" && !event.nativeEvent.isComposing) setQuery(""); }} />
       {query && <button type="button" data-slot="library-search-clear" aria-label="検索を解除" onClick={() => setQuery("")}
@@ -104,12 +118,13 @@ export function WebLibrarySidebar({ runtime, selectedItemId, selectedArtifactId,
           if (line.kind === "paper") {
             const { item, children } = line.entry;
             return <LibraryPaperRowView key={line.key} {...common} label={item.displayTitle} title={item.title} aria-label={item.displayTitle}
-              notebook={item.kind === "notebook"} selected={selectedItemId === item.id && !selectedArtifactId} active={selectedItemId === item.id}
+              notebook={item.kind === "notebook" || item.kind === "markdown"} selected={selectedItemId === item.id && !selectedArtifactId} active={selectedItemId === item.id}
               aria-selected={selectedItemId === item.id && !selectedArtifactId} aria-current={selectedItemId === item.id ? "true" : undefined}
               expandable={children.length > 0} expanded={line.open} aria-expanded={children.length ? line.open : undefined} onToggle={() => toggle(line)}
-              detail={<span>{item.kind === "notebook" ? "ノート" : "PDF"}</span>}
+              detail={<span>{item.kind === "notebook" ? "手書きノート" : item.kind === "markdown" ? "Markdownノート" : "PDF"}</span>}
               trailing={children.length > 0 && <span className="ml-1 mt-0.5 text-xs text-muted-foreground" aria-label={`持ち物 ${children.length}件`}>{children.length}</span>} />;
           }
+          if (line.kind === "more") return <LibraryChildRowView key={line.key} {...common} kind="more" label={`付属ノートをすべて表示（${line.count}件）`} />;
           const child = line.child;
           const label = child.kind === "owned" ? child.item.displayTitle : child.artifact.label;
           const selected = line.key === selectedKey;

@@ -1,37 +1,8 @@
 import createClient from "openapi-fetch";
 import type { paths } from "./schema";
-import { sendWhenLibraryFree } from "@/lib/libraryBusy";
-
-export function backendPort(): number {
-  return Number((window as any).__PAPEER_PORT || import.meta.env.VITE_PAPEER_PORT || import.meta.env.VITE_PAPERDESK_PORT || 8000);
-}
-
-/**
- * The token `just dev-sidecar` starts the development sidecar with (the same value as DEV_TOKEN in
- * src-tauri/src/lib.rs). Only a Vite dev server falls back to it; a production build has no default.
- */
-const DEV_TOKEN = "dev_token";
-
-/**
- * The sidecar's token. Inside Tauri it comes from get_backend_config (main.tsx); in a plain browser
- * during development, from VITE_PAPEER_TOKEN, else the development default.
- */
-export function authToken(): string {
-  return (window as any).__PAPEER_TOKEN || import.meta.env.VITE_PAPEER_TOKEN || import.meta.env.VITE_PAPERDESK_TOKEN
-    || (import.meta.env.DEV ? DEV_TOKEN : "");
-}
-
-export function backendUrl(path: string): string {
-  return `http://127.0.0.1:${backendPort()}${path.startsWith("/") ? path : `/${path}`}`;
-}
-
-/** URL usable from <img> and other elements that cannot send an Authorization header. */
-export function authorizedUrl(path: string): string {
-  const url = new URL(backendUrl(path));
-  const token = authToken();
-  if (token) url.searchParams.set("token", token);
-  return url.toString();
-}
+import { sendWhenLibraryFree } from "@/features/library/state/libraryBusy";
+import { backendPort, backendUrl, authToken } from './connection';
+export { backendPort, backendUrl, authToken, authorizedUrl } from './connection';
 
 /**
  * The typed client: paths, parameters, bodies and answers come from schema.d.ts (`just gen-api` makes it

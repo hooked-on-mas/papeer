@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
   isSidePanel, mergeSavedAnchors, openBesideReader, parseAnchors, savedAnchor, shownSidePanel, SIDE_PANELS, sidePanelOpen, summaryPlacement, tabChange, type SidePanel,
 } from "../src/features/reader/sidePanel.ts";
-import { onScreen } from "../src/features/reader/pageTurn.ts";
+import { onScreen } from "../src/features/reader/navigation/pageTurn.ts";
 
 const TABS = ["reader", "summary", "chat", "notes", "sticky-notes"];
 
@@ -53,10 +53,10 @@ test("text handed over from the reader opens in the side panel, with the reader 
   for (const panel of SIDE_PANELS) assert.deepEqual(openBesideReader(panel), { activeTab: "reader", sidePanel: panel });
 });
 
-test("a finished 解説 opens beside the PDF when the side panel is open there, and never hides the PDF", () => {
+test("a finished サマリー opens beside the PDF when the side panel is open there, and never hides the PDF", () => {
   // Already there: nothing to do.
   assert.equal(summaryPlacement({ activeTab: "reader", sidePanel: "summary" }), "none");
-  // Reading with the chat or memo beside the PDF: the panel switches to the 解説.
+  // Reading with the chat or memo beside the PDF: the panel switches to the サマリー.
   assert.equal(summaryPlacement({ activeTab: "reader", sidePanel: "chat" }), "panel");
   assert.equal(summaryPlacement({ activeTab: "reader", sidePanel: "notes" }), "panel");
   // No panel, or another tab shown: its tab, as before (in focus mode tabChange puts it beside the PDF).

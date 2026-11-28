@@ -31,6 +31,102 @@ test("page/version anchors, tombstones, duplicate events and imported PC edits m
   assert.throws(() => parseOperation({ ...added, stroke: { ...added.stroke, points: [[Infinity, 1]] } }, "library"));
 });
 
+test('one erase gesture is one durable operation; quota failure leaves every target unchanged and retry/reload stays atomic', async () => {
+  const local = storage(), write = local.setItem.bind(local), remote = new Map<string, Operation>(); let quota = false, offline = true, groupedWrites = 0;
+  local.setItem = (key, value) => { if (JSON.parse(value).version === 2) { if (quota) throw new Error('quota'); if (key.startsWith('papeer-ink:')) groupedWrites++; } write(key, value); };
+  const transport = { annotationFiles: async () => [...remote].map(([id]) => ({ id, name: `ink-${id}.json`, size: '100' })),
+    annotation: async (id: string) => remote.get(id), saveAnnotation: async (_library: string, _folder: string, id: string, op: Operation) => { remote.set(id, op); if (offline) throw new Error('offline'); } } as unknown as DriveSession;
+  const first = new AnnotationStore(transport, 'library', manifest, local); await first.start();
+  const a = first.add(anchor, stroke), b = first.add(anchor, stroke); await first.flush();
+  const before = first.getSnapshot().pending; quota = true;
+  assert.throws(() => first.edit(anchor, { remove: [a.id, b.id] }), /quota/);
+  assert.equal(first.getSnapshot().pending, before); assert.deepEqual(first.page(anchor).strokes.map(value => value.id), [a.id, b.id]);
+  quota = false; first.edit(anchor, { remove: [a.id, b.id] }); await first.flush();
+  assert.equal(groupedWrites, 1); assert.equal(first.page(anchor).strokes.length, 0); first.dispose();
+  const reopened = new AnnotationStore(transport, 'library', manifest, local); await reopened.start(); assert.equal(reopened.page(anchor).strokes.length, 0);
+  offline = false; await reopened.retry(); assert.equal(local.length, 0);
+  const restored = reopened.edit(anchor, { add: [a, b] }); assert.equal(restored.length, 2); assert.equal(reopened.page(anchor).strokes.length, 2);
+  reopened.edit(anchor, { remove: restored.map(value => value.id) }); assert.equal(reopened.page(anchor).strokes.length, 0); await reopened.flush();
+  assert.ok([...remote.values()].filter(op => op.version === 2).every(op => op.action === 'edit' && op.changes.length === 2));
+});
+
+test('erase admission rejects an oversized inverse, permits smaller groups, and cleans interrupted probes', async () => {
+  const local = storage(), write = local.setItem.bind(local), uploads: Operation[] = [];
+  local.setItem = (key, value) => { if (value.length > 1800) throw new Error('quota'); write(key, value); };
+  write('papeer-ink-admission:library:interrupted', 'not an operation');
+  const transport = { annotationFiles: async () => [], saveAnnotation: async (_library: string, _folder: string, _id: string, op: Operation) => { uploads.push(op); } } as unknown as DriveSession;
+  const store = new AnnotationStore(transport, 'library', manifest, local); await store.start();
+  assert.equal(store.getSnapshot().ready, true); assert.equal(local.length, 0);
+  const large = { ...stroke, points: Array.from({ length: 20 }, () => [.12345678901234567, .7654321098765432] as [number, number]) };
+  const a = store.add(anchor, large); await store.flush(); const b = store.add(anchor, large); await store.flush();
+  assert.throws(() => store.edit(anchor, { remove: [a.id, b.id] }), /一度に消去する量を減らして/);
+  assert.equal(uploads.length, 2); assert.equal(local.length, 0);
+  assert.deepEqual(store.page(anchor).strokes, [a, b]);
+  store.edit(anchor, { remove: [a.id] }); await store.flush();
+  assert.deepEqual(store.page(anchor).strokes, [b]);
+  store.edit(anchor, { add: [a] }); await store.flush();
+  assert.equal(store.page(anchor).strokes.length, 2); assert.equal(local.length, 0); store.dispose();
+});
+
+test('grouped ink validates the whole change collection before taking an operation ID', () => {
+  const a = add(); if (a.action !== 'add') assert.fail();
+  const op: Operation = { ...anchor, library_id: 'library', id: crypto.randomUUID(), version: 2, action: 'edit', changes: [{ action: 'remove', target: a.stroke.id }] };
+  assert.deepEqual(parseOperation(op, 'library'), op);
+  for (const bad of [ { ...op, changes: [] }, { ...op, changes: 1 }, { ...op, changes: [op.changes[0], op.changes[0]] },
+    { ...op, changes: [{ action: 'remove', target: a.stroke.id, stroke: a.stroke }] }, { ...op, version: true }, { ...op, target: a.stroke.id },
+    { ...op, changes: [{ action: 'remove', target: a.stroke.id + '\n' }] } ]) assert.throws(() => parseOperation(bad, 'library'));
+});
+
+test('erase admission accounts for forward and inverse journals coexisting during offline Undo', async () => {
+  const local = storage(), write = local.setItem.bind(local);
+  let capacity = Infinity, offline = false;
+  const usage = () => Array.from({ length: local.length }, (_, i) => local.key(i)!)
+    .reduce((size, key) => size + key.length + local.getItem(key)!.length, 0);
+  local.setItem = (key, value) => {
+    const previous = local.getItem(key);
+    if (usage() - (previous === null ? 0 : key.length + previous.length) + key.length + value.length > capacity) {
+      throw new Error('QuotaExceededError');
+    }
+    write(key, value);
+  };
+  const transport = { annotationFiles: async () => [], saveAnnotation: async () => { if (offline) throw new Error('offline'); } } as unknown as DriveSession;
+  const store = new AnnotationStore(transport, 'library', manifest, local); await store.start();
+  const a = store.add(anchor, { ...stroke, points: Array.from({ length: 500 }, () => [.12345678901234567, .7654321098765432] as [number, number]) });
+  await store.flush(); assert.equal(local.length, 0); offline = true;
+  const forward: Operation = { ...anchor, id: crypto.randomUUID(), library_id: 'library', version: 2, action: 'edit', changes: [{ action: 'remove', target: a.id }] };
+  const inverse: Operation = { ...anchor, id: crypto.randomUUID(), library_id: 'library', version: 2, action: 'edit', changes: [{ action: 'add', stroke: { ...a, id: 'web-' + crypto.randomUUID() } }] };
+  // The old inverse-only probe fits, but the actual offline Undo would not.
+  capacity = ('papeer-ink-admission:library:' + crypto.randomUUID()).length + JSON.stringify(inverse).length;
+  assert.throws(() => store.edit(anchor, { remove: [a.id] }), /一度に消去する量を減らして/);
+  assert.deepEqual(store.page(anchor).strokes, [a]); assert.equal(local.length, 0); assert.equal(store.getSnapshot().pending, 0);
+  // Exactly enough for both keys/bodies plus the conservative JSON-array margin.
+  capacity = ('papeer-ink:library:' + forward.id).length + ('papeer-ink:library:' + inverse.id).length
+    + JSON.stringify(forward).length + JSON.stringify(inverse).length + 3;
+  store.edit(anchor, { remove: [a.id] }); await store.flush();
+  assert.equal(store.page(anchor).strokes.length, 0); assert.equal(store.getSnapshot().pending, 1);
+  const restored = store.edit(anchor, { add: [a] }); await store.flush();
+  assert.deepEqual(store.page(anchor).strokes, restored); assert.equal(store.getSnapshot().pending, 2);
+  assert.equal(local.length, 2); assert.ok(usage() <= capacity); store.dispose();
+});
+
+test('one grouped Undo can restore multiple legal large strokes and survive remote reload', async () => {
+  const remote = new Map<string, Operation>();
+  const transport = { annotationFiles: async () => [...remote].map(([id, op]) => ({ id, name: `ink-${id}.json`, size: String(new TextEncoder().encode(JSON.stringify(op)).length) })),
+    annotation: async (id: string) => remote.get(id), saveAnnotation: async (_library: string, _folder: string, id: string, op: Operation) => { remote.set(id, op); } } as unknown as DriveSession;
+  const store = new AnnotationStore(transport, 'library', manifest, storage()); await store.start();
+  const large = { ...stroke, points: Array.from({ length: 20000 }, () => [.12345678901234567, .7654321098765432] as [number, number]) };
+  const a = store.add(anchor, large), b = store.add(anchor, large); await store.flush();
+  store.edit(anchor, { remove: [a.id, b.id] }); await store.flush();
+  const restored = store.edit(anchor, { add: [a, b] }); await store.flush();
+  assert.equal(store.page(anchor).strokes.length, 2);
+  assert.ok([...remote.values()].some(op => op.version === 2 && JSON.stringify(op).length > 1024 * 1024));
+  store.dispose();
+  const reopened = new AnnotationStore(transport, 'library', manifest, storage()); await reopened.start();
+  assert.deepEqual(reopened.page(anchor).strokes.map(s => s.id), restored.map(s => s.id));
+  reopened.edit(anchor, { remove: restored.map(s => s.id) }); await reopened.flush();
+  assert.equal(reopened.page(anchor).strokes.length, 0); reopened.dispose();
+});
+
 test("failed/ambiguous network saves keep durable drafts; reopening and retry deduplicate by operation ID", async () => {
   const local = storage(), remote = new Map<string, Operation>();
   let offline = true;

@@ -6,7 +6,6 @@ import { paperDisplayName, usePaper } from "@/api/hooks";
 import { Progress } from "@/components/ui/progress";
 import { emitAppEvent } from "@/lib/appEvents";
 import { isRunning, useStore, type Job } from "@/store";
-import { cancelSync } from "@/features/settings/driveSync";
 import { cancelJob } from "./jobEvents";
 import { clearJobFailure, showJobFailure, useJobFailures } from "./jobFailures";
 import type { ErrorReport } from "@/lib/errorReports";
@@ -38,9 +37,7 @@ function JobRow({ job, active }: { job: Job; active: boolean }) {
 
   const cancel = async () => {
     setCancelling(true);
-    // A sync keeps its own 中止 state (the waiting screen shows it too).
-    if (job.kind === "drive-sync") await cancelSync();
-    else if (!await cancelJob(job.job_id)) setCancelling(false);
+    if (!await cancelJob(job.job_id)) setCancelling(false);
   };
 
   return (

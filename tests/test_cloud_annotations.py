@@ -3,11 +3,12 @@ import hashlib
 import json
 import threading
 import uuid
+from contextlib import contextmanager
 
 import pymupdf
 import pytest
 
-from papeer.core.cloud_annotations import import_operations
+from papeer.core.cloud_annotations import import_operations, Operation
 from papeer.core.cloud_drive import snapshot
 from papeer.core.paths import PaperFiles
 from papeer.core.storage import Library
@@ -49,6 +50,70 @@ def setup(tmp_path):
 
 def apply(lib, *ops):
     return import_operations(lib, Remote(ops), "library", threading.Event())
+
+
+def test_grouped_erase_is_one_atomic_import_and_retries_after_ledger_failure(setup, monkeypatch):
+    lib, paper, _, op = setup
+    a, b = op(), op()
+    apply(lib, a, b)
+    before = lib.ink(paper, 'translated', 1)
+    batch = {key: value for key, value in a.items() if key not in {'stroke', 'action', 'id', 'version'}}
+    batch.update(version=2, id=str(uuid.uuid4()), action='edit', changes=[{'action': 'remove', 'target': entry['stroke']['id']} for entry in (a, b)])
+    connect = lib.connection
+
+    @contextmanager
+    def fail_ledger():
+        with connect() as db:
+            class Interrupted:
+                def execute(self, sql, parameters=()):
+                    if sql.startswith('INSERT INTO web_annotation_ops'):
+                        raise RuntimeError('ledger unavailable')
+                    return db.execute(sql, parameters)
+            yield Interrupted()
+
+    monkeypatch.setattr(lib, 'connection', fail_ledger)
+    with pytest.raises(RuntimeError, match='ledger unavailable'):
+        apply(lib, batch)
+    monkeypatch.setattr(lib, 'connection', connect)
+    assert lib.ink(paper, 'translated', 1) == before
+    assert apply(lib, batch) == 1
+    assert [stroke['id'] for stroke in lib.ink(paper, 'translated', 1)] == ['pc']
+    assert apply(lib, batch) == 0
+
+
+def test_grouped_operation_rejects_invalid_collection_before_accepting_any_change(setup):
+    _, _, _, op = setup
+    a = op()
+    batch = {key: value for key, value in a.items() if key not in {'stroke', 'action', 'id', 'version'}}
+    change = {'action': 'remove', 'target': a['stroke']['id']}
+    batch.update(version=2, id=str(uuid.uuid4()), action='edit', changes=[change])
+    Operation.model_validate(batch)
+    for bad in ({**batch, 'changes': []}, {**batch, 'changes': 1}, {**batch, 'changes': [change, change]},
+                {**batch, 'changes': [{**change, 'stroke': a['stroke']}]}, {**batch, 'version': True}, {**batch, 'target': change['target']},
+                {**batch, 'changes': [{**change, 'target': change['target'] + '\n'}]}):
+        with pytest.raises(ValueError):
+            Operation.model_validate(bad)
+    with pytest.raises(ValueError):
+        Operation.model_validate({**a, 'action': 'edit', 'target': a['stroke']['id'], 'stroke': None})
+
+
+def test_large_grouped_undo_imports_atomically_and_replays(setup):
+    lib, paper, _, op = setup
+    a, b = op(), op()
+    for entry in (a, b):
+        entry['stroke']['points'] = [[.12345678901234567, .7654321098765432] for _ in range(20000)]
+    assert apply(lib, a, b) == 2
+    group = {key: value for key, value in a.items() if key not in {'stroke', 'action', 'id', 'version'}}
+    erase = {**group, 'version': 2, 'id': str(uuid.uuid4()), 'action': 'edit',
+             'changes': [{'action': 'remove', 'target': value['stroke']['id']} for value in (a, b)]}
+    assert apply(lib, erase) == 1
+    restored = [{**entry['stroke'], 'id': 'web-' + str(uuid.uuid4())} for entry in (a, b)]
+    undo = {**group, 'version': 2, 'id': str(uuid.uuid4()), 'action': 'edit',
+            'changes': [{'action': 'add', 'stroke': value} for value in restored]}
+    assert len(json.dumps(undo).encode()) > 1024 * 1024
+    assert apply(lib, undo) == 1
+    assert {s['id'] for s in lib.ink(paper, 'translated', 1)} == {'pc', *(s['id'] for s in restored)}
+    assert apply(lib, undo) == 0
 
 
 def test_add_replay_and_pc_deletion_are_idempotent(setup, tmp_path):

@@ -38,5 +38,5 @@ export function openPaper(paperId: string, collection: string): void {
   const store = useStore.getState();
   store.setSelectedFolder(null);
   store.setCurrentCollection(collection);
-  if (store.activePaperId !== paperId) store.setActivePaperId(paperId);
+  if (store.activePaperId !== paperId) { store.setSidePanel(null); store.setActiveTab("reader"); store.setActivePaperId(paperId); }
 }

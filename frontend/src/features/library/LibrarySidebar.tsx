@@ -75,7 +75,7 @@ import { useRebuilding } from "@/features/reader/rebuildJobs";
 import { showJobFailure, useJobFailures } from "@/features/jobs/jobFailures";
 import { emitAppEvent, onAppEvent } from "@/lib/appEvents";
 import { QK } from "@/lib/queryKeys";
-import { SORT_LABELS } from "@/lib/librarySort";
+import { SORT_LABELS } from "@/features/library/query/librarySort";
 import { withShortcutLabels } from "@/lib/platform";
 import { isImeKey } from "@/lib/imeKeys";
 import { LibraryChildRowView, LibraryFolderRowView, LibraryPaperRowView } from "./LibraryRows";
@@ -279,7 +279,7 @@ export function LibrarySidebar() {
     if (librarySearch.trim()) return [];
     const open = expandedCollections && new Set(expandedCollections);
     return treeLines(tree, (path) => filtered || !open || open.has(path), {
-      of: paper => memoChildren(childrenByOwner.get(paper.id) ?? [], notebooks.filter(row => row.parent_id === paper.id),
+      of: paper => memoChildren((childrenByOwner.get(paper.id) ?? []).filter(row => row.format !== "md"), notebooks.filter(row => row.parent_id === paper.id),
         hideLibraryLinks ? [] : linksByOwner.get(paper.id) ?? []), isOpen: id => expandedPapers.includes(id),
     });
   }, [tree, expandedCollections, expandedPapers, childrenByOwner, notebooks, filtered, librarySearch, hideLibraryLinks, linksByOwner]);
@@ -1128,7 +1128,7 @@ function PendingRow({ item, level, setSize, posInSet }: { item: PendingImport } 
  * left, and a job's progress events render its paper's row only when what the row shows changes.
  */
 const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, setSize, posInSet, collections, onTagSelect }: { paper: PaperData; expanded: boolean; expandable: boolean; collections: string[]; onTagSelect: (name: string) => void } & LinePlace) {
-  const memoCount = (useAttachments().data?.filter(row => row.owner_id === paper.id).length ?? 0)
+  const memoCount = (useAttachments().data?.filter(row => row.owner_id === paper.id && row.format === "html").length ?? 0)
     + (useNotebooks().data?.filter(row => row.parent_id === paper.id).length ?? 0);
   const hideLinks = useStore(s => s.hideLibraryLinks);
   const { data: links = [] } = useItemLinks();
@@ -1213,7 +1213,7 @@ const PaperRow = memo(function PaperRow({ paper, expanded, expandable, level, se
             if (!e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) listeners?.onKeyDown?.(e);
           }}
           level={level} selected={selected} active={isActive} expanded={expanded} expandable={expandable}
-          notebook={itemCapabilities(paper).notebook} label={libraryPaperTitle(paper)} onToggle={() => expandMemoOwner(paper.id, !expanded)}
+          notebook={itemCapabilities(paper).notebook || paper.kind === "markdown"} label={libraryPaperTitle(paper)} onToggle={() => expandMemoOwner(paper.id, !expanded)}
           className={`${linkOver ? "outline-2 outline-primary -outline-offset-2 rounded-sm cursor-alias" : ""} ${isDragging || draggedAlong ? "opacity-40" : ""}`}
           title={`${paperDisplayName(paper)}\nファイル名：${paper.original_name ?? ""}`}
           detail={<>
@@ -1269,7 +1269,7 @@ function PaperMenu({ paper, collection, collections }: { paper: PaperData; colle
   const ids = useMemo(() => papersActedOn(usePaperSelection.getState(), useTreeFocus.getState().rows, paper.id), [paper.id]);
   const caps = itemCapabilities(paper);
   if (ids.length > 1) return <SelectionMenu ids={ids} paperId={paper.id} collections={collections} />;
-  if (caps.notebook) return <NotebookMenu paper={paper} collection={collection} collections={collections} />;
+  if (caps.notebook || paper.kind === "markdown") return <NotebookMenu paper={paper} collection={collection} collections={collections} />;
   return (
     <>
       {!paper.parent_id && <ContextMenuItem onClick={() => newNotebook({ owner: paper })}><NotebookPen className="size-4 mr-2" />専用ノートを作る…</ContextMenuItem>}
@@ -1356,9 +1356,9 @@ function NotebookMenu({ paper, collection, collections }: { paper: PaperData; co
         <FileText className="w-4 h-4 mr-2" /> 情報・整理
       </ContextMenuItem>
       <ContextMenuSeparator />
-      <ContextMenuItem disabled={exporting} onClick={() => void exportPdf(paper.id, "original")}>
+      {paper.kind !== "markdown" && <ContextMenuItem disabled={exporting} onClick={() => void exportPdf(paper.id, "original")}>
         <Download className="w-4 h-4 mr-2" /> {exporting ? "出力中…" : "書き込み付きPDFとして保存…"}
-      </ContextMenuItem>
+      </ContextMenuItem>}
       <ContextMenuItem onClick={() => openPaperFolder(paper.id)}>
         <FolderOpen className="w-4 h-4 mr-2" /> 保存フォルダーを開く
       </ContextMenuItem>

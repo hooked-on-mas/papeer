@@ -305,3 +305,54 @@ def test_a_folder_briefly_held_open_is_renamed_after_a_wait(tmp_path, monkeypatc
     monkeypatch.setattr(Path, "rename", rename)
     reading_tools._rename_folder(source, tmp_path / "moved", wait=0)
     assert len(refusals) == 2 and (tmp_path / "moved").is_dir()
+
+
+def test_restore_swap_retries_a_temporarily_locked_staging_folder(tmp_path, monkeypatch):
+    from papeer.core import backup
+    root, staging, previous = (tmp_path / name for name in ("library", "staging", "previous"))
+    root.mkdir()
+    staging.mkdir()
+    (root / "content").write_text("original")
+    (staging / "content").write_text("restored")
+    real = Path.rename
+    refusals = []
+
+    def rename(self, target):
+        if self == staging and len(refusals) < 2:
+            refusals.append(self)
+            raise PermissionError("in use")
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    monkeypatch.setattr(backup.time, "sleep", lambda _: None)
+    assert backup._swap_in(root, staging, previous, None, import_settings=True) == previous
+    assert len(refusals) == 2
+    assert (root / "content").read_text() == "restored"
+    assert (previous / "content").read_text() == "original"
+
+
+def test_restore_swap_retries_rollback_when_staging_cannot_be_installed(tmp_path, monkeypatch):
+    from papeer.core import backup
+    root, staging, previous = (tmp_path / name for name in ("library", "staging", "previous"))
+    root.mkdir()
+    staging.mkdir()
+    (root / "content").write_text("original")
+    (staging / "content").write_text("restored")
+    real = Path.rename
+    refusals = []
+
+    def rename(self, target):
+        if self == staging:
+            raise OSError("staging failed")
+        if self == previous and len(refusals) < 2:
+            refusals.append(self)
+            raise PermissionError("in use")
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    monkeypatch.setattr(backup.time, "sleep", lambda _: None)
+    with pytest.raises(OSError, match="staging failed"):
+        backup._swap_in(root, staging, previous, None, import_settings=True)
+    assert len(refusals) == 2
+    assert (root / "content").read_text() == "original"
+    assert (staging / "content").read_text() == "restored"

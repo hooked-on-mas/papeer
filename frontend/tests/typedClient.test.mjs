@@ -25,7 +25,7 @@ before(async () => {
     resolve: { alias: [{ find: "@", replacement: path("../src") }] },
   });
   client = await server.ssrLoadModule("/src/api/client.ts");
-  libraryBusy = await server.ssrLoadModule("/src/lib/libraryBusy.ts");
+  libraryBusy = await server.ssrLoadModule("/src/features/library/state/libraryBusy.ts");
   globalThis.fetch = async (input, init = {}) => {
     const request = { url: String(input), method: init.method, headers: new Headers(init.headers),
       body: init.body === undefined ? undefined : new TextDecoder().decode(init.body), signal: init.signal };

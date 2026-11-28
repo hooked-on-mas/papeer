@@ -5,7 +5,7 @@
  */
 import { mergeSavedSettings, type PageFilter } from "../features/reader/pageAppearance.ts";
 import type { SidePanel } from "../features/reader/sidePanel.ts";
-import { initialInkBarOpen, inkBarStartOf, type InkBarStart } from "../features/reader/readerBars.ts";
+import { initialInkBarOpen, inkBarStartOf, type InkBarStart } from "../features/reader/layout/readerBars.ts";
 import { clampZoom } from "../features/reader/zoomLevels.ts";
 import { savedNotebookPaper, type NotebookPaper } from "../features/notebooks/paperSpec.ts";
 

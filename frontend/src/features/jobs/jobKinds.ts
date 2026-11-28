@@ -1,6 +1,6 @@
 /**
- * Kinds of sidecar background jobs, named as the sidecar names them (JobKind in sidecar/job_types.py;
- * tests/test_job_types.py checks that the two lists agree).
+ * Kinds of sidecar background jobs, named as the sidecar names them (JobKind in sidecar/lifecycle/job_types.py;
+ * tests/lifecycle/test_job_types.py checks that the two lists agree).
  */
 export const JOB_KINDS = [
   "translate", "revision", "revision-draft", "glossary-draft", "glossary-select", "glossary-split",
@@ -19,7 +19,7 @@ export type JobKind = (typeof JOB_KINDS)[number];
 export const TRANSLATION_JOBS: readonly JobKind[] = ["translate", "revision", "term-replace"];
 /** Jobs that call the AI, so the plan's usage limits change (also when they fail on the limit). */
 export const AI_PLAN_JOBS: readonly JobKind[] = ["translate", "revision", "revision-draft", "glossary-draft", "glossary-select", "glossary-split", "term-research", "article", "ask", "check", "reference-research", "paper-map-groups", "reference-import", "library-organize"];
-/** Jobs that copy or replace the whole library; nothing else may run meanwhile (SNAPSHOT_KINDS in sidecar/job_types.py). */
+/** Jobs that copy or replace the whole library; nothing else may run meanwhile (SNAPSHOT_KINDS in sidecar/lifecycle/job_types.py). */
 export const SNAPSHOT_JOBS: readonly JobKind[] = ["backup", "restore", "drive-sync", "cloud-upload"];
 
 /** Independent of reference lookup; agrees with REFERENCE_RESEARCH_COMPATIBLE_KINDS in the sidecar. */

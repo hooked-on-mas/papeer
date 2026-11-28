@@ -313,6 +313,66 @@ def test_scanned_image_page_needs_ocr_but_a_captioned_figure_does_not(tmp_path):
     assert 2 not in required_translation_pages(document)
 
 
+def test_short_rotated_figure_caption_with_overlapping_watermark_is_not_a_scan(tmp_path):
+    source = tmp_path / "rotated-diagram.pdf"
+    panel = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 60, 80), False)
+    panel.clear_with(200)
+    with fitz.open() as pdf:
+        # The actual thesis has two overlapping images and a 39-character vertical caption.
+        page = pdf.new_page(width=500, height=710)
+        page.insert_image(fitz.Rect(50, 150, 450, 555), pixmap=panel, keep_proportion=False)
+        page.insert_image(fitz.Rect(110, 90, 370, 600), pixmap=panel, keep_proportion=False)
+        page.insert_text((390, 450), "Fig. 4.1. Framework architecture", fontsize=10, rotate=90)
+        page.insert_text((250, 675), "15", fontsize=10)
+        # An actual full-page scan must still be read, even with the same native caption.
+        page = pdf.new_page(width=500, height=710)
+        page.insert_image(page.rect, pixmap=panel, keep_proportion=False)
+        page.insert_text((390, 450), "Fig. 4.1. Framework architecture", fontsize=10, rotate=90)
+        pdf.save(source)
+    document = extract_pdf(source)
+    assert document["ocr_pages"] == [{"page": 2, "reason": "image"}]
+    assert any(b.get("kind") == "figure" and "Framework architecture" in b["text"]
+               for b in document["blocks"] if b["page"] == 1)
+
+
+def test_caption_ocr_upgrade_keeps_manual_blocks_and_real_scans(tmp_path, monkeypatch):
+    source = tmp_path / "caption-upgrade.pdf"
+    panel = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 60, 80), False)
+    panel.clear_with(200)
+    with fitz.open() as pdf:
+        page = pdf.new_page(width=500, height=710)
+        page.insert_image(fitz.Rect(50, 150, 450, 555), pixmap=panel, keep_proportion=False)
+        page.insert_image(fitz.Rect(110, 90, 370, 600), pixmap=panel, keep_proportion=False)
+        page.insert_text((390, 450), "Fig. 4.1. Framework architecture", fontsize=10, rotate=90)
+        page = pdf.new_page(width=500, height=710)
+        page.insert_image(page.rect, pixmap=panel, keep_proportion=False)
+        page.insert_text((390, 450), "Fig. 4.1. Framework architecture", fontsize=10, rotate=90)
+        _prose_page(pdf)
+        pdf.save(source)
+    library = Library(tmp_path / "library")
+    pid, _ = library.import_pdf(source)
+    path = PaperFiles(library.folder(pid)).document_json
+    document = json.loads(path.read_text("utf8"))
+    document["layout_version"] = 36
+    document["ocr_pages"].insert(0, {"page": 1, "reason": "image"})
+    for block in document["blocks"]:
+        if block["page"] == 1:
+            block["needs_ocr"] = True
+        if block["page"] == 3:
+            block["id"] = "manually-corrected-" + block["id"]
+            block["bbox"][0] += 2
+    path.write_text(json.dumps(document), encoding="utf8")
+    monkeypatch.setattr("papeer.core.library_papers.extract_pdf", lambda *_args, **_kwargs: pytest.fail("Unexpected source re-extraction"))
+    before_units = translation_units(document)
+    refreshed = library.document(pid)
+    assert refreshed["layout_version"] == 37
+    assert refreshed["ocr_pages"] == [{"page": 2, "reason": "image"}]
+    assert translation_units(refreshed) == before_units
+    for before, after in zip(document["blocks"], refreshed["blocks"]):
+        assert after == {k: v for k, v in before.items() if k != "needs_ocr" or before["page"] != 1}
+    assert document["ocr_pages"][0]["page"] == 1  # No mutation of the shared extraction.
+
+
 def _column_page(pdf, left, right_rows):
     """Helvetica prose in the left column and Type3 subset rows in the right one."""
     page = _type3_page(pdf, [])

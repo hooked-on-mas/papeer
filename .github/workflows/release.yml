@@ -1,19 +1,17 @@
-# Pushing a tag vX.Y.Z builds the installers of every platform with `just build` and attaches them to a
-# draft GitHub Release whose notes are the [X.Y.Z] section of CHANGELOG.md:
+# A version tag or a manual run builds and checks every platform. By default no installer is uploaded.
+# To distribute, manually run this workflow on a vX.Y.Z tag with publish_installers=true. This explicitly
+# authorizes PUBLIC Actions artifacts, even while the GitHub Release remains a draft for editing notes.
 #   Windows x64            NSIS setup .exe and MSI            (windows-latest)
 #   macOS Apple Silicon    .dmg, Papeer_X.Y.Z_aarch64.dmg     (macos-latest)
 #   macOS Intel            .dmg, Papeer_X.Y.Z_x64.dmg         (macos-15-intel)
 #   Linux x64              .deb, Papeer_X.Y.Z_amd64.deb       (ubuntu-22.04: glibc 2.35, so Ubuntu 22.04 and later)
-# Publish the draft by hand after checking it. Only the automatic GITHUB_TOKEN is used: nothing is signed
+# Only the automatic GITHUB_TOKEN is used: nothing is signed
 # with a certificate (the Windows installers are unsigned; the Mac app and every program and library in it
 # carry an ad-hoc signature, tauri.macos.conf.json and tools/sign_sidecar.py, and are not notarized) and the
 # app has no updater, so no signing secrets are needed.
 #
-# Run by hand (Actions → Release → Run workflow), it builds the installers of a branch the same way and keeps
-# them as the run's artifacts, without a release: a trial before tagging. The repository is private, so the
-# runner minutes count against the plan's allowance (a Windows minute twice, a macOS minute ten times).
-# Estimated (not measured): one tag, or one run by hand, costs some 750-1100 minutes of it, nearly all for the
-# two Mac builds. macos-15-intel is the last Intel image GitHub offers: when it goes, drop the macos-x64 row
+# Branch runs are verification only. Existing releases are never replaced: publish a new version instead.
+# macos-15-intel is the last Intel image GitHub offers: when it goes, drop the macos-x64 row
 # or build it on Apple Silicon under Rosetta.
 #
 # The build jobs only read the repository; only the release job, which runs no project code and no setup
@@ -26,6 +24,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      publish_installers:
+        description: "このタグの検査済みインストーラーを公開配布する（Actions成果物も公開されます）"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,7 +38,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  audit:
+    uses: ./.github/workflows/dependency-audit.yml
+
+  distribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate explicit distribution request
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "公開配布は vX.Y.Z タグを指定して実行してください。" >&2
+            exit 1
+          fi
+          # Listing must succeed: a network/permission failure is not evidence that a release is absent.
+          releases=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[].tag_name')
+          if grep -Fxq -- "$TAG" <<< "$releases"; then
+            echo "このタグのReleaseは既にあります。上書きせず新しいバージョンを作成してください。" >&2
+            exit 1
+          fi
+
   build:
+    needs: [distribution, audit]
     name: build (${{ matrix.name }})
     strategy:
       # The other platforms' installers are still worth a look when one fails.
@@ -123,6 +153,7 @@ jobs:
           set -euo pipefail
           uv sync --all-groups
           pnpm --dir frontend install --frozen-lockfile
+          cargo fetch --locked --manifest-path frontend/src-tauri/Cargo.toml
 
       # code-version.txt and the bundle hash, the PyInstaller onedir sidecar (dist/sidecar), on macOS its ad-hoc
       # signature (tools/sign_sidecar.py), its smoke test (tools/smoke_sidecar.py: the sidecar started in a
@@ -140,6 +171,15 @@ jobs:
           fi
           just build
 
+      - name: Verify bundled notices and generate this platform's inventory
+        run: |
+          set -euo pipefail
+          uv run python tools/distribution_notices.py --check dist/sidecar
+          uv run python tools/distribution_notices.py --check frontend/src-tauri/sidecar
+          uv run python tools/license_inventory.py
+          uv run python tools/license_inventory.py --check
+          uv run python tools/check_release_inventory.py --output release
+
       # The app is signed ad hoc as a whole (Tauri, signingIdentity "-"), and each program and library of the
       # sidecar in its Resources on its own (tools/sign_sidecar.py): without a valid signature, Apple Silicon
       # does not run arm64 code.
@@ -153,6 +193,37 @@ jobs:
           echo "$signature"
           grep -q "Signature=adhoc" <<< "$signature"
           uv run python tools/sign_sidecar.py --verify "$app/Contents/Resources/sidecar"
+          uv run python tools/distribution_notices.py --check "$app/Contents/Resources/sidecar"
+          dmg=$(ls frontend/src-tauri/target/release/bundle/dmg/*.dmg)
+          mount="$RUNNER_TEMP/papeer-dmg"
+          mkdir -p "$mount"
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount"
+          trap 'hdiutil detach "$mount"' EXIT
+          uv run python tools/distribution_notices.py --check "$mount/Papeer.app/Contents/Resources/sidecar"
+
+      - name: Verify notices inside Windows installers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = 'frontend/src-tauri/target/release/bundle'
+          $msi = @(Get-ChildItem "$bundle/msi/*.msi")
+          $setup = @(Get-ChildItem "$bundle/nsis/*-setup.exe")
+          if ($msi.Count -ne 1 -or $setup.Count -ne 1) { throw 'Expected one MSI and one NSIS installer' }
+          $msiTarget = Join-Path $env:RUNNER_TEMP 'papeer-msi'
+          $nsisTarget = Join-Path $env:RUNNER_TEMP 'papeer-nsis'
+          # Administrative extraction only: do not install or launch the desktop app.
+          $arguments = '/a "{0}" /qn TARGETDIR="{1}"' -f $msi[0].FullName, $msiTarget
+          $process = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
+          if ($process.ExitCode -ne 0) { throw "MSI extraction failed: $($process.ExitCode)" }
+          & 7z x -y "-o$nsisTarget" $setup[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS extraction failed' }
+          foreach ($extracted in @($msiTarget, $nsisTarget)) {
+            $launchers = @(Get-ChildItem -LiteralPath $extracted -Recurse -File -Filter 'papeer-sidecar.exe')
+            if ($launchers.Count -ne 1) { throw 'Expected exactly one bundled sidecar' }
+            uv run python tools/distribution_notices.py --check $launchers[0].DirectoryName
+            if ($LASTEXITCODE -ne 0) { throw 'Installer license verification failed' }
+          }
 
       # The package's dependencies, and the sidecar's launcher and the command line client installed as programs (mode 755).
       - name: Check the .deb
@@ -168,8 +239,17 @@ jobs:
           cli=$(dpkg-deb --contents "$deb" | grep -E '/sidecar/papeer-cli$')
           echo "$cli"
           grep -q '^-rwxr-xr-x' <<< "$cli"
+          extracted="$RUNNER_TEMP/papeer-deb"
+          dpkg-deb --extract "$deb" "$extracted"
+          sidecars=$(find "$extracted" -type f -name papeer-sidecar)
+          if [ "$(printf '%s\n' "$sidecars" | wc -l)" -ne 1 ] || [ -z "$sidecars" ]; then
+            echo "パッケージ内のsidecarが一意ではありません。" >&2
+            exit 1
+          fi
+          uv run python tools/distribution_notices.py --check "$(dirname "$sidecars")"
 
       - name: Collect installers
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_installers
         env:
           INSTALLERS: ${{ matrix.installers }}
         run: |
@@ -184,17 +264,23 @@ jobs:
             if [ "${#files[@]}" -ne 1 ]; then echo "インストーラーが 1 つではありません: $pattern: ${files[*]}" >&2; exit 1; fi
             cp "${files[0]}" release/
           done
+          if [ "$RUNNER_OS" = Windows ]; then
+            # The exact tracked source used for this build, without build outputs or environment secrets.
+            git archive --format=tar.gz --prefix="papeer-${GITHUB_REF_NAME#v}/" \
+              --output="release/papeer-${GITHUB_REF_NAME#v}-source.tar.gz" HEAD
+          fi
           ls -l release
 
-      # The installers (and, from the Windows build, release-notes.md): all the release job needs.
+      # Public distribution is explicitly authorized above. A draft Release does NOT hide Actions artifacts.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_installers
         with:
           name: release-${{ matrix.name }}
           path: release/
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_installers && startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -218,10 +304,14 @@ jobs:
           files=(release/*.exe release/*.msi release/*.dmg release/*.deb)
           # Windows setup and MSI, two Mac disk images, one Linux package.
           if [ "${#files[@]}" -ne 5 ]; then echo "インストーラーが揃っていません: ${files[*]}" >&2; exit 1; fi
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            # A re-run replaces the installers of the existing release and leaves its notes alone.
-            gh release upload "$TAG" "${files[@]}" --clobber
-          else
-            gh release create "$TAG" "${files[@]}" --draft --verify-tag \
-              --title "Papeer ${TAG#v}" --notes-file release/release-notes.md
+          inventories=(release/dependency-license-inventory.*.json)
+          if [ "${#inventories[@]}" -ne 4 ]; then echo "全OSのライセンス台帳が揃っていません。" >&2; exit 1; fi
+          sources=(release/*-source.tar.gz)
+          if [ "${#sources[@]}" -ne 1 ]; then echo "配布版に対応するソースアーカイブがありません。" >&2; exit 1; fi
+          releases=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[].tag_name')
+          if grep -Fxq -- "$TAG" <<< "$releases"; then
+            echo "このタグのReleaseは既にあります。公開済みの配布物もdraftも置換しません。" >&2
+            exit 1
           fi
+          gh release create "$TAG" "${files[@]}" "${inventories[@]}" "${sources[@]}" --draft --verify-tag \
+            --title "Papeer ${TAG#v}" --notes-file release/release-notes.md

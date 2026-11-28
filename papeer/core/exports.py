@@ -40,7 +40,7 @@ def copy_export(files: PaperFiles, kind: str, destination: Path) -> None:
     """Copy a file that already exists: the original, the translation or the summary."""
     source = {"translated": files.translated_pdf, "original": files.original_pdf, "markdown": files.article_md}[kind]
     if not source.is_file():
-        raise ValueError("先に解説を作成してください。" if kind == "markdown" else "ファイルが存在しません。")
+        raise ValueError("先にサマリーを作成してください。" if kind == "markdown" else "ファイルが存在しません。")
     try:
         with atomic_output(destination) as temporary:
             shutil.copyfile(source, temporary)

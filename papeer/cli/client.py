@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-# The `code` of the 503 a sidecar that is leaving answers with (sidecar/instance.py CLOSING_CODE).
+# The `code` of the 503 a sidecar that is leaving answers with (sidecar/lifecycle/instance.py CLOSING_CODE).
 CLOSING_CODE = "sidecar_closing"
 DEFAULT_TIMEOUT = 30.0
 # Cap on what is read of an answer: the biggest is the library list.

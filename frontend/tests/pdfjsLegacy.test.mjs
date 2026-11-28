@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
+import { moduleGraph } from './boundaryVerifier.mjs';
 
 const path = (relative) => fileURLToPath(new URL(relative, import.meta.url));
 
@@ -42,7 +43,12 @@ test("react-pdf gets pdf.js's legacy build", async () => {
 });
 
 test("the worker is the legacy build of the same release", () => {
-  const pane = fs.readFileSync(path("../src/features/reader/PdfDocument.tsx"), "utf8");
-  const workers = [...pane.matchAll(/from "(pdfjs-dist\/[^"]*worker[^"]*)"/g)].map((match) => match[1]);
-  assert.deepEqual(workers, ["pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"]);
+  const src = path('../src'), policy = path('../src/features/reader/pdf/pdfRendering.ts');
+  for (const entry of ['pdf/PdfDocument.tsx', 'pdf/canonicalPdfCapture.ts']) {
+    const graph = moduleGraph(path(`../src/features/reader/${entry}`), src);
+    assert.ok(graph.files.has(policy), `${entry} must use the shared PDF rendering policy`);
+    const workers = [...graph.files].flatMap(file => [...fs.readFileSync(file, 'utf8')
+      .matchAll(/from "(pdfjs-dist\/[^"]*worker[^"]*)"/g)].map(match => match[1]));
+    assert.deepEqual(workers, ["pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"]);
+  }
 });

@@ -1,0 +1,325 @@
+{
+  "version": 1,
+  "file": "canonical-highlight.pdf",
+  "metadata": {
+    "id": "00000000-0000-4000-8000-000000000110",
+    "sha256": "e3f3992a8f57d9089dc1ae4f0dd8d51fc5dbb316ab486c257ec27c036b655e7d",
+    "mediaType": "application/pdf",
+    "byteLength": 70942,
+    "pdfPages": [
+      {
+        "widthPt": 600.0,
+        "heightPt": 1600.0
+      },
+      {
+        "widthPt": 600.0,
+        "heightPt": 300.0
+      },
+      {
+        "widthPt": 600.0,
+        "heightPt": 800.0
+      },
+      {
+        "widthPt": 800.0,
+        "heightPt": 600.0
+      },
+      {
+        "widthPt": 600.0,
+        "heightPt": 800.0
+      },
+      {
+        "widthPt": 800.0,
+        "heightPt": 600.0
+      },
+      {
+        "widthPt": 600.0,
+        "heightPt": 800.0
+      },
+      {
+        "widthPt": 600.0,
+        "heightPt": 800.0
+      }
+    ]
+  },
+  "pages": [
+    {
+      "physicalPage": 1,
+      "rotation": 0,
+      "marker": {
+        "text": "MMMMMMMMMM",
+        "start": 2,
+        "end": 6,
+        "sourceRect": [
+          124,
+          170,
+          172,
+          210
+        ],
+        "sourceAxis": [
+          124,
+          200,
+          172,
+          200
+        ],
+        "advancePt": 12,
+        "baselinePt": 200
+      },
+      "canonicalBand": [
+        124.0,
+        170.0,
+        172.0,
+        210.0
+      ],
+      "canonicalAxis": [
+        124.0,
+        200.0,
+        172.0,
+        200.0
+      ],
+      "cropBox": [
+        0.0,
+        0.0,
+        600.0,
+        1600.0
+      ],
+      "userUnit": 1
+    },
+    {
+      "physicalPage": 2,
+      "rotation": 0,
+      "marker": {
+        "text": "MMMMMMMMMM",
+        "start": 2,
+        "end": 6,
+        "sourceRect": [
+          124,
+          70,
+          172,
+          110
+        ],
+        "sourceAxis": [
+          124,
+          100,
+          172,
+          100
+        ],
+        "advancePt": 12,
+        "baselinePt": 100
+      },
+      "canonicalBand": [
+        124.0,
+        70.0,
+        172.0,
+        110.0
+      ],
+      "canonicalAxis": [
+        124.0,
+        100.0,
+        172.0,
+        100.0
+      ],
+      "cropBox": [
+        0.0,
+        0.0,
+        600.0,
+        300.0
+      ],
+      "userUnit": 1
+    },
+    {
+      "physicalPage": 3,
+      "rotation": 0,
+      "marker": {
+        "text": "MMMMMMMMMM",
+        "start": 2,
+        "end": 6,
+        "sourceRect": [
+          124,
+          170,
+          172,
+          210
+        ],
+        "sourceAxis": [
+          124,
+          200,
+          172,
+          200
+        ],
+        "advancePt": 12,
+        "baselinePt": 200
+      },
+      "canonicalBand": [
+        124.0,
+        170.0,
+        172.0,
+        210.0
+      ],
+      "canonicalAxis": [
+        124.0,
+        200.0,
+        172.0,
+        200.0
+      ],
+      "cropBox": [
+        100.0,
+        200.0,
+        700.0,
+        1000.0
+      ],
+      "userUnit": 1
+    },
+    {
+      "physicalPage": 4,
+      "rotation": 90,
+      "marker": {
+        "text": "MMMMMMMMMM",
+        "start": 2,
+        "end": 6,
+        "sourceRect": [
+          124,
+          170,
+          172,
+          210
+        ],
+        "sourceAxis": [
+          124,
+          200,
+          172,
+          200
+        ],
+        "advancePt": 12,
+        "baselinePt": 200
+      },
+      "canonicalBand": [
+        590.0,
+        124.0,
+        630.0,
+        172.0
+      ],
+      "canonicalAxis": [
+        600.0,
+        124.0,
+        600.0,
+        172.0
+      ],
+      "cropBox": [
+        100.0,
+        200.0,
+        700.0,
+        1000.0
+      ],
+      "userUnit": 1
+    },
+    {
+      "physicalPage": 5,
+      "rotation": 180,
+      "marker": {
+        "text": "MMMMMMMMMM",
+        "start": 2,
+        "end": 6,
+        "sourceRect": [
+          124,
+          170,
+          172,
+          210
+        ],
+        "sourceAxis": [
+          124,
+          200,
+          172,
+          200
+        ],
+        "advancePt": 12,
+        "baselinePt": 200
+      },
+      "canonicalBand": [
+        428.0,
+        590.0,
+        476.0,
+        630.0
+      ],
+      "canonicalAxis": [
+        476.0,
+        600.0,
+        428.0,
+        600.0
+      ],
+      "cropBox": [
+        100.0,
+        200.0,
+        700.0,
+        1000.0
+      ],
+      "userUnit": 1
+    },
+    {
+      "physicalPage": 6,
+      "rotation": 270,
+      "marker": {
+        "text": "MMMMMMMMMM",
+        "start": 2,
+        "end": 6,
+        "sourceRect": [
+          124,
+          170,
+          172,
+          210
+        ],
+        "sourceAxis": [
+          124,
+          200,
+          172,
+          200
+        ],
+        "advancePt": 12,
+        "baselinePt": 200
+      },
+      "canonicalBand": [
+        170.0,
+        428.0,
+        210.0,
+        476.0
+      ],
+      "canonicalAxis": [
+        200.0,
+        476.0,
+        200.0,
+        428.0
+      ],
+      "cropBox": [
+        100.0,
+        200.0,
+        700.0,
+        1000.0
+      ],
+      "userUnit": 1
+    },
+    {
+      "physicalPage": 7,
+      "rotation": 0,
+      "userUnit": 1,
+      "requiredActualText": [
+        "é",
+        "fi",
+        "𠮷"
+      ],
+      "ligaturePdfText": "ﬁ",
+      "note": "PDF.js intentionally normalizes the actual fi ligature to two UTF-16 units."
+    },
+    {
+      "physicalPage": 8,
+      "rotation": 0,
+      "userUnit": 2,
+      "layoutPolicy": "measure actual canvas/text/known-marker agreement; a mismatch must refuse"
+    }
+  ],
+  "tolerances": {
+    "advancePt": 1.25,
+    "bandPt": 2,
+    "overlayClientPx": 2
+  },
+  "fontSources": [
+    "frontend\\public\\pdfjs\\standard_fonts\\LiberationSans-Regular.ttf",
+    "papeer\\core\\assets\\fonts\\SourceHanSerifJP-Regular.otf"
+  ]
+}

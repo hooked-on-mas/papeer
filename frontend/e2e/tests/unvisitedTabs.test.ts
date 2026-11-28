@@ -41,7 +41,7 @@ scenario("翻訳範囲と共用辞書の入力・検索・保存", { papers: [{ 
   assert.deepEqual(app.consoleErrors.filter(e => e.startsWith("[pageerror]")), []);
 });
 
-scenario("空の論文マップと条件解除、同期説明、読書状態の追加", { papers: [{ file: "observer.pdf" }], viewport: { width: 986, height: 763 } }, async app => {
+scenario("空の論文マップと条件解除、保存先の設定、読書状態の追加", { papers: [{ file: "observer.pdf" }], viewport: { width: 986, height: 763 } }, async app => {
   const { page, api } = app;
   await api.call("PUT", "/api/settings", { paper_discovery_enabled: false });
   await waitForLibrary(page, ["Robust Observer"]);
@@ -81,13 +81,9 @@ scenario("空の論文マップと条件解除、同期説明、読書状態の�
   await settings.getByRole("button", { name: "削除をやめる", exact: true }).click();
   assert.equal(await settings.getByRole("button", { name: "「重要」を削除", exact: true }).count(), 1);
   await nav.getByRole("button", { name: "保存先・同期", exact: true }).click();
-  for (const label of ["同期する内容", "別のPCで使うときの注意"]) {
-    const detail = settings.locator("details").filter({ has: page.locator("summary", { hasText: label }) });
-    await detail.locator("summary").waitFor();
-    assert.equal(await detail.getAttribute("open"), null);
-    await detail.locator("summary").click();
-    assert.ok((await detail.innerText()).length > label.length + 30);
-  }
+  await settings.getByRole("heading", { name: "このPCの保存先", exact: true }).waitFor();
+  await settings.getByRole("heading", { name: "Google Drive API・Web閲覧", exact: true }).waitFor();
+  assert.equal(await settings.getByText("PC版Google Driveの同期フォルダーを指定してください。", { exact: true }).count(), 0);
   await settings.getByRole("checkbox", { name: "別のPCで追加された未対応の設定を知らせる", exact: true }).waitFor();
   await settings.getByRole("button", { name: "閉じる", exact: true }).click();
   assert.deepEqual(app.consoleErrors.filter(e => e.startsWith("[pageerror]")), []);

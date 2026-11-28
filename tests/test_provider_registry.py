@@ -5,12 +5,13 @@ from pathlib import Path
 import pytest
 
 from papeer.core.config import DEFAULT_BASE_URL, Settings, device_settings_path
-from papeer.providers import BACKENDS, ProviderBackend, create_provider, spec_for, specs
+from papeer.providers import BACKENDS, ProviderBackend, backend_class, create_provider, spec_for, specs
+from papeer.providers.antigravity import AntigravityProvider
 
 
 def test_every_connection_has_a_unique_spec():
     ids = [spec.id for spec in specs()]
-    assert ids == ["codex", "claude", "antigravity", "api"]
+    assert ids == ["codex", "claude", "api"]
     assert len(set(ids)) == len(ids)
     for provider_id, backend in BACKENDS.items():
         assert issubclass(backend, ProviderBackend)
@@ -35,6 +36,21 @@ def test_unknown_connection_is_rejected():
         spec_for("bogus")
     with pytest.raises(ValueError, match="不明な接続先"):
         create_provider(Settings(provider="bogus"))
+
+
+@pytest.mark.parametrize("provider", ["antigravity", "gemini"])
+def test_retired_connection_cannot_be_started_or_listed(provider, monkeypatch):
+    def never_construct(*args, **kwargs):
+        pytest.fail("A retired transport must not be constructed by a public entry point")
+
+    monkeypatch.setattr(AntigravityProvider, "__init__", never_construct)
+    assert provider not in BACKENDS
+    with pytest.raises(ValueError, match="Antigravity連携は提供を終了"):
+        backend_class(provider)
+    with pytest.raises(ValueError, match="Antigravity連携は提供を終了"):
+        spec_for(provider)
+    with pytest.raises(ValueError, match="Antigravity連携は提供を終了"):
+        create_provider(Settings(provider=provider))
 
 
 def test_legacy_flat_settings_are_migrated(tmp_path: Path):

@@ -31,7 +31,7 @@ def test_paper_sizes_and_templates(book, size, orientation):
         with pymupdf.open(lib.folder(identity) / "original.pdf") as pdf:
             assert len(pdf) == 1
             assert pdf[0].rect.width == pytest.approx(document["pages"][0]["width_mm"] * 72 / 25.4, abs=.01)
-        assert database_version(lib.root / "library.sqlite3") == 8
+        assert database_version(lib.root / "library.sqlite3") == 9
         assert not (lib.folder(identity) / "document.json").exists()
         assert lib.document(identity)["pages"][0]["text"] == ""
 

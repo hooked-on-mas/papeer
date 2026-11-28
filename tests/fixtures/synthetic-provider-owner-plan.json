@@ -1,0 +1,167 @@
+{
+  "scope": "Synthetic unit-test request data only; not provider authority or execution proof. r2 uses production versioned checkpoint_hash; r1 bad synthetic JSON checkpoint hash is preserved.",
+  "plans": {
+    "join": {
+      "ownerNamespace": "00000000-0000-0000-0000-000000099999",
+      "requestId": "00000000-0000-0000-0000-000000000005",
+      "title": "Shared cloud join",
+      "folderId": "fixture-drive-folder-join",
+      "principalDigest": "e66d304e52a589f5e74749518b04eec3f3946f8929d3a773ac6afa273ff5fd0b",
+      "descriptor": {
+        "id": "fixture-drive-descriptor-join",
+        "version": "7",
+        "sha256": "10371f797616a2ea03a4cb682a2c5b68ad0940d775cc4033213f107dae58f81c"
+      },
+      "descriptorBytesHex": "7b22636865636b706f696e74536861323536223a2232393332313439383039626537373733316535643532623561366230306238303737383234646563353236333363363462326164363137613561376633623166222c226d616e69666573744964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303034222c2273636f7065223a7b226163636f756e744964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303031222c2265706f6368223a22666978747572652d65706f6368222c226c6962726172794964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303032227d2c2276657273696f6e223a317d",
+      "publication": {
+        "manifest": {
+          "version": 1,
+          "id": "00000000-0000-0000-0000-000000000004",
+          "scope": {
+            "accountId": "00000000-0000-0000-0000-000000000001",
+            "libraryId": "00000000-0000-0000-0000-000000000002",
+            "epoch": "fixture-epoch"
+          },
+          "checkpointSha256": "2932149809be77731e5d52b5a6b00b8077824dec52633c64b2ad617a5a7f3b1f",
+          "resources": []
+        },
+        "checkpoint": {
+          "version": 1,
+          "libraryId": "00000000-0000-0000-0000-000000000002",
+          "roots": [
+            {
+              "kind": "library",
+              "id": "00000000-0000-0000-0000-000000000002",
+              "version": "00000000-0000-0000-0000-000000000003",
+              "items": [],
+              "folders": [],
+              "links": [],
+              "deletions": []
+            }
+          ],
+          "edits": []
+        },
+        "checkpointObjectId": "00000000-0000-0000-0000-000000000008"
+      },
+      "resources": [],
+      "activationIds": {
+        "preparedControlId": "00000000-0000-0000-0000-000000000010",
+        "publishedControlId": "00000000-0000-0000-0000-000000000011",
+        "activeControlId": "00000000-0000-0000-0000-000000000012",
+        "profileRevision": "00000000-0000-0000-0000-000000000013"
+      },
+      "createObjects": null,
+      "binding": {
+        "version": 1,
+        "id": "00000000-0000-0000-0000-000000000006",
+        "provider": "google-drive",
+        "principalDigest": "e66d304e52a589f5e74749518b04eec3f3946f8929d3a773ac6afa273ff5fd0b",
+        "scope": {
+          "accountId": "00000000-0000-0000-0000-000000000001",
+          "libraryId": "00000000-0000-0000-0000-000000000002",
+          "epoch": "fixture-epoch"
+        },
+        "descriptorId": "fixture-drive-descriptor-join",
+        "descriptorVersion": "7",
+        "descriptorSha256": "10371f797616a2ea03a4cb682a2c5b68ad0940d775cc4033213f107dae58f81c",
+        "state": "preparing"
+      },
+      "intent": {
+        "version": 1,
+        "requestId": "00000000-0000-0000-0000-000000000005",
+        "bindingId": "00000000-0000-0000-0000-000000000006",
+        "action": "join",
+        "scope": {
+          "accountId": "00000000-0000-0000-0000-000000000001",
+          "libraryId": "00000000-0000-0000-0000-000000000002",
+          "epoch": "fixture-epoch"
+        },
+        "requestSha256": "0e76d392a9d91de0de571b9b425df6d4cab0ce17f48f2834a7b89ac10d7bdb59",
+        "descriptorObjectId": "00000000-0000-0000-0000-000000000007",
+        "descriptorSha256": "10371f797616a2ea03a4cb682a2c5b68ad0940d775cc4033213f107dae58f81c",
+        "manifestId": "00000000-0000-0000-0000-000000000004",
+        "checkpointObjectId": "00000000-0000-0000-0000-000000000008",
+        "checkpointSha256": "2932149809be77731e5d52b5a6b00b8077824dec52633c64b2ad617a5a7f3b1f",
+        "peerId": "00000000-0000-0000-0000-000000000009",
+        "phase": "prepared"
+      }
+    },
+    "create": {
+      "ownerNamespace": "00000000-0000-0000-0000-000000099999",
+      "requestId": "00000000-0000-0000-0000-000000001005",
+      "title": "Shared cloud create",
+      "folderId": "fixture-drive-folder-create",
+      "principalDigest": "e66d304e52a589f5e74749518b04eec3f3946f8929d3a773ac6afa273ff5fd0b",
+      "descriptor": {
+        "id": "fixture-drive-descriptor-create",
+        "version": null,
+        "sha256": "9d3855c1a8bd31ea94df222ddffefbe1294f3291e63f745f16f7ffcfe18bea9c"
+      },
+      "descriptorBytesHex": "7b22636865636b706f696e74536861323536223a2265306563383839633363363463653635303361616331633764316630636430626537343764396530666639343132633136393662363231626632363931393332222c226d616e69666573744964223a2230303030303030302d303030302d303030302d303030302d303030303030303031303034222c2273636f7065223a7b226163636f756e744964223a2230303030303030302d303030302d303030302d303030302d303030303030303031303031222c2265706f6368223a22666978747572652d65706f6368222c226c6962726172794964223a2230303030303030302d303030302d303030302d303030302d303030303030303031303032227d2c2276657273696f6e223a317d",
+      "publication": {
+        "manifest": {
+          "version": 1,
+          "id": "00000000-0000-0000-0000-000000001004",
+          "scope": {
+            "accountId": "00000000-0000-0000-0000-000000001001",
+            "libraryId": "00000000-0000-0000-0000-000000001002",
+            "epoch": "fixture-epoch"
+          },
+          "checkpointSha256": "e0ec889c3c64ce6503aac1c7d1f0cd0be747d9e0ff9412c1696b621bf2691932",
+          "resources": []
+        },
+        "checkpoint": {
+          "version": 1,
+          "libraryId": "00000000-0000-0000-0000-000000001002",
+          "roots": [
+            {
+              "kind": "library",
+              "id": "00000000-0000-0000-0000-000000001002",
+              "version": "00000000-0000-0000-0000-000000001003",
+              "items": [],
+              "folders": [],
+              "links": [],
+              "deletions": []
+            }
+          ],
+          "edits": []
+        },
+        "checkpointObjectId": "00000000-0000-0000-0000-000000001008"
+      },
+      "resources": [],
+      "activationIds": {
+        "preparedControlId": "00000000-0000-0000-0000-000000001010",
+        "publishedControlId": "00000000-0000-0000-0000-000000001011",
+        "activeControlId": "00000000-0000-0000-0000-000000001012",
+        "profileRevision": "00000000-0000-0000-0000-000000001013"
+      },
+      "createObjects": {
+        "folderObjectId": "00000000-0000-0000-0000-000000001014",
+        "folderId": "fixture-drive-folder-create",
+        "checkpointFileId": "fixture-drive-checkpoint-create",
+        "manifestFileId": "fixture-drive-manifest-create",
+        "descriptorFileId": "fixture-drive-descriptor-create"
+      },
+      "binding": null,
+      "intent": {
+        "version": 1,
+        "requestId": "00000000-0000-0000-0000-000000001005",
+        "bindingId": "00000000-0000-0000-0000-000000001006",
+        "action": "create",
+        "scope": {
+          "accountId": "00000000-0000-0000-0000-000000001001",
+          "libraryId": "00000000-0000-0000-0000-000000001002",
+          "epoch": "fixture-epoch"
+        },
+        "requestSha256": "ed1f9bab989a3cb7498bb682f803b801572a394e54ff7ac987a69d75cfe56bfd",
+        "descriptorObjectId": "00000000-0000-0000-0000-000000001007",
+        "descriptorSha256": "9d3855c1a8bd31ea94df222ddffefbe1294f3291e63f745f16f7ffcfe18bea9c",
+        "manifestId": "00000000-0000-0000-0000-000000001004",
+        "checkpointObjectId": "00000000-0000-0000-0000-000000001008",
+        "checkpointSha256": "e0ec889c3c64ce6503aac1c7d1f0cd0be747d9e0ff9412c1696b621bf2691932",
+        "peerId": "00000000-0000-0000-0000-000000001009",
+        "phase": "prepared"
+      }
+    }
+  }
+}

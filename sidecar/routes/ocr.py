@@ -14,8 +14,8 @@ from papeer.core.search_index import SearchIndex
 from papeer.layout.ocr_engines import TESSDATA, download_tessdata, tessdata_directory
 from papeer.providers import Cancelled, check_cancel, spec_for
 from sidecar import deps
-from sidecar.job_types import JobKind, JobStarted
-from sidecar.jobs import ConcurrencyConflict, TurnQueue
+from sidecar.lifecycle.job_types import JobKind, JobStarted
+from sidecar.lifecycle.jobs import ConcurrencyConflict, TurnQueue
 from sidecar.schemas.ocr import LanguageDataRequest, OcrReadRequest, OcrSettings, OcrStatus
 
 router = APIRouter(dependencies=[Depends(deps.verify_token)])
@@ -40,7 +40,11 @@ def ocr_turn(cancel: threading.Event, progress: Any) -> Iterator[None]:
 def ai_reading() -> dict[str, Any]:
     """Whether the AI connection now chosen can read a page image (ProviderBackend.image_support)."""
     settings = deps.get_settings()
-    spec = spec_for(settings.provider)
+    try:
+        spec = spec_for(settings.provider)
+    except ValueError as exc:
+        # A saved, retired connection must not hide local OCR settings or its migration guidance.
+        return {"available": False, "reason": str(exc), "provider": settings.provider, "label": settings.provider}
     reason = deps.provider_for(settings).image_support()
     return {"available": reason is None, "reason": reason, "provider": spec.id, "label": spec.label}
 

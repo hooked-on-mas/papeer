@@ -182,7 +182,7 @@ test("five reference lookups leave summary, chat and translation available and r
   assert.equal(posts.filter(post => post.path.endsWith("/reference-research")).length, 5);
   assert.equal(await page.getByRole("button", { name: "翻訳する…", exact: true }).isEnabled(), true);
   await page.getByRole("button", { name: "その他", exact: true }).click();
-  assert.equal(await page.getByRole("menuitem", { name: "サマリー（解説）を作成" }).isEnabled(), true);
+  assert.equal(await page.getByRole("menuitem", { name: "サマリーを作成" }).isEnabled(), true);
   assert.equal(await page.getByRole("menuitem", { name: "ライブラリから削除" }).isEnabled(), false);
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "サマリータブ", exact: true }).click();

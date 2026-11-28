@@ -315,7 +315,7 @@ def test_a_document_of_an_older_layout_is_extracted_again_written_compactly_and_
     library, identity = make_paper(tmp_path, [["Original content on page one."]])
     library.update(identity, title="Kept title")
     path = PaperFiles(library.folder(identity)).document_json
-    older = dict(library.document(identity), layout_version=LAYOUT_VERSION - 1, title="Old extracted title")
+    older = dict(library.document(identity), layout_version=35, title="Old extracted title")
     path.write_text(json.dumps(older, indent=2), "utf-8")
     refreshed = library.document(identity)
     assert refreshed["layout_version"] == LAYOUT_VERSION
