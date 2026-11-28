@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "auditDate": "2026-11-04",
+  "auditDate": "2026-11-28",
   "target": "Windows 11 x64; Python 3.12; Rust x86_64-pc-windows-msvc",
   "projectLicense": "AGPL-3.0-or-later (README.md and LICENSE)",
   "method": [
@@ -11,20 +11,20 @@
     "Rust: run cargo tree --locked --offline --target x86_64-pc-windows-msvc (and --edges normal; --depth 1 for the direct dependencies), then read package.license of the exact cached Cargo.toml through cargo metadata --offline. Other-platform entries in Cargo.lock are excluded.",
     "A production or normal-graph reachability flag means dependency graph inclusion, not proof that code survives tree shaking or appears in the released binary. Inspect final build artifacts separately before publication.",
     "License strings are kept as declared upstream, rather than silently normalized to a different SPDX expression. Unknown means this audit did not verify a license for that locked version.",
-    "Unknown licenses: 66 JavaScript rows (10 production, 56 development), 0 of them relevant to Windows 11 x64; 8 Python rows, 0 of them reachable on Windows 11 x64; 0 Rust rows."
+    "Unknown licenses: 67 JavaScript rows (10 production, 57 development), 0 of them relevant to Windows 11 x64; 8 Python rows, 0 of them reachable on Windows 11 x64; 0 Rust rows."
   ],
   "sourceFiles": [
     {
       "path": "uv.lock",
-      "sha256": "b33eaf662ed819f7b00ea596de9e4aa73dd94891278b83691a205e438034ef38"
+      "sha256": "a4d1380929e139a7cc8da6cb788903fcaa4e32b6d63638e60b51f28c946bea59"
     },
     {
       "path": "frontend/pnpm-lock.yaml",
-      "sha256": "cc388ea57fee4724c4ec36191706b0e9f75d65b85b40a0c20e9c91a51b03d7ee"
+      "sha256": "40b4ebb5c30c9c360c6515df6e059d2474ce34a067c9e9c9919f5987fbb6c278"
     },
     {
       "path": "frontend/src-tauri/Cargo.lock",
-      "sha256": "c56b9220f5e54bf7a4f3c1f79d621ad05c6600947fa3ee6a9b97b7dc8679a4d4"
+      "sha256": "8292b40ef68ea676e7228ca858072c4a365fb465bf2d65c62e59ada07759d4db"
     }
   ],
   "summary": {
@@ -40,14 +40,14 @@
       }
     },
     "javascript": {
-      "rows": 563,
+      "rows": 566,
       "directRows": 51,
-      "unknownLicenseRows": 66,
+      "unknownLicenseRows": 67,
       "scopeCounts": {
         "production": 325,
-        "development": 246
+        "development": 249
       },
-      "targetRelevantRows": 497,
+      "targetRelevantRows": 499,
       "targetRelevantUnknownLicenseRows": 0,
       "targetProductionRows": 315,
       "pnpmLicensesProdGroupedRecords": 305,
@@ -71,7 +71,7 @@
         }
       ],
       "productionUnknownLicenseRows": 10,
-      "developmentUnknownLicenseRows": 56
+      "developmentUnknownLicenseRows": 57
     },
     "rust": {
       "rows": 257,
@@ -351,7 +351,7 @@
       },
       {
         "name": "pillow",
-        "version": "12.3.0",
+        "version": "13.0.0",
         "dependencyType": "direct",
         "directScopes": [
           "runtime"
@@ -360,7 +360,7 @@
           "runtime"
         ],
         "license": "MIT-CMU",
-        "licenseEvidence": ".venv/Lib/site-packages/pillow-12.3.0.dist-info/METADATA",
+        "licenseEvidence": ".venv/Lib/site-packages/pillow-13.0.0.dist-info/METADATA",
         "installedOnAuditMachine": true
       },
       {
@@ -624,7 +624,7 @@
       },
       {
         "name": "setuptools",
-        "version": "84.0.0",
+        "version": "84.2.1",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -1456,9 +1456,9 @@
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@eslint-community+eslint-ut_1ef3110cab6691e4aeb977c049d371ce/node_modules/@eslint-community/eslint-utils/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@eslint-community+eslint-ut_a54d4e278bc5887260ad392a536113b1/node_modules/@eslint-community/eslint-utils/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@eslint-community/eslint-utils@4.10.1(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))",
+        "lockKey": "@eslint-community/eslint-utils@4.10.1(eslint@10.15.0(jiti@2.7.0)(supports-color@10.2.2))",
         "targetRelevant": true
       },
       {
@@ -1477,16 +1477,16 @@
       },
       {
         "name": "@eslint/config-array",
-        "version": "0.23.5",
+        "version": "0.23.6",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "Apache-2.0",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@eslint+config-array@0.23.5_supports-color@10.2.2/node_modules/@eslint/config-array/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@eslint+config-array@0.23.6_supports-color@10.2.2/node_modules/@eslint/config-array/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@eslint/config-array@0.23.5(supports-color@10.2.2)",
+        "lockKey": "@eslint/config-array@0.23.6(supports-color@10.2.2)",
         "targetRelevant": true
       },
       {
@@ -1713,6 +1713,20 @@
         "licenseEvidence": "frontend/node_modules/.pnpm/@iconify+utils@3.1.7/node_modules/@iconify/utils/package.json",
         "installedOnAuditMachine": true,
         "lockKey": "@iconify/utils@3.1.7",
+        "targetRelevant": true
+      },
+      {
+        "name": "@isaacs/nonrecursive-glob-match",
+        "version": "1.1.0",
+        "dependencyType": "transitive",
+        "directScopes": [],
+        "scopes": [
+          "development"
+        ],
+        "license": "BlueOak-1.0.0",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@isaacs+nonrecursive-glob-match@1.1.0/node_modules/@isaacs/nonrecursive-glob-match/package.json",
+        "installedOnAuditMachine": true,
+        "lockKey": "@isaacs/nonrecursive-glob-match@1.1.0",
         "targetRelevant": true
       },
       {
@@ -2212,16 +2226,16 @@
       },
       {
         "name": "@oxc-project/types",
-        "version": "0.150.0",
+        "version": "0.160.0",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@oxc-project+types@0.150.0/node_modules/@oxc-project/types/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@oxc-project+types@0.160.0/node_modules/@oxc-project/types/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@oxc-project/types@0.150.0",
+        "lockKey": "@oxc-project/types@0.160.0",
         "targetRelevant": true
       },
       {
@@ -2312,7 +2326,7 @@
       },
       {
         "name": "@rolldown/binding-android-arm-eabi",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2321,7 +2335,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-android-arm-eabi@1.2.9",
+        "lockKey": "@rolldown/binding-android-arm-eabi@1.3.4",
         "platformRestriction": {
           "os": [
             "android"
@@ -2334,7 +2348,7 @@
       },
       {
         "name": "@rolldown/binding-android-arm64",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2343,7 +2357,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-android-arm64@1.2.9",
+        "lockKey": "@rolldown/binding-android-arm64@1.3.4",
         "platformRestriction": {
           "os": [
             "android"
@@ -2356,7 +2370,7 @@
       },
       {
         "name": "@rolldown/binding-darwin-arm64",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2365,7 +2379,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-darwin-arm64@1.2.9",
+        "lockKey": "@rolldown/binding-darwin-arm64@1.3.4",
         "platformRestriction": {
           "os": [
             "darwin"
@@ -2378,7 +2392,7 @@
       },
       {
         "name": "@rolldown/binding-darwin-x64",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2387,7 +2401,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-darwin-x64@1.2.9",
+        "lockKey": "@rolldown/binding-darwin-x64@1.3.4",
         "platformRestriction": {
           "os": [
             "darwin"
@@ -2400,7 +2414,7 @@
       },
       {
         "name": "@rolldown/binding-freebsd-x64",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2409,7 +2423,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-freebsd-x64@1.2.9",
+        "lockKey": "@rolldown/binding-freebsd-x64@1.3.4",
         "platformRestriction": {
           "os": [
             "freebsd"
@@ -2422,7 +2436,7 @@
       },
       {
         "name": "@rolldown/binding-linux-arm-gnueabihf",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2431,7 +2445,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-linux-arm-gnueabihf@1.2.9",
+        "lockKey": "@rolldown/binding-linux-arm-gnueabihf@1.3.4",
         "platformRestriction": {
           "os": [
             "linux"
@@ -2444,7 +2458,7 @@
       },
       {
         "name": "@rolldown/binding-linux-arm64-gnu",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2453,7 +2467,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-linux-arm64-gnu@1.2.9",
+        "lockKey": "@rolldown/binding-linux-arm64-gnu@1.3.4",
         "platformRestriction": {
           "os": [
             "linux"
@@ -2469,7 +2483,7 @@
       },
       {
         "name": "@rolldown/binding-linux-arm64-musl",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2478,7 +2492,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-linux-arm64-musl@1.2.9",
+        "lockKey": "@rolldown/binding-linux-arm64-musl@1.3.4",
         "platformRestriction": {
           "os": [
             "linux"
@@ -2494,7 +2508,7 @@
       },
       {
         "name": "@rolldown/binding-linux-ppc64-gnu",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2503,7 +2517,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-linux-ppc64-gnu@1.2.9",
+        "lockKey": "@rolldown/binding-linux-ppc64-gnu@1.3.4",
         "platformRestriction": {
           "os": [
             "linux"
@@ -2519,7 +2533,7 @@
       },
       {
         "name": "@rolldown/binding-linux-s390x-gnu",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2528,7 +2542,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-linux-s390x-gnu@1.2.9",
+        "lockKey": "@rolldown/binding-linux-s390x-gnu@1.3.4",
         "platformRestriction": {
           "os": [
             "linux"
@@ -2544,7 +2558,7 @@
       },
       {
         "name": "@rolldown/binding-linux-x64-gnu",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2553,7 +2567,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-linux-x64-gnu@1.2.9",
+        "lockKey": "@rolldown/binding-linux-x64-gnu@1.3.4",
         "platformRestriction": {
           "os": [
             "linux"
@@ -2569,7 +2583,7 @@
       },
       {
         "name": "@rolldown/binding-linux-x64-musl",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2578,7 +2592,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-linux-x64-musl@1.2.9",
+        "lockKey": "@rolldown/binding-linux-x64-musl@1.3.4",
         "platformRestriction": {
           "os": [
             "linux"
@@ -2594,7 +2608,7 @@
       },
       {
         "name": "@rolldown/binding-openharmony-arm64",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2603,7 +2617,7 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-openharmony-arm64@1.2.9",
+        "lockKey": "@rolldown/binding-openharmony-arm64@1.3.4",
         "platformRestriction": {
           "os": [
             "openharmony"
@@ -2615,8 +2629,8 @@
         "targetRelevant": false
       },
       {
-        "name": "@rolldown/binding-win32-arm64-msvc",
-        "version": "1.2.9",
+        "name": "@rolldown/binding-wasm32-wasi",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
@@ -2625,7 +2639,26 @@
         "license": "unknown",
         "licenseEvidence": null,
         "installedOnAuditMachine": false,
-        "lockKey": "@rolldown/binding-win32-arm64-msvc@1.2.9",
+        "lockKey": "@rolldown/binding-wasm32-wasi@1.3.4",
+        "platformRestriction": {
+          "cpu": [
+            "wasm32"
+          ]
+        },
+        "targetRelevant": false
+      },
+      {
+        "name": "@rolldown/binding-win32-arm64-msvc",
+        "version": "1.3.4",
+        "dependencyType": "transitive",
+        "directScopes": [],
+        "scopes": [
+          "development"
+        ],
+        "license": "unknown",
+        "licenseEvidence": null,
+        "installedOnAuditMachine": false,
+        "lockKey": "@rolldown/binding-win32-arm64-msvc@1.3.4",
         "platformRestriction": {
           "os": [
             "win32"
@@ -2638,16 +2671,16 @@
       },
       {
         "name": "@rolldown/binding-win32-x64-msvc",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@rolldown+binding-win32-x64-msvc@1.2.9/node_modules/@rolldown/binding-win32-x64-msvc/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@rolldown+binding-win32-x64-msvc@1.3.4/node_modules/@rolldown/binding-win32-x64-msvc/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@rolldown/binding-win32-x64-msvc@1.2.9",
+        "lockKey": "@rolldown/binding-win32-x64-msvc@1.3.4",
         "platformRestriction": {
           "os": [
             "win32"
@@ -2984,9 +3017,9 @@
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@tailwindcss+vite@4.3.3_vit_57e3a0782a482eab51e26c2b5a0ca9c1/node_modules/@tailwindcss/vite/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@tailwindcss+vite@4.3.3_vit_2b009020a925c1d714cfb5a52bc2fc26/node_modules/@tailwindcss/vite/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@tailwindcss/vite@4.3.3(vite@8.3.0(@types/node@26.6.2)(jiti@2.7.0))",
+        "lockKey": "@tailwindcss/vite@4.3.3(vite@8.4.0(@types/node@26.6.2)(jiti@2.7.0))",
         "targetRelevant": true
       },
       {
@@ -4073,7 +4106,7 @@
       },
       {
         "name": "@typescript-eslint/parser",
-        "version": "8.70.1",
+        "version": "8.74.0",
         "dependencyType": "direct",
         "directScopes": [
           "development"
@@ -4082,93 +4115,93 @@
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+parser@8_00974a8406359358d0a4e099d05096fb/node_modules/@typescript-eslint/parser/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+parser@8_266fa94599eeb27ab6ed40a1ad370192/node_modules/@typescript-eslint/parser/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@typescript-eslint/parser@8.70.1(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)",
+        "lockKey": "@typescript-eslint/parser@8.74.0(eslint@10.15.0(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)",
         "targetRelevant": true
       },
       {
         "name": "@typescript-eslint/project-service",
-        "version": "8.70.1",
+        "version": "8.74.0",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+project-_085766b57b526085922213ea0d5778dd/node_modules/@typescript-eslint/project-service/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+project-_29757391ef958b52bd8c866b21eb6536/node_modules/@typescript-eslint/project-service/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@typescript-eslint/project-service@8.70.1(supports-color@10.2.2)(typescript@6.0.3)",
+        "lockKey": "@typescript-eslint/project-service@8.74.0(supports-color@10.2.2)(typescript@6.0.3)",
         "targetRelevant": true
       },
       {
         "name": "@typescript-eslint/scope-manager",
-        "version": "8.70.1",
+        "version": "8.74.0",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+scope-manager@8.70.1/node_modules/@typescript-eslint/scope-manager/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+scope-manager@8.74.0/node_modules/@typescript-eslint/scope-manager/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@typescript-eslint/scope-manager@8.70.1",
+        "lockKey": "@typescript-eslint/scope-manager@8.74.0",
         "targetRelevant": true
       },
       {
         "name": "@typescript-eslint/tsconfig-utils",
-        "version": "8.70.1",
+        "version": "8.74.0",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+tsconfig-utils@8.70.1_typescript@6.0.3/node_modules/@typescript-eslint/tsconfig-utils/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+tsconfig-utils@8.74.0_typescript@6.0.3/node_modules/@typescript-eslint/tsconfig-utils/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@typescript-eslint/tsconfig-utils@8.70.1(typescript@6.0.3)",
+        "lockKey": "@typescript-eslint/tsconfig-utils@8.74.0(typescript@6.0.3)",
         "targetRelevant": true
       },
       {
         "name": "@typescript-eslint/types",
-        "version": "8.70.1",
+        "version": "8.74.0",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+types@8.70.1/node_modules/@typescript-eslint/types/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+types@8.74.0/node_modules/@typescript-eslint/types/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@typescript-eslint/types@8.70.1",
+        "lockKey": "@typescript-eslint/types@8.74.0",
         "targetRelevant": true
       },
       {
         "name": "@typescript-eslint/typescript-estree",
-        "version": "8.70.1",
+        "version": "8.74.0",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+typescri_cc6d397fafd3072c96d917885556babe/node_modules/@typescript-eslint/typescript-estree/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+typescri_98397bcee332b24797bdbb4897797a7b/node_modules/@typescript-eslint/typescript-estree/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@typescript-eslint/typescript-estree@8.70.1(supports-color@10.2.2)(typescript@6.0.3)",
+        "lockKey": "@typescript-eslint/typescript-estree@8.74.0(supports-color@10.2.2)(typescript@6.0.3)",
         "targetRelevant": true
       },
       {
         "name": "@typescript-eslint/visitor-keys",
-        "version": "8.70.1",
+        "version": "8.74.0",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+visitor-keys@8.70.1/node_modules/@typescript-eslint/visitor-keys/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@typescript-eslint+visitor-keys@8.74.0/node_modules/@typescript-eslint/visitor-keys/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@typescript-eslint/visitor-keys@8.70.1",
+        "lockKey": "@typescript-eslint/visitor-keys@8.74.0",
         "targetRelevant": true
       },
       {
@@ -4210,9 +4243,9 @@
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/@vitejs+plugin-react@6.1.1__d7636128c862d99dafc19a2374aca571/node_modules/@vitejs/plugin-react/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/@vitejs+plugin-react@6.1.1__1923f1abaab057eedc7163d390e5012e/node_modules/@vitejs/plugin-react/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "@vitejs/plugin-react@6.1.1(vite@8.3.0(@types/node@26.6.2)(jiti@2.7.0))",
+        "lockKey": "@vitejs/plugin-react@6.1.1(vite@8.4.0(@types/node@26.6.2)(jiti@2.7.0))",
         "targetRelevant": true
       },
       {
@@ -5522,9 +5555,9 @@
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/eslint-plugin-react-hooks@7_9777ae031ac83e2d1a7b51dcf687fb62/node_modules/eslint-plugin-react-hooks/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/eslint-plugin-react-hooks@7_f996c11f6257775fb870f93fd25b9539/node_modules/eslint-plugin-react-hooks/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "eslint-plugin-react-hooks@7.1.1(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)",
+        "lockKey": "eslint-plugin-react-hooks@7.1.1(eslint@10.15.0(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)",
         "targetRelevant": true
       },
       {
@@ -5571,7 +5604,7 @@
       },
       {
         "name": "eslint",
-        "version": "10.11.0",
+        "version": "10.15.0",
         "dependencyType": "direct",
         "directScopes": [
           "development"
@@ -5580,9 +5613,9 @@
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/eslint@10.11.0_jiti@2.7.0_supports-color@10.2.2/node_modules/eslint/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/eslint@10.15.0_jiti@2.7.0_supports-color@10.2.2/node_modules/eslint/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2)",
+        "lockKey": "eslint@10.15.0(jiti@2.7.0)(supports-color@10.2.2)",
         "targetRelevant": true
       },
       {
@@ -7899,16 +7932,16 @@
       },
       {
         "name": "minimatch",
-        "version": "10.2.6",
+        "version": "11.0.9",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "BlueOak-1.0.0",
-        "licenseEvidence": "frontend/node_modules/.pnpm/minimatch@10.2.6/node_modules/minimatch/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/minimatch@11.0.9/node_modules/minimatch/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "minimatch@10.2.6",
+        "lockKey": "minimatch@11.0.9",
         "targetRelevant": true
       },
       {
@@ -7942,16 +7975,39 @@
       },
       {
         "name": "nanoid",
-        "version": "3.3.19",
+        "version": "3.3.20",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/nanoid@3.3.19/node_modules/nanoid/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/nanoid@3.3.20/node_modules/nanoid/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "nanoid@3.3.19",
+        "lockKey": "nanoid@3.3.20",
+        "targetRelevant": true
+      },
+      {
+        "name": "napi-windows-process-start-time",
+        "version": "0.1.0",
+        "dependencyType": "transitive",
+        "directScopes": [],
+        "scopes": [
+          "development"
+        ],
+        "license": "MIT",
+        "licenseEvidence": "frontend/node_modules/.pnpm/napi-windows-process-start-time@0.1.0/node_modules/napi-windows-process-start-time/package.json",
+        "installedOnAuditMachine": true,
+        "lockKey": "napi-windows-process-start-time@0.1.0",
+        "platformRestriction": {
+          "os": [
+            "win32"
+          ],
+          "cpu": [
+            "x64",
+            "arm64"
+          ]
+        },
         "targetRelevant": true
       },
       {
@@ -8302,16 +8358,16 @@
       },
       {
         "name": "postcss",
-        "version": "8.5.28",
+        "version": "8.5.33",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/postcss@8.5.28/node_modules/postcss/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/postcss@8.5.33/node_modules/postcss/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "postcss@8.5.28",
+        "lockKey": "postcss@8.5.33",
         "targetRelevant": true
       },
       {
@@ -8602,16 +8658,16 @@
       },
       {
         "name": "rolldown",
-        "version": "1.2.9",
+        "version": "1.3.4",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/rolldown@1.2.9/node_modules/rolldown/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/rolldown@1.3.4/node_modules/rolldown/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "rolldown@1.2.9",
+        "lockKey": "rolldown@1.3.4",
         "targetRelevant": true
       },
       {
@@ -9281,7 +9337,7 @@
       },
       {
         "name": "vite",
-        "version": "8.3.0",
+        "version": "8.4.0",
         "dependencyType": "direct",
         "directScopes": [
           "development"
@@ -9290,9 +9346,9 @@
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/vite@8.3.0_@types+node@26.6.2_jiti@2.7.0/node_modules/vite/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/vite@8.4.0_@types+node@26.6.2_jiti@2.7.0/node_modules/vite/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "vite@8.3.0(@types/node@26.6.2)(jiti@2.7.0)",
+        "lockKey": "vite@8.4.0(@types/node@26.6.2)(jiti@2.7.0)",
         "targetRelevant": true
       },
       {
@@ -9430,23 +9486,23 @@
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/zod-validation-error@4.0.2_zod@3.25.76/node_modules/zod-validation-error/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/zod-validation-error@4.0.2_zod@4.6.7/node_modules/zod-validation-error/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "zod-validation-error@4.0.2(zod@3.25.76)",
+        "lockKey": "zod-validation-error@4.0.2(zod@4.6.7)",
         "targetRelevant": true
       },
       {
         "name": "zod",
-        "version": "3.25.76",
+        "version": "4.6.7",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "development"
         ],
         "license": "MIT",
-        "licenseEvidence": "frontend/node_modules/.pnpm/zod@3.25.76/node_modules/zod/package.json",
+        "licenseEvidence": "frontend/node_modules/.pnpm/zod@4.6.7/node_modules/zod/package.json",
         "installedOnAuditMachine": true,
-        "lockKey": "zod@3.25.76",
+        "lockKey": "zod@4.6.7",
         "targetRelevant": true
       },
       {
@@ -9819,14 +9875,14 @@
       },
       {
         "name": "cookie",
-        "version": "0.18.2",
+        "version": "0.18.3",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "normal-graph"
         ],
         "license": "MIT OR Apache-2.0",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cookie-0.18.2/Cargo.toml",
+        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cookie-0.18.3/Cargo.toml",
         "cachedSourceOnAuditMachine": true
       },
       {
@@ -10227,14 +10283,14 @@
       },
       {
         "name": "form_urlencoded",
-        "version": "1.2.2",
+        "version": "1.2.3",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "normal-graph"
         ],
         "license": "MIT OR Apache-2.0",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/form_urlencoded-1.2.2/Cargo.toml",
+        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/form_urlencoded-1.2.3/Cargo.toml",
         "cachedSourceOnAuditMachine": true
       },
       {
@@ -12001,14 +12057,14 @@
       },
       {
         "name": "url",
-        "version": "2.5.8",
+        "version": "2.5.9",
         "dependencyType": "transitive",
         "directScopes": [],
         "scopes": [
           "normal-graph"
         ],
         "license": "MIT OR Apache-2.0",
-        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/url-2.5.8/Cargo.toml",
+        "licenseEvidence": "~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/url-2.5.9/Cargo.toml",
         "cachedSourceOnAuditMachine": true
       },
       {

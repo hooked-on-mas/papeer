@@ -7,3 +7,5 @@ overrides:
   dompurify: "^3.4.17"
   katex: "^0.18.7"
   source-map-js: "^1.2.2"
+  # eslint-plugin-react-hooks 7.1.1 pulls zod 3.25.x, which has GHSA-mrhx-c7xc-m3w5.
+  zod: "^4.6.6"
