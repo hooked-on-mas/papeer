@@ -78,11 +78,6 @@ def canonical_storage_path():
 
 def _require_clear():
     if not legacy_startup_allowed(deps.get_data_dir()): raise AuthorityError('migration-held')
-    try:
-        presence = deps.read_native_startup_presence()
-    except (OSError, ValueError) as error:
-        raise AuthorityError('legacy-state-unverifiable') from error
-    if presence != 'clear': raise AuthorityError('legacy-present')
 
 def _bearer(authorization):
     # verify_token permits dev-no-auth and query credentials; neither grants owner

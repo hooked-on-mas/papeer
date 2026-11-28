@@ -2,64 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createDesktopBootstrapHost } from '../src/adapters/desktop/bootstrapEntry.ts';
 import { createDesktopCloseController } from '../src/adapters/desktop/desktopWindowClose.ts';
-import { createRecoveryClose, recoveryCloseHost } from '../src/adapters/desktop/NativeRecoveryClose.ts';
 import { bootstrapRoutes } from '../src/adapters/desktop/canonicalBootstrapWire.ts';
 import { createDesktopBootstrapHostDriver } from '../src/adapters/desktop/bootstrapHostDriver.ts';
 import type { CanonicalInitializeRequest } from '../src/runtime/edits/contracts.ts';
-import type { ActiveLibraryProof, NativePreparationStatus } from '../src/features/bootstrap/bootstrapPorts.ts';
+import type { ActiveLibraryProof } from '../src/features/bootstrap/bootstrapPorts.ts';
 
 const flush = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 const peer = { version: 1 as const, accountId: 'fixture-namespace', peerId: '00000000-0000-4000-8000-000000000001' };
-
-for (const first of ['pending', 'http-error', 'transport-error', 'malformed'] as const) test(`recovery preserves actual driver status after ${first} and retries close`, async () => {
-  const env = browserGlobals('unit-test-token');
-  try {
-    let shutdowns = 0, statuses = 0, exits = 0;
-    const fetcher: typeof fetch = async input => {
-      const endpoint = new URL(String(input)).pathname;
-      if (endpoint.endsWith('/status')) { statuses++; return Response.json({ state: 'running', scope: 'native-preparation-only' }); }
-      if (endpoint === '/shutdown') {
-        shutdowns++;
-        if (shutdowns > 1) return Response.json({ stopped: true });
-        if (first === 'pending') return Response.json({ stopped: false });
-        if (first === 'http-error') return new Response('', { status: 503 });
-        if (first === 'transport-error') throw new Error('offline');
-        return new Response('{');
-      }
-      throw new Error('unexpected-route');
-    };
-    const base = createDesktopBootstrapHost({ fetcher }), raw = base.session.getNativePreparation(); assert.ok(raw);
-    const recovery = createRecoveryClose(base.session, raw, { ...recoveryCloseHost(fetcher), exit: async () => { exits++; } });
-    await recovery.close.request(); assert.equal(recovery.close.getSnapshot(), 'failed'); assert.equal(exits, 0);
-    assert.equal((await recovery.facade.status(new AbortController().signal)).state, 'running'); assert.equal(statuses, 1);
-    await recovery.close.request(); assert.equal(exits, 1); assert.equal(shutdowns, 2);
-  } finally { env.restore(); }
-});
-
-test('recovery close fences active and synchronously re-entered mutations', async () => {
-  let release!: (value: NativePreparationStatus) => void;
-  // A facade action remains owned while its promise is unresolved.
-  const pending = new Promise<NativePreparationStatus>(resolve => { release = resolve; });
-  let starts = 0, attempt: Promise<unknown> | undefined;
-  const raw = { status: async () => ({ state: 'idle' as const, scope: 'native-preparation-only' as const }),
-    start: async () => { starts++; return pending; }, resume: async () => pending, abandon: async () => pending };
-  const recovery = createRecoveryClose({ close: async () => ({ status: 'allowed' }) }, raw, { shutdown: async () => {}, exit: async () => {} });
-  const active = recovery.facade.start(new AbortController().signal); await recovery.close.request();
-  assert.equal(recovery.close.getSnapshot(), 'refused'); release({ state: 'running', scope: 'native-preparation-only' }); await active;
-  recovery.close.subscribe(() => { if (recovery.close.getSnapshot() === 'closing') attempt = recovery.facade.start(new AbortController().signal); });
-  await recovery.close.request(); await assert.rejects(attempt!, /maintenance-operation-pending/); assert.equal(starts, 1);
-});
-
-for (const failed of ['session', 'exit'] as const) test(`recovery retains confirmed drain after ${failed} failure`, async () => {
-  let shutdowns = 0, closes = 0, exits = 0;
-  const value: NativePreparationStatus = { state: 'idle', scope: 'native-preparation-only' };
-  const raw = { status: async () => value, start: async () => value, resume: async () => value, abandon: async () => value };
-  const recovery = createRecoveryClose({ close: async () => { closes++; if (failed === 'session' && closes === 1) throw new Error('transient'); return { status: 'allowed' }; } }, raw,
-    { shutdown: async () => { shutdowns++; }, exit: async () => { exits++; if (failed === 'exit' && exits === 1) throw new Error('transient'); } });
-  await recovery.close.request(); assert.equal(recovery.close.getSnapshot(), 'failed');
-  await assert.rejects(recovery.facade.start(new AbortController().signal), /maintenance-operation-pending/);
-  await recovery.close.request(); assert.equal(shutdowns, 1); assert.equal(exits, failed === 'exit' ? 2 : 1);
-});
 
 /** Test double for the loopback sidecar: records every request, enforces the bearer, and answers like the D2 routes. */
 function sidecar(options: { grant?: 'absent' | 'ready'; hold?: unknown; presence?: unknown; maintenance?: unknown } = {}) {
@@ -128,7 +77,7 @@ test('PC factory: explicit local setup, fixed creation and final close go throug
       closeHost: { shutdown: async () => { order.push('shutdown'); }, exit: async () => { order.push('exit'); } } });
     await session.start();
     assert.equal(session.getSnapshot().phase, 'setup-required');
-    assert.deepEqual(server.paths(), ['/api/edits/legacy-maintenance/status', bootstrapRoutes.hold, bootstrapRoutes.legacyPresence, bootstrapRoutes.readContext]);
+    assert.deepEqual(server.paths(), [bootstrapRoutes.readContext]);
     assert.equal(server.seen.every(item => item.lease === null), true);
     await session.provisionLocal();
     assert.equal(session.getSnapshot().phase, 'choosing');
@@ -152,7 +101,7 @@ test('PC factory: explicit local setup, fixed creation and final close go throug
   } finally { env.restore(); }
 });
 
-test('PC factory: an existing grant reuses a fresh lease; an active hold fails closed before any lease', async () => {
+test('PC factory: an existing grant reuses a fresh lease without implicit provisioning', async () => {
   const env = browserGlobals('unit-test-token');
   try {
     const ready = sidecar({ grant: 'ready' }), first = createDesktopBootstrapHost({ fetcher: ready.fetcher, closeHost: { shutdown: async () => {}, exit: async () => {} } });
@@ -161,12 +110,6 @@ test('PC factory: an existing grant reuses a fresh lease; an active hold fails c
     assert.equal(ready.seen.find(item => item.path === bootstrapRoutes.discover)!.lease, 'lease-read');
     assert.equal(ready.paths().includes(bootstrapRoutes.provisionContext), false, 'cold start never provisions implicitly');
     await first.session.close();
-
-    const held = sidecar({ hold: { version: 1 } }), second = createDesktopBootstrapHost({ fetcher: held.fetcher });
-    await second.session.start();
-    assert.equal(second.session.getSnapshot().phase, 'recovery-required');
-    assert.deepEqual(held.paths(), ['/api/edits/legacy-maintenance/status', bootstrapRoutes.hold], 'a malformed or active hold stops before the local context is read');
-    await second.session.close();
   } finally { env.restore(); }
 });
 
@@ -188,33 +131,6 @@ test('native bootstrap rejects malformed unknown context and discovery responses
     if (result.status !== 'ready') throw new Error('expected ready');
     await assert.rejects(driver.discover(result.lease, signal), /invalid-discovery-response/);
     await driver.close();
-  } finally { env.restore(); }
-});
-
-test('PC startup refuses legacy data without a hold, and rejects unverified presence', async () => {
-  const env = browserGlobals('unit-test-token');
-  try {
-    for (const presence of ['legacy-present', { status: 'clear' }]) {
-      const server = sidecar({ presence });
-      const host = createDesktopBootstrapHost({ fetcher: server.fetcher });
-      await host.session.start();
-      assert.equal(host.session.getSnapshot().phase, 'recovery-required');
-      assert.deepEqual(server.paths(), ['/api/edits/legacy-maintenance/status', bootstrapRoutes.hold, bootstrapRoutes.legacyPresence]);
-      await host.session.close();
-    }
-  } finally { env.restore(); }
-});
-
-test('PC startup checks separate maintenance status before any hold or grant read', async () => {
-  const env = browserGlobals('unit-test-token');
-  try {
-    for (const maintenance of [{ state: 'recovery-required', phase: 'not-collected', scope: 'native-preparation-only' }, { state: 'idle' }]) {
-      const server = sidecar({ maintenance }), host = createDesktopBootstrapHost({ fetcher: server.fetcher });
-      await host.session.start();
-      assert.equal(host.session.getSnapshot().phase, 'recovery-required');
-      assert.deepEqual(server.paths(), ['/api/edits/legacy-maintenance/status']);
-      await host.session.close();
-    }
   } finally { env.restore(); }
 });
 

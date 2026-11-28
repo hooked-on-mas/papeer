@@ -353,8 +353,9 @@ class SqliteEditRepository:
                     item = publication_item(edit["publication"])
                     if parent and (parent["kind"] != "library" or any(value["id"] == item["id"] for value in parent["items"])):
                         reject("publication-item-exists")
+            resource_cache, root_cache = {}, {}
             for snapshot in graph.states.values():
-                self._assert_bindings(db, snapshot)
+                self._assert_bindings(db, snapshot, resource_cache, root_cache)
                 if snapshot["version"] in [root["version"], *graph.view["heads"]]:
                     self._project(db, snapshot)
             self._prune_projections(db, root["id"], {root["version"], *graph.view["heads"]})
@@ -405,13 +406,27 @@ class SqliteEditRepository:
         row = db.execute("SELECT payload FROM edit_resources WHERE scope=? AND id=?", (self.namespace, resource_id)).fetchone()
         return self._stored_resource(resource_id,row[0]) if row else None
 
-    def _assert_bindings(self, db, snapshot):
-        assert_resource_bindings(snapshot, lambda resource_id: self._resource(db, resource_id))
+    def _assert_bindings(self, db, snapshot, resource_cache=None, root_cache=None):
+        def get_resource(resource_id):
+            if resource_cache is None:
+                return self._resource(db, resource_id)
+            if resource_id not in resource_cache:
+                resource_cache[resource_id] = self._resource(db, resource_id)
+            return resource_cache[resource_id]
+
+        def get_root(item_id):
+            if root_cache is None:
+                return self._root(db, item_id)
+            if item_id not in root_cache:
+                root_cache[item_id] = self._root(db, item_id)
+            return root_cache[item_id]
+
+        assert_resource_bindings(snapshot, get_resource)
         if snapshot["kind"] == "library":
             for item in snapshot["items"]:
                 if item["kind"] == "attachment":
                     continue
-                root = self._root(db, item["id"])
+                root = get_root(item["id"])
                 if not root or root["kind"] != ("markdown" if item["kind"] == "markdown" else "document"):
                     reject("missing-or-wrong-content")
 
@@ -541,8 +556,9 @@ class SqliteEditRepository:
             for record in records.values():
                 self._put(db, record)
             graph = EditGraph({"version": 1, "libraryId": self.scope["libraryId"], "root": root, "batches": [edit["batch"] for edit in waiting]})
+            resource_cache, root_cache = {}, {}
             for snapshot in graph.states.values():
-                self._assert_bindings(db, snapshot)
+                self._assert_bindings(db, snapshot, resource_cache, root_cache)
                 if snapshot["version"] in [root["version"], *graph.view["heads"]]:
                     self._project(db, snapshot)
             self._prune_projections(db, root["id"], {root["version"], *graph.view["heads"]})
@@ -677,13 +693,19 @@ class SqliteEditRepository:
                     reject("batch-id-reused")
                 if not old:
                     ids[batch["id"]] = {"batch": batch, "receipt": {"id": batch["id"], "targetId": batch["targetId"], "durable": True, "upload": "accepted", "importedBy": []}}
+            roots = None
             for record in records:
                 old = ids[record["batch"]["id"]]
-                if history_status(old, list(ids.values()), self._roots(db)) == "invalid":
-                    old = {key: value for key, value in old.items() if key != "history"}
+                if "history" in old:
+                    if roots is None:
+                        roots = self._roots(db)
+                    if history_status(old, list(ids.values()), roots) == "invalid":
+                        old = {key: value for key, value in old.items() if key != "history"}
                 ids[record["batch"]["id"]] = {**merge_edit_record(old, record), "receipt": old["receipt"]}
-            validate_histories(ids, self._roots(db), {record["batch"]["id"] for record in records if "history" in record})
+            if any("history" in edit for edit in ids.values()):
+                validate_histories(ids, self._roots(db) if roots is None else roots, {record["batch"]["id"] for record in records if "history" in record})
             targets = {batch["targetId"] for batch in batches} | {value["content"]["id"] for value in publications if value.get("content")}
+            resource_cache, root_cache = {}, {}
             for target in targets:
                 root = self._root(db, target)
                 if root is None:
@@ -702,7 +724,7 @@ class SqliteEditRepository:
                         if parent and (parent["kind"] != "library" or any(value["id"] == item["id"] for value in parent["items"])):
                             reject("publication-item-exists")
                 for snapshot in graph.states.values():
-                    self._assert_bindings(db, snapshot)
+                    self._assert_bindings(db, snapshot, resource_cache, root_cache)
                     if snapshot["version"] in [root["version"], *graph.view["heads"]]:
                         self._project(db, snapshot)
                 self._prune_projections(db, target, {root["version"], *graph.view["heads"]})

@@ -13,8 +13,6 @@ import { createBrowserScopePorts } from './browserScopePorts.ts';
 import { canonicalHostTransaction } from './canonicalHostTransaction.ts';
 import { BrowserMarkdownDraftPort } from './canonicalMarkdownDrafts.ts';
 import { CANONICAL_DATABASE_NAME } from './canonicalIndexedDbSchema.ts';
-import { LEGACY_BACKUP_DATABASE_NAME, readLegacyHoldReadonly } from './legacyHoldReadonly.ts';
-import { readLegacyWebPresenceReadonly } from './legacyPresenceReadonly.ts';
 import { LocalHostAuthority } from './localHostAuthority.ts';
 import { listOwnerLibraries } from './ownership/namespaceOwnerLibraries.ts';
 import { BrowserReaderStatePort } from './readerState.ts';
@@ -50,14 +48,10 @@ export type BrowserBootstrapHostDriver = BootstrapHostDriver & {
  reserveOfflineRetirement(): () => void;
 };
 export function createBrowserBootstrapHostDriver(options: BrowserBootstrapHostDriverOptions = {}): BootstrapHostDriver {
-  const factory = options.factory ?? globalThis.indexedDB, backup = options.legacyBackupDatabaseName ?? LEGACY_BACKUP_DATABASE_NAME;
+  const factory = options.factory ?? globalThis.indexedDB;
   const authority = new LocalHostAuthority(factory, options.databaseName ?? CANONICAL_DATABASE_NAME);
   const local = assembleBrowserBootstrapHostDriver(authority, {
-    readHold: async signal => {
-      if (await readLegacyHoldReadonly(signal, factory, backup) === 'held') return 'held';
-      if (await readLegacyWebPresenceReadonly(signal, factory) !== 'clear') throw new Error('legacy-data-present');
-      return 'clear';
-    },
+    readHold: async () => 'clear',
     draftPorts: options.draftPorts ?? defaultDraftPorts,
     ...(options.inspection ? { inspection: options.inspection } : {}),
   });

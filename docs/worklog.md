@@ -10,6 +10,10 @@
 
 ## 記録
 
+### 2026-11-28
+- M4（データ移行と PC 版の切り替え準備）を実装し、独立レビュー承認を得た。旧 PC データ（v8/v9）を読み取り専用で検査・バックアップ・変換してローカルまたは既存 Google Drive ライブラリへ取り込む一時 CLI（`tools/migrate_legacy_data.py`）と 1 枚手順書（[migration-runbook.md](migration-runbook.md)）を作成し、`SqliteEditRepository` の一括受信時の不要な再検証ループを最適化した。あわせて `tools/trial/`、`NativeRecoveryApp`、旧トップレベル入口および PC・Web の旧ブラウザデータ起動保留チェックを削除し、実データに対する一時フォルダーへの変換ドライランで警告なし完了を確認。
+- GitHub Pages 配信の依存監査（Python / JS / Rust）とライセンス台帳を更新し、`origin/main` 経由で Web PWA を公開済み。
+
 ### 2026-11-26
 - M3（Web PWA 配信準備・iPad オフライン利用 UI）の実装と検証を完了（実機確認・Pages 配信待ち）。本番 Web での Service Worker 自動登録と安全時のみ更新再読み込みする通知バー・ホーム画面追加案内（`WebPwaRuntime`）、起動画面・サイドバーからのオフライン利用許可／パスフレーズ起動 UI の復元と整形、Node 24 strip-only 互換修正、および Pages CI 向け `test-web.mjs` の主要スイート整理・オフライン E2E 追従を反映し、実画面スクリーンショットと独立レビュー承認を確認。
 

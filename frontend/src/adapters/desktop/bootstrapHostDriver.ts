@@ -11,8 +11,6 @@ import { BrowserLibraryQueryPreferences } from '../browser/libraryQueryPreferenc
 import { saveOutputFile } from './outputFile.ts';
 import { browserOutputFile } from '../browser/outputFile.ts';
 import { createBrowserInkPreferences } from '../browser/inkPreferences.ts';
-import { readLegacyHoldRecordReadonly } from '../browser/legacyHoldReadonly.ts';
-import { readLegacyWebPresenceReadonly } from '../browser/legacyPresenceReadonly.ts';
 import { validateCanonicalDevicePeer, validateCanonicalInitializeRequest, editSchema } from '../../runtime/edits/contracts.ts';
 import { validateStructure } from '../../runtime/edits/schemaValidator.ts';
 import type { EditScope } from '../../runtime/edits/ports.ts';
@@ -312,15 +310,8 @@ export function createDesktopBootstrapHostDriver(fetcher: typeof fetch = globalT
     providerOffline(value) { return !!knownProof(value).offline; },
     storageKind(value) { return knownProof(value).provider ? 'google-drive' : 'local'; },
     openReplication(value, signal) { if (knownProof(value).offline) throw new Error('provider-offline-transfer-denied'); return provider.openCurrentReplication(value, signal); },
-    async readHold(signal) {
-      const maintenance = await preparationCall('status', signal);
-      if (maintenance.state !== 'idle' && !(maintenance.state === 'cancelled' && maintenance.phase === 'restart-complete')) return 'held';
-      const result = await bootstrap(routes.hold,{},signal);
-      if (result !== null) { validateStructure(editSchema,'LegacyMigrationHold',result); return 'held'; }
-      const presence = await bootstrap(routes.legacyPresence,{},signal);
-      if (presence !== 'clear' && presence !== 'legacy-present') throw new Error('invalid-legacy-presence-response');
-      if (presence !== 'clear' || await readLegacyHoldRecordReadonly(signal) !== null) return 'held';
-      return await readLegacyWebPresenceReadonly(signal) === 'clear' ? 'clear' : 'held';
+    async readHold() {
+      return 'clear';
     },
     async readLocalContext(signal) {
       const result = context(await bootstrap(routes.readContext,{},signal));

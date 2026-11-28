@@ -17,8 +17,8 @@ const runtime = entry => memo(runtimeCache, entry, () => new Set([...moduleGraph
 const withTypes = entry => memo(typeCache, entry, () => new Set([...typeInclusiveFiles(path.join(src, entry), src)].map(rel)));
 
 /** Legacy-shell modules (typed literally, not derived from the graph). Every one exists today: a typo or a deletion fails the test below. */
-const LEGACY_MODULES = ['app/LegacyDesktopConnection.tsx', 'app/lazyPanes.tsx', 'shell/index.ts', 'store/index.ts', 'store/persisted.ts', 'api/client.ts',
-  'api/connection.ts', 'lib/migrateStorage.ts', 'App.tsx', 'web/WebLibrary.tsx', 'web/WebNotes.tsx', 'web/LegacyWebConnection.tsx',
+const LEGACY_MODULES = ['app/lazyPanes.tsx', 'shell/index.ts', 'store/index.ts', 'store/persisted.ts', 'api/client.ts',
+  'api/connection.ts', 'lib/migrateStorage.ts', 'App.tsx', 'web/WebLibrary.tsx', 'web/WebNotes.tsx',
   'web/LegacyWebLibraryConnection.tsx', 'web/LegacyDocumentReaderConnection.tsx', 'web/LegacyPdfReaderConnection.tsx'];
 /** Directories whose files exist only for the legacy shell. */
 const LEGACY_DIRECTORIES = ['shell/', 'store/', 'api/', 'features/summary/', 'features/chat/', 'features/references/', 'features/ocr/', 'features/settings/', 'features/documents/'];

@@ -17,8 +17,6 @@ import { assembleBrowserBootstrapHostDriver, type BrowserBootstrapHostDriver } f
 import { BrowserMarkdownDraftPort } from '../canonicalMarkdownDrafts.ts';
 import { BrowserAnnotationAppendDraftPort } from '../annotationAppendDrafts.ts';
 import { BrowserReaderStatePort } from '../readerState.ts';
-import { readLegacyHoldReadonly } from '../legacyHoldReadonly.ts';
-import { readLegacyWebPresenceReadonly } from '../legacyPresenceReadonly.ts';
 import { createOfflineVaultBroker } from './offline/offlineVaultBroker.ts';
 import { createOfflineEnrollmentCoordinator } from './offline/offlineEnrollmentCoordinator.ts';
 
@@ -85,11 +83,7 @@ export function createCloudProviderHost(inspection?: ResourceInspectionPort) {
     assertOpen(); cache = await acquireCloudProviderCache(signal, mode);
     if (closed) { await cache.close(); throw new Error('provider-host-closed'); }
     driver = assembleBrowserBootstrapHostDriver(cache.authority, {
-      readHold: async signal => {
-        if (await readLegacyHoldReadonly(signal) === 'held') return 'held';
-        if (await readLegacyWebPresenceReadonly(signal) !== 'clear') throw new Error('legacy-data-present');
-        return 'clear';
-      },
+      readHold: async () => 'clear',
       draftPorts: scope => ({ drafts: new BrowserMarkdownDraftPort(scope), appends: new BrowserAnnotationAppendDraftPort(scope), reader: new BrowserReaderStatePort(scope) }),
       ...(inspection ? { inspection } : {}),
     }); issuer = new ProviderGrantIssuer(cache.authority, google.verifier);

@@ -73,15 +73,15 @@ const FORBIDDEN_LEGACY_PATHS = [
   'api/client.ts',
 ];
 
-test('R29: PC and Web normal entries share the same features/** graph except desktop bootstrap legacy preparation', () => {
+test('R29: PC and Web normal entries share the exact same features/** graph', () => {
   const pcFeatures = featuresOf(reachable('main.tsx'));
   const webFeatures = featuresOf(reachable('web/main.tsx'));
   assert.ok(pcFeatures.size >= 100 && webFeatures.size >= 100, `unexpectedly small feature graph: pc=${pcFeatures.size}, web=${webFeatures.size}`);
 
   const webOnly = [...webFeatures].filter(file => !pcFeatures.has(file)).sort();
-  const pcOnlyNonLegacy = [...pcFeatures].filter(file => !webFeatures.has(file) && !file.startsWith('features/bootstrap/legacy/')).sort();
+  const pcOnly = [...pcFeatures].filter(file => !webFeatures.has(file)).sort();
   assert.deepEqual(webOnly, []);
-  assert.deepEqual(pcOnlyNonLegacy, []);
+  assert.deepEqual(pcOnly, []);
 });
 
 test('R29: both PC and Web normal entries reach the canonical A-category feature modules', () => {
